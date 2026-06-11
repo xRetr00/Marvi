@@ -211,7 +211,7 @@ RUN chmod -R a+rX /opt/hermes && \
 # `s6-setuidgid hermes` in its run script. If HERMES_UID is unset, services
 # run as the default hermes user (UID 10000).
 
-# ---------- Link hermes-agent itself (editable) ----------
+# ---------- Link Marvi Agent itself (editable) ----------
 # Deps are already installed in the cached layer above; `--no-deps` makes
 # this a fast (~1s) egg-link creation with no resolution or downloads.
 RUN uv pip install --no-cache-dir --no-deps -e "."
@@ -287,21 +287,23 @@ ENV HERMES_HOME=/opt/data
 # `docker exec <c> hermes ...` they default to root, and any file the
 # command writes under $HERMES_HOME (auth.json, .env, config.yaml) ends
 # up root-owned and unreadable to the supervised gateway (UID 10000).
-# The shim lives at /opt/hermes/bin/hermes, sits earliest on PATH, and
-# transparently re-exec's the real venv binary via `s6-setuidgid hermes`
+# The shims live at /opt/hermes/bin/{hermes,marvi}, sit earliest on PATH,
+# and transparently re-exec the real venv binary via `s6-setuidgid hermes`
 # when invoked as root. Non-root callers (supervised processes,
 # `--user hermes`, etc.) hit the short-circuit path with no overhead.
-# Recursion is impossible because the shim exec's the venv binary by
-# absolute path (/opt/hermes/.venv/bin/hermes). See the shim source for
-# the opt-out env var (HERMES_DOCKER_EXEC_AS_ROOT=1).
+# Recursion is impossible because the shims exec the venv binary by
+# absolute path (/opt/hermes/.venv/bin/{hermes,marvi}). See the shim
+# source for the opt-out env var (HERMES_DOCKER_EXEC_AS_ROOT=1).
 COPY --chmod=0755 docker/hermes-exec-shim.sh /opt/hermes/bin/hermes
+COPY --chmod=0755 docker/hermes-exec-shim.sh /opt/hermes/bin/marvi
 
 # Pre-s6 entrypoint.sh did `source .venv/bin/activate` which exported
 # the venv bin onto PATH; Architecture B's main-wrapper.sh does the
 # same for the container's main process, but `docker exec` and our
 # cont-init.d scripts don't pass through the wrapper. Expose the venv
-# bin globally so `docker exec <container> hermes ...` and any
-# subprocess that doesn't activate the venv first still find hermes.
+# bin globally so `docker exec <container> marvi ...` or
+# `docker exec <container> hermes ...` and any subprocess that doesn't
+# activate the venv first still find the CLI.
 #
 # /opt/hermes/bin is prepended ahead of the venv so the privilege-drop
 # shim wins PATH resolution. The shim's last act is to exec the venv

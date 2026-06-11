@@ -1,4 +1,4 @@
-name: Hermes smoke test
+name: Marvi smoke test
 description: >
   Run the image's built-in entrypoint against `--help` and `dashboard --help`
   to catch basic runtime regressions before publishing.  Requires the image
@@ -8,7 +8,7 @@ description: >
 
 inputs:
   image:
-    description: Fully-qualified image tag (e.g. nousresearch/hermes-agent:test)
+    description: Fully-qualified image tag (e.g. nousresearch/marvi-agent:test)
     required: true
 
 runs:

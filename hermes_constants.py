@@ -1,4 +1,4 @@
-"""Shared constants for Hermes Agent.
+"""Shared constants for Marvi Agent.
 
 Import-safe module with no dependencies — can be imported from anywhere
 without risk of circular imports.
@@ -10,6 +10,13 @@ import sysconfig
 from contextvars import ContextVar, Token
 from pathlib import Path
 
+
+PRODUCT_NAME = "Marvi Agent"
+PRODUCT_SHORT_NAME = "Marvi"
+LEGACY_PRODUCT_NAME = "Hermes Agent"
+LEGACY_PRODUCT_SHORT_NAME = "Hermes"
+MARVI_HOME_ENV = "MARVI_HOME"
+LEGACY_HERMES_HOME_ENV = "HERMES_HOME"
 
 _profile_fallback_warned: bool = False
 _UNSET = object()
@@ -41,13 +48,36 @@ def get_hermes_home_override() -> str | None:
     return str(override)
 
 
-def _get_platform_default_hermes_home() -> Path:
-    """Return the platform-native default Hermes home path."""
+def _get_platform_default_marvi_home() -> Path:
+    """Return the platform-native default Marvi home path for new installs."""
+    if sys.platform == "win32":
+        local_appdata = os.environ.get("LOCALAPPDATA", "").strip()
+        base = Path(local_appdata) if local_appdata else Path.home() / "AppData" / "Local"
+        return base / "marvi"
+    return Path.home() / ".marvi"
+
+
+def _get_platform_legacy_hermes_home() -> Path:
+    """Return the platform-native legacy Hermes home path."""
     if sys.platform == "win32":
         local_appdata = os.environ.get("LOCALAPPDATA", "").strip()
         base = Path(local_appdata) if local_appdata else Path.home() / "AppData" / "Local"
         return base / "hermes"
     return Path.home() / ".hermes"
+
+
+def _get_platform_default_hermes_home() -> Path:
+    """Return the preferred default home, reusing existing legacy installs.
+
+    The compatibility function name is retained for existing imports. New
+    installs use Marvi paths; legacy Hermes homes are reused when present and
+    no Marvi home exists.
+    """
+    marvi_home = _get_platform_default_marvi_home()
+    legacy_home = _get_platform_legacy_hermes_home()
+    if legacy_home.exists() and not marvi_home.exists():
+        return legacy_home
+    return marvi_home
 
 
 def get_hermes_home() -> Path:
@@ -70,7 +100,11 @@ def get_hermes_home() -> Path:
     if override:
         return Path(override)
 
-    val = os.environ.get("HERMES_HOME", "").strip()
+    val = os.environ.get(MARVI_HOME_ENV, "").strip()
+    if val:
+        return Path(val)
+
+    val = os.environ.get(LEGACY_HERMES_HOME_ENV, "").strip()
     if val:
         return Path(val)
 
@@ -92,11 +126,11 @@ def get_hermes_home() -> Path:
             # configured, and (b) root-logger propagation would double-emit
             # on consoles where a StreamHandler is already attached.
             msg = (
-                f"[HERMES_HOME fallback] HERMES_HOME is unset but active "
+                f"[MARVI_HOME fallback] MARVI_HOME/HERMES_HOME are unset but active "
                 f"profile is {active!r}. Falling back to {fallback_home}, which "
                 f"is the DEFAULT profile — not {active!r}. Any data this "
                 f"process writes will land in the wrong profile. The "
-                f"subprocess spawner should pass HERMES_HOME explicitly "
+                f"subprocess spawner should pass MARVI_HOME explicitly "
                 f"(see issue #18594)."
             )
             try:
@@ -126,7 +160,10 @@ def get_default_hermes_root() -> Path:
     Import-safe — no dependencies beyond stdlib.
     """
     native_home = _get_platform_default_hermes_home()
-    env_home = os.environ.get("HERMES_HOME", "")
+    env_home = (
+        os.environ.get(MARVI_HOME_ENV, "").strip()
+        or os.environ.get(LEGACY_HERMES_HOME_ENV, "").strip()
+    )
     if not env_home:
         return native_home
     env_path = Path(env_home)
@@ -299,7 +336,11 @@ def get_subprocess_home() -> str | None:
     Activation is directory-based: if the ``home/`` subdirectory doesn't
     exist, returns ``None`` and behavior is unchanged.
     """
-    hermes_home = get_hermes_home_override() or os.getenv("HERMES_HOME")
+    hermes_home = (
+        get_hermes_home_override()
+        or os.getenv(MARVI_HOME_ENV)
+        or os.getenv(LEGACY_HERMES_HOME_ENV)
+    )
     if not hermes_home:
         return None
     profile_home = os.path.join(hermes_home, "home")

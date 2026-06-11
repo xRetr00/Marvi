@@ -83,7 +83,7 @@ def _set_process_title() -> None:
     try:
         import setproctitle  # type: ignore[import-untyped]
 
-        setproctitle.setproctitle("hermes")
+        setproctitle.setproctitle("marvi")
         return
     except ImportError:
         pass
@@ -96,10 +96,10 @@ def _set_process_title() -> None:
         system = platform.system()
         if system == "Linux":
             libc = ctypes.CDLL("libc.so.6", use_errno=True)
-            libc.prctl(15, b"hermes", 0, 0, 0)  # PR_SET_NAME = 15
+            libc.prctl(15, b"marvi", 0, 0, 0)  # PR_SET_NAME = 15
         elif system == "Darwin":
             libc = ctypes.CDLL("libc.dylib", use_errno=True)
-            libc.pthread_setname_np(b"hermes")
+            libc.pthread_setname_np(b"marvi")
         # Windows: the .exe name is already ``hermes.exe`` — nothing to do.
     except Exception:
         pass
@@ -121,11 +121,13 @@ def _config_default_interface_early() -> str:
         return _EARLY_INTERFACE_CACHE[0]
     value = "cli"
     try:
-        home = os.environ.get("HERMES_HOME")
+        home = os.environ.get("MARVI_HOME") or os.environ.get("HERMES_HOME")
         if home:
             cfg_path = os.path.join(home, "config.yaml")
         else:
-            cfg_path = os.path.join(os.path.expanduser("~"), ".hermes", "config.yaml")
+            marvi_cfg = os.path.join(os.path.expanduser("~"), ".marvi", "config.yaml")
+            legacy_cfg = os.path.join(os.path.expanduser("~"), ".hermes", "config.yaml")
+            cfg_path = marvi_cfg if os.path.exists(marvi_cfg) else legacy_cfg
         if os.path.exists(cfg_path):
             import yaml as _yaml_iface
 

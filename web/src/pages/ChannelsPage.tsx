@@ -253,8 +253,8 @@ export default function ChannelsPage() {
             <WifiOff className="h-4 w-4 shrink-0" />
             <span>
               The gateway is not running. Configure channels here, then start the
-              gateway with <code className="font-courier">hermes gateway start</code>{" "}
-              (or the Restart button above).
+              gateway with <code className="font-courier">marvi gateway start</code>{" "}
+              (legacy `hermes gateway start` still works, or use the Restart button above).
             </span>
           </CardContent>
         </Card>
@@ -562,7 +562,7 @@ function TelegramOnboardingPanel({
     setDetectedOwnerId(null);
     setNewAllowedId("");
     try {
-      const res = await api.startTelegramOnboarding({ bot_name: "Hermes Agent" });
+      const res = await api.startTelegramOnboarding({ bot_name: "Marvi Agent" });
       const dataUrl = await QRCode.toDataURL(res.qr_payload, {
         errorCorrectionLevel: "M",
         margin: 1,
@@ -599,7 +599,7 @@ function TelegramOnboardingPanel({
     setNewAllowedId("");
   };
 
-  // restart_started only means the `hermes gateway restart` child spawned —
+  // restart_started only means the `marvi gateway restart` child spawned —
   // not that the restart will succeed (e.g. systemd linger missing, service
   // manager failure). Poll the action status briefly and surface a non-zero
   // exit via the manual-restart banner. Note: in no-service installs the

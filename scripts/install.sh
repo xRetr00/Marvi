@@ -1,6 +1,6 @@
 #!/bin/bash
 # ============================================================================
-# Hermes Agent Installer
+# Marvi Agent Installer
 # ============================================================================
 # Installation script for Linux, macOS, and Android/Termux.
 # Uses uv for desktop/server installs and Python's stdlib venv + pip on Termux.
@@ -155,7 +155,7 @@ while [[ $# -gt 0 ]]; do
             shift
             ;;
         -h|--help)
-            echo "Hermes Agent Installer"
+            echo "Marvi Agent Installer"
             echo ""
             echo "Usage: install.sh [OPTIONS]"
             echo ""
@@ -210,7 +210,7 @@ print_banner() {
     echo ""
     echo -e "${MAGENTA}${BOLD}"
     echo "┌─────────────────────────────────────────────────────────┐"
-    echo "│             ⚕ Hermes Agent Installer                    │"
+    echo "│             ⚕ Marvi Agent Installer                     │"
     echo "├─────────────────────────────────────────────────────────┤"
     echo "│  An open source AI agent by Nous Research.              │"
     echo "└─────────────────────────────────────────────────────────┘"
@@ -268,7 +268,7 @@ emit_manifest() {
     if [ "$INCLUDE_DESKTOP" = true ]; then
         desktop_stage='{"name":"desktop","title":"Build desktop app","category":"runtime","needs_user_input":false},'
     fi
-    printf '%s' '{"protocol_version":1,"stages":[{"name":"prerequisites","title":"System prerequisites","category":"runtime","needs_user_input":false},{"name":"repository","title":"Download Hermes Agent","category":"runtime","needs_user_input":false},{"name":"venv","title":"Create Python virtual environment","category":"runtime","needs_user_input":false},{"name":"python-deps","title":"Install Python dependencies","category":"runtime","needs_user_input":false},{"name":"node-deps","title":"Install browser-tool dependencies","category":"runtime","needs_user_input":false},{"name":"path","title":"Install hermes command","category":"runtime","needs_user_input":false},{"name":"config","title":"Prepare config and skills","category":"configuration","needs_user_input":false},{"name":"setup","title":"Configure API keys and settings","category":"configuration","needs_user_input":true},{"name":"gateway","title":"Configure gateway service","category":"configuration","needs_user_input":true},'"$desktop_stage"'{"name":"complete","title":"Finish install","category":"runtime","needs_user_input":false}]}'
+    printf '%s' '{"protocol_version":1,"stages":[{"name":"prerequisites","title":"System prerequisites","category":"runtime","needs_user_input":false},{"name":"repository","title":"Download Marvi Agent","category":"runtime","needs_user_input":false},{"name":"venv","title":"Create Python virtual environment","category":"runtime","needs_user_input":false},{"name":"python-deps","title":"Install Python dependencies","category":"runtime","needs_user_input":false},{"name":"node-deps","title":"Install browser-tool dependencies","category":"runtime","needs_user_input":false},{"name":"path","title":"Install command shims","category":"runtime","needs_user_input":false},{"name":"config","title":"Prepare config and skills","category":"configuration","needs_user_input":false},{"name":"setup","title":"Configure API keys and settings","category":"configuration","needs_user_input":true},{"name":"gateway","title":"Configure gateway service","category":"configuration","needs_user_input":true},'"$desktop_stage"'{"name":"complete","title":"Finish install","category":"runtime","needs_user_input":false}]}'
     printf '\n'
 }
 
@@ -416,10 +416,12 @@ get_command_link_display_dir() {
 get_hermes_command_path() {
     local link_dir
     link_dir="$(get_command_link_dir)"
-    if [ -x "$link_dir/hermes" ]; then
+    if [ -x "$link_dir/marvi" ]; then
+        echo "$link_dir/marvi"
+    elif [ -x "$link_dir/hermes" ]; then
         echo "$link_dir/hermes"
     else
-        echo "hermes"
+        echo "marvi"
     fi
 }
 
@@ -1013,7 +1015,7 @@ install_system_packages() {
             if [ "$IS_INTERACTIVE" = true ]; then
                 echo ""
                 log_info "sudo is needed ONLY to install optional system packages (${pkgs[*]}) via your package manager."
-                log_info "Hermes Agent itself does not require or retain root access."
+                log_info "Marvi Agent itself does not require or retain root access."
                 if prompt_yes_no "Install ${description}? (requires sudo)" "no"; then
                     if sudo DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a $install_cmd; then
                         [ "$need_ripgrep" = true ] && HAS_RIPGREP=true && log_success "ripgrep installed"
@@ -1029,7 +1031,7 @@ install_system_packages() {
                 # but opening fails with ENXIO. See #16746.
                 echo ""
                 log_info "sudo is needed ONLY to install optional system packages (${pkgs[*]}) via your package manager."
-                log_info "Hermes Agent itself does not require or retain root access."
+                log_info "Marvi Agent itself does not require or retain root access."
                 if prompt_yes_no "Install ${description}?" "yes"; then
                     if sudo DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a $install_cmd < /dev/tty; then
                         [ "$need_ripgrep" = true ] && HAS_RIPGREP=true && log_success "ripgrep installed"
@@ -1330,7 +1332,7 @@ install_deps() {
                     log_success "Build tools installed"
                 else
                     log_info "sudo is needed ONLY to install build tools (build-essential, python3-dev, libffi-dev) via apt."
-                    log_info "Hermes Agent itself does not require or retain root access."
+                    log_info "Marvi Agent itself does not require or retain root access."
                     if prompt_yes_no "Install build tools?" "yes"; then
                         sudo DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get update -qq && sudo DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get install -y -qq build-essential python3-dev libffi-dev >/dev/null 2>&1 || true
                         log_success "Build tools installed"
@@ -1421,7 +1423,7 @@ try:
     specs = data["project"]["optional-dependencies"]["all"]
     extras = []
     for s in specs:
-        m = re.search(r"hermes-agent\[([\w-]+)\]", s)
+        m = re.search(r"(?:hermes|marvi)-agent\[([\w-]+)\]", s)
         if m:
             extras.append(m.group(1))
     print(",".join(extras))
@@ -1494,21 +1496,23 @@ PY
 }
 
 setup_path() {
-    log_info "Setting up hermes command..."
+    log_info "Setting up marvi/hermes commands..."
 
     if [ "$USE_VENV" = true ]; then
+        MARVI_BIN="$INSTALL_DIR/venv/bin/marvi"
         HERMES_BIN="$INSTALL_DIR/venv/bin/hermes"
     else
+        MARVI_BIN="$(which marvi 2>/dev/null || echo "")"
         HERMES_BIN="$(which hermes 2>/dev/null || echo "")"
-        if [ -z "$HERMES_BIN" ]; then
-            log_warn "hermes not found on PATH after install"
+        if [ -z "$MARVI_BIN" ] && [ -z "$HERMES_BIN" ]; then
+            log_warn "marvi/hermes not found on PATH after install"
             return 0
         fi
     fi
 
-    # Verify the entry point script was actually generated
-    if [ ! -x "$HERMES_BIN" ]; then
-        log_warn "hermes entry point not found at $HERMES_BIN"
+    # Verify at least one entry point script was actually generated
+    if [ ! -x "$MARVI_BIN" ] && [ ! -x "$HERMES_BIN" ]; then
+        log_warn "marvi/hermes entry points not found at $MARVI_BIN or $HERMES_BIN"
         log_info "This usually means the pip install didn't complete successfully."
         if [ "$DISTRO" = "termux" ]; then
             log_info "Try: cd $INSTALL_DIR && python -m pip install -e '.[termux-all]' -c constraints-termux.txt"
@@ -1523,27 +1527,38 @@ setup_path() {
     command_link_dir="$(get_command_link_dir)"
     command_link_display_dir="$(get_command_link_display_dir)"
 
-    # Create a user-facing shim for the hermes command.
+    # Create user-facing shims for the marvi/hermes commands.
     # We intentionally clear PYTHONPATH/PYTHONHOME here so inherited env vars
     # can't make this launcher import modules from another checkout.
     mkdir -p "$command_link_dir"
-    # Older installs created this path as a symlink to $HERMES_BIN. Without
-    # the rm, `cat >` follows the symlink and overwrites the venv pip entry
-    # point with this shim — making `exec "$HERMES_BIN"` self-recurse. (#21454)
-    rm -f "$command_link_dir/hermes"
+    # Older installs created these paths as symlinks to the venv binaries.
+    # Without the rm, `cat >` follows the symlink and overwrites the venv
+    # pip entry point with this shim — making `exec "$HERMES_BIN"` recurse.
+    rm -f "$command_link_dir/marvi" "$command_link_dir/hermes"
     cat > "$command_link_dir/hermes" <<EOF
 #!/usr/bin/env bash
 unset PYTHONPATH
 unset PYTHONHOME
+if [ "\$(basename "\$0")" = "marvi" ] && [ -x "$MARVI_BIN" ]; then
+    exec "$MARVI_BIN" "\$@"
+fi
+if [ "\$(basename "\$0")" = "hermes" ] && [ -x "$HERMES_BIN" ]; then
+    exec "$HERMES_BIN" "\$@"
+fi
+if [ -x "$MARVI_BIN" ]; then
+    exec "$MARVI_BIN" "\$@"
+fi
 exec "$HERMES_BIN" "\$@"
 EOF
     chmod +x "$command_link_dir/hermes"
-    log_success "Installed hermes launcher → $command_link_display_dir/hermes"
+    cp "$command_link_dir/hermes" "$command_link_dir/marvi"
+    chmod +x "$command_link_dir/marvi"
+    log_success "Installed marvi/hermes launchers → $command_link_display_dir/{marvi,hermes}"
 
     if [ "$DISTRO" = "termux" ]; then
         export PATH="$command_link_dir:$PATH"
         log_info "$command_link_display_dir is the native Termux command path"
-        log_success "hermes command ready"
+        log_success "marvi/hermes commands ready"
         return 0
     fi
 
@@ -1558,16 +1573,16 @@ EOF
         # Probe a fresh non-login interactive bash the way the user will use it.
         # `bash -i -c` sources ~/.bashrc but NOT ~/.bash_profile or /etc/profile,
         # which is the exact scenario where RHEL root loses /usr/local/bin.
-        if env -i HOME="$HOME" TERM="${TERM:-dumb}" bash -i -c 'command -v hermes' \
+        if env -i HOME="$HOME" TERM="${TERM:-dumb}" bash -i -c 'command -v marvi >/dev/null 2>&1 || command -v hermes' \
                 >/dev/null 2>&1; then
             log_info "/usr/local/bin is already on PATH for all shells"
-            log_success "hermes command ready"
+            log_success "marvi/hermes commands ready"
             return 0
         fi
 
-        log_info "hermes not on PATH in non-login shells (common on RHEL-family)"
+        log_info "marvi/hermes not on PATH in non-login shells (common on RHEL-family)"
         PATH_LINE='export PATH="/usr/local/bin:$PATH"'
-        PATH_COMMENT='# Hermes Agent — ensure /usr/local/bin is on PATH (RHEL non-login shells)'
+        PATH_COMMENT='# Marvi Agent — ensure /usr/local/bin is on PATH (RHEL non-login shells)'
         for SHELL_CONFIG in "$HOME/.bashrc" "$HOME/.bash_profile"; do
             [ -f "$SHELL_CONFIG" ] || continue
             if ! grep -v '^[[:space:]]*#' "$SHELL_CONFIG" 2>/dev/null \
@@ -1578,7 +1593,7 @@ EOF
                 log_success "Added /usr/local/bin to PATH in $SHELL_CONFIG"
             fi
         done
-        log_success "hermes command ready"
+        log_success "marvi/hermes commands ready"
         return 0
     fi
 
@@ -1624,7 +1639,7 @@ EOF
         for SHELL_CONFIG in "${SHELL_CONFIGS[@]}"; do
             if ! grep -v '^[[:space:]]*#' "$SHELL_CONFIG" 2>/dev/null | grep -qE 'PATH=.*\.local/bin'; then
                 echo "" >> "$SHELL_CONFIG"
-                echo "# Hermes Agent — ensure ~/.local/bin is on PATH" >> "$SHELL_CONFIG"
+                echo "# Marvi Agent — ensure ~/.local/bin is on PATH" >> "$SHELL_CONFIG"
                 echo "$PATH_LINE" >> "$SHELL_CONFIG"
                 log_success "Added ~/.local/bin to PATH in $SHELL_CONFIG"
             fi
@@ -1634,7 +1649,7 @@ EOF
         if [ "$IS_FISH" = "true" ]; then
             if ! grep -q 'fish_add_path.*\.local/bin' "$FISH_CONFIG" 2>/dev/null; then
                 echo "" >> "$FISH_CONFIG"
-                echo "# Hermes Agent — ensure ~/.local/bin is on PATH" >> "$FISH_CONFIG"
+                echo "# Marvi Agent — ensure ~/.local/bin is on PATH" >> "$FISH_CONFIG"
                 echo 'fish_add_path "$HOME/.local/bin"' >> "$FISH_CONFIG"
                 log_success "Added ~/.local/bin to PATH in $FISH_CONFIG"
             fi
@@ -1648,10 +1663,10 @@ EOF
         log_info "~/.local/bin already on PATH"
     fi
 
-    # Export for current session so hermes works immediately
+    # Export for current session so marvi/hermes work immediately
     export PATH="$command_link_dir:$PATH"
 
-    log_success "hermes command ready"
+    log_success "marvi/hermes commands ready"
 }
 
 copy_config_templates() {
@@ -1691,7 +1706,7 @@ copy_config_templates() {
     # Create SOUL.md if it doesn't exist (global persona file)
     if [ ! -f "$HERMES_HOME/SOUL.md" ]; then
         cat > "$HERMES_HOME/SOUL.md" << 'SOUL_EOF'
-# Hermes Agent Persona
+# Marvi Agent Persona
 
 <!--
 This file defines the agent's personality and tone.
@@ -1809,7 +1824,7 @@ configure_browser_env_from_system_browser() {
 
     {
         echo ""
-        echo "# Hermes Agent browser tools — use the system Chrome/Chromium binary."
+        echo "# Marvi Agent browser tools — use the system Chrome/Chromium binary."
         echo "AGENT_BROWSER_EXECUTABLE_PATH=$browser_path"
     } >> "$env_file"
     log_success "Configured browser tools to use $browser_path"
@@ -1851,7 +1866,7 @@ install_node_deps() {
         DETECTED_BROWSER_EXECUTABLE="$(find_system_browser 2>/dev/null || true)"
         if [ -n "$DETECTED_BROWSER_EXECUTABLE" ]; then
             log_success "Found system Chrome/Chromium at $DETECTED_BROWSER_EXECUTABLE"
-            log_info "Skipping Playwright browser download; Hermes will use the system browser."
+            log_info "Skipping Playwright browser download; Marvi will use the system browser."
         else
             case "$DISTRO" in
                 ubuntu|debian|raspbian|pop|linuxmint|elementary|zorin|kali|parrot)
@@ -1997,7 +2012,7 @@ maybe_start_gateway() {
 
     echo ""
     log_info "Messaging platform token detected!"
-    log_info "The gateway needs to be running for Hermes to send/receive messages."
+    log_info "The gateway needs to be running for Marvi to send/receive messages."
 
     # If WhatsApp is enabled and no session exists yet, run foreground first for QR scan
     WHATSAPP_VAL=$(grep "^WHATSAPP_ENABLED=" "$ENV_FILE" 2>/dev/null | cut -d'=' -f2-)
@@ -2006,14 +2021,14 @@ maybe_start_gateway() {
         if [ "$IS_INTERACTIVE" = true ]; then
             echo ""
             log_info "WhatsApp is enabled but not yet paired."
-            log_info "Running 'hermes whatsapp' to pair via QR code..."
+            log_info "Running 'marvi whatsapp' to pair via QR code..."
             echo ""
             if prompt_yes_no "Pair WhatsApp now?" "yes"; then
                 HERMES_CMD="$(get_hermes_command_path)"
                 $HERMES_CMD whatsapp || true
             fi
         else
-            log_info "WhatsApp pairing skipped (non-interactive). Run 'hermes whatsapp' to pair."
+            log_info "WhatsApp pairing skipped (non-interactive). Run 'marvi whatsapp' to pair."
         fi
     fi
 
@@ -2021,7 +2036,7 @@ maybe_start_gateway() {
     # in Docker builds where the device node is in the mount namespace
     # but opening fails with ENXIO. See #16746.
     if ! (: </dev/tty) 2>/dev/null; then
-        log_info "Gateway setup skipped (no terminal available). Run 'hermes gateway install' later."
+        log_info "Gateway setup skipped (no terminal available). Run 'marvi gateway install' later."
         return 0
     fi
 
@@ -2047,10 +2062,10 @@ maybe_start_gateway() {
                 if $HERMES_CMD gateway start 2>/dev/null; then
                     log_success "Gateway started! Your bot is now online."
                 else
-                    log_warn "Service installed but failed to start. Try: hermes gateway start"
+                    log_warn "Service installed but failed to start. Try: marvi gateway start"
                 fi
             else
-                log_warn "Systemd install failed. You can start manually: hermes gateway"
+                log_warn "Systemd install failed. You can start manually: marvi gateway"
             fi
         else
             if [ "$DISTRO" = "termux" ]; then
@@ -2062,13 +2077,13 @@ maybe_start_gateway() {
             GATEWAY_PID=$!
             log_success "Gateway started (PID $GATEWAY_PID). Logs: ~/.hermes/logs/gateway.log"
             log_info "To stop: kill $GATEWAY_PID"
-            log_info "To restart later: hermes gateway"
+            log_info "To restart later: marvi gateway"
             if [ "$DISTRO" = "termux" ]; then
                 log_warn "Android may stop background processes when Termux is suspended or the system reclaims resources."
             fi
         fi
     else
-        log_info "Skipped. Start the gateway later with: hermes gateway"
+        log_info "Skipped. Start the gateway later with: marvi gateway"
     fi
 }
 
@@ -2094,24 +2109,25 @@ print_success() {
     echo ""
     echo -e "${CYAN}${BOLD}🚀 Commands:${NC}"
     echo ""
-    echo -e "   ${GREEN}hermes${NC}              Start chatting"
-    echo -e "   ${GREEN}hermes setup${NC}        Configure API keys & settings"
-    echo -e "   ${GREEN}hermes config${NC}       View/edit configuration"
-    echo -e "   ${GREEN}hermes config edit${NC}  Open config in editor"
-    echo -e "   ${GREEN}hermes gateway install${NC} Install gateway service (messaging + cron)"
-    echo -e "   ${GREEN}hermes update${NC}       Update to latest version"
+    echo -e "   ${GREEN}marvi${NC}               Start chatting"
+    echo -e "   ${GREEN}marvi setup${NC}        Configure API keys & settings"
+    echo -e "   ${GREEN}marvi config${NC}       View/edit configuration"
+    echo -e "   ${GREEN}marvi config edit${NC}  Open config in editor"
+    echo -e "   ${GREEN}marvi gateway install${NC} Install gateway service (messaging + cron)"
+    echo -e "   ${GREEN}marvi update${NC}       Update to latest version"
+    echo -e "   ${GREEN}hermes${NC}              Legacy alias for marvi"
     echo ""
 
     echo -e "${CYAN}─────────────────────────────────────────────────────────${NC}"
     echo ""
     if [ "$DISTRO" = "termux" ]; then
-        echo -e "${YELLOW}⚡ 'hermes' was linked into $(get_command_link_display_dir), which is already on PATH in Termux.${NC}"
+        echo -e "${YELLOW}⚡ 'marvi' and 'hermes' were linked into $(get_command_link_display_dir), which is already on PATH in Termux.${NC}"
         echo ""
     elif [ "$ROOT_FHS_LAYOUT" = true ]; then
-        echo -e "${YELLOW}⚡ 'hermes' was linked into /usr/local/bin and is ready to use — no shell reload needed.${NC}"
+        echo -e "${YELLOW}⚡ 'marvi' and 'hermes' were linked into /usr/local/bin and are ready to use — no shell reload needed.${NC}"
         echo ""
     else
-        echo -e "${YELLOW}⚡ Reload your shell to use 'hermes' command:${NC}"
+        echo -e "${YELLOW}⚡ Reload your shell to use the 'marvi' command:${NC}"
         echo ""
         LOGIN_SHELL="$(basename "${SHELL:-/bin/bash}")"
         if [ "$LOGIN_SHELL" = "zsh" ]; then
@@ -2261,7 +2277,7 @@ postinstall_mode() {
     print_banner
     detect_os
 
-    log_info "Post-install mode: setting up Hermes for pip install"
+    log_info "Post-install mode: setting up Marvi for pip install"
 
     check_node
     check_network_prerequisites
@@ -2271,12 +2287,12 @@ postinstall_mode() {
         ensure_browser
     fi
 
-    HERMES_CMD="$(command -v hermes 2>/dev/null || echo "")"
+    HERMES_CMD="$(command -v marvi 2>/dev/null || command -v hermes 2>/dev/null || echo "")"
     if [ -n "$HERMES_CMD" ]; then
-        log_info "Running hermes setup..."
+        log_info "Running marvi setup..."
         "$HERMES_CMD" setup
     else
-        log_warn "hermes command not found on PATH"
+        log_warn "marvi/hermes command not found on PATH"
         log_info "Try: python -m hermes_cli.main setup"
     fi
 }

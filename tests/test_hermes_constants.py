@@ -20,17 +20,43 @@ class TestGetDefaultHermesRoot:
     """Tests for get_default_hermes_root() — Docker/custom deployment awareness."""
 
     def test_no_hermes_home_returns_native(self, tmp_path, monkeypatch):
-        """When HERMES_HOME is not set, returns ~/.hermes."""
+        """When no home env is set, new installs default to ~/.marvi."""
+        monkeypatch.delenv("MARVI_HOME", raising=False)
         monkeypatch.delenv("HERMES_HOME", raising=False)
+        monkeypatch.delenv("LOCALAPPDATA", raising=False)
         monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        monkeypatch.setattr(hermes_constants.sys, "platform", "linux")
 
-        assert get_default_hermes_root() == tmp_path / ".hermes"
+        assert get_default_hermes_root() == tmp_path / ".marvi"
+
+    def test_existing_legacy_home_is_reused(self, tmp_path, monkeypatch):
+        """Existing ~/.hermes installs remain the default until migrated."""
+        monkeypatch.delenv("MARVI_HOME", raising=False)
+        monkeypatch.delenv("HERMES_HOME", raising=False)
+        monkeypatch.delenv("LOCALAPPDATA", raising=False)
+        legacy = tmp_path / ".hermes"
+        legacy.mkdir()
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        monkeypatch.setattr(hermes_constants.sys, "platform", "linux")
+
+        assert get_default_hermes_root() == legacy
+
+    def test_marvi_home_preferred_over_legacy_hermes_home(self, tmp_path, monkeypatch):
+        """MARVI_HOME is the new primary env var; HERMES_HOME is a fallback."""
+        marvi_home = tmp_path / "marvi-home"
+        hermes_home = tmp_path / "hermes-home"
+        monkeypatch.setenv("MARVI_HOME", str(marvi_home))
+        monkeypatch.setenv("HERMES_HOME", str(hermes_home))
+
+        assert get_hermes_home() == marvi_home
+        assert get_default_hermes_root() == marvi_home
 
     def test_hermes_home_is_native(self, tmp_path, monkeypatch):
-        """When HERMES_HOME = ~/.hermes, returns ~/.hermes."""
+        """When HERMES_HOME = ~/.hermes, returns the legacy root."""
         native = tmp_path / ".hermes"
         native.mkdir()
         monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        monkeypatch.delenv("MARVI_HOME", raising=False)
         monkeypatch.setenv("HERMES_HOME", str(native))
         assert get_default_hermes_root() == native
 
@@ -40,6 +66,7 @@ class TestGetDefaultHermesRoot:
         profile = native / "profiles" / "coder"
         profile.mkdir(parents=True)
         monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        monkeypatch.delenv("MARVI_HOME", raising=False)
         monkeypatch.setenv("HERMES_HOME", str(profile))
         assert get_default_hermes_root() == native
 
@@ -56,6 +83,7 @@ class TestGetDefaultHermesRoot:
         custom = tmp_path / "my-hermes-data"
         custom.mkdir()
         monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        monkeypatch.delenv("MARVI_HOME", raising=False)
         monkeypatch.setenv("HERMES_HOME", str(custom))
         assert get_default_hermes_root() == custom
 
@@ -66,43 +94,47 @@ class TestGetDefaultHermesRoot:
         profile = docker_root / "profiles" / "coder"
         profile.mkdir(parents=True)
         monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        monkeypatch.delenv("MARVI_HOME", raising=False)
         monkeypatch.setenv("HERMES_HOME", str(profile))
         assert get_default_hermes_root() == docker_root
 
     def test_no_hermes_home_returns_localappdata_root_on_windows(self, tmp_path, monkeypatch):
-        """Native Windows falls back to %LOCALAPPDATA%\\hermes, not ~/.hermes."""
+        """Native Windows falls back to %LOCALAPPDATA%\\marvi for new installs."""
         local_appdata = tmp_path / "LocalAppData"
+        monkeypatch.delenv("MARVI_HOME", raising=False)
         monkeypatch.delenv("HERMES_HOME", raising=False)
         monkeypatch.setenv("LOCALAPPDATA", str(local_appdata))
         monkeypatch.setattr(Path, "home", lambda: tmp_path / "Home")
         monkeypatch.setattr(hermes_constants.sys, "platform", "win32")
 
-        assert get_default_hermes_root() == local_appdata / "hermes"
+        assert get_default_hermes_root() == local_appdata / "marvi"
 
     def test_no_hermes_home_uses_windows_path_when_localappdata_missing(self, tmp_path, monkeypatch):
-        """Windows fallback still uses AppData/Local/hermes without LOCALAPPDATA."""
+        """Windows fallback still uses AppData/Local/marvi without LOCALAPPDATA."""
         home = tmp_path / "Home"
+        monkeypatch.delenv("MARVI_HOME", raising=False)
         monkeypatch.delenv("HERMES_HOME", raising=False)
         monkeypatch.delenv("LOCALAPPDATA", raising=False)
         monkeypatch.setattr(Path, "home", lambda: home)
         monkeypatch.setattr(hermes_constants.sys, "platform", "win32")
 
-        assert get_default_hermes_root() == home / "AppData" / "Local" / "hermes"
+        assert get_default_hermes_root() == home / "AppData" / "Local" / "marvi"
 
 
 class TestGetHermesHome:
     """Tests for get_hermes_home() platform-aware fallback."""
 
     def test_windows_fallback_uses_localappdata(self, tmp_path, monkeypatch):
-        """When HERMES_HOME is unset on Windows, use %LOCALAPPDATA%\\hermes."""
+        """When home env vars are unset on Windows, use %LOCALAPPDATA%\\marvi."""
         local_appdata = tmp_path / "LocalAppData"
+        monkeypatch.delenv("MARVI_HOME", raising=False)
         monkeypatch.delenv("HERMES_HOME", raising=False)
         monkeypatch.setenv("LOCALAPPDATA", str(local_appdata))
         monkeypatch.setattr(Path, "home", lambda: tmp_path / "Home")
         monkeypatch.setattr(hermes_constants.sys, "platform", "win32")
         monkeypatch.setattr(hermes_constants, "_profile_fallback_warned", False)
 
-        assert get_hermes_home() == local_appdata / "hermes"
+        assert get_hermes_home() == local_appdata / "marvi"
 
 
 class TestIsContainer:
@@ -279,6 +311,8 @@ class TestSecureParentDir:
 
     def test_symlink_resolved(self, tmp_path, monkeypatch):
         """Symlinks should be resolved before checking depth."""
+        if os.name == "nt":
+            pytest.skip("Creating symlinks requires elevated privileges on this Windows host")
         real_dir = tmp_path / "a" / "b"
         real_dir.mkdir(parents=True)
         target = real_dir / "file.json"

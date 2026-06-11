@@ -12,14 +12,19 @@
 # what s6-supervised services use too (see main-hermes/run).
 #
 # Routing:
-#   no args                       → exec `hermes` (the default)
+#   no args                       → exec `marvi` (fallback: `hermes`)
 #   first arg is an executable    → exec it directly (sleep, bash, sh, …)
-#   first arg is anything else    → exec `hermes <args>` (subcommand passthrough)
+#   first arg is anything else    → exec `marvi <args>` (subcommand passthrough)
 #
 # Drop to hermes via s6-setuidgid, but skip it when already non-root.
 set -e
 
 drop() { [ "$(id -u)" = 0 ] && set -- s6-setuidgid hermes "$@"; exec "$@"; }
+
+default_command=marvi
+if ! command -v marvi >/dev/null 2>&1; then
+    default_command=hermes
+fi
 
 # --- Reject the unsupported `docker run --user <uid>:<gid>` start ---
 # Mirror the guard in stage2-hook.sh (cont-init). This is the surface the
@@ -70,7 +75,7 @@ cd /opt/data
 cd "$_hermes_orig_cwd"
 
 if [ $# -eq 0 ]; then
-    drop hermes
+    drop "$default_command"
 fi
 
 if command -v "$1" >/dev/null 2>&1; then
@@ -78,5 +83,5 @@ if command -v "$1" >/dev/null 2>&1; then
     drop "$@"
 fi
 
-# Hermes subcommand pass-through.
-drop hermes "$@"
+# Marvi/Hermes subcommand pass-through.
+drop "$default_command" "$@"

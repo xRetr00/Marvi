@@ -40,8 +40,8 @@ const DEFAULT_LAYOUT: ThemeLayout = {
 
 export const defaultTheme: DashboardTheme = {
   name: "default",
-  label: "Hermes Teal",
-  description: "Classic dark teal — the canonical Hermes look",
+  label: "Marvi Teal",
+  description: "Classic dark teal — the canonical Marvi look",
   palette: {
     background: { hex: "#041c1c", alpha: 1 },
     midground: { hex: "#ffe6cb", alpha: 1 },
@@ -185,7 +185,7 @@ export const roseTheme: DashboardTheme = {
 };
 
 /**
- * Nous Blue — the inverted "light mode" Hermes look, ported from the
+ * Nous Blue — the inverted "light mode" Marvi look, ported from the
  * LENS_5I overlay preset in `@nous-research/ui`.
  *
  * Unlike the other built-ins (which paint dark color directly on the
@@ -285,8 +285,8 @@ export const nousBlueTheme: DashboardTheme = {
  */
 export const defaultLargeTheme: DashboardTheme = {
   name: "default-large",
-  label: "Hermes Teal (Large)",
-  description: "Hermes Teal with bigger fonts and roomier spacing",
+  label: "Marvi Teal (Large)",
+  description: "Marvi Teal with bigger fonts and roomier spacing",
   palette: defaultTheme.palette,
   typography: {
     ...DEFAULT_TYPOGRAPHY,

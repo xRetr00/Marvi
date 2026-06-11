@@ -1,9 +1,9 @@
 {
   "name": "hermes",
-  "productName": "Hermes",
+  "productName": "Marvi",
   "private": true,
   "version": "0.15.1",
-  "description": "Native desktop shell for Hermes Agent.",
+  "description": "Native desktop shell for Marvi Agent.",
   "author": "Nous Research",
   "type": "module",
   "main": "electron/main.cjs",
@@ -130,9 +130,9 @@
   "build": {
     "electronVersion": "40.9.3",
     "appId": "com.nousresearch.hermes",
-    "productName": "Hermes",
-    "executableName": "Hermes",
-    "artifactName": "Hermes-${version}-${os}-${arch}.${ext}",
+    "productName": "Marvi",
+    "executableName": "Marvi",
+    "artifactName": "Marvi-${version}-${os}-${arch}.${ext}",
     "icon": "assets/icon",
     "directories": {
       "output": "release"
@@ -173,11 +173,11 @@
       "entitlements": "electron/entitlements.mac.plist",
       "entitlementsInherit": "electron/entitlements.mac.inherit.plist",
       "extendInfo": {
-        "CFBundleDisplayName": "Hermes",
-        "CFBundleExecutable": "Hermes",
-        "CFBundleName": "Hermes",
-        "NSAudioCaptureUsageDescription": "Hermes uses audio capture for voice conversations.",
-        "NSMicrophoneUsageDescription": "Hermes uses the microphone for voice input and voice conversations."
+        "CFBundleDisplayName": "Marvi",
+        "CFBundleExecutable": "Marvi",
+        "CFBundleName": "Marvi",
+        "NSAudioCaptureUsageDescription": "Marvi uses audio capture for voice conversations.",
+        "NSMicrophoneUsageDescription": "Marvi uses the microphone for voice input and voice conversations."
       },
       "gatekeeperAssess": false,
       "hardenedRuntime": true,
@@ -187,7 +187,7 @@
       ]
     },
     "dmg": {
-      "title": "Install Hermes",
+      "title": "Install Marvi",
       "backgroundColor": "#f5f5f7",
       "iconSize": 96,
       "window": {
@@ -209,7 +209,7 @@
       ]
     },
     "win": {
-      "legalTrademarks": "Hermes",
+      "legalTrademarks": "Marvi",
       "target": [
         "nsis",
         "msi"
@@ -219,7 +219,7 @@
     "linux": {
       "category": "Development",
       "maintainer": "Nous Research <support@nousresearch.com>",
-      "synopsis": "Native desktop shell for Hermes Agent.",
+      "synopsis": "Native desktop shell for Marvi Agent.",
       "target": [
         "AppImage",
         "deb",
@@ -230,8 +230,8 @@
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
       "perMachine": false,
-      "shortcutName": "Hermes",
-      "uninstallDisplayName": "Hermes",
+      "shortcutName": "Marvi",
+      "uninstallDisplayName": "Marvi",
       "warningsAsErrors": false
     }
   }

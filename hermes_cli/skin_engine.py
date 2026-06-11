@@ -1,7 +1,7 @@
-"""Hermes CLI skin/theme engine.
+"""Marvi CLI skin/theme engine.
 
 A data-driven skin system that lets users customize the CLI's visual appearance.
-Skins are defined as YAML files in ~/.hermes/skins/ or as built-in presets.
+Skins are defined as YAML files in the Marvi home directory or as built-in presets.
 No code changes are needed to add a new skin.
 
 SKIN YAML SCHEMA
@@ -65,10 +65,10 @@ All fields are optional. Missing values inherit from the ``default`` skin.
 
     # Branding: text strings used throughout the CLI
     branding:
-      agent_name: "Hermes Agent"          # Banner title, status display
+      agent_name: "Marvi Agent"           # Banner title, status display
       welcome: "Welcome message"          # Shown at CLI startup
       goodbye: "Goodbye! ⚕"              # Shown on exit
-      response_label: " ⚕ Hermes "       # Response box header label
+      response_label: " ⚕ Marvi "        # Response box header label
       prompt_symbol: "❯"                 # Input prompt symbol (bare token; renderers add trailing space)
       help_header: "(^_^)? Commands"      # /help header text
 
@@ -90,7 +90,7 @@ USAGE
 
     skin = get_active_skin()
     print(skin.colors["banner_title"])    # "#FFD700"
-    print(skin.get_branding("agent_name"))  # "Hermes Agent"
+    print(skin.get_branding("agent_name"))  # "Marvi Agent"
 
     set_active_skin("ares")               # Switch to built-in ares skin
     set_active_skin("mytheme")            # Switch to user skin from ~/.hermes/skins/
@@ -98,7 +98,7 @@ USAGE
 BUILT-IN SKINS
 ==============
 
-- ``default`` — Classic Hermes gold/kawaii (the current look)
+- ``default`` — Classic Marvi gold/kawaii (the current look)
 - ``ares``    — Crimson/bronze war-god theme with custom spinner wings
 - ``mono``    — Clean grayscale monochrome
 - ``slate``   — Cool blue developer-focused theme
@@ -108,7 +108,7 @@ BUILT-IN SKINS
 USER SKINS
 ==========
 
-Drop a YAML file in ``~/.hermes/skins/<name>.yaml`` following the schema above.
+Drop a YAML file in ``<MARVI_HOME>/skins/<name>.yaml`` following the schema above.
 Activate with ``/skin <name>`` in the CLI or ``display.skin: <name>`` in config.yaml.
 """
 
@@ -117,7 +117,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-from hermes_constants import get_hermes_home
+from hermes_constants import PRODUCT_NAME, PRODUCT_SHORT_NAME, get_hermes_home
 
 logger = logging.getLogger(__name__)
 
@@ -164,7 +164,7 @@ class SkinConfig:
 _BUILTIN_SKINS: Dict[str, Dict[str, Any]] = {
     "default": {
         "name": "default",
-        "description": "Classic Hermes — gold and kawaii",
+        "description": "Classic Marvi — gold and kawaii",
         "colors": {
             "banner_border": "#CD7F32",
             "banner_title": "#FFD700",
@@ -187,10 +187,10 @@ _BUILTIN_SKINS: Dict[str, Dict[str, Any]] = {
             # Empty = use hardcoded defaults in display.py
         },
         "branding": {
-            "agent_name": "Hermes Agent",
-            "welcome": "Welcome to Hermes Agent! Type your message or /help for commands.",
+            "agent_name": PRODUCT_NAME,
+            "welcome": f"Welcome to {PRODUCT_NAME}! Type your message or /help for commands.",
             "goodbye": "Goodbye! ⚕",
-            "response_label": " ⚕ Hermes ",
+            "response_label": f" ⚕ {PRODUCT_SHORT_NAME} ",
             "prompt_symbol": "❯",
             "help_header": "(^_^)? Available Commands",
         },
@@ -298,10 +298,10 @@ _BUILTIN_SKINS: Dict[str, Dict[str, Any]] = {
         },
         "spinner": {},
         "branding": {
-            "agent_name": "Hermes Agent",
-            "welcome": "Welcome to Hermes Agent! Type your message or /help for commands.",
+            "agent_name": PRODUCT_NAME,
+            "welcome": f"Welcome to {PRODUCT_NAME}! Type your message or /help for commands.",
             "goodbye": "Goodbye! ⚕",
-            "response_label": " ⚕ Hermes ",
+            "response_label": f" ⚕ {PRODUCT_SHORT_NAME} ",
             "prompt_symbol": "❯",
             "help_header": "[?] Available Commands",
         },
@@ -337,10 +337,10 @@ _BUILTIN_SKINS: Dict[str, Dict[str, Any]] = {
         },
         "spinner": {},
         "branding": {
-            "agent_name": "Hermes Agent",
-            "welcome": "Welcome to Hermes Agent! Type your message or /help for commands.",
+            "agent_name": PRODUCT_NAME,
+            "welcome": f"Welcome to {PRODUCT_NAME}! Type your message or /help for commands.",
             "goodbye": "Goodbye! ⚕",
-            "response_label": " ⚕ Hermes ",
+            "response_label": f" ⚕ {PRODUCT_SHORT_NAME} ",
             "prompt_symbol": "❯",
             "help_header": "(^_^)? Available Commands",
         },
@@ -374,10 +374,10 @@ _BUILTIN_SKINS: Dict[str, Dict[str, Any]] = {
         },
         "spinner": {},
         "branding": {
-            "agent_name": "Hermes Agent",
-            "welcome": "Welcome to Hermes Agent! Type your message or /help for commands.",
+            "agent_name": PRODUCT_NAME,
+            "welcome": f"Welcome to {PRODUCT_NAME}! Type your message or /help for commands.",
             "goodbye": "Goodbye! ⚕",
-            "response_label": " ⚕ Hermes ",
+            "response_label": f" ⚕ {PRODUCT_SHORT_NAME} ",
             "prompt_symbol": "❯",
             "help_header": "[?] Available Commands",
         },
@@ -411,10 +411,10 @@ _BUILTIN_SKINS: Dict[str, Dict[str, Any]] = {
         },
         "spinner": {},
         "branding": {
-            "agent_name": "Hermes Agent",
-            "welcome": "Welcome to Hermes Agent! Type your message or /help for commands.",
+            "agent_name": PRODUCT_NAME,
+            "welcome": f"Welcome to {PRODUCT_NAME}! Type your message or /help for commands.",
             "goodbye": "Goodbye! \u2695",
-            "response_label": " \u2695 Hermes ",
+            "response_label": f" \u2695 {PRODUCT_SHORT_NAME} ",
             "prompt_symbol": "\u276f",
             "help_header": "(^_^)? Available Commands",
         },

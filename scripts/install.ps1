@@ -1,5 +1,5 @@
 # ============================================================================
-# Hermes Agent Installer for Windows
+# Marvi Agent Installer for Windows
 # ============================================================================
 # Installation script for Windows (PowerShell).
 # Uses uv for fast Python provisioning and package management.
@@ -158,7 +158,7 @@ function Get-WindowsArch {
 function Write-Banner {
     Write-Host ""
     Write-Host "+---------------------------------------------------------+" -ForegroundColor Magenta
-    Write-Host "|             * Hermes Agent Installer                    |" -ForegroundColor Magenta
+    Write-Host "|             * Marvi Agent Installer                     |" -ForegroundColor Magenta
     Write-Host "+---------------------------------------------------------+" -ForegroundColor Magenta
     Write-Host "|  An open source AI agent by Nous Research.              |" -ForegroundColor Magenta
     Write-Host "+---------------------------------------------------------+" -ForegroundColor Magenta
@@ -1539,7 +1539,7 @@ try:
     specs = data['project']['optional-dependencies']['all']
     out = []
     for s in specs:
-        m = re.search(r'hermes-agent\[([\w-]+)\]', s)
+        m = re.search(r'(?:hermes|marvi)-agent\[([\w-]+)\]', s)
         if m: out.append(m.group(1))
     print(','.join(out))
 except Exception:
@@ -1577,7 +1577,7 @@ except Exception:
         }
     }
     if (-not $installed) {
-        throw "Failed to install hermes-agent package even with no extras. Inspect the uv pip install output above."
+        throw "Failed to install marvi-agent package even with no extras. Inspect the uv pip install output above."
     }
 
     # Baseline-import gate. Even if a tier reported success above, the
@@ -1652,7 +1652,7 @@ except Exception:
 }
 
 function Set-PathVariable {
-    Write-Info "Setting up hermes command..."
+    Write-Info "Setting up marvi/hermes commands..."
     
     if ($NoVenv) {
         $hermesBin = "$InstallDir"
@@ -1660,8 +1660,8 @@ function Set-PathVariable {
         $hermesBin = "$InstallDir\venv\Scripts"
     }
     
-    # Add the venv Scripts dir to user PATH so hermes is globally available
-    # On Windows, the hermes.exe in venv\Scripts\ has the venv Python baked in
+    # Add the venv Scripts dir to user PATH so marvi/hermes are globally available.
+    # On Windows, the marvi.exe/hermes.exe in venv\Scripts\ has the venv Python baked in.
     $currentPath = [Environment]::GetEnvironmentVariable("Path", "User")
     
     if ($currentPath -notlike "*$hermesBin*") {
@@ -1688,7 +1688,7 @@ function Set-PathVariable {
     # Update current session
     $env:Path = "$hermesBin;$env:Path"
     
-    Write-Success "hermes command ready"
+    Write-Success "marvi/hermes commands ready"
 }
 
 function Write-BootstrapMarker {
@@ -1822,7 +1822,7 @@ function Copy-ConfigTemplates {
     $soulPath = "$HermesHome\SOUL.md"
     if (-not (Test-Path $soulPath)) {
         $soulContent = @"
-# Hermes Agent Persona
+# Marvi Agent Persona
 
 <!--
 This file defines the agent's personality and tone.
@@ -1891,7 +1891,7 @@ function Install-NodeDeps {
     $npmCmd = Get-Command npm -ErrorAction SilentlyContinue
     if (-not $npmCmd) {
         Write-Warn "npm not found on PATH -- skipping Node.js dependencies."
-        Write-Info "Open a new PowerShell window and re-run 'hermes setup tools' later."
+        Write-Info "Open a new PowerShell window and re-run 'marvi setup tools' later."
         return
     }
     $npmExe = $npmCmd.Source
@@ -2413,7 +2413,7 @@ function New-DesktopShortcuts {
                 $sc.TargetPath = $TargetExe
                 $sc.WorkingDirectory = $workDir
                 $sc.IconLocation = $iconLocation
-                $sc.Description = 'Hermes Agent'
+                $sc.Description = 'Marvi Agent'
                 $sc.Save()
                 Write-Success "Shortcut created: $lnkPath"
             } catch {
@@ -2556,7 +2556,7 @@ function Invoke-SetupWizard {
         # The setup wizard prompts for API keys, model choice, persona, etc.
         # Non-interactive callers (GUI installer) own that UX themselves; let
         # them drive it after install.ps1 returns.
-        Write-Info "Skipping setup wizard (non-interactive). Configure via the GUI or 'hermes setup'."
+        Write-Info "Skipping setup wizard (non-interactive). Configure via the GUI or 'marvi setup'."
         return
     }
 
@@ -2566,7 +2566,7 @@ function Invoke-SetupWizard {
 
     Push-Location $InstallDir
 
-    # Run hermes setup using the venv Python directly (no activation needed)
+    # Run marvi setup using the venv Python directly (no activation needed)
     if (-not $NoVenv) {
         & ".\venv\Scripts\python.exe" -m hermes_cli.main setup
     } else {
@@ -2589,9 +2589,12 @@ function Start-GatewayIfConfigured {
 
     if (-not $hasMessaging) { return }
 
-    $hermesCmd = "$InstallDir\venv\Scripts\hermes.exe"
+    $hermesCmd = "$InstallDir\venv\Scripts\marvi.exe"
     if (-not (Test-Path $hermesCmd)) {
-        $hermesCmd = "hermes"
+        $hermesCmd = "$InstallDir\venv\Scripts\hermes.exe"
+    }
+    if (-not (Test-Path $hermesCmd)) {
+        $hermesCmd = "marvi"
     }
 
     # If WhatsApp is enabled but not yet paired, run foreground for QR scan
@@ -2600,7 +2603,7 @@ function Start-GatewayIfConfigured {
     if ($whatsappEnabled -and -not (Test-Path $whatsappSession)) {
         Write-Host ""
         Write-Info "WhatsApp is enabled but not yet paired."
-        Write-Info "Running 'hermes whatsapp' to pair via QR code..."
+        Write-Info "Running 'marvi whatsapp' to pair via QR code..."
         Write-Host ""
         # Non-interactive callers (GUI installer, CI) skip the QR-pair prompt;
         # WhatsApp pairing requires a human looking at a phone camera, so the
@@ -2621,7 +2624,7 @@ function Start-GatewayIfConfigured {
 
     Write-Host ""
     Write-Info "Messaging platform token detected!"
-    Write-Info "The gateway handles messaging platforms and cron job execution."
+        Write-Info "The gateway handles messaging platforms and cron job execution."
     Write-Host ""
 
     # In non-interactive mode the gateway lifecycle is the caller's problem
@@ -2629,7 +2632,7 @@ function Start-GatewayIfConfigured {
     # services on the build agent, etc.).  Treat it like the user declined.
     if ($NonInteractive) {
         Write-Info "Skipping gateway autostart prompt (non-interactive)."
-        Write-Info "Start the gateway later with: hermes gateway"
+        Write-Info "Start the gateway later with: marvi gateway"
         return
     }
 
@@ -2647,10 +2650,10 @@ function Start-GatewayIfConfigured {
             Write-Info "Logs: $logFile"
             Write-Info "To stop: close the gateway process from Task Manager"
         } catch {
-            Write-Warn "Failed to start gateway. Run manually: hermes gateway"
+            Write-Warn "Failed to start gateway. Run manually: marvi gateway"
         }
     } else {
-        Write-Info "Skipped. Start the gateway later with: hermes gateway"
+        Write-Info "Skipped. Start the gateway later with: marvi gateway"
     }
 }
 
@@ -2678,18 +2681,20 @@ function Write-Completion {
     Write-Host ""
     Write-Host "* Commands:" -ForegroundColor Cyan
     Write-Host ""
-    Write-Host "   hermes              " -NoNewline -ForegroundColor Green
+    Write-Host "   marvi               " -NoNewline -ForegroundColor Green
     Write-Host "Start chatting"
-    Write-Host "   hermes setup        " -NoNewline -ForegroundColor Green
+    Write-Host "   marvi setup         " -NoNewline -ForegroundColor Green
     Write-Host "Configure API keys & settings"
-    Write-Host "   hermes config       " -NoNewline -ForegroundColor Green
+    Write-Host "   marvi config        " -NoNewline -ForegroundColor Green
     Write-Host "View/edit configuration"
-    Write-Host "   hermes config edit  " -NoNewline -ForegroundColor Green
+    Write-Host "   marvi config edit   " -NoNewline -ForegroundColor Green
     Write-Host "Open config in editor"
-    Write-Host "   hermes gateway      " -NoNewline -ForegroundColor Green
+    Write-Host "   marvi gateway       " -NoNewline -ForegroundColor Green
     Write-Host "Start messaging gateway (Telegram, Discord, etc.)"
-    Write-Host "   hermes update       " -NoNewline -ForegroundColor Green
+    Write-Host "   marvi update        " -NoNewline -ForegroundColor Green
     Write-Host "Update to latest version"
+    Write-Host "   hermes              " -NoNewline -ForegroundColor Green
+    Write-Host "Legacy alias for marvi"
     Write-Host ""
     
     Write-Host "---------------------------------------------------------" -ForegroundColor Cyan

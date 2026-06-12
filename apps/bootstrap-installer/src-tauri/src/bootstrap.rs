@@ -256,7 +256,7 @@ pub(crate) fn resolve_hermes_desktop_app(install_root: &std::path::Path) -> Opti
 /// launchable desktop app exists on disk. Used by the installer's launcher fast
 /// path so a bare re-open just opens Marvi instead of re-running setup.
 pub(crate) fn hermes_is_installed(install_root: &std::path::Path) -> bool {
-    install_root.join(".marvi-bootstrap-complete").exists()
+    crate::paths::likely_bootstrap_marker(install_root).exists()
         && resolve_hermes_desktop_exe(install_root).is_some()
 }
 

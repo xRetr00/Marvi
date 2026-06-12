@@ -138,11 +138,11 @@ fn repair_macos_installer_helper(_path: &Path) {}
 
 /// Where install.ps1 writes the bootstrap-complete marker (existence-only file
 /// the Electron app also checks). Per main.cjs:
-///   const BOOTSTRAP_COMPLETE_MARKER = path.join(ACTIVE_HERMES_ROOT, '.marvi-bootstrap-complete')
+///   const BOOTSTRAP_COMPLETE_MARKER = path.join(ACTIVE_HERMES_ROOT, '.hermes-bootstrap-complete')
 /// We don't always know ACTIVE_HERMES_ROOT until install.ps1 reports it, so
 /// this is a probe helper, not a definitive path.
 pub fn likely_bootstrap_marker(install_root: &Path) -> PathBuf {
-    install_root.join(".marvi-bootstrap-complete")
+    install_root.join(".hermes-bootstrap-complete")
 }
 
 /// Initializes tracing to bootstrap-installer.log under HERMES_HOME/logs/.

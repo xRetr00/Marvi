@@ -58,8 +58,8 @@ function modeRemovesUserData(mode) {
  * Resolve the on-disk app bundle/dir to remove for the running desktop app,
  * given the path to the running executable (`process.execPath`) and platform.
  *
- *   macOS:   …/Hermes.app/Contents/MacOS/Hermes  → …/Hermes.app
- *   Windows: …\Hermes\Hermes.exe                 → …\Hermes  (install dir)
+ *   macOS:   …/Marvi.app/Contents/MacOS/Marvi  → …/Marvi.app
+ *   Windows: …\Marvi\Marvi.exe                  → …\Marvi  (install dir)
  *   Linux:   AppImage → the APPIMAGE env path; unpacked → the *-unpacked dir
  *
  * Returns null when we can't confidently identify a removable bundle (e.g.
@@ -75,18 +75,18 @@ function resolveRemovableAppPath(execPath, platform, env = {}) {
   const p = platform === 'win32' ? path.win32 : path.posix
 
   if (platform === 'darwin') {
-    // …/Hermes.app/Contents/MacOS/Hermes → strip 3 segments to the .app
+    // …/Marvi.app/Contents/MacOS/Marvi → strip 3 segments to the .app
     const macOsDir = p.dirname(exe) // …/Contents/MacOS
     const contents = p.dirname(macOsDir) // …/Contents
-    const appBundle = p.dirname(contents) // …/Hermes.app
+    const appBundle = p.dirname(contents) // …/Marvi.app
     if (appBundle.endsWith('.app')) return appBundle
     return null
   }
 
   if (platform === 'win32') {
-    // NSIS per-user installs Hermes.exe directly in the install dir.
+    // NSIS per-user installs Marvi.exe directly in the install dir.
     const dir = p.dirname(exe)
-    if (/[\\/]Hermes$/i.test(dir) || /[\\/]hermes-desktop$/i.test(dir)) return dir
+    if (/[\\/](Hermes|Marvi)$/i.test(dir) || /[\\/]hermes-desktop$/i.test(dir)) return dir
     return null
   }
 

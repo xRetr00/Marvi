@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { type CSSProperties } from 'react'
 import { Button } from '../components/button'
-import { launchHermesDesktop } from '../store'
+import { launchMarviDesktop } from '../store'
 import { Rocket, AlertCircle } from 'lucide-react'
 
 /*
@@ -10,9 +10,9 @@ import { Rocket, AlertCircle } from 'lucide-react'
  * with a status line below.
  *
  * Launching the desktop can fail (e.g. Stage-Desktop was skipped and
- * Hermes.exe doesn't exist). We catch the Tauri error and surface it
+ * Marvi.exe doesn't exist). We catch the Tauri error and surface it
  * inline rather than silently doing nothing — the previous version
- * had `onClick={() => void launchHermesDesktop()}` which swallowed
+ * had `onClick={() => void launchMarviDesktop()}` which swallowed
  * the rejection and left the user staring at an unresponsive button.
  */
 export default function Success() {
@@ -23,7 +23,7 @@ export default function Success() {
     setError(null)
     setLaunching(true)
     try {
-      await launchHermesDesktop()
+      await launchMarviDesktop()
       // On success the installer exits — control never returns here.
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
@@ -46,9 +46,9 @@ export default function Success() {
           }
         >
           <span>
-            <span>Hermes is ready</span>
+            <span>Marvi is ready</span>
           </span>
-          <span aria-hidden="true">Hermes is ready</span>
+          <span aria-hidden="true">Marvi is ready</span>
         </p>
 
         <p className="m-0 text-center text-base leading-normal tracking-tight text-muted-foreground">
@@ -67,7 +67,7 @@ export default function Success() {
         className="inline-flex items-center gap-2 px-6"
       >
         <Rocket size={18} />
-        {launching ? 'Launching…' : 'Launch Hermes'}
+        {launching ? 'Launching…' : 'Launch Marvi'}
       </Button>
 
       {error && (

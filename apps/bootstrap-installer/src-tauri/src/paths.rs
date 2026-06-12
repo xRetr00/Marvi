@@ -6,7 +6,7 @@
 //!   Linux:   ~/.hermes  (override via $HERMES_HOME)
 //!
 //! NOTE (macOS): Python's get_hermes_home(), scripts/install.sh, and the
-//! Electron desktop's resolveHermesHome() ALL use ~/.hermes on macOS — there
+//! Electron desktop's resolveMarviHome() ALL use ~/.hermes on macOS — there
 //! is no ~/Library/Application Support branch anywhere else. An earlier
 //! version of this file used Application Support, which drifted from every
 //! other component: the installer wrote the install to one dir and the
@@ -21,7 +21,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use tracing_appender::non_blocking::WorkerGuard;
 
-/// Returns the canonical Hermes home directory, respecting $HERMES_HOME if set.
+/// Returns the canonical Marvi home directory, respecting $HERMES_HOME if set.
 pub fn hermes_home() -> PathBuf {
     if let Ok(override_path) = std::env::var("HERMES_HOME") {
         if !override_path.trim().is_empty() {
@@ -38,7 +38,7 @@ pub fn hermes_home() -> PathBuf {
     }
 
     // macOS + Linux + fallback: ~/.hermes (matches Python get_hermes_home(),
-    // install.sh, and the Electron desktop's resolveHermesHome()).
+    // install.sh, and the Electron desktop's resolveMarviHome()).
     if let Some(home) = dirs::home_dir() {
         return home.join(".hermes");
     }
@@ -66,13 +66,13 @@ pub fn bootstrap_cache_dir() -> PathBuf {
 /// HERMES_HOME so it survives repo checkout deletion (unlike anything under
 /// hermes-agent/).
 ///
-/// On Windows this is `%LOCALAPPDATA%\hermes\hermes-setup.exe`; on other
+/// On Windows this is `%LOCALAPPDATA%\hermes\marvi-setup.exe`; on other
 /// platforms the extension differs but the directory is the same.
 pub fn installer_dest() -> PathBuf {
     let name = if cfg!(target_os = "windows") {
-        "hermes-setup.exe"
+        "marvi-setup.exe"
     } else {
-        "hermes-setup"
+        "marvi-setup"
     };
     hermes_home().join(name)
 }
@@ -138,11 +138,11 @@ fn repair_macos_installer_helper(_path: &Path) {}
 
 /// Where install.ps1 writes the bootstrap-complete marker (existence-only file
 /// the Electron app also checks). Per main.cjs:
-///   const BOOTSTRAP_COMPLETE_MARKER = path.join(ACTIVE_HERMES_ROOT, '.hermes-bootstrap-complete')
+///   const BOOTSTRAP_COMPLETE_MARKER = path.join(ACTIVE_HERMES_ROOT, '.marvi-bootstrap-complete')
 /// We don't always know ACTIVE_HERMES_ROOT until install.ps1 reports it, so
 /// this is a probe helper, not a definitive path.
 pub fn likely_bootstrap_marker(install_root: &Path) -> PathBuf {
-    install_root.join(".hermes-bootstrap-complete")
+    install_root.join(".marvi-bootstrap-complete")
 }
 
 /// Initializes tracing to bootstrap-installer.log under HERMES_HOME/logs/.
@@ -153,7 +153,7 @@ pub fn init_logging() -> Option<WorkerGuard> {
     if let Err(err) = std::fs::create_dir_all(&dir) {
         // No log dir → log to stderr only. Don't panic; the installer
         // should still be usable on an exotic filesystem.
-        eprintln!("[hermes-setup] could not create log dir {dir:?}: {err}");
+        eprintln!("[marvi-setup] could not create log dir {dir:?}: {err}");
         return None;
     }
 

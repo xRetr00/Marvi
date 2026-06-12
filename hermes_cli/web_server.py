@@ -1353,7 +1353,7 @@ async def get_status():
 
     # Dashboard auth gate (Phase 7): surface whether the gate is engaged
     # and which providers are registered so ``hermes status`` and the
-    # SPA's StatusPage can show "OAuth gate ON via Nous Research" or
+    # SPA's StatusPage can show "OAuth gate ON via xRetro Labs Research" or
     # "loopback only — no auth gate" with no extra round trips.
     auth_required = bool(getattr(app.state, "auth_required", False))
     auth_providers: list[str] = []
@@ -3409,7 +3409,7 @@ _PLATFORM_OVERRIDES: dict[str, dict[str, Any]] = {
     "email": {
         "name": "Email",
         "description": "Talk to Hermes through an IMAP/SMTP mailbox.",
-        "docs_url": "https://hermes-agent.nousresearch.com/docs/user-guide/messaging/",
+        "docs_url": "https://github.com/xRetr00/Marvi",
         "env_vars": (
             "EMAIL_ADDRESS",
             "EMAIL_PASSWORD",
@@ -3507,7 +3507,7 @@ _PLATFORM_OVERRIDES: dict[str, dict[str, Any]] = {
     "api_server": {
         "name": "API server",
         "description": "Expose Hermes as an OpenAI-compatible HTTP API for tools like Open WebUI.",
-        "docs_url": "https://hermes-agent.nousresearch.com/docs/user-guide/messaging/",
+        "docs_url": "https://github.com/xRetr00/Marvi",
         "env_vars": (
             "API_SERVER_ENABLED",
             "API_SERVER_KEY",
@@ -3520,7 +3520,7 @@ _PLATFORM_OVERRIDES: dict[str, dict[str, Any]] = {
     "webhook": {
         "name": "Webhooks",
         "description": "Receive events from GitHub, GitLab, and other webhook sources.",
-        "docs_url": "https://hermes-agent.nousresearch.com/docs/user-guide/messaging/webhooks/",
+        "docs_url": "https://github.com/xRetr00/Marvi",
         "env_vars": ("WEBHOOK_ENABLED", "WEBHOOK_PORT", "WEBHOOK_SECRET"),
         "required_env": (),
     },
@@ -3964,7 +3964,7 @@ def _write_platform_enabled(platform_id: str, enabled: bool) -> None:
     save_config(config)
 
 
-_TELEGRAM_ONBOARDING_DEFAULT_URL = "https://setup.hermes-agent.nousresearch.com"
+_TELEGRAM_ONBOARDING_DEFAULT_URL = "https://github.com/xRetr00/Marvi"
 _TELEGRAM_ONBOARDING_USER_AGENT = f"HermesDashboard/{__version__}"
 _TELEGRAM_USER_ID_RE = re.compile(r"^\d+$")
 
@@ -4609,7 +4609,7 @@ _OAUTH_PROVIDER_CATALOG: tuple[Dict[str, Any], ...] = (
         # lands back on the loopback listener — no code to copy/paste.
         "flow": "loopback",
         "cli_command": "hermes auth add xai-oauth",
-        "docs_url": "https://hermes-agent.nousresearch.com/docs/guides/xai-grok-oauth",
+        "docs_url": "https://github.com/xRetr00/Marvi",
         "status_fn": None,  # dispatched via auth.get_xai_oauth_auth_status
     },
     # ── Anthropic / Claude entries sit at the bottom: the API-key path

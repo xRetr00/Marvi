@@ -3,15 +3,15 @@ import type {Config} from '@docusaurus/types';
 import type * as Preset from '@docusaurus/preset-classic';
 
 const config: Config = {
-  title: 'Hermes Agent',
-  tagline: 'The self-improving AI agent',
+  title: 'Marvi Agent',
+  tagline: 'Assistant OS infrastructure',
   favicon: 'img/favicon.ico',
 
-  url: 'https://hermes-agent.nousresearch.com',
+  url: 'https://github.com/xRetr00/Marvi',
   baseUrl: '/docs/',
 
-  organizationName: 'NousResearch',
-  projectName: 'hermes-agent',
+  organizationName: 'xRetr00',
+  projectName: 'Marvi',
 
   onBrokenLinks: 'warn',
 
@@ -73,7 +73,7 @@ const config: Config = {
         docs: {
           routeBasePath: '/',  // Docs at the root of /docs/
           sidebarPath: './sidebars.ts',
-          editUrl: 'https://github.com/NousResearch/hermes-agent/edit/main/website/',
+          editUrl: 'https://github.com/xRetr00/Marvi/edit/main/website/',
         },
         blog: false,
         theme: {
@@ -96,9 +96,9 @@ const config: Config = {
       },
     },
     navbar: {
-      title: 'Hermes Agent',
+      title: 'Marvi Agent',
       logo: {
-        alt: 'Hermes Agent',
+        alt: 'Marvi Agent',
         src: 'img/logo.png',
       },
       items: [
@@ -114,7 +114,7 @@ const config: Config = {
           position: 'left',
         },
         {
-          href: 'https://hermes-agent.nousresearch.com/desktop',
+          href: 'https://github.com/xRetr00/Marvi',
           label: 'Download',
           position: 'left',
         },
@@ -123,17 +123,17 @@ const config: Config = {
           position: 'right',
         },
         {
-          href: 'https://hermes-agent.nousresearch.com',
+          href: 'https://github.com/xRetr00/Marvi',
           label: 'Home',
           position: 'right',
         },
         {
-          href: 'https://github.com/NousResearch/hermes-agent',
+          href: 'https://github.com/xRetr00/Marvi',
           label: 'GitHub',
           position: 'right',
         },
         {
-          href: 'https://discord.gg/NousResearch',
+          href: 'https://github.com/xRetr00/Marvi',
           label: 'Discord',
           position: 'right',
         },
@@ -154,21 +154,21 @@ const config: Config = {
         {
           title: 'Community',
           items: [
-            { label: 'Discord', href: 'https://discord.gg/NousResearch' },
-            { label: 'GitHub Issues', href: 'https://github.com/NousResearch/hermes-agent/issues' },
+            { label: 'Discord', href: 'https://github.com/xRetr00/Marvi' },
+            { label: 'GitHub Issues', href: 'https://github.com/xRetr00/Marvi/issues' },
             { label: 'Skills Hub', href: 'https://agentskills.io' },
           ],
         },
         {
           title: 'More',
           items: [
-            { label: 'Desktop Download', href: 'https://hermes-agent.nousresearch.com/desktop' },
-            { label: 'GitHub', href: 'https://github.com/NousResearch/hermes-agent' },
-            { label: 'Nous Research', href: 'https://nousresearch.com' },
+            { label: 'Desktop Download', href: 'https://github.com/xRetr00/Marvi' },
+            { label: 'GitHub', href: 'https://github.com/xRetr00/Marvi' },
+            { label: 'xRetro Labs Research', href: 'https://github.com/xRetr00/Marvi' },
           ],
         },
       ],
-      copyright: `Built by <a href="https://nousresearch.com">Nous Research</a> · MIT License · ${new Date().getFullYear()}`,
+      copyright: `Built by <a href="https://github.com/xRetr00/Marvi">xRetro Labs Research</a> · MIT License · ${new Date().getFullYear()}`,
     },
     prism: {
       theme: prismThemes.github,

@@ -103,7 +103,7 @@ export const zh: Translations = {
     errors: {
       elevenLabsNeedsKey: 'ElevenLabs STT 需要 ELEVENLABS_API_KEY。',
       elevenLabsRejectedKey: 'ElevenLabs 拒绝了该 API key (401)。',
-      methodNotAllowed: '桌面后端拒绝了该请求 (405 Method Not Allowed)。请尝试重启 Hermes Desktop。',
+      methodNotAllowed: '桌面后端拒绝了该请求 (405 Method Not Allowed)。请尝试重启 Marvi Desktop。',
       microphonePermission: '麦克风权限已被拒绝。',
       openaiRejectedApiKey: 'OpenAI 拒绝了该 API key。',
       openaiRejectedApiKeyWithStatus: status => `OpenAI 拒绝了该 API key (${status} invalid_api_key)。`,
@@ -272,7 +272,7 @@ export const zh: Translations = {
       advanced: '高级'
     },
     searchPlaceholder: {
-      about: '关于 Hermes Desktop',
+      about: '关于 Marvi Desktop',
       config: '搜索设置…',
       gateway: '网关连接…',
       keys: '搜索 API 密钥…',
@@ -517,7 +517,7 @@ export const zh: Translations = {
       }
     }),
     about: {
-      heading: 'Hermes Desktop',
+      heading: 'Marvi Desktop',
       version: value => `版本 ${value}`,
       versionUnavailable: '版本不可用',
       updates: '更新',
@@ -584,7 +584,7 @@ export const zh: Translations = {
       title: '网关连接',
       envOverride: '环境变量覆盖',
       intro:
-        'Hermes Desktop 默认会启动自己的本地网关。当你希望此应用控制另一台机器上或可信代理后的现有 Hermes 后端时，可以使用远程网关。下面可按 profile 指定各自的远程主机。',
+        'Marvi Desktop 默认会启动自己的本地网关。当你希望此应用控制另一台机器上或可信代理后的现有 Hermes 后端时，可以使用远程网关。下面可按 profile 指定各自的远程主机。',
       appliesTo: '应用于',
       allProfiles: '所有 profile',
       defaultConnection: '默认连接会用于所有没有自定义覆盖的 profile。',
@@ -628,7 +628,7 @@ export const zh: Translations = {
       enterUrlFirst: '请先输入远程 URL。',
       restartingTitle: '网关连接正在重启',
       savedTitle: '网关设置已保存',
-      restartingMessage: 'Hermes Desktop 将使用已保存设置重新连接。',
+      restartingMessage: 'Marvi Desktop 将使用已保存设置重新连接。',
       savedMessage: '已保存，下一次重启生效。',
       connectedTo: (baseUrl, version) => `已连接到 ${baseUrl}${version ? ` · Hermes ${version}` : ''}`,
       reachableTitle: '远程网关可访问',
@@ -1505,7 +1505,7 @@ export const zh: Translations = {
     installTo: '将安装到',
     retryAfterRun: '我已运行 -- 重试',
     failedTitle: '安装失败',
-    settingUpTitle: '正在设置 Hermes Agent',
+    settingUpTitle: '正在设置 Marvi Agent',
     finishingTitle: '正在收尾',
     failedDesc:
       '某个安装步骤失败。在 Windows 上，如果另一个 Hermes CLI 或桌面实例正在运行，可能会出现这种情况。请停止正在运行的 Hermes 实例后重试。可查看下面的详情或 desktop 日志中的完整记录。',
@@ -1527,7 +1527,7 @@ export const zh: Translations = {
   },
 
   onboarding: {
-    headerTitle: '开始设置 Hermes Agent',
+    headerTitle: '开始设置 Marvi Agent',
     headerDesc: '连接模型提供方即可开始对话。大多数选项只需一次点击。',
     preparingInstall: 'Hermes 正在完成安装。首次运行通常不到一分钟。',
     starting: '正在启动 Hermes…',
@@ -1664,7 +1664,7 @@ export const zh: Translations = {
       update: '更新',
       updateInProgress: '正在更新',
       commitsBehind: (count, branch) => `落后 ${branch} ${count} 个提交`,
-      desktopVersion: version => `Hermes Desktop v${version}`,
+      desktopVersion: version => `Marvi Desktop v${version}`,
       backendVersion: version => `后端 v${version}`,
       clientLabel: version => `客户端 v${version}`,
       backendLabel: version => `后端 v${version}`,

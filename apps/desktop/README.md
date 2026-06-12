@@ -1,13 +1,13 @@
 # Marvi Desktop ☤
 
 <p align="center">
-  <a href="https://github.com/NousResearch/hermes-agent/releases"><img src="https://img.shields.io/badge/Download-macOS%20%C2%B7%20Windows%20%C2%B7%20Linux-FFD700?style=for-the-badge" alt="Download"></a>
-  <a href="https://hermes-agent.nousresearch.com/docs/"><img src="https://img.shields.io/badge/Docs-hermes--agent.nousresearch.com-FFD700?style=for-the-badge" alt="Documentation"></a>
-  <a href="https://discord.gg/NousResearch"><img src="https://img.shields.io/badge/Discord-5865F2?style=for-the-badge&logo=discord&logoColor=white" alt="Discord"></a>
-  <a href="https://github.com/NousResearch/hermes-agent/blob/main/LICENSE"><img src="https://img.shields.io/badge/License-MIT-green?style=for-the-badge" alt="License: MIT"></a>
+  <a href="https://github.com/xRetr00/Marvi/releases"><img src="https://img.shields.io/badge/Download-macOS%20%C2%B7%20Windows%20%C2%B7%20Linux-FFD700?style=for-the-badge" alt="Download"></a>
+  <a href="https://github.com/xRetr00/Marvi"><img src="https://img.shields.io/badge/Docs-GitHub-FFD700?style=for-the-badge" alt="Documentation"></a>
+  <a href="https://github.com/xRetr00/Marvi"><img src="https://img.shields.io/badge/Discord-5865F2?style=for-the-badge&logo=discord&logoColor=white" alt="Discord"></a>
+  <a href="https://github.com/xRetr00/Marvi/blob/main/LICENSE"><img src="https://img.shields.io/badge/License-MIT-green?style=for-the-badge" alt="License: MIT"></a>
 </p>
 
-**The native desktop app for [Marvi Agent](../../README.md) — the self-improving AI agent from [Nous Research](https://nousresearch.com).** Same agent, same skills, same memory as the CLI and gateway, in a polished native window — chat with streaming tool output, side-by-side previews, a file browser, voice, and settings, no terminal required. Available for **macOS, Windows, and Linux**.
+**The native desktop app for [Marvi Agent](../../README.md) — the self-improving AI agent from [xRetro Labs Research](https://github.com/xRetr00/Marvi).** Same agent, same skills, same memory as the CLI and gateway, in a polished native window — chat with streaming tool output, side-by-side previews, a file browser, voice, and settings, no terminal required. Available for **macOS, Windows, and Linux**.
 
 <table>
 <tr><td><b>Chat with the full agent</b></td><td>Streaming responses, live tool activity, structured tool summaries, and the same conversation history as every other Marvi surface.</td></tr>
@@ -34,7 +34,7 @@ It builds and launches the GUI against your existing install — same config, ke
 
 ### Prebuilt installers
 
-Prebuilt installers are built and distributed via [the Marvi Desktop website.](https://hermes-agent.nousresearch.com/desktop).
+Prebuilt installers are built and distributed via [the Marvi Desktop website.](https://github.com/xRetr00/Marvi/releases).
 
 ---
 
@@ -110,7 +110,7 @@ rm "$HOME/.hermes/hermes-agent/.hermes-bootstrap-complete"
 # Rebuild a broken Python venv
 rm -rf "$HOME/.hermes/hermes-agent/venv"
 # Reset a stuck macOS microphone prompt (macOS only)
-tccutil reset Microphone com.nousresearch.hermes
+tccutil reset Microphone com.xretro.marvi
 ```
 
 **Windows (PowerShell):**
@@ -128,9 +128,9 @@ Remove-Item -Recurse -Force "$env:LOCALAPPDATA\hermes\hermes-agent\venv"
 
 ## Community
 
-- 💬 [Discord](https://discord.gg/NousResearch)
-- 📖 [Documentation](https://hermes-agent.nousresearch.com/docs/)
-- 🐛 [Issues](https://github.com/NousResearch/hermes-agent/issues)
+- 💬 [Discord](https://github.com/xRetr00/Marvi)
+- 📖 [Documentation](https://github.com/xRetr00/Marvi)
+- 🐛 [Issues](https://github.com/xRetr00/Marvi/issues)
 
 ---
 
@@ -138,4 +138,4 @@ Remove-Item -Recurse -Force "$env:LOCALAPPDATA\hermes\hermes-agent\venv"
 
 MIT — see [LICENSE](../../LICENSE).
 
-Built by [Nous Research](https://nousresearch.com).
+Built by [xRetro Labs Research](https://github.com/xRetr00/Marvi).

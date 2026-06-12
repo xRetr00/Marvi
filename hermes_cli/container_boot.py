@@ -9,7 +9,7 @@ persistent profiles, recreate the s6 service slots, and auto-start
 only those whose last recorded state was ``running``.
 
 Wired into the image as /etc/cont-init.d/02-reconcile-profiles by the
-Dockerfile (Phase 4 Task 4.0). Runs as root after 01-hermes-setup
+Dockerfile (Phase 4 Task 4.0). Runs as root after 01-marvi-setup
 (the stage2 hook) has chowned the volume and seeded $HERMES_HOME, but
 before s6-rc starts user services.
 

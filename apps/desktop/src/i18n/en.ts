@@ -43,14 +43,14 @@ export const en: Translations = {
   },
 
   boot: {
-    ready: 'Hermes Desktop is ready',
+    ready: 'Marvi Desktop is ready',
     desktopBootFailedWithMessage: message => `Desktop boot failed: ${message}`,
     steps: {
       connectingGateway: 'Connecting live desktop gateway',
       loadingSettings: 'Loading Hermes settings',
       loadingSessions: 'Loading recent sessions',
       startingDesktopConnection: 'Starting desktop connection',
-      startingHermesDesktop: 'Starting Hermes Desktop…'
+      startingHermesDesktop: 'Starting Marvi Desktop…'
     },
     errors: {
       backgroundExited: 'Hermes background process exited.',
@@ -98,7 +98,7 @@ export const en: Translations = {
     copyDetailFailed: 'Could not copy notification detail',
     backendOutOfDateTitle: 'Backend out of date',
     backendOutOfDateMessage:
-      'Your Hermes backend is older than this desktop build and may not work correctly. Update to align them.',
+      'Your Marvi backend is older than this desktop build and may not work correctly. Update to align them.',
     updateHermes: 'Update Hermes',
     updateReadyTitle: 'Update ready',
     updateReadyMessage: count => `${count} new change${count === 1 ? '' : 's'} available.`,
@@ -107,7 +107,7 @@ export const en: Translations = {
       elevenLabsNeedsKey: 'ElevenLabs STT needs ELEVENLABS_API_KEY.',
       elevenLabsRejectedKey: 'ElevenLabs rejected the API key (401).',
       methodNotAllowed:
-        'The desktop backend rejected that request (405 Method Not Allowed). Try restarting Hermes Desktop.',
+        'The desktop backend rejected that request (405 Method Not Allowed). Try restarting Marvi Desktop.',
       microphonePermission: 'Microphone permission was denied.',
       openaiRejectedApiKey: 'OpenAI rejected the API key.',
       openaiRejectedApiKeyWithStatus: status => `OpenAI rejected the API key (${status} invalid_api_key).`,
@@ -276,7 +276,7 @@ export const en: Translations = {
       advanced: 'Advanced'
     },
     searchPlaceholder: {
-      about: 'About Hermes Desktop',
+      about: 'About Marvi Desktop',
       config: 'Search settings...',
       gateway: 'Gateway connection...',
       keys: 'Search API keys...',
@@ -317,7 +317,7 @@ export const en: Translations = {
     fieldLabels: FIELD_LABELS,
     fieldDescriptions: FIELD_DESCRIPTIONS,
     about: {
-      heading: 'Hermes Desktop',
+      heading: 'Marvi Desktop',
       version: value => `Version ${value}`,
       versionUnavailable: 'Version unavailable',
       updates: 'Updates',
@@ -385,7 +385,7 @@ export const en: Translations = {
       title: 'Gateway Connection',
       envOverride: 'env override',
       intro:
-        'Hermes Desktop starts its own local gateway by default. Use a remote gateway when you want this app to control an already-running Hermes backend on another machine or behind a trusted proxy. Pick a profile below to give it its own remote host.',
+        'Marvi Desktop starts its own local gateway by default. Use a remote gateway when you want this app to control an already-running Marvi backend on another machine or behind a trusted proxy. Pick a profile below to give it its own remote host.',
       appliesTo: 'Applies to',
       allProfiles: 'All profiles',
       defaultConnection: 'Default connection for every profile that has no override of its own.',
@@ -395,10 +395,10 @@ export const en: Translations = {
       envOverrideDesc:
         'Unset HERMES_DESKTOP_REMOTE_URL and HERMES_DESKTOP_REMOTE_TOKEN to use the saved setting below.',
       localTitle: 'Local gateway',
-      localDesc: 'Start a private Hermes backend on localhost. This is the default and works offline.',
+      localDesc: 'Start a private Marvi backend on localhost. This is the default and works offline.',
       remoteTitle: 'Remote gateway',
       remoteDesc:
-        'Connect this desktop shell to a remote Hermes backend. Hosted gateways use OAuth or a username and password; self-hosted ones may use a session token.',
+        'Connect this desktop shell to a remote Marvi backend. Hosted gateways use OAuth or a username and password; self-hosted ones may use a session token.',
       remoteUrlTitle: 'Remote URL',
       remoteUrlDesc: 'Base URL for the remote dashboard backend. Path prefixes are supported, for example /hermes.',
       probing: 'Checking how this gateway authenticates…',
@@ -432,7 +432,7 @@ export const en: Translations = {
       enterUrlFirst: 'Enter a remote URL first.',
       restartingTitle: 'Gateway connection restarting',
       savedTitle: 'Gateway settings saved',
-      restartingMessage: 'Hermes Desktop will reconnect using the saved settings.',
+      restartingMessage: 'Marvi Desktop will reconnect using the saved settings.',
       savedMessage: 'Saved for the next restart.',
       connectedTo: (baseUrl, version) => `Connected to ${baseUrl}${version ? ` · Hermes ${version}` : ''}`,
       reachableTitle: 'Remote gateway reachable',
@@ -1275,7 +1275,7 @@ export const en: Translations = {
     availableTitle: 'New update available',
     availableBody: 'A new version of Hermes is ready to install.',
     availableTitleBackend: 'Backend update available',
-    availableBodyBackend: 'A newer version of the connected Hermes backend is ready to install.',
+    availableBodyBackend: 'A newer version of the connected Marvi backend is ready to install.',
     availableBodyNoChangelog: 'A newer version is ready. Release notes aren’t available for this install type.',
     updateNow: 'Update now',
     maybeLater: 'Maybe later',
@@ -1319,7 +1319,7 @@ export const en: Translations = {
     installTo: 'Will install to',
     retryAfterRun: 'I’ve run it -- retry',
     failedTitle: 'Installation failed',
-    settingUpTitle: 'Setting up Hermes Agent',
+    settingUpTitle: 'Setting up Marvi Agent',
     finishingTitle: 'Finishing up',
     failedDesc:
       'One of the install steps failed. On Windows, this can happen if another Hermes CLI or desktop instance is running. Stop any running Hermes instances, then retry. Check the details below or the desktop log for the full transcript.',
@@ -1342,7 +1342,7 @@ export const en: Translations = {
   },
 
   onboarding: {
-    headerTitle: "Let's get you setup with Hermes Agent",
+    headerTitle: "Let's get you setup with Marvi Agent",
     headerDesc: 'Connect a model provider to start chatting. Most options take one click.',
     preparingInstall: 'Hermes is finishing install. This usually takes under a minute on first run.',
     starting: 'Starting Hermes…',
@@ -1484,7 +1484,7 @@ export const en: Translations = {
       update: 'update',
       updateInProgress: 'Update in progress',
       commitsBehind: (count, branch) => `${count} commit${count === 1 ? '' : 's'} behind ${branch}`,
-      desktopVersion: version => `Hermes Desktop v${version}`,
+      desktopVersion: version => `Marvi Desktop v${version}`,
       backendVersion: version => `Backend v${version}`,
       clientLabel: version => `client v${version}`,
       backendLabel: version => `backend v${version}`,
@@ -1764,8 +1764,8 @@ export const en: Translations = {
     sessionExportFailed: 'Could not export session',
     imageSaved: 'Image saved',
     downloadStarted: 'Download started',
-    restartToUseSaveImage: 'Restart Hermes Desktop to use Save Image.',
-    restartToSaveImages: 'Restart Hermes Desktop to save images',
+    restartToUseSaveImage: 'Restart Marvi Desktop to use Save Image.',
+    restartToSaveImages: 'Restart Marvi Desktop to save images',
     imageDownloadFailed: 'Image download failed',
     openImage: 'Open image',
     downloadImage: 'Download image',

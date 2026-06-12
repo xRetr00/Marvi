@@ -1,10 +1,10 @@
 {
-  "name": "hermes",
+  "name": "marvi-desktop",
   "productName": "Marvi",
   "private": true,
   "version": "0.15.1",
   "description": "Native desktop shell for Marvi Agent.",
-  "author": "Nous Research",
+  "author": "xRetro Labs Research",
   "type": "module",
   "main": "electron/main.cjs",
   "engines": {
@@ -129,7 +129,7 @@
   },
   "build": {
     "electronVersion": "40.9.3",
-    "appId": "com.nousresearch.hermes",
+    "appId": "com.xretro.marvi",
     "productName": "Marvi",
     "executableName": "Marvi",
     "artifactName": "Marvi-${version}-${os}-${arch}.${ext}",
@@ -218,7 +218,7 @@
     },
     "linux": {
       "category": "Development",
-      "maintainer": "Nous Research <support@nousresearch.com>",
+      "maintainer": "xRetro Labs Research <contact@xretro.dev>",
       "synopsis": "Native desktop shell for Marvi Agent.",
       "target": [
         "AppImage",

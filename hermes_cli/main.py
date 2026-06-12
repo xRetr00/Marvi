@@ -3489,7 +3489,7 @@ def _prompt_custom_api_mode_selection(base_url: str, current_api_mode: str = "")
         (
             "",
             "Auto-detect",
-            "Use Hermes URL heuristics; best for standard OpenAI-compatible endpoints.",
+            "Use Marvi URL heuristics; best for standard OpenAI-compatible endpoints.",
         ),
         (
             "chat_completions",
@@ -4936,15 +4936,25 @@ def _desktop_packaged_executable(desktop_dir: Path) -> Optional[Path]:
     """Return the current platform's unpacked Electron app executable."""
     release_dir = desktop_dir / "release"
     if sys.platform == "darwin":
-        candidates = list(release_dir.glob("mac*/Hermes.app/Contents/MacOS/Hermes"))
+        candidates = [
+            *release_dir.glob("mac*/Marvi.app/Contents/MacOS/Marvi"),
+            *release_dir.glob("mac*/Hermes.app/Contents/MacOS/Hermes"),
+        ]
     elif sys.platform == "win32":
         candidates = [
+            release_dir / "win-unpacked" / "Marvi.exe",
+            release_dir / "win-ia32-unpacked" / "Marvi.exe",
+            release_dir / "win-arm64-unpacked" / "Marvi.exe",
             release_dir / "win-unpacked" / "Hermes.exe",
             release_dir / "win-ia32-unpacked" / "Hermes.exe",
             release_dir / "win-arm64-unpacked" / "Hermes.exe",
         ]
     else:
         candidates = [
+            release_dir / "linux-unpacked" / "marvi",
+            release_dir / "linux-unpacked" / "Marvi",
+            release_dir / "linux-arm64-unpacked" / "marvi",
+            release_dir / "linux-arm64-unpacked" / "Marvi",
             release_dir / "linux-unpacked" / "hermes",
             release_dir / "linux-unpacked" / "Hermes",
             release_dir / "linux-arm64-unpacked" / "hermes",

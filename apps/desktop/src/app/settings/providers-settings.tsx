@@ -97,7 +97,7 @@ function OAuthPicker({ onWantApiKey, providers }: { onWantApiKey: () => void; pr
 
   const select = (p: OAuthProvider) => startManualProviderOAuth(p.id)
 
-  const featured = ordered.find(p => p.id === FEATURED_ID) ?? null
+  const featured = FEATURED_ID ? (ordered.find(p => p.id === FEATURED_ID) ?? null) : null
   const rest = featured ? ordered.filter(p => p.id !== FEATURED_ID) : ordered
   // Keep connected accounts grouped and always visible; only the unconnected
   // providers hide behind the disclosure, so the page leads with what's set up.
@@ -123,6 +123,7 @@ function OAuthPicker({ onWantApiKey, providers }: { onWantApiKey: () => void; pr
       <p className="-mt-2 mb-1 text-[length:var(--conversation-caption-font-size)] leading-(--conversation-caption-line-height) text-(--ui-text-tertiary)">
         {p.intro}
       </p>
+      <KeyProviderRow featured onClick={onWantApiKey} />
       {featured && <FeaturedProviderRow onSelect={select} provider={featured} />}
       {connected.length > 0 && (
         <>
@@ -139,7 +140,6 @@ function OAuthPicker({ onWantApiKey, providers }: { onWantApiKey: () => void; pr
           {others.map(p => (
             <ProviderRow key={p.id} onSelect={select} provider={p} />
           ))}
-          <KeyProviderRow onClick={onWantApiKey} />
         </>
       )}
       {collapsible && (

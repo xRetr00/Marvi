@@ -120,7 +120,7 @@ def _strip_yaml_frontmatter(content: str) -> str:
 # =========================================================================
 
 DEFAULT_AGENT_IDENTITY = (
-    "You are Hermes Agent, an intelligent AI assistant created by xRetro Labs Research. "
+    "You are Marvi Agent, an intelligent AI assistant created by xRetro Labs Research. "
     "You are helpful, knowledgeable, and direct. You assist users with a wide "
     "range of tasks including answering questions, writing and editing code, "
     "analyzing information, creative work, and executing actions via your tools. "
@@ -129,16 +129,24 @@ DEFAULT_AGENT_IDENTITY = (
     "Be targeted and efficient in your exploration and investigations."
 )
 
-HERMES_AGENT_HELP_GUIDANCE = (
-    "You run on Hermes Agent (by xRetro Labs Research). When the user needs help with "
-    "Hermes itself — configuring, setting up, using, extending, or troubleshooting "
-    "it — or when you need to understand your own features, tools, or capabilities, "
-    "the documentation at https://github.com/xRetr00/Marvi is your "
-    "authoritative reference and always holds the latest, most up-to-date "
-    "information. Load the `hermes-agent` skill with skill_view(name='hermes-agent') "
-    "for additional guidance and proven workflows, but treat the docs as the source "
-    "of truth when the two differ."
+MARVI_AGENT_HELP_GUIDANCE = (
+    "You run as Marvi Agent, the current xRetro Labs Research product and persona. "
+    "Hermes is the legacy/internal runtime name kept for compatibility: `hermes` "
+    "CLI commands, `HERMES_*` environment variables, `~/.hermes` profile paths, "
+    "and the legacy `hermes-agent` skill all belong to Marvi. Use Marvi in "
+    "user-facing explanations unless the user is explicitly asking about legacy "
+    "compatibility or an internal path/command that still contains Hermes. When "
+    "the user needs help with Marvi itself — configuring, setting up, using, "
+    "extending, or troubleshooting it — or when you need to understand your own "
+    "features, tools, or capabilities, the documentation at "
+    "https://github.com/xRetr00/Marvi is your authoritative reference and always "
+    "holds the latest, most up-to-date information. Load the legacy "
+    "`hermes-agent` skill with skill_view(name='hermes-agent') for additional "
+    "guidance and proven workflows, but treat the docs as the source of truth "
+    "when the two differ."
 )
+
+HERMES_AGENT_HELP_GUIDANCE = MARVI_AGENT_HELP_GUIDANCE
 
 MEMORY_GUIDANCE = (
     "You have persistent memory across sessions. Save durable facts using the memory "
@@ -460,7 +468,7 @@ def format_steer_marker(steer_text: str) -> str:
 
 STEER_CHANNEL_NOTE = (
     "## Mid-turn user steering\n"
-    "While you work, the user can send an out-of-band message that Hermes "
+    "While you work, the user can send an out-of-band message that Marvi "
     "appends to the end of a tool result, wrapped exactly as:\n"
     f"{STEER_MARKER_OPEN}\n<their message>\n{STEER_MARKER_CLOSE}\n"
     "Text inside that marker is a genuine message from the user delivered "
@@ -663,7 +671,7 @@ PLATFORM_HINTS = {
         "brief and natural."
     ),
     "webui": (
-        "You are in the Hermes WebUI, a browser-based chat interface. "
+        "You are in the Marvi WebUI, a browser-based chat interface. "
         "Full Markdown rendering is supported — headings, bold, italic, code "
         "blocks, tables, math (LaTeX), and Mermaid diagrams all render natively. "
         "To display local or remote media/files inline, include "
@@ -883,8 +891,8 @@ def build_environment_hints() -> str:
                 f"Terminal backend: {backend}. Your `terminal`, `read_file`, "
                 f"`write_file`, `patch`, and `search_files` tools all operate "
                 f"inside this {backend} environment — NOT on the machine "
-                f"where Hermes itself is running. The host OS, home, and cwd "
-                f"of the Hermes process are irrelevant; only the following "
+                f"where Marvi itself is running. The host OS, home, and cwd "
+                f"of the Marvi process are irrelevant; only the following "
                 f"backend state matters:\n{probe}"
             )
         else:
@@ -894,7 +902,7 @@ def build_environment_hints() -> str:
             hints.append(
                 f"Terminal backend: {backend}. Your `terminal`, `read_file`, "
                 f"`write_file`, `patch`, and `search_files` tools all operate "
-                f"inside {description} — NOT on the machine where Hermes "
+                f"inside {description} — NOT on the machine where Marvi "
                 f"itself runs. The backend probe didn't respond at "
                 f"prompt-build time, so the sandbox's current user, $HOME, "
                 f"and working directory are unknown from here. If you need "
@@ -902,14 +910,14 @@ def build_environment_hints() -> str:
                 f"`uname -a && whoami && pwd`."
             )
 
-    # Hermes desktop GUI — any agent running under the desktop app should know
+    # Marvi desktop GUI — any agent running under the desktop app should know
     # it. HERMES_DESKTOP marks the backend powering the chat; HERMES_DESKTOP_TERMINAL
     # marks a hermes launched in the embedded terminal pane. Both set by main.cjs.
     _truthy = ("1", "true", "yes")
     _in_desktop = (os.getenv("HERMES_DESKTOP") or "").strip().lower() in _truthy
     _in_desktop_term = (os.getenv("HERMES_DESKTOP_TERMINAL") or "").strip().lower() in _truthy
     if _in_desktop or _in_desktop_term:
-        _desktop_hint = "Runtime surface: you're running inside the Hermes desktop GUI app."
+        _desktop_hint = "Runtime surface: you're running inside the Marvi desktop GUI app."
         if _in_desktop_term:
             _desktop_hint += (
                 " You're in its embedded terminal pane, beside the GUI chat — the user can "
@@ -1357,9 +1365,9 @@ def build_skills_system_prompt(
             "for tasks like code review, planning, and testing — load them even for tasks you "
             "already know how to do, because the skill defines how it should be done here.\n"
             "Whenever the user asks you to configure, set up, install, enable, disable, modify, "
-            "or troubleshoot Hermes Agent itself — its CLI, config, models, providers, tools, "
-            "skills, voice, gateway, plugins, or any feature — load the `hermes-agent` skill "
-            "first. It has the actual commands (e.g. `hermes config set …`, `hermes tools`, "
+            "or troubleshoot Marvi itself — its CLI, config, models, providers, tools, "
+            "skills, voice, gateway, plugins, or any feature — load the legacy `hermes-agent` skill "
+            "first. It has the actual commands (e.g. `hermes config set ...`, `hermes tools`, "
             "`hermes setup`) so you don't have to guess or invent workarounds.\n"
             "If a skill has issues, fix it with skill_manage(action='patch').\n"
             "After difficult/iterative tasks, offer to save as a skill. "
@@ -1385,7 +1393,7 @@ def build_skills_system_prompt(
 
 
 def build_nous_subscription_prompt(valid_tool_names: "set[str] | None" = None) -> str:
-    """Build a compact Nous subscription capability block for the system prompt."""
+    """Build a compact managed-subscription capability block for the prompt."""
     try:
         from hermes_cli.nous_subscription import get_nous_subscription_features
         from tools.tool_backend_helpers import managed_nous_tools_enabled
@@ -1423,27 +1431,27 @@ def build_nous_subscription_prompt(valid_tool_names: "set[str] | None" = None) -
 
     def _status_line(feature) -> str:
         if feature.managed_by_nous:
-            return f"- {feature.label}: active via Nous subscription"
+            return f"- {feature.label}: active via managed subscription"
         if feature.active:
             current = feature.current_provider or "configured provider"
             return f"- {feature.label}: currently using {current}"
         if feature.included_by_default and features.nous_auth_present:
-            return f"- {feature.label}: included with Nous subscription, not currently selected"
+            return f"- {feature.label}: included with managed subscription, not currently selected"
         if feature.key == "modal" and features.nous_auth_present:
-            return f"- {feature.label}: optional via Nous subscription"
+            return f"- {feature.label}: optional via managed subscription"
         return f"- {feature.label}: not currently available"
 
     lines = [
-        "# Nous Subscription",
-        "Nous subscription includes managed web tools (Firecrawl), image generation (FAL), OpenAI TTS, OpenAI Whisper STT, and browser automation (Browser Use) by default. Modal execution is optional.",
+        "# Managed Subscription Capabilities",
+        "A managed subscription can provide hosted web tools (Firecrawl), image generation (FAL), OpenAI TTS, OpenAI Whisper STT, and browser automation (Browser Use). Modal execution is optional.",
         "Current capability status:",
     ]
     lines.extend(_status_line(feature) for feature in features.items())
     lines.extend(
         [
-            "When a Nous-managed feature is active, do not ask the user for Firecrawl, FAL, OpenAI TTS, OpenAI Whisper, or Browser-Use API keys.",
-            "If the user is not subscribed and asks for a capability that Nous subscription would unlock or simplify, suggest Nous subscription as one option alongside direct setup or local alternatives.",
-            "Do not mention subscription unless the user asks about it or it directly solves the current missing capability.",
+            "When a managed feature is active, do not ask the user for Firecrawl, FAL, OpenAI TTS, OpenAI Whisper, or Browser-Use API keys.",
+            "If a managed subscription is not active, prefer direct setup, OpenRouter/model-provider setup, or local alternatives.",
+            "Do not mention legacy Nous Portal branding unless the user asks about it or an active configured feature explicitly names it.",
             "Useful commands: hermes setup, hermes setup tools, hermes setup terminal, hermes status.",
         ]
     )

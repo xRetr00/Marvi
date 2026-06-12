@@ -2399,9 +2399,25 @@ function New-DesktopShortcuts {
         }
 
         $targets = @(
+            (Join-Path ([Environment]::GetFolderPath('Programs')) 'Marvi.lnk'),
+            (Join-Path ([Environment]::GetFolderPath('Desktop')) 'Marvi.lnk')
+        )
+
+        $legacyTargets = @(
             (Join-Path ([Environment]::GetFolderPath('Programs')) 'Hermes.lnk'),
             (Join-Path ([Environment]::GetFolderPath('Desktop')) 'Hermes.lnk')
         )
+
+        foreach ($legacyPath in $legacyTargets) {
+            try {
+                if (Test-Path $legacyPath) {
+                    Remove-Item -LiteralPath $legacyPath -Force
+                    Write-Success "Removed legacy shortcut: $legacyPath"
+                }
+            } catch {
+                Write-Warn "Could not remove legacy shortcut $legacyPath : $($_.Exception.Message)"
+            }
+        }
 
         foreach ($lnkPath in $targets) {
             try {

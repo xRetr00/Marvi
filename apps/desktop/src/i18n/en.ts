@@ -1287,7 +1287,8 @@ export const en: Translations = {
     copied: 'Copied',
     done: 'Done',
     applyingBody: 'The Marvi updater will take over in its own window and reopen Marvi when it’s done.',
-    applyingBodyBackend: 'The remote backend is applying the update and will restart. Marvi reconnects automatically when it’s back.',
+    applyingBodyBackend:
+      'The remote backend is applying the update and will restart. Marvi reconnects automatically when it’s back.',
     applyingClose: 'Marvi will close to apply the update.',
     errorTitle: 'Update didn’t finish',
     errorBody: 'No worries — nothing was lost. You can try again now.',
@@ -1353,8 +1354,8 @@ export const en: Translations = {
     chooseLater: "I'll choose a provider later",
     recommended: 'Recommended',
     connected: 'Connected',
-    featuredPitch: 'One subscription, 300+ frontier models — the recommended way to run Marvi',
-    openRouterPitch: 'One key, hundreds of models — a solid default',
+    featuredPitch: 'One OpenRouter key, hundreds of models — the recommended way to run Marvi',
+    openRouterPitch: 'One key, hundreds of models — the recommended way to run Marvi',
     apiKeyOptions: {
       openrouter: {
         short: 'one key, many models',

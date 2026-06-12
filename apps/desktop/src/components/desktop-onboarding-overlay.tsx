@@ -10,16 +10,7 @@ import { Input } from '@/components/ui/input'
 import { Loader } from '@/components/ui/loader'
 import { getGlobalModelOptions } from '@/hermes'
 import { useI18n } from '@/i18n'
-import {
-  Check,
-  ChevronDown,
-  ChevronLeft,
-  ChevronRight,
-  ExternalLink,
-  KeyRound,
-  Loader2,
-  Terminal
-} from '@/lib/icons'
+import { Check, ChevronDown, ChevronLeft, ChevronRight, ExternalLink, KeyRound, Loader2, Terminal } from '@/lib/icons'
 import { isProviderSetupErrorMessage } from '@/lib/provider-setup-errors'
 import { cn } from '@/lib/utils'
 import { $desktopBoot, type DesktopBootState } from '@/store/boot'
@@ -184,9 +175,7 @@ const providerTitle = (p: OAuthProvider) => PROVIDER_DISPLAY[p.id]?.title ?? p.n
 const orderOf = (p: OAuthProvider) => PROVIDER_DISPLAY[p.id]?.order ?? 99
 
 export const sortProviders = (providers: OAuthProvider[]) =>
-  providers
-    .filter(isVisibleOAuthProvider)
-    .sort((a, b) => orderOf(a) - orderOf(b) || a.name.localeCompare(b.name))
+  providers.filter(isVisibleOAuthProvider).sort((a, b) => orderOf(a) - orderOf(b) || a.name.localeCompare(b.name))
 
 // Exit choreography, mirroring the gateway "connecting" overlay's timing:
 // text-out (360ms: CONNECTED fades down, rest scrambles+fades) → hold (300ms)
@@ -218,8 +207,7 @@ export function DesktopOnboardingOverlay({ enabled, onCompleted, requestGateway 
       return
     }
 
-    const reduce =
-      typeof window !== 'undefined' && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
+    const reduce = typeof window !== 'undefined' && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
 
     if (reduce) {
       confirmOnboardingModel(ctx)
@@ -409,7 +397,7 @@ function Header() {
   )
 }
 
-export const FEATURED_ID = 'openai-codex'
+export const FEATURED_ID: string = ''
 const SHOW_ALL_KEY = 'hermes-onboarding-show-all-v1'
 
 const readShowAll = () => {
@@ -466,23 +454,23 @@ export function Picker({ ctx }: { ctx: OnboardingContext }) {
   }
 
   const select = (p: OAuthProvider) => void startProviderOAuth(p, ctx)
-  const featured = ordered.find(p => p.id === FEATURED_ID) ?? null
+  const featured = FEATURED_ID ? (ordered.find(p => p.id === FEATURED_ID) ?? null) : null
   const rest = featured ? ordered.filter(p => p.id !== FEATURED_ID) : ordered
-  // Collapse the secondary providers behind a disclosure only when the
-  // featured provider is present to anchor the choice — otherwise show the full list.
-  const collapsible = Boolean(featured) && rest.length > 0
+  // OpenRouter anchors the recommended path; OAuth providers stay behind a
+  // disclosure so they remain available without competing with the default.
+  const collapsible = rest.length > 0
   const showRest = !collapsible || showAll
 
   return (
     <div className="grid gap-2">
       <div className="grid max-h-[60dvh] gap-2 overflow-y-auto p-1">
+        <KeyProviderRow featured onClick={() => setOnboardingMode('apikey')} />
         {featured ? <FeaturedProviderRow onSelect={select} provider={featured} /> : null}
         {showRest ? (
           <>
             {rest.map(p => (
               <ProviderRow key={p.id} onSelect={select} provider={p} />
             ))}
-            <KeyProviderRow onClick={() => setOnboardingMode('apikey')} />
           </>
         ) : null}
       </div>
@@ -524,13 +512,7 @@ function ChooseLaterLink() {
   const { t } = useI18n()
 
   return (
-    <Button
-      className="font-medium"
-      onClick={() => dismissFirstRunOnboarding()}
-      size="xs"
-      type="button"
-      variant="text"
-    >
+    <Button className="font-medium" onClick={() => dismissFirstRunOnboarding()} size="xs" type="button" variant="text">
       {t.onboarding.chooseLater}
     </Button>
   )
@@ -589,16 +571,34 @@ function ConnectedTag() {
 const PROVIDER_ROW_CLASS =
   'group flex w-full items-center justify-between gap-3 rounded-[6px] px-3 py-2.5 text-left transition-colors hover:bg-(--ui-control-hover-background)'
 
-export function KeyProviderRow({ onClick }: { onClick: () => void }) {
+export function KeyProviderRow({ featured = false, onClick }: { featured?: boolean; onClick: () => void }) {
   const { t } = useI18n()
 
   return (
-    <button className={PROVIDER_ROW_CLASS} onClick={onClick} type="button">
+    <button
+      className={cn(PROVIDER_ROW_CLASS, featured && 'relative bg-primary/[0.06] hover:bg-primary/10')}
+      onClick={onClick}
+      type="button"
+    >
+      {featured ? <span aria-hidden className="arc-border arc-reverse arc-nous" /> : null}
       <div className="min-w-0">
-        <span className="text-[length:var(--conversation-text-font-size)] font-semibold">OpenRouter</span>
+        <div className="flex items-center gap-2">
+          <span className="text-[length:var(--conversation-text-font-size)] font-semibold">OpenRouter</span>
+          {featured ? (
+            <span className="inline-flex items-center gap-1.5 bg-primary px-2 py-0.5 text-[0.64rem] font-semibold uppercase tracking-[0.16em] text-primary-foreground">
+              <span aria-hidden="true" className="dither inline-block size-2 shrink-0" />
+              {t.onboarding.recommended}
+            </span>
+          ) : null}
+        </div>
         <p className="mt-1 text-xs leading-5 text-muted-foreground">{t.onboarding.openRouterPitch}</p>
       </div>
-      <ChevronRight className="size-4 text-muted-foreground transition group-hover:text-foreground" />
+      <ChevronRight
+        className={cn(
+          'size-4 transition group-hover:translate-x-0.5',
+          featured ? 'text-primary' : 'text-muted-foreground group-hover:text-foreground'
+        )}
+      />
     </button>
   )
 }
@@ -652,20 +652,13 @@ export function ApiKeyForm({
   isSet?: (envKey: string) => boolean
   onBack: () => void
   onClear?: (envKey: string) => void
-  onSave: (
-    envKey: string,
-    value: string,
-    name: string,
-    apiKey?: string
-  ) => Promise<{ message?: string; ok: boolean }>
+  onSave: (envKey: string, value: string, name: string, apiKey?: string) => Promise<{ message?: string; ok: boolean }>
   options?: ApiKeyOption[]
   redactedValue?: (envKey: string) => null | string | undefined
 }) {
   const { t } = useI18n()
 
-  const [option, setOption] = useState<ApiKeyOption>(
-    () => options.find(o => o.envKey === initialEnvKey) ?? options[0]
-  )
+  const [option, setOption] = useState<ApiKeyOption>(() => options.find(o => o.envKey === initialEnvKey) ?? options[0])
 
   const [value, setValue] = useState('')
   // Optional endpoint API key, only used by the local / custom endpoint option
@@ -733,13 +726,7 @@ export function ApiKeyForm({
   return (
     <div className="grid gap-4">
       {canGoBack ? (
-        <Button
-          className="-mt-1 self-start font-medium"
-          onClick={onBack}
-          size="xs"
-          type="button"
-          variant="text"
-        >
+        <Button className="-mt-1 self-start font-medium" onClick={onBack} size="xs" type="button" variant="text">
           <ChevronLeft className="size-3" />
           {t.onboarding.backToSignIn}
         </Button>
@@ -839,9 +826,7 @@ function FlowPanel({
   }
 
   if (flow.status === 'success') {
-    return (
-      <DecodedLabel text={t.onboarding.connectedPicking(title)} />
-    )
+    return <DecodedLabel text={t.onboarding.connectedPicking(title)} />
   }
 
   if (flow.status === 'confirming_model') {

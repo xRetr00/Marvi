@@ -7,27 +7,29 @@ license: MIT
 platforms: [linux, macos, windows]
 metadata:
   hermes:
-    tags: [hermes, setup, configuration, multi-agent, spawning, cli, gateway, development]
+    tags: [marvi, hermes, setup, configuration, multi-agent, spawning, cli, gateway, development]
     homepage: https://github.com/xRetr00/Marvi
     related_skills: [claude-code, codex, opencode]
 ---
 
 # Marvi Agent
 
-Hermes Agent is an open-source AI agent framework by xRetro Labs Research that runs in your terminal, messaging platforms, and IDEs. It belongs to the same category as Claude Code (Anthropic), Codex (OpenAI), and OpenClaw — autonomous coding and task-execution agents that use tool calling to interact with your system. Hermes works with any LLM provider (OpenRouter, Anthropic, OpenAI, DeepSeek, local models, and 15+ others) and runs on Linux, macOS, and WSL.
+Marvi Agent is an open-source AI agent framework by xRetro Labs Research that runs in your terminal, messaging platforms, and IDEs. It belongs to the same category as Claude Code (Anthropic), Codex (OpenAI), and OpenClaw — autonomous coding and task-execution agents that use tool calling to interact with your system. Marvi works with any LLM provider (OpenRouter, Anthropic, OpenAI, DeepSeek, local models, and 15+ others) and runs on Linux, macOS, and WSL.
 
-What makes Hermes different:
+This skill keeps the legacy `hermes-agent` ID so older prompts, profiles, and commands can still load it. Treat `hermes`, `HERMES_*`, and `~/.hermes` as compatibility names for Marvi unless the user is explicitly asking about old branding.
 
-- **Self-improving through skills** — Hermes learns from experience by saving reusable procedures as skills. When it solves a complex problem, discovers a workflow, or gets corrected, it can persist that knowledge as a skill document that loads into future sessions. Skills accumulate over time, making the agent better at your specific tasks and environment.
+What makes Marvi different:
+
+- **Self-improving through skills** — Marvi learns from experience by saving reusable procedures as skills. When it solves a complex problem, discovers a workflow, or gets corrected, it can persist that knowledge as a skill document that loads into future sessions. Skills accumulate over time, making the agent better at your specific tasks and environment.
 - **Persistent memory across sessions** — remembers who you are, your preferences, environment details, and lessons learned. Pluggable memory backends (built-in, Honcho, Mem0, and more) let you choose how memory works.
 - **Multi-platform gateway** — the same agent runs on Telegram, Discord, Slack, WhatsApp, Signal, Matrix, Email, and 10+ other platforms with full tool access, not just chat.
 - **Provider-agnostic** — swap models and providers mid-workflow without changing anything else. Credential pools rotate across multiple API keys automatically.
-- **Profiles** — run multiple independent Hermes instances with isolated configs, sessions, skills, and memory.
+- **Profiles** — run multiple independent Marvi instances with isolated configs, sessions, skills, and memory.
 - **Extensible** — plugins, MCP servers, custom tools, webhook triggers, cron scheduling, and the full Python ecosystem.
 
-People use Hermes for software development, research, system administration, data analysis, content creation, home automation, and anything else that benefits from an AI agent with persistent context and full system access.
+People use Marvi for software development, research, system administration, data analysis, content creation, home automation, and anything else that benefits from an AI agent with persistent context and full system access.
 
-**This skill helps you work with Hermes Agent effectively** — setting it up, configuring features, spawning additional agent instances, troubleshooting issues, finding the right commands and settings, and understanding how the system works when you need to extend or contribute to it.
+**This skill helps you work with Marvi Agent effectively** — setting it up, configuring features, spawning additional agent instances, troubleshooting issues, finding the right commands and settings, and understanding how the system works when you need to extend or contribute to it.
 
 **Docs:** https://github.com/xRetr00/Marvi/
 
@@ -132,7 +134,7 @@ hermes skills tap add REPO  Add a GitHub repo as skill source
 ### MCP Servers
 
 ```
-hermes mcp serve            Run Hermes as an MCP server
+hermes mcp serve            Run Marvi as an MCP server
 hermes mcp add NAME         Add an MCP server (--url or --command)
 hermes mcp remove NAME      Remove an MCP server
 hermes mcp list             List configured servers
@@ -230,7 +232,7 @@ hermes memory setup/status/off  Memory provider config
 hermes completion bash|zsh  Shell completions
 hermes acp                  ACP server (IDE integration)
 hermes claw migrate         Migrate from OpenClaw
-hermes uninstall            Uninstall Hermes
+hermes uninstall            Uninstall Marvi
 ```
 
 ---
@@ -253,13 +255,13 @@ The registry of record is `hermes_cli/commands.py` — every consumer
 /compress            Manually compress context
 /stop                Kill background processes
 /rollback [N]        Restore filesystem checkpoint
-/snapshot [sub]      Create or restore state snapshots of Hermes config/state (CLI)
+/snapshot [sub]      Create or restore state snapshots of Marvi config/state (CLI)
 /background <prompt> Run prompt in background
 /queue <prompt>      Queue for next turn
 /steer <prompt>      Inject a message after the next tool call without interrupting
 /agents (/tasks)     Show active agents and running tasks
 /resume [name]       Resume a named session
-/goal [text|sub]     Set a standing goal Hermes works on across turns until achieved
+/goal [text|sub]     Set a standing goal Marvi works on across turns until achieved
                      (subcommands: status, pause, resume, clear)
 /redraw              Force a full UI repaint (CLI)
 ```
@@ -273,7 +275,7 @@ The registry of record is `hermes_cli/commands.py` — every consumer
 /verbose             Cycle: off → new → all → verbose
 /voice [on|off|tts]  Voice mode
 /yolo                Toggle approval bypass
-/busy [sub]          Control what Enter does while Hermes is working (CLI)
+/busy [sub]          Control what Enter does while Marvi is working (CLI)
                      (subcommands: queue, steer, interrupt, status)
 /indicator [style]   Pick the TUI busy-indicator style (CLI)
                      (styles: kaomoji, emoji, unicode, ascii)
@@ -303,7 +305,7 @@ The registry of record is `hermes_cli/commands.py` — every consumer
 /deny                Deny a pending command (gateway)
 /restart             Restart gateway (gateway)
 /sethome             Set current chat as home channel (gateway)
-/update              Update Hermes to latest (gateway)
+/update              Update Marvi to latest (gateway)
 /topic [sub]         Enable or inspect Telegram DM topic sessions (gateway)
 /platforms (/gateway) Show platform connection status (gateway)
 ```
@@ -449,7 +451,7 @@ Tool changes take effect on `/reset` (new session). They do NOT apply mid-conver
 
 ## Security & Privacy Toggles
 
-Common "why is Hermes doing X to my output / tool calls / commands?" toggles — and the exact commands to change them. Most of these need a fresh session (`/reset` in chat, or start a new `hermes` invocation) because they're read once at startup.
+Common "why is Marvi doing X to my output / tool calls / commands?" toggles — and the exact commands to change them. Most of these need a fresh session (`/reset` in chat, or start a new `hermes` invocation) because they're read once at startup.
 
 ### Secret redaction in tool output
 
@@ -477,7 +479,7 @@ hermes config set privacy.redact_pii false   # disable (default)
 
 ### Command approval prompts
 
-By default (`approvals.mode: manual`), Hermes prompts the user before running shell commands flagged as destructive (`rm -rf`, `git reset --hard`, etc.). The modes are:
+By default (`approvals.mode: manual`), Marvi prompts the user before running shell commands flagged as destructive (`rm -rf`, `git reset --hard`, etc.). The modes are:
 
 - `manual` — always prompt (default)
 - `smart` — use an auxiliary LLM to auto-approve low-risk commands, prompt on high-risk
@@ -542,11 +544,11 @@ Voice commands: `/voice on` (voice-to-voice), `/voice tts` (always voice), `/voi
 
 ## Spawning Additional Marvi Instances
 
-Run additional Hermes processes as fully independent subprocesses — separate sessions, tools, and environments.
+Run additional Marvi processes as fully independent subprocesses — separate sessions, tools, and environments.
 
 ### When to Use This vs delegate_task
 
-| | `delegate_task` | Spawning `hermes` process |
+| | `delegate_task` | Spawning a `hermes` compatibility process |
 |-|-----------------|--------------------------|
 | Isolation | Separate conversation, shared process | Fully independent process |
 | Duration | Minutes (bounded by parent loop) | Hours/days |
@@ -565,7 +567,7 @@ terminal(command="hermes chat -q 'Set up CI/CD for ~/myapp'", background=true)
 
 ### Interactive PTY Mode (via tmux)
 
-Hermes uses prompt_toolkit, which requires a real terminal. Use tmux for interactive spawning:
+Marvi uses prompt_toolkit, which requires a real terminal. Use tmux for interactive spawning:
 
 ```
 # Start

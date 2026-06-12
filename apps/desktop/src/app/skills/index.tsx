@@ -28,6 +28,10 @@ function categoryFor(skill: SkillInfo): string {
   return asText(skill.category) || 'general'
 }
 
+function skillDisplayName(skill: SkillInfo): string {
+  return skill.name === 'hermes-agent' ? 'marvi-agent' : asText(skill.name)
+}
+
 function filteredSkills(skills: SkillInfo[], query: string, category: string | null): SkillInfo[] {
   const q = query.trim().toLowerCase()
 
@@ -41,9 +45,14 @@ function filteredSkills(skills: SkillInfo[], query: string, category: string | n
         return true
       }
 
-      return includesQuery(skill.name, q) || includesQuery(skill.description, q) || includesQuery(skill.category, q)
+      return (
+        includesQuery(skill.name, q) ||
+        includesQuery(skillDisplayName(skill), q) ||
+        includesQuery(skill.description, q) ||
+        includesQuery(skill.category, q)
+      )
     })
-    .sort((a, b) => asText(a.name).localeCompare(asText(b.name)))
+    .sort((a, b) => skillDisplayName(a).localeCompare(skillDisplayName(b)))
 }
 
 function filteredToolsets(toolsets: ToolsetInfo[], query: string): ToolsetInfo[] {
@@ -155,13 +164,14 @@ export function SkillsView({ setStatusbarItemGroup: _setStatusbarItemGroup, ...p
     try {
       await toggleSkill(skill.name, enabled)
       setSkills(current => current?.map(row => (row.name === skill.name ? { ...row, enabled } : row)) ?? current)
+      const displayName = skillDisplayName(skill)
       notify({
         kind: 'success',
         title: enabled ? t.skills.skillEnabled : t.skills.skillDisabled,
-        message: t.skills.appliesToNewSessions(skill.name)
+        message: t.skills.appliesToNewSessions(displayName)
       })
     } catch (err) {
-      notifyError(err, t.skills.failedToUpdate(skill.name))
+      notifyError(err, t.skills.failedToUpdate(skillDisplayName(skill)))
     } finally {
       setSavingSkill(null)
     }
@@ -260,7 +270,7 @@ export function SkillsView({ setStatusbarItemGroup: _setStatusbarItemGroup, ...p
                         key={skill.name}
                       >
                         <div className="min-w-0">
-                          <div className="truncate text-sm font-medium">{skill.name}</div>
+                          <div className="truncate text-sm font-medium">{skillDisplayName(skill)}</div>
                           <p className="mt-0.5 text-xs text-muted-foreground">
                             {asText(skill.description) || t.skills.noDescription}
                           </p>

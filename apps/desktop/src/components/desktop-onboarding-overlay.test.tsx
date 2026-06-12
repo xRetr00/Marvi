@@ -56,28 +56,34 @@ afterEach(() => {
 })
 
 describe('onboarding Picker', () => {
-  it('features OpenAI OAuth and hides other providers behind a disclosure', () => {
+  it('features OpenRouter and hides OAuth providers behind a disclosure', () => {
     setProviders([provider('anthropic', 'Anthropic Claude'), provider('openai-codex', 'OpenAI Codex / ChatGPT')])
     render(<Picker ctx={ctx} />)
 
+    expect(screen.getByText('OpenRouter')).toBeTruthy()
+    expect(screen.getByText('Recommended')).toBeTruthy()
+    expect(screen.queryByText('Anthropic API Key')).toBeNull()
+    expect(screen.queryByText('OpenAI OAuth (ChatGPT)')).toBeNull()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Other providers' }))
+
+    expect(screen.getByText('Anthropic API Key')).toBeTruthy()
     expect(screen.getByText('OpenAI OAuth (ChatGPT)')).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Collapse' })).toBeTruthy()
+  })
+
+  it('still collapses OAuth providers when no OAuth provider is featured', () => {
+    setProviders([provider('anthropic', 'Anthropic Claude'), provider('xai-oauth', 'xAI Grok')])
+    render(<Picker ctx={ctx} />)
+
+    expect(screen.getByText('OpenRouter')).toBeTruthy()
     expect(screen.getByText('Recommended')).toBeTruthy()
     expect(screen.queryByText('Anthropic API Key')).toBeNull()
 
     fireEvent.click(screen.getByRole('button', { name: 'Other providers' }))
 
     expect(screen.getByText('Anthropic API Key')).toBeTruthy()
-    expect(screen.getByRole('button', { name: 'Collapse' })).toBeTruthy()
-  })
-
-  it('shows every provider directly when featured provider is absent', () => {
-    setProviders([provider('anthropic', 'Anthropic Claude'), provider('xai-oauth', 'xAI Grok')])
-    render(<Picker ctx={ctx} />)
-
-    expect(screen.getByText('Anthropic API Key')).toBeTruthy()
     expect(screen.getByText('xAI Grok')).toBeTruthy()
-    expect(screen.queryByText('Other sign-in options')).toBeNull()
-    expect(screen.queryByText('Recommended')).toBeNull()
   })
 
   it('offers "choose later" on first run and persists the skip', () => {

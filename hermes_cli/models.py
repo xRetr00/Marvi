@@ -32,6 +32,8 @@ COPILOT_REASONING_EFFORTS_O_SERIES = ["low", "medium", "high"]
 # Fallback OpenRouter snapshot used when the live catalog is unavailable.
 # (model_id, display description shown in menus)
 OPENROUTER_MODELS: list[tuple[str, str]] = [
+    # Marvi default
+    ("deepseek/deepseek-v4-flash",             "recommended"),
     # Anthropic
     ("anthropic/claude-fable-5",               ""),
     ("anthropic/claude-opus-4.8",              ""),
@@ -50,7 +52,6 @@ OPENROUTER_MODELS: list[tuple[str, str]] = [
     ("x-ai/grok-4.3",                          ""),
     # DeepSeek
     ("deepseek/deepseek-v4-pro",               ""),
-    ("deepseek/deepseek-v4-flash",             ""),
     # Qwen
     ("qwen/qwen3.7-max",                       ""),
     ("qwen/qwen3.7-plus",                      ""),
@@ -1250,6 +1251,7 @@ _PROVIDER_ALIASES = {
 # in hermes_cli/web_server.py and ``partition_nous_models_by_tier`` — which can
 # hit the Portal; this fallback must stay cheap and network-free.
 _PROVIDER_SILENT_DEFAULT_OVERRIDES: dict[str, str] = {
+    "openrouter": "deepseek/deepseek-v4-flash",
     "nous": "deepseek/deepseek-v4-flash",
 }
 
@@ -1271,7 +1273,7 @@ def get_default_model_for_provider(provider: str) -> str:
     """
     models = _PROVIDER_MODELS.get(provider, [])
     override = _PROVIDER_SILENT_DEFAULT_OVERRIDES.get(provider)
-    if override and override in models:
+    if override and (not models or override in models):
         return override
     return models[0] if models else ""
 

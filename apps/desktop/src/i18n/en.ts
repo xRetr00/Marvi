@@ -99,7 +99,7 @@ export const en: Translations = {
     backendOutOfDateTitle: 'Backend out of date',
     backendOutOfDateMessage:
       'Your Marvi backend is older than this desktop build and may not work correctly. Update to align them.',
-    updateHermes: 'Update Hermes',
+    updateHermes: 'Update Marvi',
     updateReadyTitle: 'Update ready',
     updateReadyMessage: count => `${count} new change${count === 1 ? '' : 's'} available.`,
     seeWhatsNew: "See what's new",
@@ -692,7 +692,7 @@ export const en: Translations = {
     gatewayStopped: 'Messaging gateway stopped',
     hermesActiveSessions: (version, count) => `Hermes ${version} · Active sessions ${count}`,
     restartMessaging: 'Restart messaging',
-    updateHermes: 'Update Hermes',
+    updateHermes: 'Update Marvi',
     actionRunning: 'running',
     actionDone: 'done',
     actionFailed: 'failed',
@@ -1322,7 +1322,7 @@ export const en: Translations = {
     settingUpTitle: 'Setting up Marvi Agent',
     finishingTitle: 'Finishing up',
     failedDesc:
-      'One of the install steps failed. On Windows, this can happen if another Hermes CLI or desktop instance is running. Stop any running Hermes instances, then retry. Check the details below or the desktop log for the full transcript.',
+      'One of the install steps failed. On Windows, this can happen if another Marvi CLI or desktop instance is running. Stop any running Marvi instances, then retry. Check the details below or the desktop log for the full transcript.',
     activeDesc:
       'This is a one-time setup. The Hermes installer is downloading dependencies and configuring your machine. Subsequent launches will skip this step.',
     progress: (completed, total) => `${completed} of ${total} steps complete`,

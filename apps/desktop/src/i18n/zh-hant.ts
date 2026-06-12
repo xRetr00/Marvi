@@ -96,7 +96,7 @@ export const zhHant = defineLocale({
     copyDetailFailed: '無法複製通知詳情',
     backendOutOfDateTitle: '後端版本過舊',
     backendOutOfDateMessage: '您的 Hermes 後端早於目前的桌面版本，可能無法正常運作。請更新以保持一致。',
-    updateHermes: '更新 Hermes',
+    updateHermes: '更新 Marvi',
     updateReadyTitle: '有可用更新',
     updateReadyMessage: count => `有 ${count} 項新變更可用。`,
     seeWhatsNew: '查看新增內容',
@@ -800,7 +800,7 @@ export const zhHant = defineLocale({
     gatewayStopped: '訊息閘道已停止',
     hermesActiveSessions: (version, count) => `Hermes ${version} · 活躍工作階段 ${count}`,
     restartMessaging: '重新啟動訊息服務',
-    updateHermes: '更新 Hermes',
+    updateHermes: '更新 Marvi',
     actionRunning: '執行中',
     actionDone: '完成',
     actionFailed: '失敗',
@@ -1419,7 +1419,7 @@ export const zhHant = defineLocale({
     settingUpTitle: '正在設定 Marvi Agent',
     finishingTitle: '正在收尾',
     failedDesc:
-      '某個安裝步驟失敗。在 Windows 上，如果另一個 Hermes CLI 或桌面執行個體正在執行，可能會出現這種情況。請停止正在執行的 Hermes 執行個體後重試。可查看下方的詳細資訊或 desktop 記錄中的完整記錄。',
+      '某個安裝步驟失敗。在 Windows 上，如果另一個 Marvi CLI 或桌面執行個體正在執行，可能會出現這種情況。請停止正在執行的 Marvi 執行個體後重試。可查看下方的詳細資訊或 desktop 記錄中的完整記錄。',
     activeDesc:
       '這是一次性設定。Hermes 安裝程式正在下載相依套件並設定您的電腦。之後啟動會略過此步驟。',
     progress: (completed, total) => `${completed}/${total} 個步驟已完成`,

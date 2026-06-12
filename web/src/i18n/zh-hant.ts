@@ -120,8 +120,8 @@ export const zhHant: Translations = {
     starting: "啟動中",
     startedInBackground: "已於背景啟動 — 請查看日誌以取得進度",
     stopped: "已停止",
-    updateHermes: "更新 Hermes",
-    updatingHermes: "正在更新 Hermes…",
+    updateMarvi: "更新 Marvi",
+    updatingMarvi: "正在更新 Marvi…",
     waitingForOutput: "等待輸出…",
   },
 
@@ -318,7 +318,7 @@ export const zhHant: Translations = {
     enableRuntime: "啟用",
     forceReinstall: "強制重新安裝（先刪除既有資料夾）",
     headline:
-      "探索、安裝、啟用並更新 Hermes 外掛（對齊 `hermes plugins` CLI）。",
+      "探索、安裝、啟用並更新 Marvi 外掛（對齊 `hermes plugins` CLI）。",
     identifierLabel: "Git 網址或 owner/repo",
     inactive: "未啟用",
     installBtn: "安裝",

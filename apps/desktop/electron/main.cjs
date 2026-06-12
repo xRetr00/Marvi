@@ -1826,7 +1826,7 @@ async function applyUpdatesPosixInApp() {
     // best effort
   }
 
-  emitUpdateProgress({ stage: 'update', message: 'Updating Hermes (git + dependencies)…', percent: 10 })
+  emitUpdateProgress({ stage: 'update', message: 'Updating Marvi (git + dependencies)…', percent: 10 })
   const updated = await runStreamedUpdate(hermes, ['update', '--yes', ...branchArgs], {
     cwd: updateRoot,
     env,
@@ -2206,7 +2206,7 @@ function resolveHermesBackend(dashboardArgs) {
 
     if (hermesCommand) {
       if (looksLikeDesktopAppBinary(hermesCommand)) {
-        rememberLog(`Ignoring desktop app executable on PATH while resolving Hermes CLI: ${hermesCommand}`)
+        rememberLog(`Ignoring desktop app executable on PATH while resolving Marvi CLI: ${hermesCommand}`)
         hermesCommand = null
       }
     }
@@ -2222,7 +2222,7 @@ function resolveHermesBackend(dashboardArgs) {
       const shellForProbe = isCommandScript(hermesCommand)
       if (verifyHermesCli(hermesCommand, { shell: shellForProbe })) {
         return {
-          label: `existing Hermes CLI at ${hermesCommand}`,
+          label: `existing Marvi CLI at ${hermesCommand}`,
           command: hermesCommand,
           args: dashboardArgs,
           bootstrap: false,
@@ -2232,7 +2232,7 @@ function resolveHermesBackend(dashboardArgs) {
         }
       }
       rememberLog(
-        `Ignoring existing Hermes CLI at ${hermesCommand}: --version probe failed; falling through to bootstrap.`
+        `Ignoring existing Marvi CLI at ${hermesCommand}: --version probe failed; falling through to bootstrap.`
       )
     }
   }

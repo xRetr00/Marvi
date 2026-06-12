@@ -100,7 +100,7 @@ export const ja = defineLocale({
     backendOutOfDateTitle: 'バックエンドが古いです',
     backendOutOfDateMessage:
       'Hermes バックエンドがこのデスクトップビルドより古く、正常に動作しない場合があります。更新して揃えてください。',
-    updateHermes: 'Hermes を更新',
+    updateHermes: 'Marvi を更新',
     updateReadyTitle: '更新の準備ができました',
     updateReadyMessage: count => `${count} 件の新しい変更が利用可能です。`,
     seeWhatsNew: '新機能を見る',
@@ -817,7 +817,7 @@ export const ja = defineLocale({
     gatewayStopped: 'メッセージングゲートウェイが停止中',
     hermesActiveSessions: (version, count) => `Hermes ${version} · アクティブセッション ${count}`,
     restartMessaging: 'メッセージングを再起動',
-    updateHermes: 'Hermes を更新',
+    updateHermes: 'Marvi を更新',
     actionRunning: '実行中',
     actionDone: '完了',
     actionFailed: '失敗',
@@ -1454,7 +1454,7 @@ export const ja = defineLocale({
     settingUpTitle: 'Marvi Agent を設定中',
     finishingTitle: '仕上げ中',
     failedDesc:
-      'インストール手順のいずれかが失敗しました。Windows では、別の Hermes CLI またはデスクトップインスタンスが実行中の場合に発生することがあります。実行中の Hermes インスタンスをすべて停止してから再試行してください。詳細は以下またはデスクトップログで確認できます。',
+      'インストール手順のいずれかが失敗しました。Windows では、別の Marvi CLI またはデスクトップインスタンスが実行中の場合に発生することがあります。実行中の Marvi インスタンスをすべて停止してから再試行してください。詳細は以下またはデスクトップログで確認できます。',
     activeDesc:
       'これは一回限りのセットアップです。Hermes インストーラーが依存関係をダウンロードしてマシンを設定しています。以降の起動ではこの手順はスキップされます。',
     progress: (completed, total) => `${total} ステップ中 ${completed} 完了`,

@@ -120,8 +120,8 @@ export const tr: Translations = {
     starting: "Başlatılıyor",
     startedInBackground: "Arka planda başlatıldı — ilerleme için günlüklere bakın",
     stopped: "Durduruldu",
-    updateHermes: "Hermes'i Güncelle",
-    updatingHermes: "Hermes güncelleniyor…",
+    updateMarvi: "Marvi'yi Güncelle",
+    updatingMarvi: "Marvi güncelleniyor…",
     waitingForOutput: "Çıktı bekleniyor…",
   },
 

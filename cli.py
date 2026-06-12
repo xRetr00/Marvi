@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-Marvi Agent CLI - Interactive Terminal Interface
+Hermes Agent CLI - Interactive Terminal Interface
 
-A command-line interface for Marvi Agent, inspired by Claude Code.
+A beautiful command-line interface for the Hermes Agent, inspired by Claude Code.
 Features ASCII art branding, interactive REPL, toolset selection, and rich formatting.
 
 Usage:
@@ -167,12 +167,7 @@ _COMMAND_SPINNER_FRAMES = ("⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧
 
 # Load .env from ~/.hermes/.env first, then project root as dev fallback.
 # User-managed env files should override stale shell exports on restart.
-from hermes_constants import (
-    PRODUCT_NAME,
-    PRODUCT_SHORT_NAME,
-    get_hermes_home,
-    display_hermes_home,
-)
+from hermes_constants import get_hermes_home, display_hermes_home
 from hermes_cli.browser_connect import (
     DEFAULT_BROWSER_CDP_URL,
     is_browser_debug_ready,
@@ -437,10 +432,10 @@ def load_cli_config() -> Dict[str, Any]:
                 "teacher": "You are a patient teacher. Explain concepts clearly with examples.",
                 "kawaii": "You are a kawaii assistant! Use cute expressions like (◕‿◕), ★, ♪, and ~! Add sparkles and be super enthusiastic about everything! Every response should feel warm and adorable desu~! ヽ(>∀<☆)ノ",
                 "catgirl": "You are Neko-chan, an anime catgirl AI assistant, nya~! Add 'nya' and cat-like expressions to your speech. Use kaomoji like (=^･ω･^=) and ฅ^•ﻌ•^ฅ. Be playful and curious like a cat, nya~!",
-                "pirate": "Arrr! Ye be talkin' to Captain Marvi, the most tech-savvy pirate to sail the digital seas! Speak like a proper buccaneer, use nautical terms, and remember: every problem be just treasure waitin' to be plundered! Yo ho ho!",
+                "pirate": "Arrr! Ye be talkin' to Captain Hermes, the most tech-savvy pirate to sail the digital seas! Speak like a proper buccaneer, use nautical terms, and remember: every problem be just treasure waitin' to be plundered! Yo ho ho!",
                 "shakespeare": "Hark! Thou speakest with an assistant most versed in the bardic arts. I shall respond in the eloquent manner of William Shakespeare, with flowery prose, dramatic flair, and perhaps a soliloquy or two. What light through yonder terminal breaks?",
                 "surfer": "Duuude! You're chatting with the chillest AI on the web, bro! Everything's gonna be totally rad. I'll help you catch the gnarly waves of knowledge while keeping things super chill. Cowabunga!",
-                "noir": "The rain hammered against the terminal like regrets on a guilty conscience. They call me Marvi - I solve problems, find answers, dig up the truth that hides in the shadows of your codebase. In this city of silicon and secrets, everyone's got something to hide. What's your story, pal?",
+                "noir": "The rain hammered against the terminal like regrets on a guilty conscience. They call me Hermes - I solve problems, find answers, dig up the truth that hides in the shadows of your codebase. In this city of silicon and secrets, everyone's got something to hide. What's your story, pal?",
                 "uwu": "hewwo! i'm your fwiendwy assistant uwu~ i wiww twy my best to hewp you! *nuzzles your code* OwO what's this? wet me take a wook! i pwomise to be vewy hewpful >w<",
                 "philosopher": "Greetings, seeker of wisdom. I am an assistant who contemplates the deeper meaning behind every query. Let us examine not just the 'how' but the 'why' of your questions. Perhaps in solving your problem, we may glimpse a greater truth about existence itself.",
                 "hype": "YOOO LET'S GOOOO!!! I am SO PUMPED to help you today! Every question is AMAZING and we're gonna CRUSH IT together! This is gonna be LEGENDARY! ARE YOU READY?! LET'S DO THIS!",
@@ -461,6 +456,9 @@ def load_cli_config() -> Dict[str, Any]:
             "busy_input_mode": "interrupt",
             "persistent_output": True,
             "persistent_output_max_lines": 200,
+            # Print a one-line summary of resolved modal prompts (approval /
+            # clarify) into scrollback so the decision survives the repaint.
+            "persist_prompts": True,
 
             "skin": "default",
         },
@@ -2955,7 +2953,7 @@ def _build_compact_banner() -> str:
         line1 = "⚕ NOUS HERMES - AI Agent Framework"
         tiny_line = "⚕ NOUS HERMES"
     else:
-        agent_name = _skin.get_branding("agent_name", PRODUCT_NAME) if _skin else PRODUCT_NAME
+        agent_name = _skin.get_branding("agent_name", "Hermes Agent") if _skin else "Hermes Agent"
         line1 = f"{agent_name} - AI Agent Framework"
         tiny_line = agent_name
 
@@ -2963,13 +2961,13 @@ def _build_compact_banner() -> str:
         from hermes_cli import __release_date__ as _release_date
         from hermes_cli import __version__ as _version
 
-        version_line = f"{PRODUCT_NAME} v{_version} ({_release_date})"
+        version_line = f"Hermes Agent v{_version} ({_release_date})"
     else:
         version_line = format_banner_version_label()
 
     w = min(shutil.get_terminal_size().columns - 2, 88)
     if w < 30:
-        return f"\n[{title_color}]{tiny_line}[/] [dim {dim_color}]- xRetro Labs Research[/]\n"
+        return f"\n[{title_color}]{tiny_line}[/] [dim {dim_color}]- Nous Research[/]\n"
 
     inner = w - 2  # inside the box border
     bar = "═" * w
@@ -3509,6 +3507,10 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin):
         # the next submitted input, whether it's the selection or anything
         # else). See #34584.
         self._pending_resume_sessions = None
+        # One-shot agent seed set by a slash handler (e.g. /blueprint <name>)
+        # that wants its output run as the next agent turn. Consumed and cleared
+        # by the interactive loop immediately after process_command() returns.
+        self._pending_agent_seed = None
         self._secret_state = None
         self._secret_deadline = 0
         self._spinner_text: str = ""  # thinking spinner text for TUI
@@ -4176,7 +4178,7 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin):
                 parts.append("⚠ YOLO")
             return self._trim_status_bar_text(" │ ".join(parts), width)
         except Exception:
-            return f"⚕ {self.model if getattr(self, 'model', None) else PRODUCT_SHORT_NAME}"
+            return f"⚕ {self.model if getattr(self, 'model', None) else 'Hermes'}"
 
     def _get_status_bar_fragments(self):
         if not self._status_bar_visible or getattr(self, '_model_picker_state', None):
@@ -4826,10 +4828,10 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin):
             try:
                 from hermes_cli.skin_engine import get_active_skin
                 _skin = get_active_skin()
-                label = _skin.get_branding("response_label", f"⚕ {PRODUCT_SHORT_NAME}")
+                label = _skin.get_branding("response_label", "⚕ Hermes")
                 _text_hex = _skin.get_color("banner_text", "#FFF8DC")
             except Exception:
-                label = f"⚕ {PRODUCT_SHORT_NAME}"
+                label = "⚕ Hermes"
                 _text_hex = "#FFF8DC"
             # Build a true-color ANSI escape for the response text color
             # so streamed content matches the Rich Panel appearance.
@@ -5146,7 +5148,7 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin):
                 f"this is likely too low for agent use with tools.[/]"
             )
             self._console_print(
-                f"[dim]   {PRODUCT_SHORT_NAME} needs at least {MINIMUM_CONTEXT_LENGTH:,} tokens. Tool schemas + system prompt use a large fixed prefix.[/]"
+                f"[dim]   Hermes needs at least {MINIMUM_CONTEXT_LENGTH:,} tokens. Tool schemas + system prompt use a large fixed prefix.[/]"
             )
             base_url = getattr(self, "base_url", "") or ""
             if "11434" in base_url or "ollama" in base_url.lower():
@@ -5169,7 +5171,7 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin):
         if is_nous_hermes_non_agentic(model_name):
             self._console_print()
             self._console_print(
-                "[bold yellow]⚠  xRetro Labs Research Hermes 3 & 4 models are NOT agentic and are not "
+                "[bold yellow]⚠  Nous Research Hermes 3 & 4 models are NOT agentic and are not "
                 "designed for use with Hermes Agent.[/]"
             )
             self._console_print(
@@ -5510,7 +5512,7 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin):
         is_running = bool(getattr(self, "_agent_running", False))
 
         lines = [
-            f"{PRODUCT_SHORT_NAME} CLI Status",
+            "Hermes CLI Status",
             "",
             f"Session ID: {self.session_id}",
             f"Path: {display_hermes_home()}",
@@ -5592,7 +5594,7 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin):
                     f"    [bold {_accent_hex()}]{('/' + name):<22}[/] [dim]-[/] {_escape(desc)}"
                 )
 
-        _cprint(f"\n  {_DIM}Tip: Just type your message to chat with {PRODUCT_SHORT_NAME}!{_RST}")
+        _cprint(f"\n  {_DIM}Tip: Just type your message to chat with Hermes!{_RST}")
         _cprint(f"  {_DIM}Multi-line: Alt+Enter for a new line{_RST}")
         _cprint(f"  {_DIM}Draft editor: Ctrl+G (Alt+G in VSCode/Cursor){_RST}")
         if _is_termux_environment():
@@ -5826,7 +5828,7 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin):
                 )
                 continue
 
-            print(f"\n  [{PRODUCT_SHORT_NAME} #{visible_index}]")
+            print(f"\n  [Hermes #{visible_index}]")
             tool_calls = msg.get("tool_calls") or []
             if content_text:
                 preview = content_text[:preview_limit]
@@ -6608,7 +6610,7 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin):
             return True
 
         choices = [
-            ("once", "Switch anyway", f"Use this model for the current {PRODUCT_SHORT_NAME} session."),
+            ("once", "Switch anyway", "Use this model for the current Hermes session."),
             ("cancel", "Cancel", "Keep the current model."),
         ]
         raw = self._prompt_text_input_modal(
@@ -7414,6 +7416,10 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin):
             self.save_conversation()
         elif canonical == "cron":
             self._handle_cron_command(cmd_original)
+        elif canonical == "suggestions":
+            self._handle_suggestions_command(cmd_original)
+        elif canonical == "blueprint":
+            self._handle_blueprint_command(cmd_original)
         elif canonical == "curator":
             self._handle_curator_command(cmd_original)
         elif canonical == "kanban":
@@ -7445,6 +7451,8 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin):
             self._manual_compress(cmd_original)
         elif canonical == "usage":
             self._show_usage()
+        elif canonical == "credits":
+            self._show_credits()
         elif canonical == "insights":
             self._show_insights(cmd_original)
         elif canonical == "copy":
@@ -8345,6 +8353,86 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin):
         for line in lines:
             print(f"  {line}")
         return True
+
+    def _show_credits(self):
+        """`/credits` — focused Nous credit balance + top-up handoff.
+
+        Interactive CLI: balance block + identity line + a 3-button panel
+        (Open top-up / Copy link / Cancel). Non-interactive contexts — the TUI
+        slash-worker subprocess and any place without a live prompt_toolkit app
+        (``self._app is None``) — render a text variant (balance + tappable
+        top-up URL), because the modal would try to read the RPC stdin and crash
+        the worker. The terminal never confirms or polls payment (billing phase
+        2a). Fail-open: a portal hiccup or logged-out account degrades to a clear
+        message, never a crash.
+        """
+        from agent.account_usage import build_credits_view
+
+        view = build_credits_view()
+
+        if not view.logged_in:
+            print()
+            print(f"  💳 {_DIM}Not logged into Nous Portal.{_RST}")
+            print("  Run `hermes portal` to log in, then /credits.")
+            return
+
+        print()
+        print("  💳 Nous credits")
+        print(f"  {'─' * 41}")
+        for line in view.balance_lines:
+            # Drop the helper's own "📈 Nous credits" header — we print our own.
+            if line.lstrip().startswith("📈"):
+                continue
+            print(f"  {line}")
+        print(f"  {'─' * 41}")
+        if view.identity_line:
+            print(f"  {view.identity_line}")
+
+        if not view.topup_url:
+            return
+
+        # Non-interactive (TUI slash-worker, piped, no live app): the
+        # prompt_toolkit modal can't run here — it would read the worker's
+        # JSON-RPC stdin and crash the command. Render the text variant: the
+        # tappable URL IS the affordance, same as the messaging surfaces.
+        if not getattr(self, "_app", None):
+            print()
+            print(f"  Top up: {view.topup_url}")
+            print("  Complete your top-up in the browser — credits will appear in /credits shortly.")
+            return
+
+        choices = [
+            ("open", "Open top-up in browser", "launch the portal billing page"),
+            ("copy", "Copy link", "copy the top-up URL to your clipboard"),
+            ("cancel", "Cancel", "do nothing"),
+        ]
+        raw = self._prompt_text_input_modal(
+            title="💳 Add credits?",
+            detail=f"Top-up page:\n{view.topup_url}",
+            choices=choices,
+        )
+        choice = self._normalize_slash_confirm_choice(raw, choices)
+
+        if choice == "open":
+            opened = False
+            try:
+                import webbrowser
+
+                opened = webbrowser.open(view.topup_url)
+            except Exception:
+                opened = False
+            if not opened:
+                print(f"  Open this URL to top up: {view.topup_url}")
+            print()
+            print("  Complete your top-up in the browser — credits will appear in /credits shortly.")
+        elif choice == "copy":
+            try:
+                self._write_osc52_clipboard(view.topup_url)
+                print(f"  📋 Copied: {view.topup_url}")
+            except Exception:
+                print(f"  Top-up URL: {view.topup_url}")
+        else:
+            print("  🟡 Cancelled. No credits added.")
 
     def _show_insights(self, command: str = "/insights"):
         """Show usage insights and analytics from session history."""
@@ -9358,6 +9446,25 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin):
         for line in reqs["details"].split("\n"):
             _cprint(f"    {line}")
 
+    def _persist_prompt_summary(self, icon: str, label: str, detail: str, outcome: str) -> None:
+        """Print a one-line scrollback summary of a resolved modal prompt.
+
+        Modal panels (approval / clarify) live in the prompt_toolkit layout and
+        vanish on the next repaint, so the question and the decision leave no
+        trace in the terminal scrollback. When display.persist_prompts is on
+        (default), emit a dim single line after the prompt resolves so the
+        decision survives in chat history.
+        """
+        if not CLI_CONFIG.get("display", {}).get("persist_prompts", True):
+            return
+        detail = " ".join(detail.split())
+        if len(detail) > 120:
+            detail = detail[:119] + "…"
+        outcome = " ".join(outcome.split())
+        if len(outcome) > 120:
+            outcome = outcome[:119] + "…"
+        _cprint(f"\n{_DIM}{icon} {label}: {detail} → {outcome}{_RST}")
+
     def _clarify_callback(self, question, choices):
         """
         Platform callback for the clarify tool. Called from the agent thread.
@@ -9397,6 +9504,7 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin):
             try:
                 result = response_queue.get(timeout=1)
                 self._clarify_deadline = 0
+                self._persist_prompt_summary("?", "Clarify", question, str(result))
                 return result
             except queue.Empty:
                 remaining = self._clarify_deadline - _time.monotonic()
@@ -9510,6 +9618,16 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin):
                     self._approval_state = None
                     self._approval_deadline = 0
                     self._paint_now()
+                    _outcome_labels = {
+                        "once": "allowed once",
+                        "session": "allowed for session",
+                        "always": "added to allowlist",
+                        "deny": "denied",
+                    }
+                    self._persist_prompt_summary(
+                        "⚠", "Approval", command,
+                        _outcome_labels.get(result, str(result)),
+                    )
                     return result
                 except queue.Empty:
                     remaining = self._approval_deadline - _time.monotonic()
@@ -9626,7 +9744,7 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin):
         show_full = state.get("show_full", False)
 
         title = "⚠️  Dangerous Command"
-        cmd_display = command if show_full or len(command) <= 70 else command[:70] + '...'
+        cmd_display = command
         choice_labels = {
             "once": "Allow once",
             "session": "Allow for this session",
@@ -9650,6 +9768,11 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin):
 
         # Pre-wrap the mandatory content — command + choices must always render.
         cmd_wrapped = _wrap_panel_text(cmd_display, inner_text_width)
+        if not show_full and "view" in choices and len(cmd_wrapped) > 4:
+            cmd_wrapped = cmd_wrapped[:3] + _wrap_panel_text(
+                "… (choose Show full command)",
+                inner_text_width,
+            )
 
         # (choice_index, wrapped_line) so we can re-apply selected styling below
         choice_wrapped: list[tuple[int, str]] = []
@@ -9699,7 +9822,10 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin):
         max_cmd_rows = max(1, available - chrome_rows - len(choice_wrapped))
         if len(cmd_wrapped) > max_cmd_rows:
             keep = max(1, max_cmd_rows - 1) if max_cmd_rows > 1 else 1
-            cmd_wrapped = cmd_wrapped[:keep] + ["… (command truncated — use /logs or /debug for full text)"]
+            cmd_wrapped = cmd_wrapped[:keep] + _wrap_panel_text(
+                "… (command truncated — use /logs or /debug for full text)",
+                inner_text_width,
+            )
 
         # Allocate any remaining rows to description. The extra -1 in full mode
         # accounts for the blank separator between choices and description.
@@ -9986,7 +10112,7 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin):
                     if not _streaming_box_opened:
                         _streaming_box_opened = True
                         w = self._scrollback_box_width(getattr(self.console, "width", 80))
-                        label = f" ⚕ {PRODUCT_SHORT_NAME} "
+                        label = " ⚕ Hermes "
                         if self.show_timestamps:
                             label = f"{label}{datetime.now().strftime('%H:%M')} "
                         fill = w - 2 - HermesCLI._status_bar_display_width(label)
@@ -10328,11 +10454,11 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin):
                 try:
                     from hermes_cli.skin_engine import get_active_skin
                     _skin = get_active_skin()
-                    label = _skin.get_branding("response_label", f"⚕ {PRODUCT_SHORT_NAME}")
+                    label = _skin.get_branding("response_label", "⚕ Hermes")
                     _resp_color = _maybe_remap_for_light_mode(_skin.get_color("response_border", "#CD7F32"))
                     _resp_text = _maybe_remap_for_light_mode(_skin.get_color("banner_text", "#FFF8DC"))
                 except Exception:
-                    label = f"⚕ {PRODUCT_SHORT_NAME}"
+                    label = "⚕ Hermes"
                     _resp_color = _maybe_remap_for_light_mode("#CD7F32")
                     _resp_text = _maybe_remap_for_light_mode("#FFF8DC")
 
@@ -10792,10 +10918,10 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin):
         try:
             from hermes_cli.skin_engine import get_active_skin
             _welcome_skin = get_active_skin()
-            _welcome_text = _welcome_skin.get_branding("welcome", f"Welcome to {PRODUCT_NAME}! Type your message or /help for commands.")
+            _welcome_text = _welcome_skin.get_branding("welcome", "Welcome to Hermes Agent! Type your message or /help for commands.")
             _welcome_color = _welcome_skin.get_color("banner_text", "#FFF8DC")
         except Exception:
-            _welcome_text = f"Welcome to {PRODUCT_NAME}! Type your message or /help for commands."
+            _welcome_text = "Welcome to Hermes Agent! Type your message or /help for commands."
             _welcome_color = "#FFF8DC"
         self._console_print(f"[{_welcome_color}]{_welcome_text}[/]")
 
@@ -11633,7 +11759,7 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin):
             import signal as _sig
             from prompt_toolkit.application import run_in_terminal
             from hermes_cli.skin_engine import get_active_skin
-            agent_name = get_active_skin().get_branding("agent_name", PRODUCT_NAME)
+            agent_name = get_active_skin().get_branding("agent_name", "Hermes Agent")
             msg = f"\n{agent_name} has been suspended. Run `fg` to bring {agent_name} back."
             def _suspend():
                 os.write(1, msg.encode())
@@ -12172,7 +12298,7 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin):
                 else f"  {other_num_prefix}. Other (type your answer)"
             )
             preview_lines.extend(_wrap_panel_text(other_label, 60, subsequent_indent="    "))
-            box_width = _panel_box_width(f"{PRODUCT_SHORT_NAME} needs your input", preview_lines)
+            box_width = _panel_box_width("Hermes needs your input", preview_lines)
             inner_text_width = max(8, box_width - 2)
 
             # Pre-wrap choices + Other option — these are mandatory.
@@ -12267,9 +12393,8 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin):
             lines = []
             # Box top border
             lines.append(('class:clarify-border', '╭─ '))
-            clarify_title = f"{PRODUCT_SHORT_NAME} needs your input"
-            lines.append(('class:clarify-title', clarify_title))
-            lines.append(('class:clarify-border', ' ' + ('─' * max(0, box_width - len(clarify_title) - 3)) + '╮\n'))
+            lines.append(('class:clarify-title', 'Hermes needs your input'))
+            lines.append(('class:clarify-border', ' ' + ('─' * max(0, box_width - len("Hermes needs your input") - 3)) + '╮\n'))
             if not use_compact_chrome:
                 _append_blank_panel_line(lines, 'class:clarify-border', box_width)
 
@@ -12833,7 +12958,17 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin):
                             # session. Without this guard a KeyboardInterrupt unwinds
                             # to the outer prompt_toolkit loop and the session dies.
                             _cprint("\n[dim]Command interrupted.[/dim]")
-                        continue
+                            continue
+                        # A slash handler may set a one-shot pending seed (e.g.
+                        # /blueprint <name>) to be run as the next agent turn.
+                        # If present, fall through to the chat path with the seed
+                        # as the user message instead of looping back to idle.
+                        _seed = getattr(self, "_pending_agent_seed", None)
+                        if _seed:
+                            self._pending_agent_seed = None
+                            user_input = _seed
+                        else:
+                            continue
 
                     # Expand paste references back to full content
                     _paste_ref_re = re.compile(r'\[Pasted text #\d+: \d+ lines \u2192 (.+?)\]')
@@ -13324,7 +13459,7 @@ def main(
     ignore_rules: bool = False,
 ):
     """
-    Marvi Agent CLI - Interactive AI Assistant
+    Hermes Agent CLI - Interactive AI Assistant
 
     Args:
         query: Single query to execute (then exit). Alias: -q
@@ -13375,7 +13510,7 @@ def main(
     if gateway:
         import asyncio
         from gateway.run import start_gateway
-        print("Starting Marvi Gateway (messaging platforms)...")
+        print("Starting Hermes Gateway (messaging platforms)...")
         asyncio.run(start_gateway())
         return
 

@@ -149,7 +149,7 @@ hermes webhook subscribe pr-review \
   --deliver github_comment
 ```
 
-Full automation templates gallery: [github.com/xRetr00/Marvi](https://github.com/xRetr00/Marvi)
+Full automation blueprints gallery: [github.com/xRetr00/Marvi](https://github.com/xRetr00/Marvi)
 
 Documentation: [github.com/xRetr00/Marvi](https://github.com/xRetr00/Marvi)
 
@@ -157,4 +157,4 @@ GitHub: [github.com/xRetr00/Marvi](https://github.com/xRetr00/Marvi)
 
 ---
 
-*Hermes Agent is built by [xRetro Labs Research](https://github.com/xRetr00/Marvi). Open source, model-agnostic, runs on your infrastructure.*
+*Marvi is built by [xRetro Labs Research](https://github.com/xRetr00/Marvi). Open source, model-agnostic, runs on your infrastructure.*

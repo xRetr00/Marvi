@@ -4,8 +4,7 @@ No React, no JavaScript dependency. Listed providers come from the
 registry; clicking a provider sends a GET to
 ``/auth/login?provider=<name>``.
 
-Visual styling mirrors the Nous Research design system (the
-``@nous-research/ui`` package the React dashboard uses): the same
+Visual styling mirrors the Marvi dashboard design system: the same
 ``Collapse`` / ``Rules Compressed`` typeface, amber-on-dark colour
 tokens (``#170d02`` / ``#ffac02`` / ``#fff``), uppercase + wide-tracking
 brand chrome, and the inset-bevel button shadow. Fonts are served
@@ -38,9 +37,9 @@ _LOGIN_HTML_TEMPLATE = """\
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Sign in — Hermes Agent</title>
+<title>Sign in - Marvi</title>
 <style>
-  /* Brand fonts shipped by @nous-research/ui — same files the SPA loads. */
+  /* Brand fonts shipped with the dashboard - same files the SPA loads. */
   @font-face {{
     font-family: 'Collapse';
     font-style: normal;
@@ -302,10 +301,10 @@ _LOGIN_HTML_TEMPLATE = """\
 </head>
 <body>
 <main>
-  <div class="brand">Nous<span class="dot"></span>Research</div>
+  <div class="brand">xRetro<span class="dot"></span>Labs</div>
   <div class="card">
     <h1>Sign in</h1>
-    <p class="subtitle">Choose a sign-in method to continue to the Hermes Agent dashboard.</p>
+    <p class="subtitle">Choose a sign-in method to continue to the Marvi dashboard.</p>
     <div class="provider-list">
 {provider_buttons}
     </div>
@@ -325,7 +324,7 @@ _EMPTY_HTML = """\
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Sign-in unavailable — Hermes Agent</title>
+<title>Sign-in unavailable - Marvi</title>
 <style>
   @font-face {
     font-family: 'Collapse';

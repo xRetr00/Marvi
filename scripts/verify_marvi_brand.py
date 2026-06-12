@@ -41,6 +41,7 @@ VISIBLE_TEXT_ROOTS = [
     "scripts/install.ps1",
     "scripts/install.sh",
     "hermes_cli/banner.py",
+    "hermes_cli/dashboard_auth/login_page.py",
     "hermes_cli/main.py",
     "hermes_cli/setup.py",
     "hermes_cli/uninstall.py",
@@ -117,6 +118,7 @@ ALLOWED_SNIPPETS = [
 REQUIRED_TEXT = {
     "apps/desktop/package.json": ["\"productName\": \"Marvi\"", "\"executableName\": \"Marvi\""],
     "apps/desktop/src/components/chat/intro.tsx": ["const WORDMARK = 'MARVI'"],
+    "apps/desktop/src/components/brand-mark.tsx": ["assetPath('hermes.png')"],
     "apps/bootstrap-installer/src/routes/welcome.tsx": [">MARVI<", "Install Marvi"],
     "apps/bootstrap-installer/src-tauri/tauri.conf.json": [
         "\"productName\": \"Marvi\"",
@@ -131,6 +133,11 @@ REQUIRED_TEXT = {
     ],
     "apps/desktop/electron/bootstrap-runner.cjs": [
         "raw.githubusercontent.com/xRetr00/Marvi"
+    ],
+    "hermes_cli/dashboard_auth/login_page.py": [
+        "<title>Sign in - Marvi</title>",
+        "xRetro<span class=\"dot\"></span>Labs",
+        "continue to the Marvi dashboard",
     ],
 }
 

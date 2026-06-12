@@ -132,6 +132,14 @@
     "appId": "com.xretro.marvi",
     "productName": "Marvi",
     "executableName": "Marvi",
+    "protocols": [
+      {
+        "name": "Marvi Protocol",
+        "schemes": [
+          "hermes"
+        ]
+      }
+    ],
     "artifactName": "Marvi-${version}-${os}-${arch}.${ext}",
     "icon": "assets/icon",
     "directories": {

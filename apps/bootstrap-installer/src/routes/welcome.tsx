@@ -12,7 +12,7 @@ import { ArrowRight } from 'lucide-react'
  *   - fit-text utility so the wordmark sizes itself to the column
  *
  * No install-path footer. The default install location is correct for
- * 99% of users; the rest will use the CLI installer with a -HermesHome
+ * 99% of users; the rest will use the CLI installer with a -MarviHome
  * flag. Showing %LOCALAPPDATA% to grandma is developer-brain.
  */
 export default function Welcome() {
@@ -47,7 +47,7 @@ export default function Welcome() {
         size="lg"
         className="group inline-flex items-center gap-2 px-6"
       >
-        Install Hermes
+        Install Marvi
         <ArrowRight
           size={18}
           className="transition-transform group-hover:translate-x-0.5"

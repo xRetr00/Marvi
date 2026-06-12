@@ -99,7 +99,7 @@ One automation, any destination:
 
 ```bash
 --deliver telegram                      # Telegram home channel
---deliver discord                       # Discord home channel  
+--deliver discord                       # Discord home channel
 --deliver slack                         # Slack channel
 --deliver sms:+15551234567              # Text message
 --deliver telegram:-1001234567890:42    # Specific Telegram forum topic
@@ -149,12 +149,12 @@ hermes webhook subscribe pr-review \
   --deliver github_comment
 ```
 
-Full automation templates gallery: [hermes-agent.nousresearch.com/docs/guides/automation-templates](https://hermes-agent.nousresearch.com/docs/guides/automation-templates)
+Full automation templates gallery: [github.com/xRetr00/Marvi](https://github.com/xRetr00/Marvi)
 
-Documentation: [hermes-agent.nousresearch.com](https://hermes-agent.nousresearch.com)
+Documentation: [github.com/xRetr00/Marvi](https://github.com/xRetr00/Marvi)
 
-GitHub: [github.com/NousResearch/hermes-agent](https://github.com/NousResearch/hermes-agent)
+GitHub: [github.com/xRetr00/Marvi](https://github.com/xRetr00/Marvi)
 
 ---
 
-*Hermes Agent is built by [Nous Research](https://nousresearch.com). Open source, model-agnostic, runs on your infrastructure.*
+*Hermes Agent is built by [xRetro Labs Research](https://github.com/xRetr00/Marvi). Open source, model-agnostic, runs on your infrastructure.*

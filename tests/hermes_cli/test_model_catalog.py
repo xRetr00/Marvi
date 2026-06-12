@@ -180,9 +180,9 @@ class TestFallbackChain:
     releases (opus 4.8, etc.) never reach the picker.
     """
 
-    PRIMARY = "https://hermes-agent.nousresearch.com/docs/api/model-catalog.json"
+    PRIMARY = "https://github.com/xRetr00/Marvi"
     FALLBACK = (
-        "https://raw.githubusercontent.com/NousResearch/hermes-agent"
+        "https://raw.githubusercontent.com/xRetr00/Marvi"
         "/main/website/static/api/model-catalog.json"
     )
 
@@ -236,24 +236,21 @@ class TestFallbackChain:
 
         assert fetch.call_count == 1, f"expected 1 call, got {fetch.call_count}"
 
-    def test_get_catalog_uses_fallback_chain(self, isolated_home):
-        """End-to-end: ``get_catalog`` routes through the fallback helper so
-        a primary URL failure transparently produces a working catalog."""
+    def test_get_catalog_uses_raw_github_primary(self, isolated_home):
+        """End-to-end: ``get_catalog`` uses the raw Marvi manifest URL directly."""
         from hermes_cli import model_catalog
         manifest = _valid_manifest()
         calls: list[str] = []
 
         def fake_fetch(url, timeout):
             calls.append(url)
-            if url == self.PRIMARY:
-                return None
             return manifest
 
         with patch.object(model_catalog, "_fetch_manifest", side_effect=fake_fetch):
             result = model_catalog.get_catalog(force_refresh=True)
 
         assert result == manifest
-        assert self.FALLBACK in calls
+        assert calls == [model_catalog.DEFAULT_CATALOG_URL]
 
 
 class TestCuratedAccessors:

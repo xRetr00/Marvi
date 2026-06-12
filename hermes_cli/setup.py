@@ -1,6 +1,6 @@
 """
 
-Interactive setup wizard for Hermes Agent.
+Interactive setup wizard for Marvi.
 
 
 
@@ -6000,7 +6000,7 @@ def run_setup_wizard(args):
 
         color(
 
-            "│             ⚕ Hermes Agent Setup Wizard                │", Colors.MAGENTA
+            "│                 Marvi Setup Wizard                     │", Colors.MAGENTA
 
         )
 
@@ -6022,7 +6022,7 @@ def run_setup_wizard(args):
 
         color(
 
-            "│  Let's configure your Hermes Agent installation.       │", Colors.MAGENTA
+            "│  Let's configure your Marvi installation.              │", Colors.MAGENTA
 
         )
 

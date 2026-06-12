@@ -1,0 +1,128 @@
+name: Marvi Upstream Sync
+
+on:
+  schedule:
+    # Daily at 05:20 UTC. Scheduled workflows run on the default branch only.
+    - cron: '20 5 * * *'
+  workflow_dispatch:
+    inputs:
+      upstream_branch:
+        description: Hermes upstream branch to sync
+        required: false
+        default: main
+      create_pr:
+        description: Create a PR when upstream has changes
+        required: false
+        default: 'true'
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  sync:
+    if: github.repository == 'xRetr00/Marvi'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405  # v6.2.0
+        with:
+          python-version: '3.11'
+
+      - name: Configure git author
+        run: |
+          git config user.name "marvi-upstream-sync[bot]"
+          git config user.email "marvi-upstream-sync[bot]@users.noreply.github.com"
+
+      - name: Add Hermes upstream remote
+        run: |
+          git remote add hermes-upstream https://github.com/NousResearch/hermes-agent.git || true
+          git fetch origin main
+          git fetch hermes-upstream "${{ inputs.upstream_branch || 'main' }}"
+
+      - name: Check whether upstream has new commits
+        id: check
+        shell: bash
+        run: |
+          set -euo pipefail
+          UPSTREAM_BRANCH="${{ inputs.upstream_branch || 'main' }}"
+          UPSTREAM_REF="hermes-upstream/${UPSTREAM_BRANCH}"
+          UPSTREAM_SHA="$(git rev-parse "$UPSTREAM_REF")"
+          BASE_SHA="$(git rev-parse origin/main)"
+          NEW_COUNT="$(git rev-list --count "origin/main..$UPSTREAM_REF" || echo 0)"
+          echo "upstream_sha=$UPSTREAM_SHA" >> "$GITHUB_OUTPUT"
+          echo "base_sha=$BASE_SHA" >> "$GITHUB_OUTPUT"
+          echo "new_count=$NEW_COUNT" >> "$GITHUB_OUTPUT"
+          if [ "$NEW_COUNT" = "0" ]; then
+            echo "has_updates=false" >> "$GITHUB_OUTPUT"
+            echo "Marvi main has no missing commits from $UPSTREAM_REF."
+          else
+            echo "has_updates=true" >> "$GITHUB_OUTPUT"
+            echo "Hermes upstream has $NEW_COUNT commit(s) not reachable from Marvi main."
+          fi
+
+      - name: Prepare sync branch
+        if: steps.check.outputs.has_updates == 'true'
+        id: prepare
+        shell: bash
+        run: |
+          set -euo pipefail
+          UPSTREAM_BRANCH="${{ inputs.upstream_branch || 'main' }}"
+          SHORT_SHA="$(git rev-parse --short=8 "hermes-upstream/${UPSTREAM_BRANCH}")"
+          BRANCH="sync/hermes-upstream-$(date -u +%Y%m%d)-${SHORT_SHA}"
+          echo "branch=$BRANCH" >> "$GITHUB_OUTPUT"
+          python scripts/prepare_marvi_upstream_sync.py \
+            --upstream-remote hermes-upstream \
+            --upstream-branch "$UPSTREAM_BRANCH" \
+            --base-branch main \
+            --branch "$BRANCH"
+
+      - name: Run brand guard
+        if: steps.check.outputs.has_updates == 'true'
+        run: python scripts/verify_marvi_brand.py
+
+      - name: Run focused update-surface tests
+        if: steps.check.outputs.has_updates == 'true'
+        run: |
+          python -m compileall hermes_cli scripts
+          npm ci
+          npm run typecheck --workspace apps/bootstrap-installer
+          npm run typecheck --workspace apps/desktop
+          npm run typecheck --workspace ui-tui
+          npm run typecheck --workspace web
+          node --test apps/desktop/electron/update-remote.test.cjs apps/desktop/electron/bootstrap-runner.test.cjs
+
+      - name: Push sync branch
+        if: steps.check.outputs.has_updates == 'true'
+        run: git push -u origin "${{ steps.prepare.outputs.branch }}"
+
+      - name: Create pull request
+        if: steps.check.outputs.has_updates == 'true' && (github.event_name == 'schedule' || inputs.create_pr == 'true')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BRANCH: ${{ steps.prepare.outputs.branch }}
+          UPSTREAM_SHA: ${{ steps.check.outputs.upstream_sha }}
+          NEW_COUNT: ${{ steps.check.outputs.new_count }}
+        run: |
+          gh pr create \
+            --base main \
+            --head "$BRANCH" \
+            --title "sync: merge Hermes upstream into Marvi" \
+            --body "Automated upstream sync from NousResearch/hermes-agent.
+
+          Upstream SHA: \`$UPSTREAM_SHA\`
+          New upstream commits detected: \`$NEW_COUNT\`
+
+          Required review:
+          - Confirm Marvi visible branding is preserved.
+          - Review UI/installer/TUI conflicts carefully.
+          - Run full CI before merging.
+
+          Guardrails already run in this workflow:
+          - \`python scripts/verify_marvi_brand.py\`
+          - focused TypeScript checks for desktop/bootstrap/TUI/web
+          - desktop update/bootstrap Node tests"

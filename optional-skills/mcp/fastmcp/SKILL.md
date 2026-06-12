@@ -2,7 +2,7 @@
 name: fastmcp
 description: Build, test, inspect, install, and deploy MCP servers with FastMCP in Python. Use when creating a new MCP server, wrapping an API or database as MCP tools, exposing resources or prompts, or preparing a FastMCP server for Claude Code, Cursor, or HTTP deployment.
 version: 1.0.0
-author: Hermes Agent
+author: Marvi Agent
 license: MIT
 platforms: [linux, macos, windows]
 metadata:
@@ -291,7 +291,7 @@ fastmcp call server.py your_tool_name --json
 
 This usually exposes naming mismatches, missing required arguments, or non-serializable return values.
 
-### Hermes cannot see the deployed server
+### Marvi cannot see the deployed server
 
 The server-building part may be correct while the Hermes config is not. Load the `native-mcp` skill and configure the server in `~/.hermes/config.yaml`, then restart Hermes.
 

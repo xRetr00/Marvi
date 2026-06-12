@@ -2,7 +2,7 @@
 name: codex
 description: "Delegate coding to OpenAI Codex CLI (features, PRs)."
 version: 1.0.0
-author: Hermes Agent
+author: Marvi Agent
 license: MIT
 platforms: [linux, macos, windows]
 metadata:
@@ -76,7 +76,7 @@ process(action="kill", session_id="<id>")
 | `--yolo` | No sandbox, no approvals (fastest, most dangerous) |
 | `--sandbox danger-full-access` | No Codex sandbox; useful when the host service context breaks bubblewrap |
 
-## Hermes Gateway Caveat
+## Marvi Gateway Caveat
 
 When invoking the Codex CLI from a Hermes gateway/service context (for example,
 Telegram-driven agent sessions), Codex `workspace-write` sandboxing may fail even

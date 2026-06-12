@@ -133,7 +133,7 @@ n.cook(force=True)
 actual = str(n.width) + 'x' + str(n.height)
 ```
 
-## 5. Hermes Configuration
+## 5. Marvi Configuration
 
 ### Config location
 

@@ -183,10 +183,10 @@ async function checkRuntime(ctx: OnboardingContext): Promise<RuntimeReadinessRes
 }
 
 function notifyReady(provider: string) {
-  notify({ kind: 'success', title: 'Hermes is ready', message: `${provider} connected.` })
+  notify({ kind: 'success', title: 'Marvi is ready', message: `${provider} connected.` })
 }
 
-// Human-friendly labels for tools auto-routed through the Nous Tool Gateway,
+// Human-friendly labels for tools auto-routed through the managed Tool Gateway,
 // mirroring hermes_cli/nous_subscription._GATEWAY_TOOL_LABELS so the GUI and
 // CLI describe the same thing.
 const GATEWAY_TOOL_LABELS: Record<string, string> = {
@@ -197,8 +197,8 @@ const GATEWAY_TOOL_LABELS: Record<string, string> = {
   web: 'web search & extract'
 }
 
-// When switching to Nous auto-routes unconfigured tools through the Tool
-// Gateway, tell the user which ones — same information the CLI prints. Silent
+// When a subscription auto-routes unconfigured tools through the Tool Gateway,
+// tell the user which ones — same information the CLI prints. Silent
 // when nothing changed (subscriber already configured, has own keys, etc.).
 function notifyGatewayTools(tools: string[] | undefined) {
   if (!tools || tools.length === 0) {
@@ -211,7 +211,7 @@ function notifyGatewayTools(tools: string[] | undefined) {
   notify({
     durationMs: 8000,
     kind: 'info',
-    message: `${list} now run through your Nous subscription — no separate API keys needed.`,
+    message: `${list} now run through your subscription — no separate API keys needed.`,
     title: 'Tool Gateway enabled'
   })
 }
@@ -257,8 +257,8 @@ async function fetchProviderDefaultModel(
   }
 
   // Prefer the backend's recommended default — it mirrors the curation
-  // `hermes model` does (for Nous it honors the user's free/paid tier, so a
-  // free user gets a free model rather than a paid default like opus). Fall
+  // `hermes model` does (for subscription-backed providers it honors the
+  // user's tier, so a free user gets a free model rather than a paid default). Fall
   // back to the first curated model if the endpoint can't resolve one.
   let defaultModel = String(models[0])
 
@@ -354,9 +354,11 @@ function providerResolutionFailure(reason: null | string) {
   const detail = reason?.trim()
 
   return detail
-    ? `Connected, but Hermes still cannot resolve a usable provider. ${detail}`
-    : 'Connected, but Hermes still cannot resolve a usable provider.'
+    ? `Connected, but Marvi still cannot resolve a usable provider. ${detail}`
+    : 'Connected, but Marvi still cannot resolve a usable provider.'
 }
+
+const visibleOAuthProviders = (providers: OAuthProvider[]) => providers.filter(provider => provider.id !== 'nous')
 
 async function refreshProviders() {
   if (providersRefreshPromise) {
@@ -368,7 +370,8 @@ async function refreshProviders() {
   providersRefreshPromise = (async () => {
     try {
       const { providers } = await listOAuthProviders()
-      patch({ mode: providers.length > 0 ? 'oauth' : 'apikey', providers })
+      const visibleProviders = visibleOAuthProviders(providers)
+      patch({ mode: visibleProviders.length > 0 ? 'oauth' : 'apikey', providers: visibleProviders })
     } catch {
       patch({ mode: 'apikey', providers: [] })
     } finally {
@@ -696,7 +699,7 @@ export async function recheckExternalSignin(ctx: OnboardingContext) {
       provider,
       message:
         reason?.trim() ||
-        `Hermes still cannot reach ${provider.name}. Run \`${provider.cli_command}\` in a terminal first.`
+        `Marvi still cannot reach ${provider.name}. Run \`${provider.cli_command}\` in a terminal first.`
     })
   )
 }
@@ -798,7 +801,7 @@ export async function saveOnboardingLocalEndpoint(baseUrl: string, ctx: Onboardi
     if (!runtime.ready) {
       const detail = (runtime.reason ?? '').trim()
 
-      return { ok: false, message: detail || `Saved, but Hermes still cannot reach ${url}.` }
+      return { ok: false, message: detail || `Saved, but Marvi still cannot reach ${url}.` }
     }
 
     notifyReady('Local / custom endpoint')

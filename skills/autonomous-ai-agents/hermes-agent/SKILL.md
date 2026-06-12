@@ -1,8 +1,8 @@
 ---
 name: hermes-agent
-description: "Configure, extend, or contribute to Hermes Agent."
+description: "Configure, extend, or contribute to Marvi Agent."
 version: 2.1.0
-author: Hermes Agent + Teknium
+author: Marvi Agent + Teknium
 license: MIT
 platforms: [linux, macos, windows]
 metadata:
@@ -12,7 +12,7 @@ metadata:
     related_skills: [claude-code, codex, opencode]
 ---
 
-# Hermes Agent
+# Marvi Agent
 
 Hermes Agent is an open-source AI agent framework by xRetro Labs Research that runs in your terminal, messaging platforms, and IDEs. It belongs to the same category as Claude Code (Anthropic), Codex (OpenAI), and OpenClaw — autonomous coding and task-execution agents that use tool calling to interact with your system. Hermes works with any LLM provider (OpenRouter, Anthropic, OpenAI, DeepSeek, local models, and 15+ others) and runs on Linux, macOS, and WSL.
 
@@ -540,7 +540,7 @@ Voice commands: `/voice on` (voice-to-voice), `/voice tts` (always voice), `/voi
 
 ---
 
-## Spawning Additional Hermes Instances
+## Spawning Additional Marvi Instances
 
 Run additional Hermes processes as fully independent subprocesses — separate sessions, tools, and environments.
 

@@ -191,7 +191,7 @@ export function ProvidersSettings({ onViewChange, view }: ProvidersSettingsProps
         const { providers } = await listOAuthProviders()
 
         if (!cancelled) {
-          setOauthProviders(providers)
+          setOauthProviders(providers.filter(provider => provider.id !== 'nous'))
         }
       } catch {
         // Ignore — the OAuth panel just won't render.

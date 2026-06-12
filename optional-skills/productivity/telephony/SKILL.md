@@ -1,8 +1,8 @@
 ---
 name: telephony
-description: Give Hermes phone capabilities without core tool changes. Provision and persist a Twilio number, send and receive SMS/MMS, make direct calls, and place AI-driven outbound calls through Bland.ai or Vapi.
+description: Give Marvi phone capabilities without core tool changes. Provision and persist a Twilio number, send and receive SMS/MMS, make direct calls, and place AI-driven outbound calls through Bland.ai or Vapi.
 version: 1.0.0
-author: Nous Research
+author: xRetro Labs Research
 license: MIT
 platforms: [linux, macos, windows]
 metadata:
@@ -53,7 +53,7 @@ It does **not** turn Hermes into a real-time inbound phone gateway. Inbound SMS 
 
 Use this logic instead of hardcoded provider routing:
 
-### 1) "I want Hermes to own a real phone number"
+### 1) "I want Marvi to own a real phone number"
 Use **Twilio**.
 
 Why:

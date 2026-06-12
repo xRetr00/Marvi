@@ -1,8 +1,8 @@
 ---
 name: hermes-s6-container-supervision
-description: Modify, debug, or extend the s6-overlay supervision tree inside the Hermes Agent Docker image — adding new services, debugging profile gateways, understanding the Architecture B main-program pattern.
+description: Modify, debug, or extend the s6-overlay supervision tree inside the Marvi Agent Docker image — adding new services, debugging profile gateways, understanding the Architecture B main-program pattern.
 version: 1.0.0
-author: Hermes Agent
+author: Marvi Agent
 license: MIT
 platforms: [linux]
 environments: [s6]
@@ -12,7 +12,7 @@ metadata:
     related_skills: [hermes-agent, hermes-agent-dev]
 ---
 
-# Hermes s6-overlay Container Supervision
+# Marvi s6-overlay Container Supervision
 
 ## When to use this skill
 

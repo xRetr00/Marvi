@@ -28,6 +28,9 @@ function isProviderReady(p?: ModelOptionProvider): boolean {
   return !!p && (p.authenticated !== false || (p.models?.length ?? 0) > 0)
 }
 
+const visibleModelProviders = (providers: ModelOptionProvider[] = []) =>
+  providers.filter(provider => String(provider.slug).toLowerCase() !== 'nous')
+
 // Mirrors `_AUX_TASK_SLOTS` in hermes_cli/web_server.py. Friendly labels and
 // hints make the assignments readable; raw task keys (vision, mcp, …) are
 // opaque to most users.
@@ -120,7 +123,8 @@ export function ModelSettings({ onMainModelChanged }: ModelSettingsProps) {
       ])
 
       setMainModel({ model: modelInfo.model, provider: modelInfo.provider })
-      setProviders(modelOptions.providers || [])
+      const nextProviders = visibleModelProviders(modelOptions.providers)
+      setProviders(nextProviders)
       setSelectedProvider(prev => prev || modelInfo.provider)
       setSelectedModel(prev => prev || modelInfo.model)
       setAuxiliary(auxiliaryModels)
@@ -212,8 +216,9 @@ export function ModelSettings({ onMainModelChanged }: ModelSettingsProps) {
       }
 
       const options = await getGlobalModelOptions()
-      setProviders(options.providers || [])
-      const refreshedRow = options.providers?.find(p => p.slug === slug)
+      const nextProviders = visibleModelProviders(options.providers)
+      setProviders(nextProviders)
+      const refreshedRow = nextProviders.find(p => p.slug === slug)
       const fallbackModel = refreshedRow?.models?.[0] ?? ''
       setSelectedModel(nextModel || fallbackModel)
     } catch (err) {

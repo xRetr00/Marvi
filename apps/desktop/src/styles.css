@@ -584,12 +584,12 @@
   animation: arc-border var(--arc-duration) linear infinite;
 }
 
-/* Flip the arc's travel direction (e.g. the Nous Portal hero row). */
+/* Flip the arc's travel direction (e.g. the featured provider hero row). */
 .arc-border.arc-reverse::before {
   animation-direction: reverse;
 }
 
-/* Nous Portal hero: slower, blue → orange arc. */
+/* Featured provider hero: slower, blue → orange arc. */
 .arc-border.arc-nous,
 :root.dark .arc-border.arc-nous {
   --arc-c1: #4f8cff;

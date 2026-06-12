@@ -75,7 +75,7 @@ Z={QUERY}
 
 ---
 
-## 5. GODMODE FAST — Hermes 4 405B (Zero Refusal)
+## 5. GODMODE FAST — Marvi 4 405B (Zero Refusal)
 
 **Model:** `nousresearch/hermes-4-405b`
 **Strategy:** Hermes models are already uncensored, so this combo is about speed — instant token streaming with zero refusal checking needed. Uses the same Pliny Love divider format as a formality.
@@ -89,7 +89,7 @@ Z={QUERY}
 
 ---
 
-## Using with Hermes Agent
+## Using with Marvi Agent
 
 ### As ephemeral system prompt (config.yaml)
 

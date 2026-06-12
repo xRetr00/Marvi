@@ -5,7 +5,7 @@ toolsets it needs. Only references skills that ship in the public hermes-agent
 repository (under `skills/` or `optional-skills/`). External APIs and CLIs are
 called from the terminal toolset; they don't appear in `always_load`.
 
-## Hermes skills relevant to video production
+## Marvi skills relevant to video production
 
 ### Visual / rendering skills (`hermes-agent/skills/creative/`)
 
@@ -82,7 +82,7 @@ them directly.
 | Manim CE (`manim`) | Math animation render (driven by `manim-video` skill's recipes) | renderer-manim |
 | Blender (`blender -b`) | 3D rendering (alternative to `blender-mcp`) | renderer-3d |
 
-## Built-in Hermes tools for media review
+## Built-in Marvi tools for media review
 
 These are native Hermes tools — not invoked via terminal but through their own
 toolsets. Enable them per-profile by adding the toolset to the profile config.

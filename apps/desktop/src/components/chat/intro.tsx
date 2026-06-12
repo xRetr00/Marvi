@@ -143,6 +143,7 @@ function pickCopy(copies: IntroCopy[], seed = 0): IntroCopy {
 }
 
 const WORDMARK = 'MARVI'
+const BRAND_BYLINE = 'by Marvex'
 
 function resolveCopy(personality?: string, seed?: number): IntroCopy {
   const personalityKey = normalizeKey(personality)
@@ -173,6 +174,10 @@ export function Intro({ personality, seed }: IntroProps) {
             <span>{WORDMARK}</span>
           </span>
           <span aria-hidden="true">{WORDMARK}</span>
+        </p>
+
+        <p className="mb-2 mt-0 text-[0.62rem] font-medium uppercase tracking-[0.18em] text-muted-foreground/65">
+          {BRAND_BYLINE}
         </p>
 
         <p className="m-0 text-center leading-normal tracking-tight">{copy.body}</p>

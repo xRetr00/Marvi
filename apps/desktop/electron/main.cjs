@@ -313,7 +313,8 @@ const BOOT_FAKE_STEP_MS = (() => {
   if (!Number.isFinite(raw) || raw <= 0) return 650
   return Math.max(120, raw)
 })()
-const APP_NAME = 'Hermes'
+const APP_NAME = 'Marvi'
+const WINDOW_TITLE = 'Marvi by Marvex'
 const TITLEBAR_HEIGHT = 34
 const MACOS_TRAFFIC_LIGHTS_HEIGHT = 14
 const WINDOW_BUTTON_POSITION = {
@@ -468,12 +469,12 @@ function previewFileMetadata(filePath, mimeType) {
 }
 
 app.setName(APP_NAME)
-// Seed the native About panel with the live Hermes version. This is refreshed
+// Seed the native About panel with the live Marvi version. This is refreshed
 // on every open via the explicit "About" menu handler (refreshAboutPanel), so
 // an in-place `hermes update` mid-session is reflected without an app restart;
 // the seed here just covers the first open and any non-menu invocation path.
 app.setAboutPanelOptions({
-  applicationName: APP_NAME,
+  applicationName: WINDOW_TITLE,
   applicationVersion: resolveHermesVersion(),
   copyright: 'Copyright © 2026 xRetro Labs Research'
 })
@@ -3705,7 +3706,7 @@ function openOauthLoginWindow(baseUrl) {
       win = new BrowserWindow({
         width: 520,
         height: 720,
-        title: 'Sign in to Hermes gateway',
+        title: 'Sign in to Marvi gateway',
         autoHideMenuBar: true,
         webPreferences: {
           contextIsolation: true,
@@ -4904,7 +4905,7 @@ function createSessionWindow(sessionId) {
       height: 800,
       minWidth: 420,
       minHeight: 620,
-      title: 'Hermes',
+      title: WINDOW_TITLE,
       titleBarStyle: 'hidden',
       titleBarOverlay: getTitleBarOverlayOptions(),
       trafficLightPosition: IS_MAC ? WINDOW_BUTTON_POSITION : undefined,
@@ -4950,7 +4951,7 @@ function createWindow() {
     height: 800,
     minWidth: 400,
     minHeight: 620,
-    title: 'Hermes',
+    title: WINDOW_TITLE,
     // Frameless title bar on every platform so the renderer can paint the
     // "hide sidebar" button (and other left-side titlebar tools) flush with
     // the top edge — matching the macOS layout where the traffic lights sit
@@ -5411,7 +5412,7 @@ ipcMain.handle('hermes:api', async (_event, request) => {
 ipcMain.handle('hermes:notify', (_event, payload) => {
   if (!Notification.isSupported()) return false
   new Notification({
-    title: payload?.title || 'Hermes',
+    title: payload?.title || WINDOW_TITLE,
     body: payload?.body || '',
     silent: Boolean(payload?.silent)
   }).show()
@@ -5968,13 +5969,13 @@ function resolveHermesVersion() {
   return app.getVersion()
 }
 
-// Re-resolve the live Hermes version and push it into the native About panel
+// Re-resolve the live Marvi version and push it into the native About panel
 // just before showing it, so an in-place `hermes update` is reflected without
 // an app restart. macOS only — `showAboutPanel()` is a no-op elsewhere, and the
 // other platforms don't use this menu item.
 function showAboutPanelFresh() {
   app.setAboutPanelOptions({
-    applicationName: APP_NAME,
+    applicationName: WINDOW_TITLE,
     applicationVersion: resolveHermesVersion(),
     copyright: 'Copyright © 2026 xRetro Labs Research'
   })

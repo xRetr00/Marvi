@@ -97,6 +97,9 @@ export function AboutSettings() {
         <BrandMark className="size-16" />
         <div>
           <h2 className="text-lg font-semibold tracking-tight">{a.heading}</h2>
+          <p className="mt-0.5 text-[0.66rem] font-medium uppercase tracking-[0.18em] text-muted-foreground/70">
+            by Marvex
+          </p>
           <p className="mt-1 text-xs text-muted-foreground">
             {version?.appVersion ? a.version(version.appVersion) : a.versionUnavailable}
           </p>

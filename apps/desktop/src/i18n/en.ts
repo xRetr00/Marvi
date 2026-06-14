@@ -127,6 +127,8 @@ export const en: Translations = {
       noSpeechDetected: 'No speech detected',
       playbackFailed: 'Voice playback failed',
       recordingFailed: 'Voice recording failed',
+      streamingFallback: 'Using standard transcription for this turn.',
+      streamingUnavailable: 'Streaming speech-to-text unavailable',
       transcriptionFailed: 'Voice transcription failed',
       transcriptionUnavailable: 'Voice transcription is not available yet.',
       tryRecordingAgain: 'Try recording again.',

@@ -123,6 +123,8 @@ export const zh: Translations = {
       noSpeechDetected: '没有检测到语音',
       playbackFailed: '语音播放失败',
       recordingFailed: '语音录制失败',
+      streamingFallback: '本轮将使用标准转写。',
+      streamingUnavailable: '流式语音转文字不可用',
       transcriptionFailed: '语音转写失败',
       transcriptionUnavailable: '语音转写暂不可用。',
       tryRecordingAgain: '请再录一次。',

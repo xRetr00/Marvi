@@ -64,4 +64,28 @@ describe('playSpeechTextQueue', () => {
     await expect(promise).resolves.toBe(true)
     expect(speakText).toHaveBeenNthCalledWith(2, 'Second sentence.')
   })
+
+  it('prefetches the next sentence while the current sentence is playing', async () => {
+    ;(globalThis as { Audio: unknown }).Audio = FakeAudio
+    vi.mocked(speakText).mockResolvedValue({
+      data_url: 'data:audio/wav;base64,AAAA',
+      mime_type: 'audio/wav',
+      ok: true,
+      provider: 'pockettts'
+    })
+
+    const promise = playSpeechTextQueue('First sentence. Second sentence.', { source: 'voice-conversation' })
+
+    await vi.waitFor(() => expect(FakeAudio.instances).toHaveLength(1))
+    await vi.waitFor(() => expect(speakText).toHaveBeenCalledTimes(2))
+
+    expect(speakText).toHaveBeenNthCalledWith(1, 'First sentence.')
+    expect(speakText).toHaveBeenNthCalledWith(2, 'Second sentence.')
+
+    FakeAudio.instances[0].end()
+    await vi.waitFor(() => expect(FakeAudio.instances).toHaveLength(2))
+    FakeAudio.instances[1].end()
+
+    await expect(promise).resolves.toBe(true)
+  })
 })

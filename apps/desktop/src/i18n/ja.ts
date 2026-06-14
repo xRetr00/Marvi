@@ -128,6 +128,8 @@ export const ja = defineLocale({
       noSpeechDetected: '音声が検出されませんでした',
       playbackFailed: '音声再生に失敗しました',
       recordingFailed: '音声録音に失敗しました',
+      streamingFallback: 'このターンでは標準の文字起こしを使用します。',
+      streamingUnavailable: 'ストリーミング音声認識は利用できません',
       transcriptionFailed: '音声文字起こしに失敗しました',
       transcriptionUnavailable: '音声文字起こしはまだ利用できません。',
       tryRecordingAgain: 'もう一度録音してください。',

@@ -153,8 +153,27 @@ export async function playSpeechTextQueue(text: string, options: VoicePlaybackOp
   setVoicePlaybackState(currentState('preparing', options))
 
   try {
-    for (const chunk of chunks) {
-      const response = await speakText(chunk)
+    const responsePromises = new Map<number, ReturnType<typeof speakText>>()
+    const prefetch = (index: number) => {
+      if (index >= chunks.length || responsePromises.has(index)) {
+        return
+      }
+
+      responsePromises.set(index, speakText(chunks[index]))
+    }
+
+    prefetch(0)
+
+    for (let index = 0; index < chunks.length; index++) {
+      const responsePromise = responsePromises.get(index)
+
+      if (!responsePromise) {
+        return false
+      }
+
+      const response = await responsePromise
+      prefetch(index + 1)
+      prefetch(index + 2)
 
       if (!(await playAudioDataUrl(response.data_url, options, isCurrent))) {
         return false

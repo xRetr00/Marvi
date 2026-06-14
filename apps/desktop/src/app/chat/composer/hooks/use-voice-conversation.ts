@@ -226,7 +226,13 @@ export function useVoiceConversation({
           streamingSessionRef.current = await openStreamingSttSession({
             onPartial: text => setTranscriptPreview(text)
           })
-        } catch {
+        } catch (error) {
+          console.warn('[voice] Streaming STT unavailable; falling back to standard transcription.', error)
+          notify({
+            kind: 'warning',
+            title: voiceCopy.streamingUnavailable,
+            message: error instanceof Error ? error.message : voiceCopy.streamingFallback
+          })
           streamingSessionRef.current = null
         }
       }

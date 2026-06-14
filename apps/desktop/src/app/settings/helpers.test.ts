@@ -139,10 +139,11 @@ describe('settings helpers', () => {
   describe('enumOptionsFor — backend selector dropdowns', () => {
     const config: HermesConfigRecord = {}
 
-    it('renders a dropdown for the TTS provider including xAI (Grok)', () => {
+    it('renders a dropdown for the TTS provider including local PocketTTS', () => {
       const opts = enumOptionsFor('tts.provider', 'edge', config)
       expect(opts).toBeDefined()
       expect(opts).toContain('xai')
+      expect(opts).toContain('pockettts')
       expect(opts).toContain('edge')
       expect(opts).toContain('elevenlabs')
     })

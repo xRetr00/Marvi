@@ -256,7 +256,8 @@ export const ENUM_OPTIONS: Record<string, string[]> = {
     'gemini',
     'neutts',
     'kittentts',
-    'piper'
+    'piper',
+    'pockettts'
   ],
   'stt.openai.model': ['whisper-1', 'gpt-4o-mini-transcribe', 'gpt-4o-transcribe'],
   'stt.mistral.model': ['voxtral-mini-latest', 'voxtral-mini-2602'],
@@ -389,6 +390,9 @@ export const FIELD_LABELS: Record<string, string> = defineFieldCopy({
     },
     piper: {
       voice: 'Piper Voice'
+    },
+    pockettts: {
+      voice: 'PocketTTS Voice'
     }
   },
   memory: {
@@ -582,6 +586,7 @@ export const SECTIONS: DesktopConfigSection[] = [
       'tts.kittentts.model',
       'tts.kittentts.voice',
       'tts.piper.voice',
+      'tts.pockettts.voice',
       'stt.local.model',
       'stt.local.language',
       'stt.openai.model',

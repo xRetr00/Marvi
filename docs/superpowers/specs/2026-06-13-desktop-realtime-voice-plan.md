@@ -84,7 +84,9 @@ and faster TTS start. It should not attempt full duplex.
 ## Update Order
 
 1. Desktop Markdown AST speech renderer.
-2. PocketTTS provider behind existing desktop speak flow.
+2. PocketTTS provider behind existing desktop speak flow. Done: added as
+   `tts.provider: pockettts` beside the existing providers, exposed in desktop
+   voice settings, and wired into the setup/provider picker.
 3. sherpa-onnx streaming STT proof behind a new opt-in desktop voice setting.
 4. Desktop realtime voice session state: listening, partial transcript, final
    transcript, thinking, speaking.

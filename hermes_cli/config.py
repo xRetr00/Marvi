@@ -1607,9 +1607,9 @@ DEFAULT_CONFIG = {
     # Each provider supports an optional `max_text_length:` override for the
     # per-request input-character cap. Omit it to use the provider's documented
     # limit (OpenAI 4096, xAI 15000, MiniMax 10000, ElevenLabs 5k-40k model-aware,
-    # Gemini 32000, Edge 5000, Mistral 4000, NeuTTS/KittenTTS 2000).
+    # Gemini 32000, Edge 5000, Mistral 4000, NeuTTS/KittenTTS 2000, PocketTTS/Piper 5000).
     "tts": {
-        "provider": "edge",  # "edge" (free) | "elevenlabs" (premium) | "openai" | "xai" | "minimax" | "mistral" | "gemini" | "neutts" (local) | "kittentts" (local) | "piper" (local)
+        "provider": "edge",  # "edge" (free) | "elevenlabs" (premium) | "openai" | "xai" | "minimax" | "mistral" | "gemini" | "neutts" (local) | "kittentts" (local) | "piper" (local) | "pockettts" (local)
         "edge": {
             "voice": "en-US-AriaNeural",
             # Popular: AriaNeural, JennyNeural, AndrewNeural, BrianNeural, SoniaNeural
@@ -1664,6 +1664,12 @@ DEFAULT_CONFIG = {
             # "noise_w_scale": 0.8,
             # "volume": 1.0,
             # "normalize_audio": True,
+        },
+        "pockettts": {
+            # Built-in voices include alba, marius, javert, jean, fantine,
+            # cosette, eponine, and azelma. A local wav/safetensors path can
+            # also be used for custom voice prompts.
+            "voice": "alba",
         },
     },
 

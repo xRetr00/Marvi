@@ -1022,6 +1022,24 @@ def _print_setup_summary(config: dict, hermes_home):
 
             tool_status.append(("Text-to-Speech (KittenTTS — not installed)", False, "run 'hermes setup tts'"))
 
+    elif tts_provider == "pockettts":
+
+        try:
+
+            pockettts_ok = importlib.util.find_spec("pocket_tts") is not None
+
+        except Exception:
+
+            pockettts_ok = False
+
+        if pockettts_ok:
+
+            tool_status.append(("Text-to-Speech (PocketTTS local)", True, None))
+
+        else:
+
+            tool_status.append(("Text-to-Speech (PocketTTS — not installed)", False, "run 'hermes setup tts'"))
+
     else:
 
         tool_status.append(("Text-to-Speech (Edge TTS)", True, None))
@@ -1665,6 +1683,43 @@ def _install_kittentts_deps() -> bool:
         return False
 
 
+def _install_pockettts_deps() -> bool:
+
+    """Install PocketTTS dependencies with user approval. Returns True on success."""
+
+    import subprocess
+
+    import sys
+
+    print()
+
+    print_info("Installing pocket-tts Python package (model downloaded on first use)...")
+
+    print()
+
+    try:
+
+        subprocess.run(
+
+            [sys.executable, "-m", "pip", "install", "-U", "pocket-tts", "scipy", "--quiet"],
+
+            check=True, timeout=600,
+
+        )
+
+        print_success("pocket-tts installed successfully")
+
+        return True
+
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
+
+        print_error(f"Failed to install pocket-tts: {e}")
+
+        print_info("Try manually: python -m pip install -U pocket-tts scipy")
+
+        return False
+
+
 
 
 
@@ -1804,6 +1859,8 @@ def _setup_tts_provider(config: dict):
 
         "kittentts": "KittenTTS",
 
+        "pockettts": "PocketTTS",
+
     }
 
     current_label = provider_labels.get(current_provider, current_provider)
@@ -1852,11 +1909,13 @@ def _setup_tts_provider(config: dict):
 
             "KittenTTS (local on-device, free, lightweight ~25-80MB ONNX)",
 
+            "PocketTTS (local CPU TTS, free, Kyutai preset/custom voices)",
+
         ]
 
     )
 
-    providers.extend(["edge", "elevenlabs", "openai", "xai", "minimax", "mistral", "gemini", "neutts", "kittentts"])
+    providers.extend(["edge", "elevenlabs", "openai", "xai", "minimax", "mistral", "gemini", "neutts", "kittentts", "pockettts"])
 
     choices.append(f"Keep current ({current_label})")
 
@@ -2223,6 +2282,44 @@ def _setup_tts_provider(config: dict):
             else:
 
                 print_info("Skipping install. Set tts.provider to 'kittentts' after installing manually.")
+
+                selected = "edge"
+
+    elif selected == "pockettts":
+
+        try:
+
+            already_installed = importlib.util.find_spec("pocket_tts") is not None
+
+        except Exception:
+
+            already_installed = False
+
+        if already_installed:
+
+            print_success("PocketTTS is already installed")
+
+        else:
+
+            print()
+
+            print_info("PocketTTS is a local Kyutai CPU TTS provider with preset/custom voices.")
+
+            print_info("Preset voices: alba, marius, javert, jean, fantine, cosette, eponine, azelma")
+
+            print()
+
+            if prompt_yes_no("Install PocketTTS now?", True):
+
+                if not _install_pockettts_deps():
+
+                    print_warning("PocketTTS installation incomplete. Falling back to Edge TTS.")
+
+                    selected = "edge"
+
+            else:
+
+                print_info("Skipping install. Set tts.provider to 'pockettts' after installing manually.")
 
                 selected = "edge"
 

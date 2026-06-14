@@ -13,6 +13,7 @@ Built-in TTS providers:
 - NeuTTS (local, free, no API key): On-device TTS via neutts
 - KittenTTS (local, free, no API key): On-device 25MB model
 - Piper (local, free, no API key): OHF-Voice/piper1-gpl neural VITS, 44 languages
+- PocketTTS (local, free, no API key): Kyutai CPU TTS with preset/custom voices
 
 Custom command providers:
 - Users can declare any number of named providers with ``type: command``
@@ -162,6 +163,12 @@ def _import_piper():
     return PiperVoice
 
 
+def _import_pockettts_model():
+    """Lazy import PocketTTS. Returns the TTSModel class or raises ImportError."""
+    from pocket_tts import TTSModel
+    return TTSModel
+
+
 # ===========================================================================
 # Defaults
 # ===========================================================================
@@ -174,6 +181,7 @@ DEFAULT_OPENAI_MODEL = "gpt-4o-mini-tts"
 DEFAULT_KITTENTTS_MODEL = "KittenML/kitten-tts-nano-0.8-int8"  # 25MB
 DEFAULT_KITTENTTS_VOICE = "Jasper"
 DEFAULT_PIPER_VOICE = "en_US-lessac-medium"  # balanced size/quality
+DEFAULT_POCKETTTS_VOICE = "alba"
 DEFAULT_OPENAI_VOICE = "alloy"
 DEFAULT_OPENAI_BASE_URL = "https://api.openai.com/v1"
 DEFAULT_MINIMAX_MODEL = "speech-02-hd"
@@ -221,6 +229,7 @@ PROVIDER_MAX_TEXT_LENGTH: Dict[str, int] = {
     "neutts": 2000,       # local model, quality falls off on long text
     "kittentts": 2000,    # local 25MB model
     "piper": 5000,        # local VITS model, phoneme-based; practical cap
+    "pockettts": 5000,    # local Kyutai CPU model; practical cap
 }
 
 # ElevenLabs caps vary by model_id. https://elevenlabs.io/docs/overview/models
@@ -384,6 +393,7 @@ BUILTIN_TTS_PROVIDERS = frozenset({
     "neutts",
     "kittentts",
     "piper",
+    "pockettts",
 })
 
 DEFAULT_COMMAND_TTS_TIMEOUT_SECONDS = 120
@@ -1724,6 +1734,15 @@ def _check_kittentts_available() -> bool:
         return False
 
 
+def _check_pockettts_available() -> bool:
+    """Check whether the pocket-tts package is importable."""
+    try:
+        import importlib.util
+        return importlib.util.find_spec("pocket_tts") is not None
+    except Exception:
+        return False
+
+
 def _default_neutts_ref_audio() -> str:
     """Return path to the bundled default voice reference audio."""
     return str(Path(__file__).parent / "neutts_samples" / "jo.wav")
@@ -1782,6 +1801,68 @@ def _generate_neutts(text: str, output_path: str, tts_config: Dict[str, Any]) ->
             os.remove(wav_path)
         else:
             # No ffmpeg — just rename the WAV to the expected path
+            os.rename(wav_path, output_path)
+
+    return output_path
+
+
+# ===========================================================================
+# Provider: PocketTTS (local Kyutai CPU TTS)
+# ===========================================================================
+
+_pockettts_model_cache: Dict[str, Any] = {}
+_pockettts_voice_cache: Dict[str, Any] = {}
+
+
+def _generate_pockettts(text: str, output_path: str, tts_config: Dict[str, Any]) -> str:
+    """Generate speech using Kyutai PocketTTS.
+
+    PocketTTS returns a 1D torch tensor of PCM samples. Keep the loaded model
+    and voice state in memory because upstream documents both as relatively
+    slow to initialize compared with synthesis.
+    """
+    TTSModel = _import_pockettts_model()
+    from scipy.io import wavfile
+
+    pocket_config = tts_config.get("pockettts", {}) if isinstance(tts_config, dict) else {}
+    voice = str(pocket_config.get("voice") or DEFAULT_POCKETTTS_VOICE).strip() or DEFAULT_POCKETTTS_VOICE
+    model_name = str(pocket_config.get("model") or "default").strip() or "default"
+
+    global _pockettts_model_cache, _pockettts_voice_cache
+    if model_name not in _pockettts_model_cache:
+        logger.info("[PocketTTS] Loading model: %s", model_name)
+        # The public API currently exposes load_model() without requiring a
+        # model id. Keep the config key in the cache key so a future model
+        # option can be added without changing user config shape.
+        _pockettts_model_cache[model_name] = TTSModel.load_model()
+        logger.info("[PocketTTS] Model loaded")
+
+    model = _pockettts_model_cache[model_name]
+    voice_key = f"{model_name}::{voice}"
+    if voice_key not in _pockettts_voice_cache:
+        logger.info("[PocketTTS] Loading voice: %s", voice)
+        _pockettts_voice_cache[voice_key] = model.get_state_for_audio_prompt(voice)
+
+    voice_state = _pockettts_voice_cache[voice_key]
+    audio = model.generate_audio(voice_state, text)
+    samples = audio.numpy() if hasattr(audio, "numpy") else audio
+
+    wav_path = output_path
+    if not output_path.endswith(".wav"):
+        wav_path = output_path.rsplit(".", 1)[0] + ".wav"
+
+    wavfile.write(wav_path, int(model.sample_rate), samples)
+
+    if wav_path != output_path:
+        ffmpeg = shutil.which("ffmpeg")
+        if ffmpeg:
+            conv_cmd = [ffmpeg, "-i", wav_path, "-y", "-loglevel", "error", output_path]
+            subprocess.run(conv_cmd, check=True, timeout=30, stdin=subprocess.DEVNULL)
+            try:
+                os.remove(wav_path)
+            except OSError:
+                pass
+        else:
             os.rename(wav_path, output_path)
 
     return output_path
@@ -2219,6 +2300,19 @@ def text_to_speech_tool(
             logger.info("Generating speech with Piper (local)...")
             _generate_piper_tts(text, file_str, tts_config)
 
+        elif provider == "pockettts":
+            try:
+                _import_pockettts_model()
+            except ImportError:
+                return json.dumps({
+                    "success": False,
+                    "error": "PocketTTS provider selected but 'pocket-tts' package is not installed. "
+                             "Run 'hermes tools' and select PocketTTS under TTS, or install manually: "
+                             "pip install pocket-tts scipy",
+                }, ensure_ascii=False)
+            logger.info("Generating speech with PocketTTS (local CPU)...")
+            _generate_pockettts(text, file_str, tts_config)
+
         else:
             # Default: Edge TTS (free), with NeuTTS as local fallback
             edge_available = True
@@ -2284,7 +2378,7 @@ def text_to_speech_tool(
                 voice_compatible = file_str.endswith(".ogg")
         elif (
             want_opus
-            and provider in {"edge", "neutts", "minimax", "xai", "kittentts", "piper"}
+            and provider in {"edge", "neutts", "minimax", "xai", "kittentts", "piper", "pockettts"}
             and not file_str.endswith(".ogg")
         ):
             opus_path = _convert_to_opus(file_str)
@@ -2383,6 +2477,8 @@ def check_tts_requirements() -> bool:
     if _check_kittentts_available():
         return True
     if _check_piper_available():
+        return True
+    if _check_pockettts_available():
         return True
     return False
 
@@ -2687,6 +2783,7 @@ if __name__ == "__main__":
     )
     print(f"  MiniMax:    {'API key set' if get_env_value('MINIMAX_API_KEY') else 'not set (MINIMAX_API_KEY)'}")
     print(f"  Piper:      {'installed' if _check_piper_available() else 'not installed (pip install piper-tts)'}")
+    print(f"  PocketTTS:  {'installed' if _check_pockettts_available() else 'not installed (pip install pocket-tts scipy)'}")
     print(f"  ffmpeg:     {'✅ found' if _has_ffmpeg() else '❌ not found (needed for Telegram Opus)'}")
     print(f"\n  Output dir: {DEFAULT_OUTPUT_DIR}")
 

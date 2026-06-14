@@ -640,6 +640,22 @@ TOOL_CATEGORIES = {
 
             },
 
+            {
+
+                "name": "PocketTTS",
+
+                "badge": "local · free",
+
+                "tag": "Kyutai CPU TTS with preset and custom voices",
+
+                "env_vars": [],
+
+                "tts_provider": "pockettts",
+
+                "post_setup": "pockettts",
+
+            },
+
         ],
 
     },
@@ -2045,6 +2061,50 @@ def _run_post_setup(post_setup_key: str):
         _print_info("    Full voice list: https://github.com/OHF-Voice/piper1-gpl/blob/main/docs/VOICES.md")
 
         _print_info("    Switch voices by setting tts.piper.voice in ~/.hermes/config.yaml")
+
+    elif post_setup_key == "pockettts":
+
+        try:
+
+            __import__("pocket_tts")
+
+            _print_success("    pocket-tts is already installed")
+
+        except ImportError:
+
+            _print_info("    Installing pocket-tts (Kyutai local CPU TTS; model downloads on first use)...")
+
+            try:
+
+                result = _pip_install(["-U", "pocket-tts", "scipy", "--quiet"], timeout=600)
+
+                if result.returncode == 0:
+
+                    _print_success("    pocket-tts installed")
+
+                else:
+
+                    _print_warning("    pocket-tts install failed:")
+
+                    _print_info(f"      {(result.stderr or '').strip()[:300]}")
+
+                    _print_info("    Run manually: uv pip install -U pocket-tts scipy")
+
+                    return
+
+            except subprocess.TimeoutExpired:
+
+                _print_warning("    pocket-tts install timed out (>10min)")
+
+                _print_info("    Run manually: uv pip install -U pocket-tts scipy")
+
+                return
+
+        _print_info("    Default voice: alba")
+
+        _print_info("    Other preset voices: marius, javert, jean, fantine, cosette, eponine, azelma")
+
+        _print_info("    Switch voices by setting tts.pockettts.voice in ~/.hermes/config.yaml")
 
 
 
@@ -3946,7 +4006,7 @@ def _plugin_tts_providers() -> list[dict]:
 
     Issue #30398 — the ``register_tts_provider()`` plugin hook
 
-    coexists alongside the 10 built-in TTS providers
+    coexists alongside the built-in TTS providers
 
     (``edge``/``openai``/``elevenlabs``/…) and the
 

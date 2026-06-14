@@ -159,6 +159,19 @@ describe('settings helpers', () => {
       expect(enumOptionsFor('tts.neutts.device', 'cpu', config)).toEqual(['cpu', 'cuda', 'mps'])
     })
 
+    it('renders a dropdown for PocketTTS preset voices', () => {
+      expect(enumOptionsFor('tts.pockettts.voice', 'alba', config)).toEqual([
+        'alba',
+        'marius',
+        'javert',
+        'jean',
+        'fantine',
+        'cosette',
+        'eponine',
+        'azelma'
+      ])
+    })
+
     it('renders a dropdown for the terminal execution backend', () => {
       const opts = enumOptionsFor('terminal.backend', 'local', config)
       expect(opts).toEqual(['local', 'docker', 'singularity', 'modal', 'daytona', 'ssh'])

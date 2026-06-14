@@ -536,6 +536,10 @@ def _spawn_pytest_once(
 
         text=True,
 
+        # Avoid bytecode-write races while many pytest subprocesses import the
+        # same modules concurrently.
+        env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
+
         # POSIX: place the child at the head of its own process group so
 
         # _kill_tree can SIGKILL the group atomically.

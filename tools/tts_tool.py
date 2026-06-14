@@ -182,6 +182,29 @@ DEFAULT_KITTENTTS_MODEL = "KittenML/kitten-tts-nano-0.8-int8"  # 25MB
 DEFAULT_KITTENTTS_VOICE = "Jasper"
 DEFAULT_PIPER_VOICE = "en_US-lessac-medium"  # balanced size/quality
 DEFAULT_POCKETTTS_VOICE = "alba"
+POCKETTTS_PRESET_VOICES = frozenset({
+    "alba",
+    "anna",
+    "azelma",
+    "bill_boerst",
+    "caro_davy",
+    "charles",
+    "cosette",
+    "eponine",
+    "eve",
+    "fantine",
+    "george",
+    "jane",
+    "jean",
+    "javert",
+    "marius",
+    "mary",
+    "michael",
+    "paul",
+    "peter_yearsley",
+    "stuart_bell",
+    "vera",
+})
 DEFAULT_OPENAI_VOICE = "alloy"
 DEFAULT_OPENAI_BASE_URL = "https://api.openai.com/v1"
 DEFAULT_MINIMAX_MODEL = "speech-02-hd"
@@ -1819,7 +1842,8 @@ def _resolve_pockettts_model_and_voice(tts_config: Dict[str, Any]) -> tuple[Any,
     TTSModel = _import_pockettts_model()
 
     pocket_config = tts_config.get("pockettts", {}) if isinstance(tts_config, dict) else {}
-    voice = str(pocket_config.get("voice") or DEFAULT_POCKETTTS_VOICE).strip() or DEFAULT_POCKETTTS_VOICE
+    raw_voice = str(pocket_config.get("voice") or DEFAULT_POCKETTTS_VOICE).strip() or DEFAULT_POCKETTTS_VOICE
+    voice = raw_voice.lower() if raw_voice.lower() in POCKETTTS_PRESET_VOICES else raw_voice
     model_name = str(pocket_config.get("model") or "default").strip() or "default"
 
     global _pockettts_model_cache, _pockettts_voice_cache

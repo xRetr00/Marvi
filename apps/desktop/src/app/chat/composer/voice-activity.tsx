@@ -9,6 +9,7 @@ import { stopVoicePlayback } from '@/lib/voice-playback'
 import { $voicePlayback } from '@/store/voice-playback'
 
 import type { VoiceActivityState } from './types'
+import type { ConversationStatus } from './hooks/use-voice-conversation'
 
 type BrowserAudioContext = typeof AudioContext
 
@@ -199,6 +200,47 @@ export function VoiceActivity({ state }: { state: VoiceActivityState }) {
       </div>
 
       <VoiceLevelBars active={recording} level={state.level} />
+    </div>
+  )
+}
+
+export function VoiceConversationActivity({
+  status,
+  transcript
+}: {
+  status: ConversationStatus
+  transcript: string
+}) {
+  const { t } = useI18n()
+  const text = transcript.trim()
+
+  if (status === 'idle' || !text) {
+    return null
+  }
+
+  const labels: Record<Exclude<ConversationStatus, 'idle'>, string> = {
+    listening: t.composer.listening,
+    speaking: t.composer.speakingResponse,
+    thinking: t.composer.thinking,
+    transcribing: t.composer.transcribing
+  }
+
+  return (
+    <div
+      aria-live="polite"
+      className={cn(
+        'flex min-h-8 items-center gap-2 rounded-xl border border-primary/20 bg-primary/10 px-2.5 py-1.5 text-xs text-primary',
+        'shadow-[inset_0_1px_0_rgba(255,255,255,0.35)] backdrop-blur-sm'
+      )}
+      role="status"
+    >
+      <div className="flex size-5 shrink-0 items-center justify-center rounded-full bg-primary/15 text-primary">
+        {status === 'listening' ? <Mic size={12} /> : <Loader2 className="animate-spin" size={12} />}
+      </div>
+      <div className="min-w-0 flex-1">
+        <div className="font-medium text-primary">{labels[status]}</div>
+        <div className="line-clamp-2 break-words text-foreground/85">{text}</div>
+      </div>
     </div>
   )
 }

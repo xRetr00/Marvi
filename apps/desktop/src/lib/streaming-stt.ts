@@ -7,6 +7,10 @@ export interface StreamingSttSession {
   stop: () => void
 }
 
+export interface StreamingSttOptions {
+  onPartial?: (text: string) => void
+}
+
 function streamingSttUrl(wsUrl: string): string {
   const url = new URL(wsUrl)
   url.pathname = '/api/audio/transcribe/stream'
@@ -15,7 +19,7 @@ function streamingSttUrl(wsUrl: string): string {
   return url.toString()
 }
 
-export async function openStreamingSttSession(): Promise<StreamingSttSession> {
+export async function openStreamingSttSession(options: StreamingSttOptions = {}): Promise<StreamingSttSession> {
   const conn = $connection.get()
 
   if (!conn) {
@@ -71,7 +75,11 @@ export async function openStreamingSttSession(): Promise<StreamingSttSession> {
         window.clearTimeout(timeout)
         resolve()
       } else if (message.type === 'partial') {
-        finalText = message.text || finalText
+        const text = message.text || ''
+        if (text) {
+          finalText = text
+          options.onPartial?.(text)
+        }
       } else if (message.type === 'final') {
         finalText = message.text || ''
         finalResolve?.(finalText)

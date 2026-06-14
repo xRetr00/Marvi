@@ -92,6 +92,19 @@ class TestGeneratePocketTts:
 
         fake_model.get_state_for_audio_prompt.assert_called_once_with("marius")
 
+    def test_known_preset_voice_is_case_normalized(self, tmp_path, mock_pockettts_modules):
+        from tools.tts_tool import _generate_pockettts
+
+        fake_model, _, _ = mock_pockettts_modules
+
+        _generate_pockettts(
+            "Hi",
+            str(tmp_path / "out.wav"),
+            {"pockettts": {"voice": "JANE"}},
+        )
+
+        fake_model.get_state_for_audio_prompt.assert_called_once_with("jane")
+
     def test_model_and_voice_are_cached(self, tmp_path, mock_pockettts_modules):
         from tools.tts_tool import _generate_pockettts
 

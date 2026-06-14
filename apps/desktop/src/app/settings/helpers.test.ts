@@ -162,13 +162,26 @@ describe('settings helpers', () => {
     it('renders a dropdown for PocketTTS preset voices', () => {
       expect(enumOptionsFor('tts.pockettts.voice', 'alba', config)).toEqual([
         'alba',
-        'marius',
-        'javert',
-        'jean',
-        'fantine',
+        'anna',
+        'azelma',
+        'bill_boerst',
+        'caro_davy',
+        'charles',
         'cosette',
         'eponine',
-        'azelma'
+        'eve',
+        'fantine',
+        'george',
+        'jane',
+        'jean',
+        'javert',
+        'marius',
+        'mary',
+        'michael',
+        'paul',
+        'peter_yearsley',
+        'stuart_bell',
+        'vera'
       ])
     })
 

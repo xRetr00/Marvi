@@ -99,7 +99,7 @@ import { detectTrigger, extractClipboardImageBlobs, textBeforeCaret, type Trigge
 import { ComposerTriggerPopover } from './trigger-popover'
 import type { ChatBarProps } from './types'
 import { UrlDialog } from './url-dialog'
-import { VoiceActivity, VoicePlaybackActivity } from './voice-activity'
+import { VoiceActivity, VoiceConversationActivity, VoicePlaybackActivity } from './voice-activity'
 
 const COMPOSER_STACK_BREAKPOINT_PX = 320
 
@@ -1909,6 +1909,7 @@ export function ChatBar({
                 data-slot="composer-fade"
               >
                 <VoiceActivity state={voiceActivityState} />
+                <VoiceConversationActivity status={conversation.status} transcript={conversation.transcriptPreview} />
                 <VoicePlaybackActivity />
                 {queueEdit && editingQueuedPrompt && (
                   <div className="flex items-center justify-between gap-2 rounded-lg border border-[color-mix(in_srgb,var(--dt-composer-ring)_32%,transparent)] bg-accent/18 px-2 py-1">

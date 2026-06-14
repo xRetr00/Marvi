@@ -41,6 +41,7 @@ export function useVoiceConversation({
   const { handle, level } = useMicRecorder(voiceCopy)
   const [status, setStatus] = useState<ConversationStatus>('idle')
   const [muted, setMuted] = useState(false)
+  const [transcriptPreview, setTranscriptPreview] = useState('')
   const turnTimeoutRef = useRef<number | null>(null)
   const pendingStartRef = useRef(false)
   const turnClosingRef = useRef(false)
@@ -174,6 +175,8 @@ export function useVoiceConversation({
             transcript = (await onTranscribeAudio(result.audio)).trim()
           }
 
+          setTranscriptPreview(transcript)
+
           if (!transcript) {
             if (enabledRef.current) {
               pendingStartRef.current = true
@@ -217,9 +220,12 @@ export function useVoiceConversation({
 
     try {
       streamingSessionRef.current = null
+      setTranscriptPreview('')
       if (sttStreamingEnabled) {
         try {
-          streamingSessionRef.current = await openStreamingSttSession()
+          streamingSessionRef.current = await openStreamingSttSession({
+            onPartial: text => setTranscriptPreview(text)
+          })
         } catch {
           streamingSessionRef.current = null
         }
@@ -298,6 +304,7 @@ export function useVoiceConversation({
     awaitingSpokenResponseRef.current = false
     resetSpeechBuffer()
     consumePendingResponse()
+    setTranscriptPreview('')
     setMuted(false)
     setStatus('idle')
   }, [consumePendingResponse, handle])
@@ -315,6 +322,9 @@ export function useVoiceConversation({
       if (next) {
         clearTurnTimeout()
         handle.cancel()
+        streamingSessionRef.current?.stop()
+        streamingSessionRef.current = null
+        setTranscriptPreview('')
         setStatus('idle')
       } else if (enabledRef.current && !busyRef.current && statusRef.current === 'idle') {
         pendingStartRef.current = true
@@ -418,5 +428,5 @@ export function useVoiceConversation({
     wasEnabledRef.current = enabled
   }, [enabled, end, start])
 
-  return { end, level, muted, start, status, stopTurn, toggleMute }
+  return { end, level, muted, start, status, stopTurn, toggleMute, transcriptPreview }
 }

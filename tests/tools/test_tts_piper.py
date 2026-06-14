@@ -239,6 +239,15 @@ class TestGeneratePiperTts:
         assert kwargs["length_scale"] == 2.0
         assert kwargs["volume"] == 0.8
 
+    def test_warm_provider_loads_configured_voice(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(tts_tool, "_import_piper", lambda: _StubPiperVoice)
+        model = self._prepare_voice_files(tmp_path)
+
+        warmed = tts_tool.warm_tts_provider({"provider": "piper", "piper": {"voice": str(model)}})
+
+        assert warmed is True
+        assert _StubPiperVoice.loaded == [str(model)]
+
 
 # ---------------------------------------------------------------------------
 # text_to_speech_tool end-to-end (provider == "piper")

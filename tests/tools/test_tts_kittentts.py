@@ -102,6 +102,19 @@ class TestGenerateKittenTts:
         # Same model name → class instantiated exactly once
         assert fake_cls.call_count == 1
 
+    def test_warm_provider_loads_configured_model(self, mock_kittentts_module):
+        from tools.tts_tool import warm_tts_provider
+
+        _, fake_cls = mock_kittentts_module
+
+        warmed = warm_tts_provider({
+            "provider": "kittentts",
+            "kittentts": {"model": "KittenML/kitten-tts-mini-0.8"},
+        })
+
+        assert warmed is True
+        fake_cls.assert_called_once_with("KittenML/kitten-tts-mini-0.8")
+
     def test_different_models_are_cached_separately(self, tmp_path, mock_kittentts_module):
         from tools.tts_tool import _generate_kittentts
 

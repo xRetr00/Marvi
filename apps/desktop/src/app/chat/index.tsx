@@ -20,6 +20,7 @@ import type { ChatMessage } from '@/lib/chat-messages'
 import { quickModelOptions, sessionTitle, toRuntimeMessage } from '@/lib/chat-runtime'
 import { useIncrementalExternalStoreRuntime } from '@/lib/incremental-external-store-runtime'
 import { cn } from '@/lib/utils'
+import type { VoiceFillerConfig } from '@/lib/voice-filler'
 import type { ComposerAttachment } from '@/store/composer'
 import { $pinnedSessionIds } from '@/store/layout'
 import { $gatewaySwapTarget } from '@/store/profile'
@@ -69,6 +70,7 @@ interface ChatViewProps extends Omit<React.ComponentProps<'div'>, 'onSubmit'> {
   onBranchInNewChat: (messageId: string) => void
   maxVoiceRecordingSeconds?: number
   sttStreamingEnabled?: boolean
+  voiceFillerConfig?: VoiceFillerConfig
   onAttachImageBlob: (blob: Blob) => Promise<boolean | void> | boolean | void
   onAttachDroppedItems: (candidates: DroppedFile[]) => Promise<boolean | void> | boolean | void
   onPasteClipboardImage: () => void
@@ -260,6 +262,7 @@ export function ChatView({
   onBranchInNewChat,
   maxVoiceRecordingSeconds,
   sttStreamingEnabled,
+  voiceFillerConfig,
   onPasteClipboardImage,
   onPickFiles,
   onPickFolders,
@@ -456,6 +459,7 @@ export function ChatView({
                 queueSessionKey={selectedSessionId}
                 sessionId={activeSessionId}
                 sttStreamingEnabled={sttStreamingEnabled}
+                voiceFillerConfig={voiceFillerConfig}
                 state={chatBarState}
               />
             </Suspense>

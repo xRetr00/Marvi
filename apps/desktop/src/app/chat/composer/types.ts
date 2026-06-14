@@ -1,4 +1,5 @@
 import type { HermesGateway } from '@/hermes'
+import type { VoiceFillerConfig } from '@/lib/voice-filler'
 import type { ComposerAttachment } from '@/store/composer'
 
 import type { DroppedFile } from '../hooks/use-composer-actions'
@@ -33,6 +34,7 @@ export interface ChatBarProps {
   focusKey?: string | null
   maxRecordingSeconds?: number
   sttStreamingEnabled?: boolean
+  voiceFillerConfig?: VoiceFillerConfig
   state: ChatBarState
   gateway?: HermesGateway | null
   queueSessionKey?: string | null

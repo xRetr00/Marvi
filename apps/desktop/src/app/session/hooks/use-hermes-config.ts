@@ -2,6 +2,7 @@ import { type MutableRefObject, useCallback, useState } from 'react'
 
 import { getHermesConfig, getHermesConfigDefaults } from '@/hermes'
 import { BUILTIN_PERSONALITIES, normalizePersonalityValue, personalityNamesFromConfig } from '@/lib/chat-runtime'
+import { normalizeVoiceFillerConfig, type VoiceFillerConfig } from '@/lib/voice-filler'
 import {
   $currentCwd,
   setAvailablePersonalities,
@@ -27,6 +28,9 @@ interface HermesConfigOptions {
 
 export function useHermesConfig({ activeSessionIdRef, refreshProjectBranch }: HermesConfigOptions) {
   const [voiceMaxRecordingSeconds, setVoiceMaxRecordingSeconds] = useState(DEFAULT_VOICE_SECONDS)
+  const [voiceFillerConfig, setVoiceFillerConfig] = useState<VoiceFillerConfig>(() =>
+    normalizeVoiceFillerConfig(undefined)
+  )
   const [sttEnabled, setSttEnabled] = useState(true)
   const [sttStreamingEnabled, setSttStreamingEnabled] = useState(false)
 
@@ -65,6 +69,7 @@ export function useHermesConfig({ activeSessionIdRef, refreshProjectBranch }: He
       setCurrentFastMode(prev => (activeSessionIdRef.current ? prev : FAST_TIERS.has(tier.toLowerCase())))
 
       setVoiceMaxRecordingSeconds(recordingLimit(config.voice?.max_recording_seconds))
+      setVoiceFillerConfig(normalizeVoiceFillerConfig(config.voice?.filler))
       setSttEnabled(config.stt?.enabled !== false)
       setSttStreamingEnabled(config.stt?.streaming?.enabled === true)
     } catch {
@@ -72,5 +77,5 @@ export function useHermesConfig({ activeSessionIdRef, refreshProjectBranch }: He
     }
   }, [activeSessionIdRef, refreshProjectBranch])
 
-  return { refreshHermesConfig, sttEnabled, sttStreamingEnabled, voiceMaxRecordingSeconds }
+  return { refreshHermesConfig, sttEnabled, sttStreamingEnabled, voiceFillerConfig, voiceMaxRecordingSeconds }
 }

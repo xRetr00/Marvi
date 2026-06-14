@@ -7,6 +7,7 @@ import {
 } from '@/store/voice-playback'
 
 import { sanitizeTextForSpeech } from './speech-text'
+import { createVoiceFillerController, type VoiceFillerConfig, type VoiceFillerController } from './voice-filler'
 
 let currentAudio: HTMLAudioElement | null = null
 let currentStop: (() => void) | null = null
@@ -27,6 +28,8 @@ function currentState(
 }
 
 export interface VoicePlaybackOptions {
+  filler?: VoiceFillerConfig | null
+  fillerController?: VoiceFillerController | null
   messageId?: string | null
   source: VoicePlaybackSource
 }
@@ -162,6 +165,7 @@ export function createSpeechPlaybackQueue(options: VoicePlaybackOptions): Speech
   let closed = false
   let playIndex = 0
   let active = true
+  const filler = options.fillerController ?? (options.filler ? createVoiceFillerController(options.filler) : null)
 
   const notify = () => {
     for (const waiter of waiters.splice(0)) {
@@ -197,11 +201,13 @@ export function createSpeechPlaybackQueue(options: VoicePlaybackOptions): Speech
 
         if (playIndex >= chunks.length) {
           if (closed) {
+            filler?.stopNow()
             setVoicePlaybackState(currentState('idle'))
 
             return chunks.length > 0
           }
 
+          filler?.waiting()
           setVoicePlaybackState(currentState('preparing', options))
           await waitForMore()
           continue
@@ -215,6 +221,7 @@ export function createSpeechPlaybackQueue(options: VoicePlaybackOptions): Speech
 
         const response = await responsePromise
         prefetchLookahead()
+        await filler?.beforeResponse()
 
         if (!(await playAudioDataUrl(response.data_url, options, isCurrent))) {
           return false
@@ -263,6 +270,7 @@ export function createSpeechPlaybackQueue(options: VoicePlaybackOptions): Speech
     stop: () => {
       active = false
       closed = true
+      filler?.stopNow()
       notify()
       if (isCurrent()) {
         stopVoicePlayback()

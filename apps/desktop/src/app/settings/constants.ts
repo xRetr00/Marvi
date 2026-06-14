@@ -241,6 +241,7 @@ export const ENUM_OPTIONS: Record<string, string[]> = {
   'stt.local.model': ['tiny', 'base', 'small', 'medium', 'large-v3'],
   'stt.streaming.provider': ['sherpa_onnx'],
   'stt.streaming.model': ['en-20m-int8'],
+  'voice.filler.type': ['typing', 'chime'],
   // Speech-to-text backends — kept in sync with the stt block in
   // hermes_cli/config.py (local/groq/openai/mistral/elevenlabs).
   'stt.provider': ['local', 'groq', 'openai', 'mistral', 'xai', 'elevenlabs'],
@@ -351,7 +352,14 @@ export const FIELD_LABELS: Record<string, string> = defineFieldCopy({
   voice: {
     recordKey: 'Voice Shortcut',
     maxRecordingSeconds: 'Max Recording Length',
-    autoTts: 'Read Responses Aloud'
+    autoTts: 'Read Responses Aloud',
+    filler: {
+      enabled: 'Voice Filler',
+      type: 'Filler Sound',
+      startDelayMs: 'Filler Start Delay',
+      minimumPlayDurationMs: 'Minimum Filler Duration',
+      responseDeliveryDelayMs: 'Filler Response Delay'
+    }
   },
   stt: {
     enabled: 'Speech To Text',
@@ -501,7 +509,14 @@ export const FIELD_DESCRIPTIONS: Record<string, string> = defineFieldCopy({
     enabled: 'Summarize older context when conversations get large.'
   },
   voice: {
-    autoTts: 'Automatically speak assistant responses.'
+    autoTts: 'Automatically speak assistant responses.',
+    filler: {
+      enabled: 'Play a quiet non-verbal sound while waiting for the next assistant sentence.',
+      type: 'Local filler sound used while the response is still pending.',
+      startDelayMs: 'Milliseconds to wait before filler starts.',
+      minimumPlayDurationMs: 'Minimum filler duration once it starts.',
+      responseDeliveryDelayMs: 'Delay after filler stops before response audio resumes.'
+    }
   },
   tts: {
     xai: {
@@ -633,7 +648,12 @@ export const SECTIONS: DesktopConfigSection[] = [
       'stt.elevenlabs.tag_audio_events',
       'stt.elevenlabs.diarize',
       'voice.record_key',
-      'voice.max_recording_seconds'
+      'voice.max_recording_seconds',
+      'voice.filler.enabled',
+      'voice.filler.type',
+      'voice.filler.start_delay_ms',
+      'voice.filler.minimum_play_duration_ms',
+      'voice.filler.response_delivery_delay_ms'
     ]
   },
   {

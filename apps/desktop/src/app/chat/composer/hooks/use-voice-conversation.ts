@@ -3,7 +3,6 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { getActionStatus, runStreamingSttSetup } from '@/hermes'
 import { useI18n } from '@/i18n'
 import { openStreamingSttSession, type StreamingSttSession } from '@/lib/streaming-stt'
-import type { VoiceFillerConfig } from '@/lib/voice-filler'
 import { createSpeechPlaybackQueue, stopVoicePlayback, type SpeechPlaybackQueue } from '@/lib/voice-playback'
 import { upsertDesktopActionTask } from '@/store/activity'
 import { notify, notifyError } from '@/store/notifications'
@@ -24,7 +23,6 @@ interface VoiceConversationOptions {
   onFatalError?: () => void
   onSubmit: (text: string) => Promise<void> | void
   sttStreamingEnabled?: boolean
-  voiceFillerConfig?: VoiceFillerConfig
   onTranscribeAudio?: (audio: Blob) => Promise<string>
   pendingResponse: () => PendingVoiceResponse | null
   consumePendingResponse: () => void
@@ -36,7 +34,6 @@ export function useVoiceConversation({
   onFatalError,
   onSubmit,
   sttStreamingEnabled = false,
-  voiceFillerConfig,
   onTranscribeAudio,
   pendingResponse,
   consumePendingResponse
@@ -326,7 +323,7 @@ export function useVoiceConversation({
       return speechQueueRef.current
     }
 
-    const queue = createSpeechPlaybackQueue({ filler: voiceFillerConfig, source: 'voice-conversation' })
+    const queue = createSpeechPlaybackQueue({ source: 'voice-conversation' })
     speechQueueRef.current = queue
     setStatus('speaking')
 
@@ -351,7 +348,7 @@ export function useVoiceConversation({
       })
 
     return queue
-  }, [voiceCopy.playbackFailed, voiceFillerConfig])
+  }, [voiceCopy.playbackFailed])
 
   const enqueueSpeech = useCallback(
     (text: string) => {

@@ -1716,16 +1716,6 @@ DEFAULT_CONFIG = {
         "record_key": "ctrl+b",
         "max_recording_seconds": 120,
         "auto_tts": False,
-        "filler": {
-            # Desktop voice conversation only. Lex-style non-verbal filler
-            # while the assistant is still generating and the TTS queue is
-            # empty. Disabled by default to avoid surprising existing users.
-            "enabled": False,
-            "type": "typing",  # "typing" | "chime"
-            "start_delay_ms": 1400,
-            "minimum_play_duration_ms": 1800,
-            "response_delivery_delay_ms": 150,
-        },
         "beep_enabled": True,         # Play record start/stop beeps in CLI voice mode
         "silence_threshold": 200,     # RMS below this = silence (0-32767)
         "silence_duration": 3.0,      # Seconds of silence before auto-stop

@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { getSessionMessages, listAllProfileSessions, listSessions } from './hermes'
+import { getSessionMessages, listAllProfileSessions, listSessions, speakText } from './hermes'
 
 const emptySessionsResponse = {
   limit: 0,
@@ -55,6 +55,24 @@ describe('Hermes REST session helpers', () => {
     expect(api).toHaveBeenCalledWith({
       path: '/api/sessions/session-1/messages?profile=xiaoxuxu',
       profile: 'xiaoxuxu'
+    })
+  })
+
+  it('uses a provider-sized timeout for desktop speech synthesis', async () => {
+    api.mockResolvedValue({
+      data_url: 'data:audio/mpeg;base64,AA==',
+      mime_type: 'audio/mpeg',
+      ok: true,
+      provider: 'piper'
+    })
+
+    await speakText('Hello')
+
+    expect(api).toHaveBeenCalledWith({
+      body: { text: 'Hello' },
+      method: 'POST',
+      path: '/api/audio/speak',
+      timeoutMs: 360_000
     })
   })
 })

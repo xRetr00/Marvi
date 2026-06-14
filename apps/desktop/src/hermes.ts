@@ -44,6 +44,7 @@ import type {
 
 const DEFAULT_GATEWAY_REQUEST_TIMEOUT_MS = 30_000
 const SESSION_LIST_REQUEST_TIMEOUT_MS = 60_000
+const AUDIO_SPEAK_REQUEST_TIMEOUT_MS = 360_000
 
 export type {
   ActionResponse,
@@ -720,7 +721,8 @@ export function speakText(text: string): Promise<AudioSpeakResponse> {
   return window.hermesDesktop.api<AudioSpeakResponse>({
     path: '/api/audio/speak',
     method: 'POST',
-    body: { text }
+    body: { text },
+    timeoutMs: AUDIO_SPEAK_REQUEST_TIMEOUT_MS
   })
 }
 

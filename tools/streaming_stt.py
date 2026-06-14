@@ -76,8 +76,9 @@ def _import_sherpa_onnx():
         import sherpa_onnx  # type: ignore
     except ImportError as exc:
         raise StreamingSttUnavailable(
-            "sherpa-onnx is not installed. Install it with `pip install sherpa-onnx` "
-            "or keep stt.streaming.enabled false to use batch faster-whisper."
+            "sherpa-onnx is not installed. Run `hermes tools post-setup sherpa_onnx` "
+            "or install it with `pip install sherpa-onnx`. Keep stt.streaming.enabled "
+            "false to use batch faster-whisper."
         ) from exc
     return sherpa_onnx
 

@@ -9731,6 +9731,42 @@ class ToolsetPostSetup(BaseModel):
     profile: Optional[str] = None
 
 
+class StreamingSttSetup(BaseModel):
+    profile: Optional[str] = None
+
+
+@app.post("/api/audio/streaming-stt/setup")
+async def run_streaming_stt_setup(
+    body: Optional[StreamingSttSetup] = None, profile: Optional[str] = None
+):
+    """Spawn the local streaming STT dependency installer.
+
+    Streaming STT is desktop runtime infrastructure, not a model toolset, so it
+    gets a dedicated setup endpoint while still reusing the post-setup runner
+    and allowlist behind ``hermes tools post-setup``.
+    """
+    from hermes_cli.tools_config import valid_post_setup_keys
+
+    key = "sherpa_onnx"
+    if key not in valid_post_setup_keys():
+        raise HTTPException(status_code=400, detail=f"Unknown post-setup key: {key}")
+
+    try:
+        proc = _spawn_hermes_action(
+            _profile_cli_args((body.profile if body else None) or profile)
+            + ["tools", "post-setup", key],
+            "tools-post-setup",
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        _log.exception("Failed to spawn streaming STT setup")
+        raise HTTPException(
+            status_code=500, detail=f"Failed to run streaming STT setup: {exc}"
+        )
+    return {"ok": True, "pid": proc.pid, "name": "tools-post-setup", "key": key}
+
+
 @app.post("/api/tools/toolsets/{name}/post-setup")
 async def run_toolset_post_setup(
     name: str, body: ToolsetPostSetup, profile: Optional[str] = None

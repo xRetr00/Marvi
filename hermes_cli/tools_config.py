@@ -20,6 +20,7 @@ the `platform_toolsets` key.
 
 
 
+import importlib
 import json as _json
 
 import logging
@@ -71,6 +72,8 @@ logger = logging.getLogger(__name__)
 
 
 PROJECT_ROOT = Path(__file__).parent.parent.resolve()
+
+STANDALONE_POST_SETUP_KEYS = {"sherpa_onnx"}
 
 
 
@@ -2106,6 +2109,44 @@ def _run_post_setup(post_setup_key: str):
 
         _print_info("    Switch voices by setting tts.pockettts.voice in ~/.hermes/config.yaml")
 
+    elif post_setup_key == "sherpa_onnx":
+
+        if importlib.util.find_spec("sherpa_onnx") is not None:
+
+            _print_success("    sherpa-onnx is already installed")
+
+            return
+
+        _print_info("    Installing sherpa-onnx for local streaming STT (CPU)...")
+
+        try:
+
+            result = _pip_install(["-U", "sherpa-onnx", "--quiet"], timeout=300)
+
+            if result.returncode == 0:
+
+                _print_success("    sherpa-onnx installed")
+
+                _print_info("    Default streaming model downloads on first realtime voice use")
+
+            else:
+
+                _print_warning("    sherpa-onnx install failed:")
+
+                _print_info(f"      {(result.stderr or '').strip()[:300]}")
+
+                _print_info("    Run manually: uv pip install -U sherpa-onnx")
+
+                return
+
+        except subprocess.TimeoutExpired:
+
+            _print_warning("    sherpa-onnx install timed out (>5min)")
+
+            _print_info("    Run manually: uv pip install -U sherpa-onnx")
+
+            return
+
 
 
     elif post_setup_key == "ddgs":
@@ -2424,7 +2465,7 @@ def valid_post_setup_keys() -> Set[str]:
 
     """
 
-    keys: Set[str] = set()
+    keys: Set[str] = set(STANDALONE_POST_SETUP_KEYS)
 
     for cat in TOOL_CATEGORIES.values():
 
@@ -4345,6 +4386,7 @@ _POST_SETUP_INSTALLED: dict = {
     # doesn't trigger a heavy import.
 
     "cua_driver": lambda: bool(shutil.which(_cua_driver_cmd())),
+    "sherpa_onnx": lambda: importlib.util.find_spec("sherpa_onnx") is not None,
 
 }
 

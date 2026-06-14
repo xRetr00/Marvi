@@ -73,3 +73,20 @@ def test_factory_rejects_disabled_streaming():
 
     with pytest.raises(StreamingSttUnavailable, match="disabled"):
         factory.create({"stt": {"streaming": {"enabled": False}}})
+
+
+def test_missing_sherpa_error_points_to_setup(monkeypatch):
+    from tools import streaming_stt
+    from tools.streaming_stt import StreamingSttUnavailable
+
+    real_import = __import__
+
+    def fake_import(name, *args, **kwargs):
+        if name == "sherpa_onnx":
+            raise ImportError("missing")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr("builtins.__import__", fake_import)
+
+    with pytest.raises(StreamingSttUnavailable, match="hermes tools post-setup sherpa_onnx"):
+        streaming_stt._import_sherpa_onnx()

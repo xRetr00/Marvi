@@ -1877,6 +1877,14 @@ def warm_tts_provider(tts_config: Optional[Dict[str, Any]] = None) -> bool:
         _resolve_pockettts_model_and_voice(cfg)
         return True
 
+    if provider == "piper":
+        _resolve_piper_voice(cfg)
+        return True
+
+    if provider == "kittentts":
+        _resolve_kittentts_model(cfg)
+        return True
+
     return False
 
 
@@ -1998,15 +2006,9 @@ def _resolve_piper_voice_path(voice: str, download_dir: Path) -> str:
     return str(cached)
 
 
-def _generate_piper_tts(text: str, output_path: str, tts_config: Dict[str, Any]) -> str:
-    """Generate speech using the local Piper engine.
-
-    Loads the voice model once per process (cached by absolute path) and
-    writes a WAV file. Caller is responsible for converting to MP3/Opus
-    via ffmpeg when a different output format is required.
-    """
+def _resolve_piper_voice(tts_config: Dict[str, Any]) -> Any:
+    """Return the cached Piper voice for the configured model path."""
     PiperVoice = _import_piper()
-    import wave
 
     piper_config = tts_config.get("piper", {}) if isinstance(tts_config, dict) else {}
     voice_name = piper_config.get("voice") or DEFAULT_PIPER_VOICE
@@ -2015,14 +2017,28 @@ def _generate_piper_tts(text: str, output_path: str, tts_config: Dict[str, Any])
     use_cuda = bool(piper_config.get("use_cuda", False))
 
     model_path = _resolve_piper_voice_path(voice_name, download_dir)
-
     cache_key = f"{model_path}::cuda={use_cuda}"
+
     global _piper_voice_cache
     if cache_key not in _piper_voice_cache:
         logger.info("[Piper] Loading voice: %s", model_path)
         _piper_voice_cache[cache_key] = PiperVoice.load(model_path, use_cuda=use_cuda)
         logger.info("[Piper] Voice loaded")
-    voice = _piper_voice_cache[cache_key]
+
+    return _piper_voice_cache[cache_key]
+
+
+def _generate_piper_tts(text: str, output_path: str, tts_config: Dict[str, Any]) -> str:
+    """Generate speech using the local Piper engine.
+
+    Loads the voice model once per process (cached by absolute path) and
+    writes a WAV file. Caller is responsible for converting to MP3/Opus
+    via ffmpeg when a different output format is required.
+    """
+    import wave
+
+    piper_config = tts_config.get("piper", {}) if isinstance(tts_config, dict) else {}
+    voice = _resolve_piper_voice(tts_config)
 
     # Optional synthesis knobs — only pass a SynthesisConfig when at least
     # one advanced knob is configured, so we don't depend on a newer Piper
@@ -2084,6 +2100,21 @@ def _generate_piper_tts(text: str, output_path: str, tts_config: Dict[str, Any])
 _kittentts_model_cache: Dict[str, Any] = {}
 
 
+def _resolve_kittentts_model(tts_config: Dict[str, Any]) -> Any:
+    """Return the cached KittenTTS model for the configured model name."""
+    KittenTTS = _import_kittentts()
+    kt_config = tts_config.get("kittentts", {}) if isinstance(tts_config, dict) else {}
+    model_name = kt_config.get("model", DEFAULT_KITTENTTS_MODEL)
+
+    global _kittentts_model_cache
+    if model_name not in _kittentts_model_cache:
+        logger.info("[KittenTTS] Loading model: %s", model_name)
+        _kittentts_model_cache[model_name] = KittenTTS(model_name)
+        logger.info("[KittenTTS] Model loaded successfully")
+
+    return _kittentts_model_cache[model_name]
+
+
 def _generate_kittentts(text: str, output_path: str, tts_config: Dict[str, Any]) -> str:
     """Generate speech using KittenTTS local ONNX model.
 
@@ -2098,21 +2129,11 @@ def _generate_kittentts(text: str, output_path: str, tts_config: Dict[str, Any])
     Returns:
         Path to the saved audio file.
     """
-    KittenTTS = _import_kittentts()
-    kt_config = tts_config.get("kittentts", {})
-    model_name = kt_config.get("model", DEFAULT_KITTENTTS_MODEL)
+    kt_config = tts_config.get("kittentts", {}) if isinstance(tts_config, dict) else {}
     voice = kt_config.get("voice", DEFAULT_KITTENTTS_VOICE)
     speed = kt_config.get("speed", 1.0)
     clean_text = kt_config.get("clean_text", True)
-
-    # Use cached model instance if available
-    global _kittentts_model_cache
-    if model_name not in _kittentts_model_cache:
-        logger.info("[KittenTTS] Loading model: %s", model_name)
-        _kittentts_model_cache[model_name] = KittenTTS(model_name)
-        logger.info("[KittenTTS] Model loaded successfully")
-
-    model = _kittentts_model_cache[model_name]
+    model = _resolve_kittentts_model(tts_config)
 
     # Generate audio (returns numpy array at 24kHz)
     audio = model.generate(text, voice=voice, speed=speed, clean_text=clean_text)

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { useI18n } from '@/i18n'
 import { openStreamingSttSession, type StreamingSttSession } from '@/lib/streaming-stt'
-import { playSpeechText, stopVoicePlayback } from '@/lib/voice-playback'
+import { playSpeechTextQueue, stopVoicePlayback } from '@/lib/voice-playback'
 import { notify, notifyError } from '@/store/notifications'
 
 import { useMicRecorder } from './use-mic-recorder'
@@ -260,7 +260,7 @@ export function useVoiceConversation({
     setStatus('speaking')
 
     try {
-      await playSpeechText(text, { source: 'voice-conversation' })
+      await playSpeechTextQueue(text, { source: 'voice-conversation' })
     } catch (error) {
       notifyError(error, voiceCopy.playbackFailed)
     } finally {

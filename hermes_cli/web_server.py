@@ -2481,10 +2481,18 @@ async def transcribe_audio_stream(ws: WebSocket) -> None:
                     config = load_config()
                     cfg = streaming_stt_config(config)
                     sample_rate = int(payload.get("sample_rate") or cfg.sample_rate)
+                    _log.info(
+                        "Starting streaming STT WebSocket provider=%s model=%s sample_rate=%s",
+                        cfg.provider,
+                        cfg.model,
+                        sample_rate,
+                    )
                     recognizer = _STREAMING_STT_FACTORY.create(config)
                     recognizer.start(sample_rate=sample_rate)
+                    _log.info("Streaming STT WebSocket ready provider=%s", cfg.provider)
                     await ws.send_json({"type": "ready", "sample_rate": sample_rate, "provider": cfg.provider})
                 except StreamingSttUnavailable as exc:
+                    _log.warning("Streaming STT unavailable: %s", exc)
                     await ws.send_json({"type": "error", "error": str(exc)})
                 except Exception as exc:
                     _log.exception("Streaming STT failed to start")

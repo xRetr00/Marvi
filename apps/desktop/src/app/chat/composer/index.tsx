@@ -164,6 +164,7 @@ export function ChatBar({
   gateway,
   maxRecordingSeconds = 120,
   sttStreamingEnabled = false,
+  voiceFillerConfig,
   queueSessionKey,
   sessionId,
   state,
@@ -1698,7 +1699,8 @@ export function ChatBar({
     onSubmit: submitVoiceTurn,
     onTranscribeAudio,
     pendingResponse,
-    sttStreamingEnabled
+    sttStreamingEnabled,
+    voiceFillerConfig
   })
 
   const contextMenu = (

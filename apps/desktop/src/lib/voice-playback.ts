@@ -7,6 +7,7 @@ import {
 } from '@/store/voice-playback'
 
 import { sanitizeTextForSpeech } from './speech-text'
+import { createVoiceFillerController, type VoiceFillerConfig, type VoiceFillerController } from './voice-filler'
 
 let currentAudio: HTMLAudioElement | null = null
 let currentStop: (() => void) | null = null
@@ -27,8 +28,17 @@ function currentState(
 }
 
 export interface VoicePlaybackOptions {
+  filler?: VoiceFillerConfig | null
+  fillerController?: VoiceFillerController | null
   messageId?: string | null
   source: VoicePlaybackSource
+}
+
+export interface SpeechPlaybackQueue {
+  close: () => void
+  done: Promise<boolean>
+  enqueue: (text: string) => void
+  stop: () => void
 }
 
 function splitSpeechQueueText(text: string): string[] {
@@ -139,48 +149,133 @@ export async function playSpeechText(text: string, options: VoicePlaybackOptions
 }
 
 export async function playSpeechTextQueue(text: string, options: VoicePlaybackOptions): Promise<boolean> {
+  const queue = createSpeechPlaybackQueue(options)
+  queue.enqueue(text)
+  queue.close()
+
+  return queue.done
+}
+
+export function createSpeechPlaybackQueue(options: VoicePlaybackOptions): SpeechPlaybackQueue {
   stopVoicePlayback()
 
-  const chunks = splitSpeechQueueText(text)
+  const chunks: string[] = []
+  const responsePromises = new Map<number, ReturnType<typeof speakText>>()
+  const waiters: Array<() => void> = []
+  let closed = false
+  let playIndex = 0
+  let active = true
+  const filler = options.fillerController ?? (options.filler ? createVoiceFillerController(options.filler) : null)
 
-  if (chunks.length === 0) {
-    return false
+  const notify = () => {
+    for (const waiter of waiters.splice(0)) {
+      waiter()
+    }
   }
 
   const ownSequence = sequence
   const isCurrent = () => ownSequence === sequence
 
-  setVoicePlaybackState(currentState('preparing', options))
+  const waitForMore = () => new Promise<void>(resolve => waiters.push(resolve))
 
-  try {
-    for (const chunk of chunks) {
-      const response = await speakText(chunk)
-
-      if (!(await playAudioDataUrl(response.data_url, options, isCurrent))) {
-        return false
-      }
-
-      currentAudio = null
-      if (isCurrent()) {
-        setVoicePlaybackState(currentState('preparing', options))
-      }
+  const prefetch = (index: number) => {
+    if (index >= chunks.length || responsePromises.has(index) || !isCurrent()) {
+      return
     }
 
-    if (!isCurrent()) {
+    responsePromises.set(index, speakText(chunks[index]))
+  }
+
+  const prefetchLookahead = () => {
+    prefetch(playIndex)
+    prefetch(playIndex + 1)
+    prefetch(playIndex + 2)
+  }
+
+  const run = async (): Promise<boolean> => {
+    setVoicePlaybackState(currentState('preparing', options))
+
+    try {
+      while (isCurrent() && active) {
+        prefetchLookahead()
+
+        if (playIndex >= chunks.length) {
+          if (closed) {
+            filler?.stopNow()
+            setVoicePlaybackState(currentState('idle'))
+
+            return chunks.length > 0
+          }
+
+          filler?.waiting()
+          setVoicePlaybackState(currentState('preparing', options))
+          await waitForMore()
+          continue
+        }
+
+        const responsePromise = responsePromises.get(playIndex)
+
+        if (!responsePromise) {
+          return false
+        }
+
+        const response = await responsePromise
+        prefetchLookahead()
+        await filler?.beforeResponse()
+
+        if (!(await playAudioDataUrl(response.data_url, options, isCurrent))) {
+          return false
+        }
+
+        currentAudio = null
+        playIndex += 1
+      }
+
       return false
+    } catch (error) {
+      if (isCurrent()) {
+        currentStop = null
+        currentAudio = null
+        setVoicePlaybackState(currentState('idle'))
+      }
+
+      throw error
     }
+  }
 
-    setVoicePlaybackState(currentState('idle'))
+  const done = run()
 
-    return true
-  } catch (error) {
-    if (isCurrent()) {
-      currentStop = null
-      currentAudio = null
-      setVoicePlaybackState(currentState('idle'))
+  return {
+    close: () => {
+      closed = true
+      notify()
+    },
+    done,
+    enqueue: text => {
+      if (closed || !active || !isCurrent()) {
+        return
+      }
+
+      const nextChunks = splitSpeechQueueText(text)
+      if (nextChunks.length === 0) {
+        return
+      }
+
+      for (const chunk of nextChunks) {
+        chunks.push(chunk)
+      }
+      prefetchLookahead()
+      notify()
+    },
+    stop: () => {
+      active = false
+      closed = true
+      filler?.stopNow()
+      notify()
+      if (isCurrent()) {
+        stopVoicePlayback()
+      }
     }
-
-    throw error
   }
 }
 

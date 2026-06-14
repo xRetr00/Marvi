@@ -2,7 +2,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { speakText } from '@/hermes'
 
-import { playSpeechTextQueue, stopVoicePlayback } from './voice-playback'
+import { createSpeechPlaybackQueue, playSpeechTextQueue, stopVoicePlayback } from './voice-playback'
+import type { VoiceFillerController } from './voice-filler'
 
 vi.mock('@/hermes', () => ({
   speakText: vi.fn()
@@ -63,5 +64,91 @@ describe('playSpeechTextQueue', () => {
 
     await expect(promise).resolves.toBe(true)
     expect(speakText).toHaveBeenNthCalledWith(2, 'Second sentence.')
+  })
+
+  it('prefetches the next sentence while the current sentence is playing', async () => {
+    ;(globalThis as { Audio: unknown }).Audio = FakeAudio
+    vi.mocked(speakText).mockResolvedValue({
+      data_url: 'data:audio/wav;base64,AAAA',
+      mime_type: 'audio/wav',
+      ok: true,
+      provider: 'pockettts'
+    })
+
+    const promise = playSpeechTextQueue('First sentence. Second sentence.', { source: 'voice-conversation' })
+
+    await vi.waitFor(() => expect(FakeAudio.instances).toHaveLength(1))
+    await vi.waitFor(() => expect(speakText).toHaveBeenCalledTimes(2))
+
+    expect(speakText).toHaveBeenNthCalledWith(1, 'First sentence.')
+    expect(speakText).toHaveBeenNthCalledWith(2, 'Second sentence.')
+
+    FakeAudio.instances[0].end()
+    await vi.waitFor(() => expect(FakeAudio.instances).toHaveLength(2))
+    FakeAudio.instances[1].end()
+
+    await expect(promise).resolves.toBe(true)
+  })
+
+  it('keeps one playback queue open for sentences appended after playback starts', async () => {
+    ;(globalThis as { Audio: unknown }).Audio = FakeAudio
+    vi.mocked(speakText).mockResolvedValue({
+      data_url: 'data:audio/wav;base64,AAAA',
+      mime_type: 'audio/wav',
+      ok: true,
+      provider: 'pockettts'
+    })
+
+    const queue = createSpeechPlaybackQueue({ source: 'voice-conversation' })
+
+    queue.enqueue('Hello.')
+    await vi.waitFor(() => expect(FakeAudio.instances).toHaveLength(1))
+
+    queue.enqueue('I can help with that.')
+    await vi.waitFor(() => expect(speakText).toHaveBeenCalledTimes(2))
+
+    expect(speakText).toHaveBeenNthCalledWith(1, 'Hello.')
+    expect(speakText).toHaveBeenNthCalledWith(2, 'I can help with that.')
+
+    FakeAudio.instances[0].end()
+    await vi.waitFor(() => expect(FakeAudio.instances).toHaveLength(2))
+    queue.close()
+    FakeAudio.instances[1].end()
+
+    await expect(queue.done).resolves.toBe(true)
+  })
+
+  it('starts filler while waiting and stops it before later response audio plays', async () => {
+    ;(globalThis as { Audio: unknown }).Audio = FakeAudio
+    const filler: VoiceFillerController = {
+      beforeResponse: vi.fn(async () => undefined),
+      stopNow: vi.fn(),
+      waiting: vi.fn()
+    }
+
+    vi.mocked(speakText).mockResolvedValue({
+      data_url: 'data:audio/wav;base64,AAAA',
+      mime_type: 'audio/wav',
+      ok: true,
+      provider: 'pockettts'
+    })
+
+    const queue = createSpeechPlaybackQueue({
+      fillerController: filler,
+      source: 'voice-conversation'
+    })
+
+    queue.enqueue('Hello.')
+    await vi.waitFor(() => expect(FakeAudio.instances).toHaveLength(1))
+    FakeAudio.instances[0].end()
+    await vi.waitFor(() => expect(filler.waiting).toHaveBeenCalled())
+
+    queue.enqueue('I can help.')
+    await vi.waitFor(() => expect(filler.beforeResponse).toHaveBeenCalled())
+    await vi.waitFor(() => expect(FakeAudio.instances).toHaveLength(2))
+
+    queue.close()
+    FakeAudio.instances[1].end()
+    await expect(queue.done).resolves.toBe(true)
   })
 })

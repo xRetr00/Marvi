@@ -138,6 +138,8 @@ export interface Translations {
       noSpeechDetected: string
       playbackFailed: string
       recordingFailed: string
+      streamingFallback: string
+      streamingUnavailable: string
       transcriptionFailed: string
       transcriptionUnavailable: string
       tryRecordingAgain: string

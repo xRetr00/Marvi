@@ -31,6 +31,13 @@ export interface VoicePlaybackOptions {
   source: VoicePlaybackSource
 }
 
+export interface SpeechPlaybackQueue {
+  close: () => void
+  done: Promise<boolean>
+  enqueue: (text: string) => void
+  stop: () => void
+}
+
 function splitSpeechQueueText(text: string): string[] {
   const speakableText = sanitizeTextForSpeech(text)
 
@@ -139,67 +146,128 @@ export async function playSpeechText(text: string, options: VoicePlaybackOptions
 }
 
 export async function playSpeechTextQueue(text: string, options: VoicePlaybackOptions): Promise<boolean> {
+  const queue = createSpeechPlaybackQueue(options)
+  queue.enqueue(text)
+  queue.close()
+
+  return queue.done
+}
+
+export function createSpeechPlaybackQueue(options: VoicePlaybackOptions): SpeechPlaybackQueue {
   stopVoicePlayback()
 
-  const chunks = splitSpeechQueueText(text)
+  const chunks: string[] = []
+  const responsePromises = new Map<number, ReturnType<typeof speakText>>()
+  const waiters: Array<() => void> = []
+  let closed = false
+  let playIndex = 0
+  let active = true
 
-  if (chunks.length === 0) {
-    return false
+  const notify = () => {
+    for (const waiter of waiters.splice(0)) {
+      waiter()
+    }
   }
 
   const ownSequence = sequence
   const isCurrent = () => ownSequence === sequence
 
-  setVoicePlaybackState(currentState('preparing', options))
+  const waitForMore = () => new Promise<void>(resolve => waiters.push(resolve))
 
-  try {
-    const responsePromises = new Map<number, ReturnType<typeof speakText>>()
-    const prefetch = (index: number) => {
-      if (index >= chunks.length || responsePromises.has(index)) {
+  const prefetch = (index: number) => {
+    if (index >= chunks.length || responsePromises.has(index) || !isCurrent()) {
+      return
+    }
+
+    responsePromises.set(index, speakText(chunks[index]))
+  }
+
+  const prefetchLookahead = () => {
+    prefetch(playIndex)
+    prefetch(playIndex + 1)
+    prefetch(playIndex + 2)
+  }
+
+  const run = async (): Promise<boolean> => {
+    setVoicePlaybackState(currentState('preparing', options))
+
+    try {
+      while (isCurrent() && active) {
+        prefetchLookahead()
+
+        if (playIndex >= chunks.length) {
+          if (closed) {
+            setVoicePlaybackState(currentState('idle'))
+
+            return chunks.length > 0
+          }
+
+          setVoicePlaybackState(currentState('preparing', options))
+          await waitForMore()
+          continue
+        }
+
+        const responsePromise = responsePromises.get(playIndex)
+
+        if (!responsePromise) {
+          return false
+        }
+
+        const response = await responsePromise
+        prefetchLookahead()
+
+        if (!(await playAudioDataUrl(response.data_url, options, isCurrent))) {
+          return false
+        }
+
+        currentAudio = null
+        playIndex += 1
+      }
+
+      return false
+    } catch (error) {
+      if (isCurrent()) {
+        currentStop = null
+        currentAudio = null
+        setVoicePlaybackState(currentState('idle'))
+      }
+
+      throw error
+    }
+  }
+
+  const done = run()
+
+  return {
+    close: () => {
+      closed = true
+      notify()
+    },
+    done,
+    enqueue: text => {
+      if (closed || !active || !isCurrent()) {
         return
       }
 
-      responsePromises.set(index, speakText(chunks[index]))
-    }
-
-    prefetch(0)
-
-    for (let index = 0; index < chunks.length; index++) {
-      const responsePromise = responsePromises.get(index)
-
-      if (!responsePromise) {
-        return false
+      const nextChunks = splitSpeechQueueText(text)
+      if (nextChunks.length === 0) {
+        return
       }
 
-      const response = await responsePromise
-      prefetch(index + 1)
-      prefetch(index + 2)
-
-      if (!(await playAudioDataUrl(response.data_url, options, isCurrent))) {
-        return false
+      for (const chunk of nextChunks) {
+        chunks.push(chunk)
       }
-
-      currentAudio = null
+      prefetchLookahead()
+      notify()
+    },
+    stop: () => {
+      active = false
+      closed = true
+      notify()
       if (isCurrent()) {
-        setVoicePlaybackState(currentState('preparing', options))
+        stopVoicePlayback()
       }
     }
-
-    if (!isCurrent()) {
-      return false
-    }
-
-    setVoicePlaybackState(currentState('idle'))
-
-    return true
-  } catch (error) {
-    if (isCurrent()) {
-      currentStop = null
-      currentAudio = null
-      setVoicePlaybackState(currentState('idle'))
-    }
-
-    throw error
   }
 }
 

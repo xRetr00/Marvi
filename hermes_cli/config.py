@@ -941,6 +941,13 @@ DEFAULT_CONFIG = {
         # (terminal and execute_code).  Skill-declared required_environment_variables
         # are passed through automatically; this list is for non-skill use cases.
         "env_passthrough": [],
+        # HOME handling for host tool subprocesses:
+        #   auto    — host keeps the real OS-user HOME; containers use
+        #             HERMES_HOME/home for persistent state (default)
+        #   real    — force the real OS-user HOME
+        #   profile — force HERMES_HOME/home when it exists (old strict
+        #             per-profile CLI config isolation)
+        "home_mode": "auto",
         # Extra files to source in the login shell when building the
         # per-session environment snapshot.  Use this when tools like nvm,
         # pyenv, asdf, or custom PATH entries are registered by files that
@@ -2233,11 +2240,11 @@ DEFAULT_CONFIG = {
     # Remotely-hosted model catalog manifest.  When enabled, the CLI fetches
     # curated model lists for OpenRouter and Nous Portal from this URL,
     # falling back to the in-repo snapshot on network failure.  Lets us
-    # update model picker lists without shipping a hermes-agent release.
-    # The default URL is served by the docs site GitHub Pages deploy.
+    # update model picker lists without shipping a Marvi release.
+    # The default URL is served from the Marvi repo's raw GitHub manifest.
     "model_catalog": {
         "enabled": True,
-        "url": "https://hermes-agent.nousresearch.com/docs/api/model-catalog.json",
+        "url": "https://raw.githubusercontent.com/xRetr00/Marvi/main/website/static/api/model-catalog.json",
         # Disk cache TTL in hours.  Beyond this, the CLI refetches on the
         # next /model or `hermes model` invocation; network failures
         # silently fall back to the stale cache.
@@ -4131,7 +4138,7 @@ _KNOWN_ROOT_KEYS = {
     "fallback_providers", "credential_pool_strategies", "toolsets",
     "agent", "terminal", "display", "compression", "delegation",
     "auxiliary", "custom_providers", "context", "memory", "gateway",
-    "sessions", "streaming", "updates",
+    "sessions", "streaming", "updates", "mcp_servers",
 }
 
 # Valid fields inside a custom_providers list entry
@@ -4838,6 +4845,38 @@ def migrate_config(interactive: bool = True, quiet: bool = False) -> Dict[str, A
             save_config(config)
             if not quiet:
                 print("  ✓ Renamed write_mode → write_approval (boolean gate)")
+
+    # ── Post-migration: disable exfiltration-shaped MCP stdio entries ──
+    # Users can hand-edit mcp_servers, and older installs may already contain a
+    # malicious entry. Preserve the stanza for auditability but mark it
+    # disabled so the next startup will not spawn it. (#45620)
+    config = read_raw_config()
+    raw_mcp_servers = config.get("mcp_servers")
+    if isinstance(raw_mcp_servers, dict):
+        try:
+            from hermes_cli.mcp_security import validate_mcp_server_entry as _validate_mcp_server_entry
+        except Exception:
+            _validate_mcp_server_entry = None
+        if _validate_mcp_server_entry:
+            mcp_touched = False
+            for server_name, entry in raw_mcp_servers.items():
+                if not isinstance(entry, dict):
+                    continue
+                issues = _validate_mcp_server_entry(server_name, entry)
+                if not issues:
+                    continue
+                entry["enabled"] = False
+                mcp_touched = True
+                results["warnings"].append(
+                    f"Disabled suspicious MCP server '{server_name}'"
+                )
+                if not quiet:
+                    for issue in issues:
+                        print(f"  ⚠ {issue}")
+                    print(f"  ⚠ Disabled MCP server '{server_name}' pending review")
+            if mcp_touched:
+                config["mcp_servers"] = raw_mcp_servers
+                save_config(config)
 
     if current_ver < latest_ver and not quiet:
         print(f"Config version: {current_ver} → {latest_ver}")

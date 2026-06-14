@@ -978,7 +978,7 @@ class TestWebServerEndpoints:
         assert data["name"] == "hermes-update"
         assert data["pid"] is None
         assert data["error"] == "docker_update_unsupported"
-        assert "docker pull nousresearch/hermes-agent:latest" in data["message"]
+        assert "docker pull xretr00/marvi:latest" in data["message"]
         assert spawned is False
 
         status = self.client.get("/api/actions/hermes-update/status")
@@ -987,7 +987,7 @@ class TestWebServerEndpoints:
         assert status_data["running"] is False
         assert status_data["exit_code"] == 1
         assert status_data["pid"] is None
-        assert any("docker pull nousresearch/hermes-agent:latest" in line for line in status_data["lines"])
+        assert any("docker pull xretr00/marvi:latest" in line for line in status_data["lines"])
 
     def test_update_hermes_spawns_on_non_docker_install(self, monkeypatch):
         import hermes_cli.web_server as web_server
@@ -1465,6 +1465,26 @@ class TestWebServerEndpoints:
         assert telegram["enabled"] is False
         assert any(field["key"] == "TELEGRAM_BOT_TOKEN" and field["required"] for field in telegram["env_vars"])
 
+    def test_weixin_messaging_metadata_describes_personal_ilink_setup(self):
+        resp = self.client.get("/api/messaging/platforms")
+
+        assert resp.status_code == 200
+        weixin = next(
+            platform
+            for platform in resp.json()["platforms"]
+            if platform["id"] == "weixin"
+        )
+        assert weixin["name"] == "Weixin / WeChat (Personal)"
+        assert "personal WeChat" in weixin["description"]
+        assert "Official Account" not in f"{weixin['name']} {weixin['description']}"
+        assert weixin["docs_url"] == "https://github.com/xRetr00/Marvi"
+
+        fields = {field["key"]: field for field in weixin["env_vars"]}
+        for key in ("WEIXIN_ACCOUNT_ID", "WEIXIN_TOKEN", "WEIXIN_BASE_URL"):
+            assert "iLink" in fields[key]["description"]
+            assert "QR login" in fields[key]["description"]
+            assert "Official Account" not in fields[key]["description"]
+
     def test_messaging_catalog_covers_gateway_platforms(self):
         """Catalog is derived from the Platform enum, so every built-in shows up."""
         from gateway.config import Platform
@@ -1935,6 +1955,45 @@ class TestWebServerEndpoints:
         assert resp.status_code in {200, 404}
         if resp.status_code == 200:
             assert "FastAPI" not in resp.text  # Should not serve the actual source
+
+    def test_spa_assets_are_read_as_utf8(self, monkeypatch, tmp_path):
+        from fastapi import FastAPI
+        from starlette.testclient import TestClient
+        import hermes_cli.web_server as ws
+
+        dist = tmp_path / "web_dist"
+        assets = dist / "assets"
+        assets.mkdir(parents=True)
+        index_path = dist / "index.html"
+        css_path = assets / "app.css"
+        index_path.write_text("<html><head></head><body>cafe cafe</body></html>", encoding="utf-8")
+        css_path.write_text("body::before { content: 'cafe'; }", encoding="utf-8")
+
+        original_read_text = Path.read_text
+        seen_encodings = {}
+
+        def tracking_read_text(path_self, *args, **kwargs):
+            if path_self == index_path:
+                seen_encodings["index"] = kwargs.get("encoding")
+            elif path_self == css_path:
+                seen_encodings["css"] = kwargs.get("encoding")
+            return original_read_text(path_self, *args, **kwargs)
+
+        monkeypatch.setattr(ws, "WEB_DIST", dist)
+        monkeypatch.setattr(Path, "read_text", tracking_read_text)
+        spa_app = FastAPI()
+        ws.mount_spa(spa_app)
+        spa_client = TestClient(spa_app)
+
+        index_resp = spa_client.get("/chat")
+        assert index_resp.status_code == 200
+        assert "cafe cafe" in index_resp.text
+
+        css_resp = spa_client.get("/assets/app.css", headers={"x-forwarded-prefix": "/hermes"})
+        assert css_resp.status_code == 200
+        assert "content: 'cafe';" in css_resp.text
+
+        assert seen_encodings == {"index": "utf-8", "css": "utf-8"}
 
     def test_set_model_main_nous_applies_gateway_defaults(self, monkeypatch):
         """Switching the main provider to Nous calls apply_nous_managed_defaults
@@ -2711,6 +2770,7 @@ class TestNewEndpoints:
         wrapper_dir = tmp_path / "bin"
         wrapper_dir.mkdir()
         monkeypatch.setattr(profiles_mod, "_get_wrapper_dir", lambda: wrapper_dir)
+        monkeypatch.setattr(profiles_mod.shutil, "which", lambda name: "/opt/hermes/bin/hermes")
 
         resp = self.client.post(
             "/api/profiles",
@@ -2725,7 +2785,7 @@ class TestNewEndpoints:
         else:
             wrapper_path = wrapper_dir / "writer"
             assert wrapper_path.exists()
-            assert wrapper_path.read_text() == '#!/bin/sh\nexec hermes -p writer "$@"\n'
+            assert wrapper_path.read_text() == '#!/bin/sh\nexec /opt/hermes/bin/hermes -p writer "$@"\n'
 
     def test_profiles_create_with_clone_from_copies_source_skills(self, monkeypatch):
         from hermes_constants import get_hermes_home

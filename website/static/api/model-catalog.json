@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated_at": "2026-06-13T08:41:46Z",
+  "updated_at": "2026-06-14T14:37:06Z",
   "metadata": {
     "source": "hermes-agent repo",
     "docs": "https://github.com/xRetr00/Marvi"
@@ -12,6 +12,10 @@
         "note": "Descriptions drive picker badges. Live /api/v1/models filters curated ids by tool-calling support and free pricing."
       },
       "models": [
+        {
+          "id": "deepseek/deepseek-v4-flash",
+          "description": "recommended"
+        },
         {
           "id": "anthropic/claude-opus-4.8",
           "description": ""
@@ -58,10 +62,6 @@
         },
         {
           "id": "deepseek/deepseek-v4-pro",
-          "description": ""
-        },
-        {
-          "id": "deepseek/deepseek-v4-flash",
           "description": ""
         },
         {

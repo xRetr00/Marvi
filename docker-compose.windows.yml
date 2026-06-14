@@ -12,7 +12,7 @@
 #
 services:
   gateway:
-    image: nousresearch/marvi-agent:latest
+    image: xretr00/marvi:latest
     container_name: hermes
     restart: unless-stopped
     volumes:
@@ -23,7 +23,7 @@ services:
     command: ["gateway", "run"]
 
   dashboard:
-    image: nousresearch/marvi-agent:latest
+    image: xretr00/marvi:latest
     container_name: hermes-dashboard
     restart: unless-stopped
     depends_on:

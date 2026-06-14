@@ -307,13 +307,13 @@ Meta only allows **free-form messages** within a 24-hour window after the user's
 - **Long-running `delegate_task` async results** that take longer than 24h fail the same way.
 - **Webhook subscribers** that route external events to WhatsApp fail when the user hasn't DM'd the bot recently.
 
-Hermes warns the agent about this window in its system prompt, so the model knows to mention it when scheduling delayed messages.
+Marvi warns the agent about this window in its system prompt, so the model knows to mention it when scheduling delayed messages.
 
-Message-template support (the workaround for outside-window sends) is not yet implemented in Hermes. If you need it, please [open an issue](https://github.com/NousResearch/hermes-agent/issues) — it's planned but waiting on a clear demand signal.
+Message-template support (the workaround for outside-window sends) is not yet implemented in Marvi. If you need it, please [open an issue](https://github.com/xRetr00/Marvi/issues) — it's planned but waiting on a clear demand signal.
 
 ### Group chats
 
-The Cloud API has limited group support (capability-tier gated by Meta).  Hermes's `whatsapp_cloud` adapter currently handles **direct messages only** in v1.  If you need group chats, use the Baileys bridge.
+The Cloud API has limited group support (capability-tier gated by Meta).  Marvi's `whatsapp_cloud` adapter currently handles **direct messages only** in v1.  If you need group chats, use the Baileys bridge.
 
 ### Outbound rate limit
 

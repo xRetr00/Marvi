@@ -73,10 +73,10 @@ https://raw.githubusercontent.com/xRetr00/Marvi
 Forbidden for user install/update paths:
 
 ```text
-https://github.com/NousResearch/hermes-agent
-https://raw.githubusercontent.com/NousResearch/hermes-agent
-https://hermes-agent.nousresearch.com
-ghcr.io/nousresearch/hermes-agent
+legacy Hermes upstream repo URL
+legacy Hermes raw GitHub URL
+legacy Hermes docs domain
+legacy Hermes GHCR image
 ```
 
 ## Standard Sync Procedure

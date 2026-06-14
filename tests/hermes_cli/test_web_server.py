@@ -822,10 +822,72 @@ class TestWebServerEndpoints:
         assert resp.status_code == 400
         assert "base64" in resp.json()["detail"]
 
+    def test_audio_streaming_transcription_websocket_returns_partial_and_final(self, monkeypatch):
+        import struct
+
+        import hermes_cli.web_server as web_server
+
+        class FakeStreamingRecognizer:
+            def __init__(self):
+                self.started = False
+                self.frames = []
+
+            def start(self, sample_rate=16000):
+                self.started = True
+                self.sample_rate = sample_rate
+
+            def accept_waveform(self, samples):
+                self.frames.append(samples)
+                return "hello"
+
+            def finish(self):
+                return "hello world"
+
+        recognizer = FakeStreamingRecognizer()
+
+        class FakeFactory:
+            def create(self, config=None):
+                return recognizer
+
+        monkeypatch.setattr(web_server, "_STREAMING_STT_FACTORY", FakeFactory())
+        monkeypatch.setattr(
+            web_server,
+            "load_config",
+            lambda: {"stt": {"streaming": {"enabled": True, "provider": "sherpa_onnx"}}},
+        )
+
+        with self.client.websocket_connect(f"/api/audio/transcribe/stream?token={web_server._SESSION_TOKEN}") as ws:
+            ws.send_json({"type": "start", "sample_rate": 16000})
+            assert ws.receive_json() == {"type": "ready", "sample_rate": 16000, "provider": "sherpa_onnx"}
+
+            ws.send_bytes(struct.pack("<4f", 0.0, 0.1, 0.2, 0.3))
+            assert ws.receive_json() == {"type": "partial", "text": "hello"}
+
+            ws.send_json({"type": "end"})
+            assert ws.receive_json() == {"type": "final", "text": "hello world"}
+
+        assert recognizer.started is True
+        assert recognizer.sample_rate == 16000
+        assert len(recognizer.frames) == 1
+
+    def test_audio_streaming_transcription_websocket_reports_protocol_errors(self, monkeypatch):
+        import hermes_cli.web_server as web_server
+
+        class FakeFactory:
+            def create(self, config=None):
+                raise AssertionError("recognizer should not start before start message")
+
+        monkeypatch.setattr(web_server, "_STREAMING_STT_FACTORY", FakeFactory())
+
+        with self.client.websocket_connect(f"/api/audio/transcribe/stream?token={web_server._SESSION_TOKEN}") as ws:
+            ws.send_bytes(b"\x00\x00\x00\x00")
+            assert ws.receive_json()["type"] == "error"
+
     def test_desktop_audio_routes_registered(self):
         """All three desktop voice endpoints must exist.
 
-        The renderer (apps/desktop) calls /api/audio/transcribe, /speak, and
+        The renderer (apps/desktop) calls /api/audio/transcribe,
+        /api/audio/transcribe/stream, /speak, /tts/warm, and
         /elevenlabs/voices. /speak + /voices were silently dropped in a merge
         once; this guards the contract so a future merge can't lose them
         without failing CI.
@@ -834,8 +896,25 @@ class TestWebServerEndpoints:
 
         paths = {getattr(r, "path", None) for r in app.routes}
         assert "/api/audio/transcribe" in paths
+        assert "/api/audio/transcribe/stream" in paths
         assert "/api/audio/speak" in paths
+        assert "/api/audio/tts/warm" in paths
         assert "/api/audio/elevenlabs/voices" in paths
+
+    def test_tts_warm_endpoint_uses_current_config(self, monkeypatch):
+        import hermes_cli.web_server as web_server
+        from tools import tts_tool
+
+        warmed = {}
+
+        monkeypatch.setattr(web_server, "load_config", lambda: {"tts": {"provider": "pockettts"}})
+        monkeypatch.setattr(tts_tool, "warm_tts_provider", lambda cfg: warmed.setdefault("cfg", cfg) or True)
+
+        resp = self.client.post("/api/audio/tts/warm")
+
+        assert resp.status_code == 200
+        assert resp.json() == {"ok": True, "warmed": True, "provider": "pockettts"}
+        assert warmed["cfg"] == {"provider": "pockettts"}
 
     def test_elevenlabs_voices_unavailable_without_key(self, monkeypatch):
         import hermes_cli.web_server as web_server

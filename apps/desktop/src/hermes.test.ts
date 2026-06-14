@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { getSessionMessages, listAllProfileSessions, listSessions, speakText } from './hermes'
+import { getSessionMessages, listAllProfileSessions, listSessions, speakText, warmTextToSpeech } from './hermes'
 
 const emptySessionsResponse = {
   limit: 0,
@@ -72,6 +72,18 @@ describe('Hermes REST session helpers', () => {
       body: { text: 'Hello' },
       method: 'POST',
       path: '/api/audio/speak',
+      timeoutMs: 360_000
+    })
+  })
+
+  it('fires a desktop TTS warm request', async () => {
+    api.mockResolvedValue({ ok: true, warmed: true })
+
+    await warmTextToSpeech()
+
+    expect(api).toHaveBeenCalledWith({
+      method: 'POST',
+      path: '/api/audio/tts/warm',
       timeoutMs: 360_000
     })
   })

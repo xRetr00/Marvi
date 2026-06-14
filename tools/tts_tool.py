@@ -1814,15 +1814,9 @@ _pockettts_model_cache: Dict[str, Any] = {}
 _pockettts_voice_cache: Dict[str, Any] = {}
 
 
-def _generate_pockettts(text: str, output_path: str, tts_config: Dict[str, Any]) -> str:
-    """Generate speech using Kyutai PocketTTS.
-
-    PocketTTS returns a 1D torch tensor of PCM samples. Keep the loaded model
-    and voice state in memory because upstream documents both as relatively
-    slow to initialize compared with synthesis.
-    """
+def _resolve_pockettts_model_and_voice(tts_config: Dict[str, Any]) -> tuple[Any, Any]:
+    """Return cached PocketTTS model + selected voice state."""
     TTSModel = _import_pockettts_model()
-    from scipy.io import wavfile
 
     pocket_config = tts_config.get("pockettts", {}) if isinstance(tts_config, dict) else {}
     voice = str(pocket_config.get("voice") or DEFAULT_POCKETTTS_VOICE).strip() or DEFAULT_POCKETTTS_VOICE
@@ -1843,7 +1837,35 @@ def _generate_pockettts(text: str, output_path: str, tts_config: Dict[str, Any])
         logger.info("[PocketTTS] Loading voice: %s", voice)
         _pockettts_voice_cache[voice_key] = model.get_state_for_audio_prompt(voice)
 
-    voice_state = _pockettts_voice_cache[voice_key]
+    return model, _pockettts_voice_cache[voice_key]
+
+
+def warm_tts_provider(tts_config: Optional[Dict[str, Any]] = None) -> bool:
+    """Preload the configured local TTS provider when it has a warmable cache.
+
+    Returns True when a provider was warmed. Providers without an explicit
+    warm-up path return False so callers can fire-and-forget safely.
+    """
+    cfg = tts_config if tts_config is not None else _load_tts_config()
+    provider = _get_provider(cfg)
+
+    if provider == "pockettts":
+        _resolve_pockettts_model_and_voice(cfg)
+        return True
+
+    return False
+
+
+def _generate_pockettts(text: str, output_path: str, tts_config: Dict[str, Any]) -> str:
+    """Generate speech using Kyutai PocketTTS.
+
+    PocketTTS returns a 1D torch tensor of PCM samples. Keep the loaded model
+    and voice state in memory because upstream documents both as relatively
+    slow to initialize compared with synthesis.
+    """
+    from scipy.io import wavfile
+
+    model, voice_state = _resolve_pockettts_model_and_voice(tts_config)
     audio = model.generate_audio(voice_state, text)
     samples = audio.numpy() if hasattr(audio, "numpy") else audio
 

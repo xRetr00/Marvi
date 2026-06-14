@@ -739,6 +739,14 @@ export function speakText(text: string): Promise<AudioSpeakResponse> {
   })
 }
 
+export function warmTextToSpeech(): Promise<{ ok: boolean; provider?: string; warmed: boolean }> {
+  return window.hermesDesktop.api<{ ok: boolean; provider?: string; warmed: boolean }>({
+    path: '/api/audio/tts/warm',
+    method: 'POST',
+    timeoutMs: AUDIO_SPEAK_REQUEST_TIMEOUT_MS
+  })
+}
+
 export function getElevenLabsVoices(): Promise<ElevenLabsVoicesResponse> {
   return window.hermesDesktop.api<ElevenLabsVoicesResponse>({
     path: '/api/audio/elevenlabs/voices'

@@ -1676,6 +1676,17 @@ DEFAULT_CONFIG = {
     "stt": {
         "enabled": True,
         "provider": "local",  # "local" (free, faster-whisper) | "groq" | "openai" (Whisper API) | "mistral" (Voxtral Transcribe) | "elevenlabs" (Scribe)
+        "streaming": {
+            # Desktop realtime voice only. Disabled by default so the stable
+            # batch transcription endpoint remains the default behavior.
+            "enabled": False,
+            "provider": "sherpa_onnx",
+            "model": "en-20m-int8",
+            "sample_rate": 16000,
+            "frame_ms": 100,
+            "endpoint_silence_ms": 1200,
+            "partial_interval_ms": 150,
+        },
         "local": {
             "model": "base",  # tiny, base, small, medium, large-v3
             "language": "",  # auto-detect by default; set to "en", "es", "fr", etc. to force

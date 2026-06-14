@@ -11,7 +11,8 @@ import {
   getHermesConfigDefaults,
   getHermesConfigRecord,
   getHermesConfigSchema,
-  saveHermesConfig
+  saveHermesConfig,
+  warmTextToSpeech
 } from '@/hermes'
 import { useI18n } from '@/i18n'
 import { cn } from '@/lib/utils'
@@ -253,6 +254,7 @@ export function ConfigSettings({
 
           if (saveVersionRef.current === v) {
             onConfigSaved?.()
+            void warmTextToSpeech().catch(() => undefined)
           }
         } catch (err) {
           if (saveVersionRef.current === v) {

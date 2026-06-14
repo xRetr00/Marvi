@@ -2,7 +2,38 @@ import { useEffect, useRef, useState } from 'react'
 
 type BrowserAudioContext = typeof AudioContext
 
+export function downsampleFloat32(input: Float32Array, inputRate: number, outputRate: number): Float32Array {
+  if (!input.length || inputRate <= 0 || outputRate <= 0) {
+    return new Float32Array()
+  }
+
+  if (inputRate === outputRate) {
+    return new Float32Array(input)
+  }
+
+  const ratio = inputRate / outputRate
+  const outputLength = Math.max(1, Math.floor(input.length / ratio))
+  const output = new Float32Array(outputLength)
+
+  for (let i = 0; i < outputLength; i += 1) {
+    const start = Math.floor(i * ratio)
+    const end = Math.min(input.length, Math.floor((i + 1) * ratio))
+    let sum = 0
+    let count = 0
+
+    for (let j = start; j < end; j += 1) {
+      sum += input[j] ?? 0
+      count += 1
+    }
+
+    output[i] = count > 0 ? sum / count : input[Math.min(start, input.length - 1)] ?? 0
+  }
+
+  return output
+}
+
 export interface MicRecorderOptions {
+  onAudioFrame?: (samples: Float32Array) => void
   onLevel?: (level: number) => void
   onError?: (error: Error) => void
   onSilence?: () => void
@@ -67,6 +98,7 @@ export function useMicRecorder(copy: MicRecorderErrorCopy): { handle: MicRecorde
   const streamRef = useRef<MediaStream | null>(null)
   const chunksRef = useRef<Blob[]>([])
   const audioContextRef = useRef<AudioContext | null>(null)
+  const processorRef = useRef<ScriptProcessorNode | null>(null)
   const animationRef = useRef<number | null>(null)
   const startedAtRef = useRef(0)
   const heardSpeechRef = useRef(false)
@@ -82,6 +114,7 @@ export function useMicRecorder(copy: MicRecorderErrorCopy): { handle: MicRecorde
 
     void audioContextRef.current?.close()
     audioContextRef.current = null
+    processorRef.current = null
     streamRef.current?.getTracks().forEach(track => track.stop())
     streamRef.current = null
     recorderRef.current = null
@@ -109,6 +142,21 @@ export function useMicRecorder(copy: MicRecorderErrorCopy): { handle: MicRecorde
       const data = new Uint8Array(analyser.fftSize)
 
       source.connect(analyser)
+
+      if (options.onAudioFrame) {
+        const processor = audioContext.createScriptProcessor(4096, 1, 1)
+        processor.onaudioprocess = event => {
+          const input = event.inputBuffer.getChannelData(0)
+          options.onAudioFrame?.(downsampleFloat32(input, audioContext.sampleRate, 16000))
+
+          const output = event.outputBuffer.getChannelData(0)
+          output.fill(0)
+        }
+        source.connect(processor)
+        processor.connect(audioContext.destination)
+        processorRef.current = processor
+      }
+
       audioContextRef.current = audioContext
 
       const tick = () => {

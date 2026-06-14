@@ -153,8 +153,6 @@ export function createVoiceFillerController(
         return
       }
 
-      const elapsed = Date.now() - startedAt
-      await delay(Math.max(0, config.minimumPlayDurationMs - elapsed))
       stopSound()
       await delay(config.responseDeliveryDelayMs)
     },

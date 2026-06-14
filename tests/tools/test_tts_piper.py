@@ -7,6 +7,7 @@ without requiring the ``piper-tts`` package to actually be installed
 """
 
 import json
+import datetime as datetime_module
 import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -270,6 +271,32 @@ class TestTextToSpeechToolWithPiper:
         assert data["success"] is True, data
         assert data["provider"] == "piper"
         assert Path(data["file_path"]).exists()
+
+    def test_default_output_path_is_unique_with_parallel_chunks(self, tmp_path, monkeypatch):
+        class FixedDateTime(datetime_module.datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return cls(2026, 6, 14, 19, 25, 55, tzinfo=tz)
+
+        monkeypatch.setattr(tts_tool.datetime, "datetime", FixedDateTime)
+        monkeypatch.setattr(tts_tool, "DEFAULT_OUTPUT_DIR", str(tmp_path))
+        monkeypatch.setattr(tts_tool, "_import_piper", lambda: _StubPiperVoice)
+        monkeypatch.setattr(tts_tool, "_load_tts_config", lambda: {"provider": "piper"})
+
+        def fake_generate(text, output_path, config):
+            Path(output_path).write_bytes(f"audio:{text}".encode("utf-8"))
+            return output_path
+
+        monkeypatch.setattr(tts_tool, "_generate_piper_tts", fake_generate)
+
+        first = json.loads(text_to_speech_tool(text="first"))
+        second = json.loads(text_to_speech_tool(text="second"))
+
+        assert first["success"] is True, first
+        assert second["success"] is True, second
+        assert first["file_path"] != second["file_path"]
+        assert Path(first["file_path"]).name.startswith("tts_20260614_192555_")
+        assert Path(second["file_path"]).name.startswith("tts_20260614_192555_")
 
     def test_missing_package_surfaces_error(self, tmp_path, monkeypatch):
         def raise_import():

@@ -41,7 +41,7 @@ describe('createVoiceFillerController', () => {
     filler.stopNow()
   })
 
-  it('starts after delay and holds the minimum duration before response playback', async () => {
+  it('stops promptly when response playback is ready', async () => {
     vi.useFakeTimers()
     const sound = new FakeFillerSound()
     const filler = createVoiceFillerController(enabledConfig, { createSound: () => sound })
@@ -51,15 +51,11 @@ describe('createVoiceFillerController', () => {
     expect(sound.starts).toBe(1)
 
     const ready = filler.beforeResponse()
-    vi.advanceTimersByTime(1199)
     await Promise.resolve()
-    expect(sound.stops).toBe(0)
+    expect(sound.stops).toBe(1)
 
-    vi.advanceTimersByTime(1)
-    await Promise.resolve()
     vi.advanceTimersByTime(200)
     await expect(ready).resolves.toBeUndefined()
-    expect(sound.stops).toBe(1)
 
     filler.stopNow()
   })

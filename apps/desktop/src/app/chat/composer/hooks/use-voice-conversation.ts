@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { useI18n } from '@/i18n'
+import { openStreamingSttSession, type StreamingSttSession } from '@/lib/streaming-stt'
 import { playSpeechText, stopVoicePlayback } from '@/lib/voice-playback'
 import { notify, notifyError } from '@/store/notifications'
 
@@ -19,6 +20,7 @@ interface VoiceConversationOptions {
   enabled: boolean
   onFatalError?: () => void
   onSubmit: (text: string) => Promise<void> | void
+  sttStreamingEnabled?: boolean
   onTranscribeAudio?: (audio: Blob) => Promise<string>
   pendingResponse: () => PendingVoiceResponse | null
   consumePendingResponse: () => void
@@ -29,6 +31,7 @@ export function useVoiceConversation({
   enabled,
   onFatalError,
   onSubmit,
+  sttStreamingEnabled = false,
   onTranscribeAudio,
   pendingResponse,
   consumePendingResponse
@@ -50,6 +53,7 @@ export function useVoiceConversation({
   const busyRef = useRef(busy)
   const statusRef = useRef<ConversationStatus>('idle')
   const wasEnabledRef = useRef(enabled)
+  const streamingSessionRef = useRef<StreamingSttSession | null>(null)
 
   useEffect(() => {
     enabledRef.current = enabled
@@ -154,7 +158,21 @@ export function useVoiceConversation({
         }
 
         try {
-          const transcript = (await onTranscribeAudio(result.audio)).trim()
+          let transcript = ''
+          const streamingSession = streamingSessionRef.current
+          streamingSessionRef.current = null
+
+          if (streamingSession) {
+            try {
+              transcript = (await streamingSession.finish()).trim()
+            } catch {
+              transcript = ''
+            }
+          }
+
+          if (!transcript) {
+            transcript = (await onTranscribeAudio(result.audio)).trim()
+          }
 
           if (!transcript) {
             if (enabledRef.current) {
@@ -198,8 +216,18 @@ export function useVoiceConversation({
     }
 
     try {
+      streamingSessionRef.current = null
+      if (sttStreamingEnabled) {
+        try {
+          streamingSessionRef.current = await openStreamingSttSession()
+        } catch {
+          streamingSessionRef.current = null
+        }
+      }
+
       // VAD tuning mirrors `tools.voice_mode` defaults so the browser loop matches the CLI.
       await handle.start({
+        onAudioFrame: samples => streamingSessionRef.current?.sendFrame(samples),
         silenceLevel: 0.075,
         silenceMs: 1_250,
         idleSilenceMs: 12_000,
@@ -213,12 +241,14 @@ export function useVoiceConversation({
       setStatus('listening')
       turnTimeoutRef.current = window.setTimeout(() => void handleTurn(), 60_000)
     } catch (error) {
+      streamingSessionRef.current?.stop()
+      streamingSessionRef.current = null
       notifyError(error, voiceCopy.couldNotStartSession)
       pendingStartRef.current = false
       setStatus('idle')
       onFatalError?.()
     }
-  }, [handle, handleTurn, onFatalError, voiceCopy.couldNotStartSession, voiceCopy.microphoneFailed])
+  }, [handle, handleTurn, onFatalError, sttStreamingEnabled, voiceCopy.couldNotStartSession, voiceCopy.microphoneFailed])
 
   const speak = useCallback(async (text: string) => {
     setStatus('speaking')
@@ -261,6 +291,8 @@ export function useVoiceConversation({
     pendingStartRef.current = false
     clearTurnTimeout()
     stopVoicePlayback()
+    streamingSessionRef.current?.stop()
+    streamingSessionRef.current = null
     handle.cancel()
     turnClosingRef.current = false
     awaitingSpokenResponseRef.current = false

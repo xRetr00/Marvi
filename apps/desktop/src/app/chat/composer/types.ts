@@ -32,6 +32,7 @@ export interface ChatBarProps {
   disabled: boolean
   focusKey?: string | null
   maxRecordingSeconds?: number
+  sttStreamingEnabled?: boolean
   state: ChatBarState
   gateway?: HermesGateway | null
   queueSessionKey?: string | null

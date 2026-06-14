@@ -27,6 +27,7 @@ import secrets
 import shutil
 import stat
 import subprocess
+import struct
 import sys
 import tempfile
 import threading
@@ -64,6 +65,7 @@ from hermes_cli.config import (
 )
 from gateway.status import get_running_pid, read_runtime_status
 from utils import env_var_enabled
+from tools.streaming_stt import StreamingSttFactory, StreamingSttUnavailable, streaming_stt_config
 
 try:
     from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
@@ -91,6 +93,7 @@ except ImportError:
 
 WEB_DIST = Path(os.environ["HERMES_WEB_DIST"]) if "HERMES_WEB_DIST" in os.environ else Path(__file__).parent / "web_dist"
 _log = logging.getLogger(__name__)
+_STREAMING_STT_FACTORY = StreamingSttFactory()
 
 # ---------------------------------------------------------------------------
 # Per-channel subscriber registry used by /api/pub (PTY-side gateway → dashboard)
@@ -2388,8 +2391,140 @@ async def transcribe_audio_upload(payload: AudioTranscriptionRequest):
     }
 
 
+async def _close_ws_with_reason(ws: WebSocket, code: int, reason: str) -> None:
+    try:
+        await ws.close(code=code, reason=reason)
+    except Exception:
+        pass
+
+
+def _float32le_samples(data: bytes) -> list[float]:
+    if len(data) % 4 != 0:
+        raise ValueError("Audio frame bytes must be Float32 little-endian")
+    if not data:
+        return []
+    return list(struct.unpack("<" + "f" * (len(data) // 4), data))
+
+
+@app.websocket("/api/audio/transcribe/stream")
+async def transcribe_audio_stream(ws: WebSocket) -> None:
+    """Desktop-only streaming STT WebSocket.
+
+    Protocol:
+      - JSON start: {"type": "start", "sample_rate": 16000}
+      - Binary frames: Float32LE mono PCM
+      - JSON end: {"type": "end"}
+      - Server sends ready/partial/final/error JSON frames.
+    """
+    if not _ws_request_is_allowed(ws):
+        reason = _ws_request_reason(ws) or "forbidden"
+        await _close_ws_with_reason(ws, 1008, reason)
+        return
+
+    auth_reason, credential = _ws_auth_reason(ws)
+    if auth_reason is not None:
+        _log.warning(
+            "Rejecting streaming STT WebSocket from %s (%s via %s)",
+            ws.client.host if ws.client else "?",
+            auth_reason,
+            credential,
+        )
+        await _close_ws_with_reason(ws, 1008, auth_reason)
+        return
+
+    await ws.accept()
+    recognizer = None
+    last_partial = ""
+
+    try:
+        while True:
+            msg = await ws.receive()
+
+            if msg.get("type") == "websocket.disconnect":
+                break
+
+            if msg.get("bytes") is not None:
+                if recognizer is None:
+                    await ws.send_json({"type": "error", "error": "Send a start message before audio frames"})
+                    continue
+
+                try:
+                    samples = _float32le_samples(msg["bytes"] or b"")
+                except ValueError as exc:
+                    await ws.send_json({"type": "error", "error": str(exc)})
+                    continue
+
+                partial = str(recognizer.accept_waveform(samples) or "").strip()
+                if partial and partial != last_partial:
+                    last_partial = partial
+                    await ws.send_json({"type": "partial", "text": partial})
+                continue
+
+            raw_text = msg.get("text")
+            if raw_text is None:
+                await ws.send_json({"type": "error", "error": "Expected JSON control message or binary audio frame"})
+                continue
+
+            try:
+                payload = json.loads(raw_text)
+            except json.JSONDecodeError:
+                await ws.send_json({"type": "error", "error": "Control messages must be JSON"})
+                continue
+
+            kind = str(payload.get("type") or "").strip().lower()
+            if kind == "start":
+                if recognizer is not None:
+                    await ws.send_json({"type": "error", "error": "Streaming STT already started"})
+                    continue
+
+                try:
+                    config = load_config()
+                    cfg = streaming_stt_config(config)
+                    sample_rate = int(payload.get("sample_rate") or cfg.sample_rate)
+                    recognizer = _STREAMING_STT_FACTORY.create(config)
+                    recognizer.start(sample_rate=sample_rate)
+                    await ws.send_json({"type": "ready", "sample_rate": sample_rate, "provider": cfg.provider})
+                except StreamingSttUnavailable as exc:
+                    await ws.send_json({"type": "error", "error": str(exc)})
+                except Exception as exc:
+                    _log.exception("Streaming STT failed to start")
+                    await ws.send_json({"type": "error", "error": f"Streaming STT failed to start: {exc}"})
+                continue
+
+            if kind == "end":
+                if recognizer is None:
+                    await ws.send_json({"type": "error", "error": "Streaming STT has not started"})
+                    continue
+
+                try:
+                    final = str(recognizer.finish() or "").strip()
+                    await ws.send_json({"type": "final", "text": final})
+                except Exception as exc:
+                    _log.exception("Streaming STT finalization failed")
+                    await ws.send_json({"type": "error", "error": f"Streaming STT finalization failed: {exc}"})
+                break
+
+            await ws.send_json({"type": "error", "error": f"Unknown control message type: {kind or 'missing'}"})
+    except WebSocketDisconnect:
+        pass
+
+
 class TTSSpeakRequest(BaseModel):
     text: str
+
+
+@app.post("/api/audio/tts/warm")
+async def warm_text_to_speech_provider():
+    try:
+        tts_config = (load_config() or {}).get("tts", {})
+        from tools import tts_tool
+
+        warmed = await asyncio.to_thread(tts_tool.warm_tts_provider, tts_config)
+        provider = str(tts_config.get("provider") or "").strip().lower()
+        return {"ok": True, "warmed": bool(warmed), "provider": provider}
+    except Exception as exc:
+        _log.exception("Desktop TTS warm-up failed")
+        raise HTTPException(status_code=500, detail=f"TTS warm-up failed: {exc}")
 
 
 def _elevenlabs_voice_label(voice: Dict[str, Any]) -> str:

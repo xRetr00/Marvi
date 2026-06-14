@@ -163,6 +163,7 @@ export function ChatBar({
   focusKey,
   gateway,
   maxRecordingSeconds = 120,
+  sttStreamingEnabled = false,
   queueSessionKey,
   sessionId,
   state,
@@ -1696,7 +1697,8 @@ export function ChatBar({
     onFatalError: () => setVoiceConversationActive(false),
     onSubmit: submitVoiceTurn,
     onTranscribeAudio,
-    pendingResponse
+    pendingResponse,
+    sttStreamingEnabled
   })
 
   const contextMenu = (

@@ -239,6 +239,8 @@ export const ENUM_OPTIONS: Record<string, string[]> = {
   'terminal.backend': ['local', 'docker', 'singularity', 'modal', 'daytona', 'ssh'],
   'stt.elevenlabs.model_id': ['scribe_v2', 'scribe_v1'],
   'stt.local.model': ['tiny', 'base', 'small', 'medium', 'large-v3'],
+  'stt.streaming.provider': ['sherpa_onnx'],
+  'stt.streaming.model': ['en-20m-int8'],
   // Speech-to-text backends — kept in sync with the stt block in
   // hermes_cli/config.py (local/groq/openai/mistral/elevenlabs).
   'stt.provider': ['local', 'groq', 'openai', 'mistral', 'xai', 'elevenlabs'],
@@ -338,6 +340,11 @@ export const FIELD_LABELS: Record<string, string> = defineFieldCopy({
     },
     openai: {
       model: 'OpenAI STT Model'
+    },
+    streaming: {
+      enabled: 'Streaming STT',
+      provider: 'Streaming STT Provider',
+      model: 'Streaming STT Model'
     },
     groq: {
       model: 'Groq STT Model'
@@ -485,6 +492,9 @@ export const FIELD_DESCRIPTIONS: Record<string, string> = defineFieldCopy({
   },
   stt: {
     enabled: 'Enable local or provider-backed speech transcription.',
+    streaming: {
+      enabled: 'Use realtime desktop voice transcription when available; falls back to batch transcription on failure.'
+    },
     elevenlabs: {
       languageCode: 'Optional ISO-639-3 language code. Blank lets ElevenLabs auto-detect.'
     }
@@ -568,6 +578,9 @@ export const SECTIONS: DesktopConfigSection[] = [
       'tts.provider',
       'stt.enabled',
       'stt.provider',
+      'stt.streaming.enabled',
+      'stt.streaming.provider',
+      'stt.streaming.model',
       'voice.auto_tts',
       'tts.edge.voice',
       'tts.openai.model',

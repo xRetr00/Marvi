@@ -104,6 +104,41 @@ class TestGeneratePocketTts:
         fake_model.get_state_for_audio_prompt.assert_called_once()
         assert fake_model.generate_audio.call_count == 2
 
+    def test_different_configured_voices_use_distinct_cached_voice_states(self, tmp_path, mock_pockettts_modules):
+        from tools.tts_tool import _generate_pockettts
+
+        fake_model, fake_cls, _ = mock_pockettts_modules
+        fake_model.get_state_for_audio_prompt.side_effect = lambda voice: f"state:{voice}"
+
+        _generate_pockettts(
+            "One",
+            str(tmp_path / "a.wav"),
+            {"pockettts": {"voice": "alba"}},
+        )
+        _generate_pockettts(
+            "Two",
+            str(tmp_path / "b.wav"),
+            {"pockettts": {"voice": "marius"}},
+        )
+
+        fake_cls.load_model.assert_called_once()
+        assert fake_model.get_state_for_audio_prompt.call_args_list[0].args == ("alba",)
+        assert fake_model.get_state_for_audio_prompt.call_args_list[1].args == ("marius",)
+        assert fake_model.generate_audio.call_args_list[0].args[:2] == ("state:alba", "One")
+        assert fake_model.generate_audio.call_args_list[1].args[:2] == ("state:marius", "Two")
+
+    def test_warm_pockettts_preloads_model_and_selected_voice(self, mock_pockettts_modules):
+        from tools.tts_tool import warm_tts_provider
+
+        fake_model, fake_cls, _ = mock_pockettts_modules
+
+        warmed = warm_tts_provider({"provider": "pockettts", "pockettts": {"voice": "cosette"}})
+
+        assert warmed is True
+        fake_cls.load_model.assert_called_once()
+        fake_model.get_state_for_audio_prompt.assert_called_once_with("cosette")
+        fake_model.generate_audio.assert_not_called()
+
 
 class TestCheckPocketTtsAvailable:
     def test_reports_available_when_package_present(self, monkeypatch):

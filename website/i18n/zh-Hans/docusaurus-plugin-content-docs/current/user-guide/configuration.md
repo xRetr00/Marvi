@@ -2605,9 +2605,7 @@ streaming:
   buffer_threshold: 40    # 强制编辑刷新前的字符数
 
   cursor: " ▉"            # 流式传输期间显示的光标
-
-  fresh_final_after_seconds: 60   # 当预览超过此时间时发送新的最终消息（Telegram）；0 = 始终就地编辑
-
+  fresh_final_after_seconds: 0    # 预览超过此时间时选择发送新的最终消息（Telegram）
 ```
 
 
@@ -2622,9 +2620,7 @@ streaming:
 
 **溢出处理：** 如果流式传输的文本超过平台的消息长度限制（约 4096 字符），当前消息被最终化，新消息自动开始。
 
-
-
-**新的最终消息（Telegram）：** Telegram 的 `editMessageText` 保留原始消息时间戳，因此长时间运行的流式回复即使在完成后也会保留第一个 token 的时间戳。当 `fresh_final_after_seconds > 0`（默认 `60`）时，完成的回复作为全新消息传递（尽力删除旧预览），以便 Telegram 的可见时间戳反映完成时间。短预览仍然就地最终化。设置为 `0` 以始终就地编辑。
+**新的最终消息（Telegram）：** Telegram 的 `editMessageText` 保留原始消息时间戳，因此长时间运行的流式回复即使在完成后也会保留第一个 token 的时间戳。设置 `fresh_final_after_seconds > 0` 可选择将旧预览作为全新的最终消息传递，并尽力删除旧预览。默认值为 `0`，始终就地最终化流式回复，避免某些客户端短暂显示重复消息再删除其中一条。
 
 
 

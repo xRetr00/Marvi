@@ -10,6 +10,7 @@ tests/docker/test_container_restart.py.
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -30,6 +31,7 @@ def _make_profile(
     name: str,
     *,
     state: str | None,
+    desired_state: str | None = None,
     with_pid: bool = False,
     config: bool = True,
 ) -> Path:
@@ -40,10 +42,13 @@ def _make_profile(
         # SOUL.md is what the reconciler keys on — it's always seeded by
         # `hermes profile create`. See container_boot._render_run_script.
         (p / "SOUL.md").write_text("# fake profile\n")
-    if state is not None:
-        (p / "gateway_state.json").write_text(json.dumps({
-            "gateway_state": state, "timestamp": 1234567890,
-        }))
+    if state is not None or desired_state is not None:
+        payload: dict[str, object] = {"timestamp": 1234567890}
+        if state is not None:
+            payload["gateway_state"] = state
+        if desired_state is not None:
+            payload["desired_state"] = desired_state
+        (p / "gateway_state.json").write_text(json.dumps(payload))
     if with_pid:
         (p / "gateway.pid").write_text(json.dumps(
             {"pid": 99999, "host": "old-container"},
@@ -95,7 +100,8 @@ def test_running_profile_is_registered_and_autostarted(tmp_path: Path) -> None:
     )]
     svc = scandir / "gateway-coder"
     assert (svc / "run").exists()
-    assert (svc / "run").stat().st_mode & 0o111  # executable
+    if os.name != "nt":
+        assert (svc / "run").stat().st_mode & 0o111  # executable
     assert (svc / "type").read_text().strip() == "longrun"
     # Auto-start means no down-marker.
     assert not (svc / "down").exists()
@@ -128,6 +134,46 @@ def test_startup_failed_does_not_autostart(tmp_path: Path) -> None:
     named = _named_actions(actions)
     assert named[0].action == "registered"
     assert (scandir / "gateway-broken" / "down").exists()
+
+
+def test_desired_state_running_autostarts_even_if_runtime_failed(tmp_path: Path) -> None:
+    """Persisted operator intent wins over transient runtime failures."""
+    scandir = tmp_path / "run-service"; scandir.mkdir()
+    _make_profile(
+        tmp_path,
+        "resilient",
+        state="startup_failed",
+        desired_state="running",
+    )
+
+    actions = reconcile_profile_gateways(
+        hermes_home=tmp_path, scandir=scandir, dry_run=False,
+    )
+
+    assert _named_actions(actions) == [ReconcileAction(
+        profile="resilient", prior_state="running", action="started",
+    )]
+    assert not (scandir / "gateway-resilient" / "down").exists()
+
+
+def test_desired_state_stopped_blocks_legacy_running_runtime(tmp_path: Path) -> None:
+    """Explicit stop must survive a stale legacy runtime state of running."""
+    scandir = tmp_path / "run-service"; scandir.mkdir()
+    _make_profile(
+        tmp_path,
+        "quiet",
+        state="running",
+        desired_state="stopped",
+    )
+
+    actions = reconcile_profile_gateways(
+        hermes_home=tmp_path, scandir=scandir, dry_run=False,
+    )
+
+    assert _named_actions(actions) == [ReconcileAction(
+        profile="quiet", prior_state="stopped", action="registered",
+    )]
+    assert (scandir / "gateway-quiet" / "down").exists()
 
 
 def test_starting_state_does_not_autostart(tmp_path: Path) -> None:
@@ -513,6 +559,7 @@ def test_legacy_gateway_run_cmd_seeds_default_running_state(
     assert not (scandir / "gateway-default" / "down").exists()
     state = json.loads((tmp_path / "gateway_state.json").read_text())
     assert state["gateway_state"] == "running"
+    assert state["desired_state"] == "running"
     assert state["migrated_from"] == "legacy-container-cmd"
 
 

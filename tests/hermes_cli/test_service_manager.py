@@ -7,6 +7,8 @@ implementation in this same file once that phase ships.
 """
 from __future__ import annotations
 
+import os
+
 import pytest
 
 from hermes_cli.service_manager import (
@@ -69,6 +71,20 @@ def test_detect_service_manager_returns_known_value() -> None:
     assert result in ("systemd", "launchd", "windows", "s6", "none")
 
 
+def test_detect_service_manager_s6_keys_off_s6_running_not_is_container(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression: Fly runs s6-overlay as PID 1 in a Firecracker microVM, which
+    is not a Docker/Podman container. Gating s6 detection on is_container() made
+    the dispatch path inert on Fly, so `hermes gateway restart` spawned a
+    foreground gateway that fought the supervised one. Detection must key off
+    s6 being PID 1 (`_s6_running`) alone."""
+    monkeypatch.setattr(
+        "hermes_cli.service_manager._s6_running", lambda: True,
+    )
+    assert detect_service_manager() == "s6"
+
+
 # ---------------------------------------------------------------------------
 # _s6_running — must work for unprivileged users, not just root
 # ---------------------------------------------------------------------------
@@ -107,6 +123,9 @@ def _patch_s6_paths(
 def test_s6_running_true_when_comm_and_basedir_match(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    if os.name == "nt":
+        pytest.skip("s6 PID/basedir detection is POSIX-only")
+
     from hermes_cli.service_manager import _s6_running
 
     _patch_s6_paths(monkeypatch, comm="s6-svscan", basedir_is_dir=True)
@@ -424,6 +443,7 @@ def test_s6_manager_kind_and_supports_registration() -> None:
 
 def test_seed_supervise_skeleton_creates_expected_layout(tmp_path) -> None:
     """Verifies the dirs + FIFO + modes the helper lays down."""
+    import os
     import stat
 
     from hermes_cli.service_manager import _seed_supervise_skeleton
@@ -436,27 +456,34 @@ def test_seed_supervise_skeleton_creates_expected_layout(tmp_path) -> None:
     # Top-level event/ — s6-svlisten1 event subscription dir.
     event = svc_dir / "event"
     assert event.is_dir(), "missing top-level event/"
-    assert stat.S_IMODE(event.stat().st_mode) == 0o3730, (
-        f"event/ mode = {oct(event.stat().st_mode)}, want 03730"
-    )
+    if os.name != "nt":
+        assert stat.S_IMODE(event.stat().st_mode) == 0o3730, (
+            f"event/ mode = {oct(event.stat().st_mode)}, want 03730"
+        )
 
     # supervise/ dir.
     supervise = svc_dir / "supervise"
     assert supervise.is_dir(), "missing supervise/"
-    assert stat.S_IMODE(supervise.stat().st_mode) == 0o755
+    if os.name != "nt":
+        assert stat.S_IMODE(supervise.stat().st_mode) == 0o755
 
     # supervise/event/.
     supervise_event = supervise / "event"
     assert supervise_event.is_dir(), "missing supervise/event/"
-    assert stat.S_IMODE(supervise_event.stat().st_mode) == 0o3730
+    if os.name != "nt":
+        assert stat.S_IMODE(supervise_event.stat().st_mode) == 0o3730
 
     # supervise/control FIFO.
     control = supervise / "control"
     assert control.exists(), "missing supervise/control FIFO"
-    assert stat.S_ISFIFO(control.stat().st_mode), (
-        "supervise/control must be a FIFO"
-    )
-    assert stat.S_IMODE(control.stat().st_mode) == 0o660
+    if hasattr(os, "mkfifo"):
+        assert stat.S_ISFIFO(control.stat().st_mode), (
+            "supervise/control must be a FIFO"
+        )
+    else:
+        assert control.is_file(), "supervise/control fallback must be a file"
+    if os.name != "nt":
+        assert stat.S_IMODE(control.stat().st_mode) == 0o660
 
 
 def test_seed_supervise_skeleton_handles_log_subservice(tmp_path) -> None:
@@ -466,6 +493,7 @@ def test_seed_supervise_skeleton_handles_log_subservice(tmp_path) -> None:
     on the logger's root-owned supervise dir even after the parent
     slot's supervise/ was hermes-owned.
     """
+    import os
     import stat
 
     from hermes_cli.service_manager import _seed_supervise_skeleton
@@ -483,10 +511,15 @@ def test_seed_supervise_skeleton_handles_log_subservice(tmp_path) -> None:
     log_control = log_supervise / "control"
 
     assert log_event.is_dir()
-    assert stat.S_IMODE(log_event.stat().st_mode) == 0o3730
     assert log_supervise.is_dir()
     assert log_supervise_event.is_dir()
-    assert log_control.exists() and stat.S_ISFIFO(log_control.stat().st_mode)
+    assert log_control.exists()
+    if os.name != "nt":
+        assert stat.S_IMODE(log_event.stat().st_mode) == 0o3730
+    if hasattr(os, "mkfifo"):
+        assert stat.S_ISFIFO(log_control.stat().st_mode)
+    else:
+        assert log_control.is_file()
 
 
 def test_seed_supervise_skeleton_skips_when_no_log_subservice(tmp_path) -> None:
@@ -531,7 +564,8 @@ def test_s6_register_creates_service_dir_and_triggers_scan(
 
     run_path = svc_dir / "run"
     assert run_path.is_file()
-    assert run_path.stat().st_mode & 0o111  # executable
+    if os.name != "nt":
+        assert run_path.stat().st_mode & 0o111  # executable
     run_text = run_path.read_text()
     assert "export HOME=/opt/data" in run_text
     assert "hermes -p coder gateway run" in run_text
@@ -570,6 +604,35 @@ def test_s6_register_creates_service_dir_and_triggers_scan(
         and str(s6_scandir) in cmd
         for cmd in fake_subprocess_run
     ), f"s6-svscanctl -a not invoked; saw: {fake_subprocess_run}"
+
+
+def test_s6_register_start_now_false_writes_down_marker(
+    s6_scandir, fake_subprocess_run,
+) -> None:
+    """When start_now=False, a `down` marker must be written so
+    s6-supervise does not auto-start the service on rescan."""
+    mgr = S6ServiceManager(scandir=s6_scandir)
+    mgr.register_profile_gateway("coder", start_now=False)
+
+    svc_dir = s6_scandir / "gateway-coder"
+    assert svc_dir.is_dir()
+    assert (svc_dir / "down").is_file(), (
+        "start_now=False must write a `down` marker file"
+    )
+
+
+def test_s6_register_start_now_true_no_down_marker(
+    s6_scandir, fake_subprocess_run,
+) -> None:
+    """When start_now=True (default), no `down` marker should exist."""
+    mgr = S6ServiceManager(scandir=s6_scandir)
+    mgr.register_profile_gateway("coder")
+
+    svc_dir = s6_scandir / "gateway-coder"
+    assert svc_dir.is_dir()
+    assert not (svc_dir / "down").exists(), (
+        "start_now=True must NOT write a `down` marker file"
+    )
 
 
 def test_s6_register_extra_env_is_quoted(s6_scandir, fake_subprocess_run) -> None:
@@ -681,6 +744,48 @@ def test_s6_lifecycle_dispatches_to_s6_svc(
 
     flags = [c[1] for c in fake_subprocess_run if c[0] == "s6-svc"]
     assert flags == ["-u", "-d", "-t"]
+
+
+def test_s6_lifecycle_persists_named_profile_desired_state(
+    s6_scandir,
+    fake_subprocess_run,
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import json
+
+    hermes_home = tmp_path / "hermes-home"
+    profile_dir = hermes_home / "profiles" / "coder"
+    profile_dir.mkdir(parents=True)
+    (s6_scandir / "gateway-coder").mkdir()
+    monkeypatch.setenv("HERMES_HOME", str(hermes_home))
+
+    mgr = S6ServiceManager(scandir=s6_scandir)
+    mgr.start("gateway-coder")
+    assert json.loads((profile_dir / "gateway_state.json").read_text())["desired_state"] == "running"
+    mgr.stop("gateway-coder")
+    assert json.loads((profile_dir / "gateway_state.json").read_text())["desired_state"] == "stopped"
+    mgr.restart("gateway-coder")
+    assert json.loads((profile_dir / "gateway_state.json").read_text())["desired_state"] == "running"
+
+
+def test_s6_lifecycle_persists_default_profile_desired_state(
+    s6_scandir,
+    fake_subprocess_run,
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import json
+
+    hermes_home = tmp_path / "hermes-home"
+    hermes_home.mkdir()
+    (s6_scandir / "gateway-default").mkdir()
+    monkeypatch.setenv("HERMES_HOME", str(hermes_home / "profiles" / "coder"))
+
+    mgr = S6ServiceManager(scandir=s6_scandir)
+    mgr.start("gateway-default")
+    state = json.loads((hermes_home / "gateway_state.json").read_text())
+    assert state["desired_state"] == "running"
 
 
 # ---------------------------------------------------------------------------
@@ -907,3 +1012,38 @@ def test_s6_stop_tolerates_marker_write_failure(monkeypatch, s6_scandir):
     mgr.stop("gateway-coder")  # must not raise
 
     assert any(cmd[0] == "s6-svc" and "-d" in cmd for cmd in svc_calls)
+
+
+def test_s6_log_run_chowns_gateways_parent(s6_scandir, fake_subprocess_run) -> None:
+    """The log/run script must chown the logs/gateways/ parent, not just the leaf.
+
+    Regression guard for #45258: `mkdir -p` creates the gateways/ parent
+    root-owned on a root-context boot, and a leaf-only chown leaves it that
+    way. Every profile registered later then runs its log service as the
+    dropped hermes user and s6-log crash-loops on `mkdir: Permission denied`.
+    """
+    mgr = S6ServiceManager(scandir=s6_scandir)
+    mgr.register_profile_gateway("coder")
+
+    log_text = (s6_scandir / "gateway-coder" / "log" / "run").read_text()
+
+    parent_chown = 'chown hermes:hermes "$HERMES_HOME/logs/gateways"'
+    assert parent_chown in log_text, (
+        "log/run must chown the logs/gateways parent so profiles added "
+        f"after a root-context boot can create their leaf dirs. Saw: {log_text!r}"
+    )
+    # Non-recursive on purpose: sibling profile leaf dirs are each managed
+    # by their own log/run; a recursive parent chown would race them.
+    assert 'chown -R hermes:hermes "$HERMES_HOME/logs/gateways"' not in log_text
+
+    # Ordering: mkdir creates the parent, then the parent chown repairs its
+    # ownership, then the leaf chown — all before s6-log execs.
+    mkdir_idx = log_text.index('mkdir -p "$log_dir"')
+    parent_idx = log_text.index(parent_chown)
+    leaf_idx = log_text.index('chown -R hermes:hermes "$log_dir"')
+    exec_idx = log_text.index("s6-log 1 ")
+    assert mkdir_idx < parent_idx < leaf_idx < exec_idx
+
+    # The parent path must be a runtime env expansion, never a baked-in
+    # absolute path (same contract as the log_dir itself).
+    assert '/opt/data/logs/gateways"' not in log_text

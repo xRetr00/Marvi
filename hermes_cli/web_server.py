@@ -2455,7 +2455,12 @@ async def transcribe_audio_stream(ws: WebSocket) -> None:
                     await ws.send_json({"type": "error", "error": str(exc)})
                     continue
 
-                partial = str(recognizer.accept_waveform(samples) or "").strip()
+                try:
+                    partial = str(recognizer.accept_waveform(samples) or "").strip()
+                except Exception as exc:
+                    _log.exception("Streaming STT frame processing failed")
+                    await ws.send_json({"type": "error", "error": f"Streaming STT frame processing failed: {exc}"})
+                    break
                 if partial and partial != last_partial:
                     last_partial = partial
                     await ws.send_json({"type": "partial", "text": partial})
@@ -2565,8 +2570,14 @@ async def wake_word_stream(ws: WebSocket) -> None:
                     await ws.send_json({"type": "error", "error": str(exc)})
                     continue
 
-                phrase = str(spotter.accept_waveform(samples) or "").strip()
+                try:
+                    phrase = str(spotter.accept_waveform(samples) or "").strip()
+                except Exception as exc:
+                    _log.exception("Wake-word frame processing failed")
+                    await ws.send_json({"type": "error", "error": f"Wake-word frame processing failed: {exc}"})
+                    break
                 if phrase:
+                    _log.info("Wake-word detected phrase=%s", phrase)
                     await ws.send_json({"type": "detected", "phrase": phrase})
                 continue
 
@@ -2599,6 +2610,7 @@ async def wake_word_stream(ws: WebSocket) -> None:
                     )
                     spotter = _WAKE_WORD_FACTORY.create(config)
                     spotter.start(sample_rate=sample_rate)
+                    _log.info("Wake-word WebSocket ready provider=%s", cfg.provider)
                     await ws.send_json({"type": "ready", "sample_rate": sample_rate, "provider": cfg.provider})
                 except StreamingSttUnavailable as exc:
                     _log.warning("Wake-word unavailable: %s", exc)

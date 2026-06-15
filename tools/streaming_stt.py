@@ -290,10 +290,14 @@ def resolve_sherpa_kws_model_files(cfg: WakeWordConfig) -> dict[str, str]:
             "or set voice.wake_word.model to a local sherpa-onnx KWS model directory."
         )
 
+    def preferred_model_file(prefix: str) -> Path | None:
+        matches = sorted(root.glob(f"{prefix}*.onnx"))
+        return next((path for path in matches if ".int8." not in path.name), None) or (matches[0] if matches else None)
+
     files = {
-        "encoder": next(root.glob("encoder*.onnx"), None),
-        "decoder": next(root.glob("decoder*.onnx"), None),
-        "joiner": next(root.glob("joiner*.onnx"), None),
+        "encoder": preferred_model_file("encoder"),
+        "decoder": preferred_model_file("decoder"),
+        "joiner": preferred_model_file("joiner"),
         "tokens": root / "tokens.txt",
         "bpe_model": root / "bpe.model",
     }
@@ -450,6 +454,8 @@ class SherpaOnnxWakeWordSpotter:
             joiner=files["joiner"],
             num_threads=2,
             keywords_file=keywords_file,
+            keywords_score=cfg.boost,
+            keywords_threshold=cfg.threshold,
             provider="cpu",
         )
         self.stream = self.spotter.create_stream()

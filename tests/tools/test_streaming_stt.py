@@ -249,6 +249,66 @@ def test_prepare_wake_word_assets_resolves_model_and_keywords(monkeypatch):
     ]
 
 
+def test_kws_model_resolution_prefers_full_precision_files(tmp_path):
+    from tools.streaming_stt import WakeWordConfig, resolve_sherpa_kws_model_files
+
+    root = tmp_path / "kws"
+    root.mkdir()
+    for name in [
+        "encoder-epoch-1.int8.onnx",
+        "encoder-epoch-1.onnx",
+        "decoder-epoch-1.int8.onnx",
+        "decoder-epoch-1.onnx",
+        "joiner-epoch-1.int8.onnx",
+        "joiner-epoch-1.onnx",
+        "tokens.txt",
+        "bpe.model",
+    ]:
+        (root / name).write_text("x", encoding="utf-8")
+
+    files = resolve_sherpa_kws_model_files(WakeWordConfig(enabled=True, model=str(root)))
+
+    assert files["encoder"].endswith("encoder-epoch-1.onnx")
+    assert files["decoder"].endswith("decoder-epoch-1.onnx")
+    assert files["joiner"].endswith("joiner-epoch-1.onnx")
+
+
+def test_wake_word_spotter_passes_tuned_score_and_threshold(monkeypatch, tmp_path):
+    from tools import streaming_stt
+    from tools.streaming_stt import SherpaOnnxWakeWordSpotter, WakeWordConfig
+
+    captured = {}
+
+    class FakeKeywordSpotter:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+        def create_stream(self):
+            return object()
+
+    class FakeSherpa:
+        KeywordSpotter = FakeKeywordSpotter
+
+    monkeypatch.setattr(streaming_stt, "_import_sherpa_onnx", lambda: FakeSherpa)
+    monkeypatch.setattr(
+        streaming_stt,
+        "resolve_sherpa_kws_model_files",
+        lambda _cfg: {
+            "encoder": "encoder.onnx",
+            "decoder": "decoder.onnx",
+            "joiner": "joiner.onnx",
+            "tokens": "tokens.txt",
+            "bpe_model": "bpe.model",
+        },
+    )
+    monkeypatch.setattr(streaming_stt, "_write_wake_keywords_file", lambda _cfg, _files: str(tmp_path / "kw.txt"))
+
+    SherpaOnnxWakeWordSpotter(WakeWordConfig(enabled=True, boost=4.0, threshold=0.21))
+
+    assert captured["keywords_score"] == 4.0
+    assert captured["keywords_threshold"] == 0.21
+
+
 def test_wake_keywords_tokenizer_forces_utf8_stdio(monkeypatch, tmp_path):
     from types import SimpleNamespace
 

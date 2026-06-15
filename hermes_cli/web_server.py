@@ -65,7 +65,7 @@ from hermes_cli.config import (
 )
 from gateway.status import get_running_pid, read_runtime_status
 from utils import env_var_enabled
-from tools.streaming_stt import StreamingSttFactory, StreamingSttUnavailable, streaming_stt_config
+from tools.streaming_stt import StreamingSttFactory, StreamingSttUnavailable, WakeWordFactory, streaming_stt_config, wake_word_config
 
 try:
     from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
@@ -94,6 +94,7 @@ except ImportError:
 WEB_DIST = Path(os.environ["HERMES_WEB_DIST"]) if "HERMES_WEB_DIST" in os.environ else Path(__file__).parent / "web_dist"
 _log = logging.getLogger(__name__)
 _STREAMING_STT_FACTORY = StreamingSttFactory()
+_WAKE_WORD_FACTORY = WakeWordFactory()
 
 # ---------------------------------------------------------------------------
 # Per-channel subscriber registry used by /api/pub (PTY-side gateway → dashboard)
@@ -2510,6 +2511,109 @@ async def transcribe_audio_stream(ws: WebSocket) -> None:
                 except Exception as exc:
                     _log.exception("Streaming STT finalization failed")
                     await ws.send_json({"type": "error", "error": f"Streaming STT finalization failed: {exc}"})
+                break
+
+            await ws.send_json({"type": "error", "error": f"Unknown control message type: {kind or 'missing'}"})
+    except WebSocketDisconnect:
+        pass
+
+
+@app.websocket("/api/audio/wake-word/stream")
+async def wake_word_stream(ws: WebSocket) -> None:
+    """Desktop-only wake-word WebSocket.
+
+    Protocol:
+      - JSON start: {"type": "start", "sample_rate": 16000}
+      - Binary frames: Float32LE mono PCM
+      - Server sends ready/detected/error JSON frames.
+      - JSON stop closes the detector.
+    """
+    if not _ws_request_is_allowed(ws):
+        reason = _ws_request_reason(ws) or "forbidden"
+        await _close_ws_with_reason(ws, 1008, reason)
+        return
+
+    auth_reason, credential = _ws_auth_reason(ws)
+    if auth_reason is not None:
+        _log.warning(
+            "Rejecting wake-word WebSocket from %s (%s via %s)",
+            ws.client.host if ws.client else "?",
+            auth_reason,
+            credential,
+        )
+        await _close_ws_with_reason(ws, 1008, auth_reason)
+        return
+
+    await ws.accept()
+    spotter = None
+
+    try:
+        while True:
+            msg = await ws.receive()
+
+            if msg.get("type") == "websocket.disconnect":
+                break
+
+            if msg.get("bytes") is not None:
+                if spotter is None:
+                    await ws.send_json({"type": "error", "error": "Send a start message before audio frames"})
+                    continue
+
+                try:
+                    samples = _float32le_samples(msg["bytes"] or b"")
+                except ValueError as exc:
+                    await ws.send_json({"type": "error", "error": str(exc)})
+                    continue
+
+                phrase = str(spotter.accept_waveform(samples) or "").strip()
+                if phrase:
+                    await ws.send_json({"type": "detected", "phrase": phrase})
+                continue
+
+            raw_text = msg.get("text")
+            if raw_text is None:
+                await ws.send_json({"type": "error", "error": "Expected JSON control message or binary audio frame"})
+                continue
+
+            try:
+                payload = json.loads(raw_text)
+            except json.JSONDecodeError:
+                await ws.send_json({"type": "error", "error": "Control messages must be JSON"})
+                continue
+
+            kind = str(payload.get("type") or "").strip().lower()
+            if kind == "start":
+                if spotter is not None:
+                    await ws.send_json({"type": "error", "error": "Wake-word detection already started"})
+                    continue
+
+                try:
+                    config = load_config()
+                    cfg = wake_word_config(config)
+                    sample_rate = int(payload.get("sample_rate") or cfg.sample_rate)
+                    _log.info(
+                        "Starting wake-word WebSocket provider=%s phrases=%s sample_rate=%s",
+                        cfg.provider,
+                        ",".join(cfg.phrases),
+                        sample_rate,
+                    )
+                    spotter = _WAKE_WORD_FACTORY.create(config)
+                    spotter.start(sample_rate=sample_rate)
+                    await ws.send_json({"type": "ready", "sample_rate": sample_rate, "provider": cfg.provider})
+                except StreamingSttUnavailable as exc:
+                    _log.warning("Wake-word unavailable: %s", exc)
+                    await ws.send_json({"type": "error", "error": str(exc)})
+                except Exception as exc:
+                    _log.exception("Wake-word detection failed to start")
+                    await ws.send_json({"type": "error", "error": f"Wake-word detection failed to start: {exc}"})
+                continue
+
+            if kind == "stop":
+                if spotter is not None:
+                    try:
+                        spotter.stop()
+                    except Exception:
+                        pass
                 break
 
             await ws.send_json({"type": "error", "error": f"Unknown control message type: {kind or 'missing'}"})
@@ -9729,6 +9833,42 @@ async def save_toolset_env(name: str, body: ToolsetEnvUpdate, profile: Optional[
 class ToolsetPostSetup(BaseModel):
     key: str
     profile: Optional[str] = None
+
+
+class StreamingSttSetup(BaseModel):
+    profile: Optional[str] = None
+
+
+@app.post("/api/audio/streaming-stt/setup")
+async def run_streaming_stt_setup(
+    body: Optional[StreamingSttSetup] = None, profile: Optional[str] = None
+):
+    """Spawn the local streaming STT dependency installer.
+
+    Streaming STT is desktop runtime infrastructure, not a model toolset, so it
+    gets a dedicated setup endpoint while still reusing the post-setup runner
+    and allowlist behind ``hermes tools post-setup``.
+    """
+    from hermes_cli.tools_config import valid_post_setup_keys
+
+    key = "sherpa_onnx"
+    if key not in valid_post_setup_keys():
+        raise HTTPException(status_code=400, detail=f"Unknown post-setup key: {key}")
+
+    try:
+        proc = _spawn_hermes_action(
+            _profile_cli_args((body.profile if body else None) or profile)
+            + ["tools", "post-setup", key],
+            "tools-post-setup",
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        _log.exception("Failed to spawn streaming STT setup")
+        raise HTTPException(
+            status_code=500, detail=f"Failed to run streaming STT setup: {exc}"
+        )
+    return {"ok": True, "pid": proc.pid, "name": "tools-post-setup", "key": key}
 
 
 @app.post("/api/tools/toolsets/{name}/post-setup")

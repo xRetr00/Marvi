@@ -185,14 +185,18 @@ export interface HermesConfig {
     }
   }
   voice?: {
-    filler?: {
-      enabled?: boolean
-      minimum_play_duration_ms?: number
-      response_delivery_delay_ms?: number
-      start_delay_ms?: number
-      type?: string
-    }
     max_recording_seconds?: number
+    wake_word?: {
+      boost?: number
+      command_timeout_ms?: number
+      cooldown_ms?: number
+      enabled?: boolean
+      model?: string
+      phrases?: string[]
+      provider?: string
+      sample_rate?: number
+      threshold?: number
+    }
   }
 }
 

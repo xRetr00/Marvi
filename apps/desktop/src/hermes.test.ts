@@ -1,6 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { getSessionMessages, listAllProfileSessions, listSessions, speakText, warmTextToSpeech } from './hermes'
+import {
+  getSessionMessages,
+  listAllProfileSessions,
+  listSessions,
+  runStreamingSttSetup,
+  speakText,
+  warmTextToSpeech
+} from './hermes'
 
 const emptySessionsResponse = {
   limit: 0,
@@ -85,6 +92,18 @@ describe('Hermes REST session helpers', () => {
       method: 'POST',
       path: '/api/audio/tts/warm',
       timeoutMs: 360_000
+    })
+  })
+
+  it('fires the streaming STT setup action', async () => {
+    api.mockResolvedValue({ key: 'sherpa_onnx', name: 'tools-post-setup', ok: true, pid: 1234 })
+
+    await runStreamingSttSetup()
+
+    expect(api).toHaveBeenCalledWith({
+      method: 'POST',
+      path: '/api/audio/streaming-stt/setup',
+      timeoutMs: 30_000
     })
   })
 })

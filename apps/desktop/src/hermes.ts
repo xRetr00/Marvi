@@ -755,6 +755,15 @@ export function warmTextToSpeech(): Promise<{ ok: boolean; provider?: string; wa
   })
 }
 
+export function runStreamingSttSetup(): Promise<ActionResponse & { key: string }> {
+  return window.hermesDesktop.api<ActionResponse & { key: string }>({
+    ...profileScoped(),
+    path: '/api/audio/streaming-stt/setup',
+    method: 'POST',
+    timeoutMs: 30_000
+  })
+}
+
 export function getElevenLabsVoices(): Promise<ElevenLabsVoicesResponse> {
   return window.hermesDesktop.api<ElevenLabsVoicesResponse>({
     path: '/api/audio/elevenlabs/voices'

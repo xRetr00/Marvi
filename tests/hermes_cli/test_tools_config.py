@@ -2026,9 +2026,10 @@ def test_computer_use_respects_custom_cua_driver_command():
 
 
 
-    with patch.dict("os.environ", {"HERMES_CUA_DRIVER_CMD": "custom-cua"}), \
-
-         patch("shutil.which", side_effect=fake_which):
+    with (
+        patch.dict("os.environ", {"HERMES_CUA_DRIVER_CMD": "custom-cua"}),
+        patch("shutil.which", side_effect=fake_which),
+    ):
 
         assert _toolset_needs_configuration_prompt("computer_use", {}) is False
 
@@ -2046,9 +2047,10 @@ def test_computer_use_blank_custom_driver_command_falls_back_to_default():
 
 
 
-    with patch.dict("os.environ", {"HERMES_CUA_DRIVER_CMD": "   "}), \
-
-         patch("shutil.which", side_effect=fake_which):
+    with (
+        patch.dict("os.environ", {"HERMES_CUA_DRIVER_CMD": "   "}),
+        patch("shutil.which", side_effect=fake_which),
+    ):
 
         assert _toolset_needs_configuration_prompt("computer_use", {}) is False
 
@@ -2066,13 +2068,12 @@ def test_computer_use_post_setup_respects_custom_driver_command_when_installed()
 
 
 
-    with patch.dict("os.environ", {"HERMES_CUA_DRIVER_CMD": "custom-cua"}), \
-
-         patch("platform.system", return_value="Darwin"), \
-
-         patch("shutil.which", side_effect=fake_which), \
-
-         patch("subprocess.run") as run:
+    with (
+        patch.dict("os.environ", {"HERMES_CUA_DRIVER_CMD": "custom-cua"}),
+        patch("platform.system", return_value="Darwin"),
+        patch("shutil.which", side_effect=fake_which),
+        patch("subprocess.run") as run,
+    ):
 
         run.return_value.stdout = "custom 1.2.3\n"
 
@@ -2114,13 +2115,12 @@ def test_computer_use_post_setup_missing_override_does_not_accept_default_binary
 
 
 
-    with patch.dict("os.environ", {"HERMES_CUA_DRIVER_CMD": "custom-cua"}), \
-
-         patch("platform.system", return_value="Darwin"), \
-
-         patch("shutil.which", side_effect=fake_which), \
-
-         patch("subprocess.run") as run:
+    with (
+        patch.dict("os.environ", {"HERMES_CUA_DRIVER_CMD": "custom-cua"}),
+        patch("platform.system", return_value="Darwin"),
+        patch("shutil.which", side_effect=fake_which),
+        patch("subprocess.run") as run,
+    ):
 
         _run_post_setup("cua_driver")
 
@@ -2957,6 +2957,53 @@ def test_apply_provider_selection_tts_sets_provider():
     assert config["tts"]["provider"] == "edge"
 
     assert config["tts"]["use_gateway"] is False
+
+
+def test_valid_post_setup_keys_includes_streaming_stt():
+
+    from hermes_cli.tools_config import valid_post_setup_keys
+
+    assert "sherpa_onnx" in valid_post_setup_keys()
+
+
+def test_sherpa_post_setup_installed_check_uses_import_spec(monkeypatch):
+
+    from hermes_cli import tools_config
+
+    monkeypatch.setattr(tools_config.importlib.util, "find_spec", lambda name: object() if name == "sherpa_onnx" else None)
+
+    assert tools_config._post_setup_already_installed("sherpa_onnx") is True
+
+
+def test_sherpa_post_setup_installs_package_when_missing(monkeypatch):
+
+    from hermes_cli import tools_config
+
+    calls = []
+    prepared = []
+
+    monkeypatch.setattr(tools_config.importlib.util, "find_spec", lambda _name: None)
+    monkeypatch.setattr(tools_config, "_pip_install", lambda args, timeout=300: calls.append((args, timeout)) or SimpleNamespace(returncode=0, stderr=""))
+    monkeypatch.setattr(tools_config, "_prepare_sherpa_wake_word_assets", lambda: prepared.append(True))
+
+    tools_config._run_post_setup("sherpa_onnx")
+
+    assert calls == [(["-U", "sherpa-onnx", "--quiet"], 300)]
+    assert prepared == [True]
+
+
+def test_sherpa_post_setup_prepares_wake_assets_when_already_installed(monkeypatch):
+
+    from hermes_cli import tools_config
+
+    prepared = []
+
+    monkeypatch.setattr(tools_config.importlib.util, "find_spec", lambda name: object() if name == "sherpa_onnx" else None)
+    monkeypatch.setattr(tools_config, "_prepare_sherpa_wake_word_assets", lambda: prepared.append(True))
+
+    tools_config._run_post_setup("sherpa_onnx")
+
+    assert prepared == [True]
 
 
 

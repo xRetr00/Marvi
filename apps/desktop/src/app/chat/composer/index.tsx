@@ -76,6 +76,7 @@ import { useAtCompletions } from './hooks/use-at-completions'
 import { useSlashCompletions } from './hooks/use-slash-completions'
 import { useVoiceConversation } from './hooks/use-voice-conversation'
 import { useVoiceRecorder } from './hooks/use-voice-recorder'
+import { useWakeWord } from './hooks/use-wake-word'
 import {
   dragHasAttachments,
   droppedFileInlineRefs,
@@ -164,7 +165,7 @@ export function ChatBar({
   gateway,
   maxRecordingSeconds = 120,
   sttStreamingEnabled = false,
-  voiceFillerConfig,
+  wakeWordConfig,
   queueSessionKey,
   sessionId,
   state,
@@ -1699,8 +1700,23 @@ export function ChatBar({
     onSubmit: submitVoiceTurn,
     onTranscribeAudio,
     pendingResponse,
-    sttStreamingEnabled,
-    voiceFillerConfig
+    sttStreamingEnabled
+  })
+
+  const wakeWord = useWakeWord({
+    busy,
+    config: wakeWordConfig,
+    enabled: Boolean(
+      wakeWordConfig?.enabled &&
+        state.voice.enabled &&
+        !disabled &&
+        !voiceConversationActive &&
+        voiceStatus === 'idle' &&
+        !hasComposerPayload
+    ),
+    onSubmit: submitVoiceTurn,
+    onTranscribeAudio,
+    sttStreamingEnabled
   })
 
   const contextMenu = (
@@ -1742,6 +1758,7 @@ export function ChatBar({
       onDictate={dictate}
       onSteer={steerDraft}
       state={state}
+      wakeWord={{ active: wakeWord.status !== 'idle', status: wakeWord.status }}
       voiceStatus={voiceStatus}
     />
   )

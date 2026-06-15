@@ -1,5 +1,5 @@
 import type { HermesGateway } from '@/hermes'
-import type { VoiceFillerConfig } from '@/lib/voice-filler'
+import type { WakeWordConfig } from '@/lib/wake-word'
 import type { ComposerAttachment } from '@/store/composer'
 
 import type { DroppedFile } from '../hooks/use-composer-actions'
@@ -34,7 +34,7 @@ export interface ChatBarProps {
   focusKey?: string | null
   maxRecordingSeconds?: number
   sttStreamingEnabled?: boolean
-  voiceFillerConfig?: VoiceFillerConfig
+  wakeWordConfig?: WakeWordConfig
   state: ChatBarState
   gateway?: HermesGateway | null
   queueSessionKey?: string | null

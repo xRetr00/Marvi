@@ -185,8 +185,9 @@ describe('settings helpers', () => {
       ])
     })
 
-    it('renders a dropdown for voice filler sounds', () => {
-      expect(enumOptionsFor('voice.filler.type', 'typing', config)).toEqual(['typing', 'chime'])
+    it('renders dropdowns for local wake-word options', () => {
+      expect(enumOptionsFor('voice.wake_word.provider', 'sherpa_onnx', config)).toEqual(['sherpa_onnx'])
+      expect(enumOptionsFor('voice.wake_word.model', 'kws-en-3.3m', config)).toEqual(['kws-en-3.3m'])
     })
 
     it('renders a dropdown for the terminal execution backend', () => {

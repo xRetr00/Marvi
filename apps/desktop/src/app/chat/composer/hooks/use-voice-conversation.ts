@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 
+import { getActionStatus, runStreamingSttSetup } from '@/hermes'
 import { useI18n } from '@/i18n'
 import { openStreamingSttSession, type StreamingSttSession } from '@/lib/streaming-stt'
-import type { VoiceFillerConfig } from '@/lib/voice-filler'
 import { createSpeechPlaybackQueue, stopVoicePlayback, type SpeechPlaybackQueue } from '@/lib/voice-playback'
+import { upsertDesktopActionTask } from '@/store/activity'
 import { notify, notifyError } from '@/store/notifications'
 
 import { useMicRecorder } from './use-mic-recorder'
@@ -22,7 +23,6 @@ interface VoiceConversationOptions {
   onFatalError?: () => void
   onSubmit: (text: string) => Promise<void> | void
   sttStreamingEnabled?: boolean
-  voiceFillerConfig?: VoiceFillerConfig
   onTranscribeAudio?: (audio: Blob) => Promise<string>
   pendingResponse: () => PendingVoiceResponse | null
   consumePendingResponse: () => void
@@ -34,7 +34,6 @@ export function useVoiceConversation({
   onFatalError,
   onSubmit,
   sttStreamingEnabled = false,
-  voiceFillerConfig,
   onTranscribeAudio,
   pendingResponse,
   consumePendingResponse
@@ -93,6 +92,41 @@ export function useVoiceConversation({
     speechQueueRef.current?.stop()
     speechQueueRef.current = null
   }, [])
+
+  const runStreamingSttInstaller = useCallback(async () => {
+    try {
+      const started = await runStreamingSttSetup()
+      notify({
+        kind: 'info',
+        title: voiceCopy.streamingUnavailable,
+        message: 'Streaming STT setup started.'
+      })
+
+      if (!started.ok) {
+        notifyError(new Error('spawn failed'), 'Failed to run streaming STT setup')
+
+        return
+      }
+
+      for (let attempt = 0; attempt < 150; attempt += 1) {
+        await new Promise(resolve => window.setTimeout(resolve, 1200))
+        const status = await getActionStatus(started.name, 300)
+        upsertDesktopActionTask(status)
+
+        if (!status.running) {
+          notify({
+            kind: status.exit_code === 0 ? 'success' : 'error',
+            title: status.exit_code === 0 ? 'Streaming STT setup complete' : 'Streaming STT setup failed',
+            message: status.exit_code === 0 ? 'Restart voice mode and try realtime STT again.' : 'Check the setup log.'
+          })
+
+          return
+        }
+      }
+    } catch (error) {
+      notifyError(error, 'Failed to run streaming STT setup')
+    }
+  }, [voiceCopy.streamingUnavailable])
 
   const appendSpeechText = (text: string) => {
     if (!text) {
@@ -237,10 +271,13 @@ export function useVoiceConversation({
           })
         } catch (error) {
           console.warn('[voice] Streaming STT unavailable; falling back to standard transcription.', error)
+          const message = error instanceof Error ? error.message : voiceCopy.streamingFallback
+          const canRunSetup = /sherpa[-_]onnx/i.test(message)
           notify({
             kind: 'warning',
             title: voiceCopy.streamingUnavailable,
-            message: error instanceof Error ? error.message : voiceCopy.streamingFallback
+            message,
+            action: canRunSetup ? { label: 'Run setup', onClick: () => void runStreamingSttInstaller() } : undefined
           })
           streamingSessionRef.current = null
         }
@@ -269,14 +306,24 @@ export function useVoiceConversation({
       setStatus('idle')
       onFatalError?.()
     }
-  }, [handle, handleTurn, onFatalError, sttStreamingEnabled, voiceCopy.couldNotStartSession, voiceCopy.microphoneFailed])
+  }, [
+    handle,
+    handleTurn,
+    onFatalError,
+    runStreamingSttInstaller,
+    sttStreamingEnabled,
+    voiceCopy.couldNotStartSession,
+    voiceCopy.microphoneFailed,
+    voiceCopy.streamingFallback,
+    voiceCopy.streamingUnavailable
+  ])
 
   const ensureSpeechQueue = useCallback(() => {
     if (speechQueueRef.current) {
       return speechQueueRef.current
     }
 
-    const queue = createSpeechPlaybackQueue({ filler: voiceFillerConfig, source: 'voice-conversation' })
+    const queue = createSpeechPlaybackQueue({ source: 'voice-conversation' })
     speechQueueRef.current = queue
     setStatus('speaking')
 
@@ -301,7 +348,7 @@ export function useVoiceConversation({
       })
 
     return queue
-  }, [voiceCopy.playbackFailed, voiceFillerConfig])
+  }, [voiceCopy.playbackFailed])
 
   const enqueueSpeech = useCallback(
     (text: string) => {

@@ -1,7 +1,8 @@
-import { Component, type ErrorInfo, type ReactNode } from 'react'
+import { Component, type ErrorInfo, type ReactNode, useEffect, useState } from 'react'
 
 import { Button } from '@/components/ui/button'
 import { ErrorState } from '@/components/ui/error-state'
+import type { DesktopUpdateStatus } from '@/global'
 import { useI18n } from '@/i18n'
 
 export interface ErrorBoundaryFallbackProps {
@@ -54,6 +55,61 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
 
 function RootErrorFallback({ error, reset }: ErrorBoundaryFallbackProps) {
   const { t } = useI18n()
+  const [updateStatus, setUpdateStatus] = useState<DesktopUpdateStatus | null>(null)
+  const [updating, setUpdating] = useState(false)
+  const [updateMessage, setUpdateMessage] = useState<string | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    const bridge = window.hermesDesktop?.updates
+
+    if (!bridge) {
+      return
+    }
+
+    void bridge
+      .check()
+      .then(status => {
+        if (!cancelled) {
+          setUpdateStatus(status)
+        }
+      })
+      .catch(() => undefined)
+
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  const updateAvailable = Boolean(
+    updateStatus &&
+      updateStatus.supported !== false &&
+      !updateStatus.error &&
+      updateStatus.targetSha &&
+      (updateStatus.behind ?? 0) > 0
+  )
+
+  const applyUpdate = async () => {
+    const bridge = window.hermesDesktop?.updates
+
+    if (!bridge) {
+      return
+    }
+
+    setUpdating(true)
+    setUpdateMessage(null)
+
+    try {
+      const result = await bridge.apply()
+      if (result?.manual) {
+        setUpdateMessage(result.command ?? 'hermes update')
+        setUpdating(false)
+      }
+    } catch (err) {
+      setUpdateMessage(err instanceof Error ? err.message : String(err))
+      setUpdating(false)
+    }
+  }
 
   return (
     <div className="fixed inset-0 z-[1500] grid place-items-center bg-(--ui-chat-surface-background) p-6">
@@ -62,6 +118,11 @@ function RootErrorFallback({ error, reset }: ErrorBoundaryFallbackProps) {
         description={error.message || t.errors.boundaryDesc}
         title={t.errors.boundaryTitle}
       >
+        {updateAvailable ? (
+          <Button disabled={updating} onClick={() => void applyUpdate()} size="lg">
+            {updating ? t.updates.stages.prepare : t.updates.updateNow}
+          </Button>
+        ) : null}
         <Button className="font-semibold" onClick={reset} size="lg">
           {t.common.retry}
         </Button>
@@ -71,6 +132,7 @@ function RootErrorFallback({ error, reset }: ErrorBoundaryFallbackProps) {
         <Button onClick={() => void window.hermesDesktop?.revealLogs()?.catch(() => undefined)} variant="text">
           {t.errors.openLogs}
         </Button>
+        {updateMessage ? <p className="text-xs text-muted-foreground">{updateMessage}</p> : null}
       </ErrorState>
     </div>
   )

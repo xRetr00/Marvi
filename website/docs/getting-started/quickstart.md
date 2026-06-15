@@ -48,7 +48,7 @@ Pick the row that matches your goal:
 
 ## 1. Install Hermes Agent
 ### With the Hermes Desktop installer on macOS or Windows (recommended)
-To easily install the command-line and desktop applications, [download the Hermes Desktop installer](https://github.com/xRetr00/Marvi/blob/main/website/docs/user-guide/desktop.md) from the repo and run it.
+To easily install the command-line and desktop applications, [download the Marvi Desktop installer](https://github.com/xRetr00/Marvi/releases) from the repo and run it.
 
 ### Without Hermes Desktop:
 For a command-line only install without Hermes Desktop, run:

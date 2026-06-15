@@ -76,9 +76,31 @@ description: "如何为 Hermes Agent 做贡献 — 开发环境配置、代码�
 
 | **Node.js 20+** | 可选 — 浏览器工具和 WhatsApp bridge 需要（与根目录 `package.json` engines 字段一致） |
 
+### 使用标准安装器
 
+对大多数贡献者来说，最好的开发启动方式和用户安装方式相同：运行标准安装器，然后在它克隆出的仓库里开发。安装器会创建 Marvi venv、配置 `hermes` 兼容命令、为 `hermes update` 写入安装方式标记，并把完整 git 项目克隆到 `$HERMES_HOME/hermes-agent`（通常是 `~/.hermes/hermes-agent`）。这样你的开发环境会和 CLI、updater、lazy dependency installer、gateway、docs 默认假设的布局一致。
 
-### 克隆与安装
+```bash
+curl -fsSL https://raw.githubusercontent.com/xRetr00/Marvi/main/scripts/install.sh | bash
+cd "${HERMES_HOME:-$HOME/.hermes}/hermes-agent"
+
+# 在标准安装基础上添加开发/测试 extras。
+uv pip install -e ".[all,dev]"
+
+# 可选：浏览器工具 / docs site dependencies。
+npm install
+```
+
+之后从这个 checkout 创建分支并运行测试：
+
+```bash
+git checkout -b fix/description
+scripts/run_tests.sh
+```
+
+### 手动克隆备用路径
+
+只有在你明确不想使用 Hermes managed install layout 时才使用这种方式（例如容器或 CI job 里的临时 clone）。如果这样安装，请确保运行的是这个 venv 里的 `hermes` entrypoint；运行系统 `python3 -m hermes_cli.main` 可能会加载无关的系统 Python 包。
 
 
 
@@ -139,33 +161,26 @@ echo 'OPENROUTER_API_KEY=sk-or-v1-your-key' >> ~/.hermes/.env
 
 
 ```bash
-
-# 创建全局访问的符号链接
-
-mkdir -p ~/.local/bin
-
-ln -sf "$(pwd)/venv/bin/hermes" ~/.local/bin/hermes
-
-
-
-# 验证
-
+# 标准安装器已经把 `hermes` 放到了 PATH 上。
 hermes doctor
 
 hermes chat -q "Hello"
 
 ```
 
+如果你使用了手动克隆备用路径，可以在 checkout 中运行 `./hermes`，或显式把这个 clone 的 venv 链接到 PATH：
 
+```bash
+mkdir -p ~/.local/bin
+ln -sf "$(pwd)/venv/bin/hermes" ~/.local/bin/hermes
+```
 
 ### 运行测试
 
 
 
 ```bash
-
-pytest tests/ -v
-
+scripts/run_tests.sh
 ```
 
 

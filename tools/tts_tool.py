@@ -1835,6 +1835,7 @@ def _generate_neutts(text: str, output_path: str, tts_config: Dict[str, Any]) ->
 
 _pockettts_model_cache: Dict[str, Any] = {}
 _pockettts_voice_cache: Dict[str, Any] = {}
+_pockettts_cache_lock = threading.Lock()
 
 
 def _resolve_pockettts_model_and_voice(tts_config: Dict[str, Any]) -> tuple[Any, Any]:
@@ -1847,21 +1848,22 @@ def _resolve_pockettts_model_and_voice(tts_config: Dict[str, Any]) -> tuple[Any,
     model_name = str(pocket_config.get("model") or "default").strip() or "default"
 
     global _pockettts_model_cache, _pockettts_voice_cache
-    if model_name not in _pockettts_model_cache:
-        logger.info("[PocketTTS] Loading model: %s", model_name)
-        # The public API currently exposes load_model() without requiring a
-        # model id. Keep the config key in the cache key so a future model
-        # option can be added without changing user config shape.
-        _pockettts_model_cache[model_name] = TTSModel.load_model()
-        logger.info("[PocketTTS] Model loaded")
+    with _pockettts_cache_lock:
+        if model_name not in _pockettts_model_cache:
+            logger.info("[PocketTTS] Loading model: %s", model_name)
+            # The public API currently exposes load_model() without requiring a
+            # model id. Keep the config key in the cache key so a future model
+            # option can be added without changing user config shape.
+            _pockettts_model_cache[model_name] = TTSModel.load_model()
+            logger.info("[PocketTTS] Model loaded")
 
-    model = _pockettts_model_cache[model_name]
-    voice_key = f"{model_name}::{voice}"
-    if voice_key not in _pockettts_voice_cache:
-        logger.info("[PocketTTS] Loading voice: %s", voice)
-        _pockettts_voice_cache[voice_key] = model.get_state_for_audio_prompt(voice)
+        model = _pockettts_model_cache[model_name]
+        voice_key = f"{model_name}::{voice}"
+        if voice_key not in _pockettts_voice_cache:
+            logger.info("[PocketTTS] Loading voice: %s", voice)
+            _pockettts_voice_cache[voice_key] = model.get_state_for_audio_prompt(voice)
 
-    return model, _pockettts_voice_cache[voice_key]
+        return model, _pockettts_voice_cache[voice_key]
 
 
 def warm_tts_provider(tts_config: Optional[Dict[str, Any]] = None) -> bool:
@@ -1930,6 +1932,7 @@ def _generate_pockettts(text: str, output_path: str, tts_config: Dict[str, Any])
 # absolute .onnx model path so switching voices doesn't invalidate older
 # cached voices.
 _piper_voice_cache: Dict[str, Any] = {}
+_piper_voice_cache_lock = threading.Lock()
 
 
 def _check_piper_available() -> bool:
@@ -2020,12 +2023,13 @@ def _resolve_piper_voice(tts_config: Dict[str, Any]) -> Any:
     cache_key = f"{model_path}::cuda={use_cuda}"
 
     global _piper_voice_cache
-    if cache_key not in _piper_voice_cache:
-        logger.info("[Piper] Loading voice: %s", model_path)
-        _piper_voice_cache[cache_key] = PiperVoice.load(model_path, use_cuda=use_cuda)
-        logger.info("[Piper] Voice loaded")
+    with _piper_voice_cache_lock:
+        if cache_key not in _piper_voice_cache:
+            logger.info("[Piper] Loading voice: %s", model_path)
+            _piper_voice_cache[cache_key] = PiperVoice.load(model_path, use_cuda=use_cuda)
+            logger.info("[Piper] Voice loaded")
 
-    return _piper_voice_cache[cache_key]
+        return _piper_voice_cache[cache_key]
 
 
 def _generate_piper_tts(text: str, output_path: str, tts_config: Dict[str, Any]) -> str:
@@ -2098,6 +2102,7 @@ def _generate_piper_tts(text: str, output_path: str, tts_config: Dict[str, Any])
 
 # Module-level cache for KittenTTS model instance
 _kittentts_model_cache: Dict[str, Any] = {}
+_kittentts_model_cache_lock = threading.Lock()
 
 
 def _resolve_kittentts_model(tts_config: Dict[str, Any]) -> Any:
@@ -2107,12 +2112,13 @@ def _resolve_kittentts_model(tts_config: Dict[str, Any]) -> Any:
     model_name = kt_config.get("model", DEFAULT_KITTENTTS_MODEL)
 
     global _kittentts_model_cache
-    if model_name not in _kittentts_model_cache:
-        logger.info("[KittenTTS] Loading model: %s", model_name)
-        _kittentts_model_cache[model_name] = KittenTTS(model_name)
-        logger.info("[KittenTTS] Model loaded successfully")
+    with _kittentts_model_cache_lock:
+        if model_name not in _kittentts_model_cache:
+            logger.info("[KittenTTS] Loading model: %s", model_name)
+            _kittentts_model_cache[model_name] = KittenTTS(model_name)
+            logger.info("[KittenTTS] Model loaded successfully")
 
-    return _kittentts_model_cache[model_name]
+        return _kittentts_model_cache[model_name]
 
 
 def _generate_kittentts(text: str, output_path: str, tts_config: Dict[str, Any]) -> str:

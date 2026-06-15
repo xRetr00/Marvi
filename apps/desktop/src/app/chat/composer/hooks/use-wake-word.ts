@@ -247,7 +247,11 @@ export function useWakeWord({
             }
           },
           onError: error => notifyError(error, voiceCopy.microphoneFailed),
-          onSilence: () => void finishCaptureRef.current?.(),
+          onSilence: () => {
+            if (detectedRef.current) {
+              void finishCaptureRef.current?.()
+            }
+          },
           silenceLevel: 0.075,
           silenceMs: 1_250
         })

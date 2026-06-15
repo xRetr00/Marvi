@@ -152,6 +152,32 @@ class TestGeneratePocketTts:
         fake_model.get_state_for_audio_prompt.assert_called_once_with("cosette")
         fake_model.generate_audio.assert_not_called()
 
+    def test_concurrent_warm_uses_single_model_load(self, mock_pockettts_modules):
+        import concurrent.futures
+        import time
+
+        from tools.tts_tool import warm_tts_provider
+
+        fake_model, fake_cls, _ = mock_pockettts_modules
+
+        def slow_load_model():
+            time.sleep(0.05)
+            return fake_model
+
+        fake_cls.load_model.side_effect = slow_load_model
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
+            results = list(
+                executor.map(
+                    lambda _: warm_tts_provider({"provider": "pockettts", "pockettts": {"voice": "cosette"}}),
+                    range(8),
+                )
+            )
+
+        assert results == [True] * 8
+        fake_cls.load_model.assert_called_once()
+        fake_model.get_state_for_audio_prompt.assert_called_once_with("cosette")
+
 
 class TestCheckPocketTtsAvailable:
     def test_reports_available_when_package_present(self, monkeypatch):

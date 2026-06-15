@@ -1716,6 +1716,39 @@ DEFAULT_CONFIG = {
         "record_key": "ctrl+b",
         "max_recording_seconds": 120,
         "auto_tts": False,
+        "wake_word": {
+            # Desktop-only one-shot wake mode. Disabled by default because it
+            # keeps the microphone open while armed. Detection is local via
+            # sherpa-onnx KWS; the command after the wake phrase is submitted
+            # as one normal turn, then Marvi returns to wake-only listening.
+            "enabled": False,
+            "provider": "sherpa_onnx",
+            "model": "kws-en-3.3m",
+            "phrases": [
+                "hey marvi",
+                "hi marvi",
+                "okay marvi",
+                "ok marvi",
+                "yo marvi",
+                "marvi",
+                "hey marve",
+                "hey marvy",
+                "hey marvie",
+                "hey marfi",
+                "hey marfe",
+                "hey marvey",
+                "marve",
+                "marvy",
+                "marvie",
+                "marfi",
+                "marfe",
+                "marvey",
+            ],
+            "boost": 2.0,
+            "threshold": 0.35,
+            "command_timeout_ms": 8000,
+            "cooldown_ms": 1200,
+        },
         "beep_enabled": True,         # Play record start/stop beeps in CLI voice mode
         "silence_threshold": 200,     # RMS below this = silence (0-32767)
         "silence_duration": 3.0,      # Seconds of silence before auto-stop

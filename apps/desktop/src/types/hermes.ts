@@ -186,6 +186,17 @@ export interface HermesConfig {
   }
   voice?: {
     max_recording_seconds?: number
+    wake_word?: {
+      boost?: number
+      command_timeout_ms?: number
+      cooldown_ms?: number
+      enabled?: boolean
+      model?: string
+      phrases?: string[]
+      provider?: string
+      sample_rate?: number
+      threshold?: number
+    }
   }
 }
 

@@ -57,6 +57,46 @@ def test_streaming_config_reads_nested_settings():
     assert cfg.partial_interval_ms == 75
 
 
+def test_wake_word_config_defaults_include_marvi_variants():
+    from tools.streaming_stt import wake_word_config
+
+    cfg = wake_word_config({"voice": {}})
+
+    assert cfg.enabled is False
+    assert cfg.provider == "sherpa_onnx"
+    assert "hey marvi" in cfg.phrases
+    assert "marvi" in cfg.phrases
+    assert "marve" in cfg.phrases
+    assert "marfe" in cfg.phrases
+    assert "marfi" in cfg.phrases
+
+
+def test_wake_word_config_reads_nested_settings():
+    from tools.streaming_stt import wake_word_config
+
+    cfg = wake_word_config(
+        {
+            "voice": {
+                "wake_word": {
+                    "enabled": True,
+                    "phrases": ["Hey Marvi", "marfe", "", "hey marvi"],
+                    "threshold": 0.42,
+                    "boost": 2.5,
+                    "command_timeout_ms": 9000,
+                    "cooldown_ms": 500,
+                }
+            }
+        }
+    )
+
+    assert cfg.enabled is True
+    assert cfg.phrases == ("hey marvi", "marfe")
+    assert cfg.threshold == 0.42
+    assert cfg.boost == 2.5
+    assert cfg.command_timeout_ms == 9000
+    assert cfg.cooldown_ms == 500
+
+
 def test_factory_returns_fake_recognizer_for_tests():
     from tools.streaming_stt import StreamingSttFactory
 
@@ -90,3 +130,24 @@ def test_missing_sherpa_error_points_to_setup(monkeypatch):
 
     with pytest.raises(StreamingSttUnavailable, match="hermes tools post-setup sherpa_onnx"):
         streaming_stt._import_sherpa_onnx()
+
+
+def test_wake_word_factory_returns_fake_spotter_for_tests():
+    from tools.streaming_stt import WakeWordFactory
+
+    class FakeSpotter:
+        pass
+
+    spotter = FakeSpotter()
+    factory = WakeWordFactory(create_spotter=lambda _cfg: spotter)
+
+    assert factory.create({"voice": {"wake_word": {"enabled": True}}}) is spotter
+
+
+def test_wake_word_factory_rejects_disabled_config():
+    from tools.streaming_stt import StreamingSttUnavailable, WakeWordFactory
+
+    factory = WakeWordFactory(create_spotter=lambda _cfg: object())
+
+    with pytest.raises(StreamingSttUnavailable, match="disabled"):
+        factory.create({"voice": {"wake_word": {"enabled": False}}})

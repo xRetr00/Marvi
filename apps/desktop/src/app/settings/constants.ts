@@ -241,6 +241,8 @@ export const ENUM_OPTIONS: Record<string, string[]> = {
   'stt.local.model': ['tiny', 'base', 'small', 'medium', 'large-v3'],
   'stt.streaming.provider': ['sherpa_onnx'],
   'stt.streaming.model': ['en-20m-int8'],
+  'voice.wake_word.provider': ['sherpa_onnx'],
+  'voice.wake_word.model': ['kws-en-3.3m'],
   // Speech-to-text backends — kept in sync with the stt block in
   // hermes_cli/config.py (local/groq/openai/mistral/elevenlabs).
   'stt.provider': ['local', 'groq', 'openai', 'mistral', 'xai', 'elevenlabs'],
@@ -351,7 +353,17 @@ export const FIELD_LABELS: Record<string, string> = defineFieldCopy({
   voice: {
     recordKey: 'Voice Shortcut',
     maxRecordingSeconds: 'Max Recording Length',
-    autoTts: 'Read Responses Aloud'
+    autoTts: 'Read Responses Aloud',
+    wakeWord: {
+      enabled: 'Wake Word',
+      provider: 'Wake Word Provider',
+      model: 'Wake Word Model',
+      phrases: 'Wake Word Phrases',
+      boost: 'Wake Word Boost',
+      threshold: 'Wake Word Threshold',
+      commandTimeoutMs: 'Wake Command Timeout',
+      cooldownMs: 'Wake Cooldown'
+    }
   },
   stt: {
     enabled: 'Speech To Text',
@@ -501,7 +513,12 @@ export const FIELD_DESCRIPTIONS: Record<string, string> = defineFieldCopy({
     enabled: 'Summarize older context when conversations get large.'
   },
   voice: {
-    autoTts: 'Automatically speak assistant responses.'
+    autoTts: 'Automatically speak assistant responses.',
+    wakeWord: {
+      enabled: 'Listen for a local wake phrase and submit one spoken command, then return to wake-only mode.',
+      phrases: 'Phrases and common Marvi misrecognitions that can wake the one-shot command pipeline.',
+      threshold: 'Higher values reduce false wakes but may miss valid wake phrases.'
+    }
   },
   tts: {
     xai: {
@@ -633,7 +650,15 @@ export const SECTIONS: DesktopConfigSection[] = [
       'stt.elevenlabs.tag_audio_events',
       'stt.elevenlabs.diarize',
       'voice.record_key',
-      'voice.max_recording_seconds'
+      'voice.max_recording_seconds',
+      'voice.wake_word.enabled',
+      'voice.wake_word.provider',
+      'voice.wake_word.model',
+      'voice.wake_word.phrases',
+      'voice.wake_word.threshold',
+      'voice.wake_word.boost',
+      'voice.wake_word.command_timeout_ms',
+      'voice.wake_word.cooldown_ms'
     ]
   },
   {

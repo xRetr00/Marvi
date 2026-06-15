@@ -2930,7 +2930,7 @@ def test_apply_provider_selection_tts_sets_provider():
     assert config["tts"]["use_gateway"] is False
 
 
-def test_valid_post_setup_keys_includes_streaming_stt():
+def test_valid_post_setup_keys_includes_wake_word():
 
     from hermes_cli.tools_config import valid_post_setup_keys
 

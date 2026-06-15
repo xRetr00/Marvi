@@ -1,60 +1,6 @@
-"""Tests for local streaming STT helpers."""
+"""Tests for local wake-word helpers."""
 
 import pytest
-
-
-class _FakeStreamRecognizer:
-    def __init__(self, partials=None, final="hello world"):
-        self.started = False
-        self.ended = False
-        self.frames = []
-        self.partials = list(partials or ["hello"])
-        self.final_text = final
-
-    def start(self, sample_rate=16000):
-        self.started = True
-        self.sample_rate = sample_rate
-
-    def accept_waveform(self, samples):
-        self.frames.append(list(samples))
-        return self.partials.pop(0) if self.partials else ""
-
-    def finish(self):
-        self.ended = True
-        return self.final_text
-
-
-def test_streaming_config_defaults_to_disabled():
-    from tools.streaming_stt import streaming_stt_config
-
-    cfg = streaming_stt_config({"stt": {}})
-
-    assert cfg.enabled is False
-    assert cfg.provider == "sherpa_onnx"
-    assert cfg.sample_rate == 16000
-
-
-def test_streaming_config_reads_nested_settings():
-    from tools.streaming_stt import streaming_stt_config
-
-    cfg = streaming_stt_config(
-        {
-            "stt": {
-                "streaming": {
-                    "enabled": True,
-                    "provider": "sherpa_onnx",
-                    "model": "en-20m-int8",
-                    "sample_rate": 8000,
-                    "partial_interval_ms": 75,
-                }
-            }
-        }
-    )
-
-    assert cfg.enabled is True
-    assert cfg.model == "en-20m-int8"
-    assert cfg.sample_rate == 8000
-    assert cfg.partial_interval_ms == 75
 
 
 def test_wake_word_config_defaults_include_marvi_variants():
@@ -97,96 +43,9 @@ def test_wake_word_config_reads_nested_settings():
     assert cfg.cooldown_ms == 500
 
 
-def test_factory_returns_fake_recognizer_for_tests():
-    from tools.streaming_stt import StreamingSttFactory
-
-    recognizer = _FakeStreamRecognizer()
-    factory = StreamingSttFactory(create_recognizer=lambda _cfg: recognizer)
-
-    assert factory.create({"stt": {"streaming": {"enabled": True}}}) is recognizer
-
-
-def test_factory_rejects_disabled_streaming():
-    from tools.streaming_stt import StreamingSttFactory, StreamingSttUnavailable
-
-    factory = StreamingSttFactory(create_recognizer=lambda _cfg: _FakeStreamRecognizer())
-
-    with pytest.raises(StreamingSttUnavailable, match="disabled"):
-        factory.create({"stt": {"streaming": {"enabled": False}}})
-
-
-def test_sherpa_streaming_recognizer_uses_online_stream_api(monkeypatch):
-    from tools import streaming_stt
-    from tools.streaming_stt import SherpaOnnxStreamingRecognizer, StreamingSttConfig
-
-    class FakeResult:
-        text = "hello marvi"
-
-    class FakeStream:
-        def __init__(self):
-            self.accepted = []
-            self.finished = False
-
-        def accept_waveform(self, sample_rate, samples):
-            self.accepted.append((sample_rate, list(samples)))
-
-        def input_finished(self):
-            self.finished = True
-
-    class FakeOnlineRecognizer:
-        created = []
-
-        @classmethod
-        def from_transducer(cls, **kwargs):
-            recognizer = cls()
-            recognizer.kwargs = kwargs
-            recognizer.stream = FakeStream()
-            recognizer.decode_count = 0
-            cls.created.append(recognizer)
-            return recognizer
-
-        def create_stream(self):
-            return self.stream
-
-        def is_ready(self, _stream):
-            return self.decode_count == 0
-
-        def decode_stream(self, _stream):
-            self.decode_count += 1
-
-        def get_result(self, _stream):
-            return FakeResult()
-
-    class FakeSherpa:
-        OnlineRecognizer = FakeOnlineRecognizer
-
-    monkeypatch.setattr(streaming_stt, "_import_sherpa_onnx", lambda: FakeSherpa)
-    monkeypatch.setattr(
-        streaming_stt,
-        "resolve_sherpa_model_files",
-        lambda _cfg: {
-            "encoder": "encoder.onnx",
-            "decoder": "decoder.onnx",
-            "joiner": "joiner.onnx",
-            "tokens": "tokens.txt",
-        },
-    )
-
-    recognizer = SherpaOnnxStreamingRecognizer(StreamingSttConfig(enabled=True, sample_rate=16000))
-    recognizer.start(8000)
-
-    assert recognizer.accept_waveform([0.1, 0.2]) == "hello marvi"
-    assert recognizer.finish() == "hello marvi"
-
-    fake = FakeOnlineRecognizer.created[0]
-    assert fake.stream.accepted == [(8000, [0.1, 0.2])]
-    assert fake.stream.finished is True
-    assert fake.decode_count == 1
-
-
 def test_missing_sherpa_error_points_to_setup(monkeypatch):
     from tools import streaming_stt
-    from tools.streaming_stt import StreamingSttUnavailable
+    from tools.streaming_stt import WakeWordUnavailable
 
     real_import = __import__
 
@@ -197,7 +56,7 @@ def test_missing_sherpa_error_points_to_setup(monkeypatch):
 
     monkeypatch.setattr("builtins.__import__", fake_import)
 
-    with pytest.raises(StreamingSttUnavailable, match="hermes tools post-setup sherpa_onnx"):
+    with pytest.raises(WakeWordUnavailable, match="hermes tools post-setup sherpa_onnx"):
         streaming_stt._import_sherpa_onnx()
 
 
@@ -214,11 +73,11 @@ def test_wake_word_factory_returns_fake_spotter_for_tests():
 
 
 def test_wake_word_factory_rejects_disabled_config():
-    from tools.streaming_stt import StreamingSttUnavailable, WakeWordFactory
+    from tools.streaming_stt import WakeWordUnavailable, WakeWordFactory
 
     factory = WakeWordFactory(create_spotter=lambda _cfg: object())
 
-    with pytest.raises(StreamingSttUnavailable, match="disabled"):
+    with pytest.raises(WakeWordUnavailable, match="disabled"):
         factory.create({"voice": {"wake_word": {"enabled": False}}})
 
 

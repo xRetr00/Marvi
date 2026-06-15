@@ -4,7 +4,6 @@ import {
   getSessionMessages,
   listAllProfileSessions,
   listSessions,
-  runStreamingSttSetup,
   speakText,
   warmTextToSpeech
 } from './hermes'
@@ -95,15 +94,4 @@ describe('Hermes REST session helpers', () => {
     })
   })
 
-  it('fires the streaming STT setup action', async () => {
-    api.mockResolvedValue({ key: 'sherpa_onnx', name: 'tools-post-setup', ok: true, pid: 1234 })
-
-    await runStreamingSttSetup()
-
-    expect(api).toHaveBeenCalledWith({
-      method: 'POST',
-      path: '/api/audio/streaming-stt/setup',
-      timeoutMs: 30_000
-    })
-  })
 })

@@ -352,63 +352,6 @@ class TestProfileScopedPostSetup:
         assert resp.status_code == 200
         assert calls == [["tools", "post-setup", "agent_browser"]]
 
-    def test_streaming_stt_setup_spawns_sherpa_post_setup_with_profile(
-        self, client, isolated_profiles, monkeypatch
-    ):
-        import hermes_cli.web_server as web_server
-
-        calls = []
-
-        class _FakeProc:
-            pid = 778
-
-        monkeypatch.setattr(
-            web_server,
-            "_spawn_hermes_action",
-            lambda subcommand, name: calls.append((list(subcommand), name)) or _FakeProc(),
-        )
-        monkeypatch.setattr(
-            "hermes_cli.tools_config.valid_post_setup_keys",
-            lambda: {"sherpa_onnx"},
-        )
-
-        resp = client.post(
-            "/api/audio/streaming-stt/setup",
-            json={"profile": "worker_beta"},
-        )
-
-        assert resp.status_code == 200
-        assert resp.json()["key"] == "sherpa_onnx"
-        assert calls == [
-            (["-p", "worker_beta", "tools", "post-setup", "sherpa_onnx"], "tools-post-setup")
-        ]
-
-    def test_streaming_stt_setup_accepts_empty_body(
-        self, client, isolated_profiles, monkeypatch
-    ):
-        import hermes_cli.web_server as web_server
-
-        calls = []
-
-        class _FakeProc:
-            pid = 779
-
-        monkeypatch.setattr(
-            web_server,
-            "_spawn_hermes_action",
-            lambda subcommand, name: calls.append((list(subcommand), name)) or _FakeProc(),
-        )
-        monkeypatch.setattr(
-            "hermes_cli.tools_config.valid_post_setup_keys",
-            lambda: {"sherpa_onnx"},
-        )
-
-        resp = client.post("/api/audio/streaming-stt/setup")
-
-        assert resp.status_code == 200
-        assert calls == [(["tools", "post-setup", "sherpa_onnx"], "tools-post-setup")]
-
-
 class TestProfileScopedChatPty:
     def test_chat_argv_scopes_hermes_home(self, isolated_profiles, monkeypatch):
         import hermes_cli.web_server as web_server

@@ -2155,7 +2155,7 @@ def _run_post_setup(post_setup_key: str):
 
             return
 
-        _print_info("    Installing sherpa-onnx for local streaming STT (CPU)...")
+        _print_info("    Installing sherpa-onnx for local wake-word detection (CPU)...")
 
         try:
 
@@ -2165,7 +2165,7 @@ def _run_post_setup(post_setup_key: str):
 
                 _print_success("    sherpa-onnx installed")
 
-                _print_info("    Default streaming model downloads on first realtime voice use")
+                _print_info("    Wake-word model is prepared for desktop voice use")
                 _prepare_sherpa_wake_word_assets()
 
             else:

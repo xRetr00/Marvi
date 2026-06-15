@@ -1,8 +1,8 @@
-"""Local streaming speech-to-text helpers for the desktop voice loop.
+"""Local wake-word helpers for the desktop voice loop.
 
-The stable batch STT endpoint remains in ``tools.transcription_tools``.  This
-module is intentionally opt-in and dependency-light: sherpa-onnx is imported
-only when a streaming session is actually started.
+The speech-to-text path remains the stable batch endpoint in
+``tools.transcription_tools``. This module is intentionally dependency-light:
+sherpa-onnx is imported only when wake-word detection starts.
 """
 
 from __future__ import annotations
@@ -25,15 +25,6 @@ from hermes_constants import get_hermes_dir
 
 logger = logging.getLogger(__name__)
 
-
-DEFAULT_SHERPA_MODEL_ID = "en-20m-int8"
-_SHERPA_EN_20M_REPO = "csukuangfj/sherpa-onnx-streaming-zipformer-en-20M-2023-02-17"
-_SHERPA_EN_20M_FILES = {
-    "encoder": "encoder-epoch-99-avg-1.int8.onnx",
-    "decoder": "decoder-epoch-99-avg-1.int8.onnx",
-    "joiner": "joiner-epoch-99-avg-1.int8.onnx",
-    "tokens": "tokens.txt",
-}
 
 DEFAULT_WAKE_WORD_MODEL_ID = "kws-en-3.3m"
 DEFAULT_WAKE_WORD_PHRASES = (
@@ -63,17 +54,6 @@ _SHERPA_KWS_EN_REPO_ARCHIVE = (
 
 
 @dataclass(frozen=True)
-class StreamingSttConfig:
-    enabled: bool = False
-    provider: str = "sherpa_onnx"
-    model: str = DEFAULT_SHERPA_MODEL_ID
-    sample_rate: int = 16000
-    frame_ms: int = 100
-    endpoint_silence_ms: int = 1200
-    partial_interval_ms: int = 150
-
-
-@dataclass(frozen=True)
 class WakeWordConfig:
     enabled: bool = False
     provider: str = "sherpa_onnx"
@@ -86,8 +66,8 @@ class WakeWordConfig:
     cooldown_ms: int = 1200
 
 
-class StreamingSttUnavailable(RuntimeError):
-    """Raised when opt-in streaming STT cannot start."""
+class WakeWordUnavailable(RuntimeError):
+    """Raised when local sherpa-onnx wake-word detection cannot start."""
 
 
 def _positive_int(value: Any, default: int, *, min_value: int = 1, max_value: int = 60_000) -> int:
@@ -128,23 +108,6 @@ def _normalize_phrases(value: Any) -> tuple[str, ...]:
     return tuple(phrases) if phrases else DEFAULT_WAKE_WORD_PHRASES
 
 
-def streaming_stt_config(config: Optional[dict[str, Any]] = None) -> StreamingSttConfig:
-    stt = (config or {}).get("stt") if isinstance(config, dict) else {}
-    stt = stt if isinstance(stt, dict) else {}
-    raw = stt.get("streaming")
-    raw = raw if isinstance(raw, dict) else {}
-
-    return StreamingSttConfig(
-        enabled=raw.get("enabled") is True,
-        provider=str(raw.get("provider") or "sherpa_onnx").strip().lower() or "sherpa_onnx",
-        model=str(raw.get("model") or DEFAULT_SHERPA_MODEL_ID).strip() or DEFAULT_SHERPA_MODEL_ID,
-        sample_rate=_positive_int(raw.get("sample_rate"), 16000, min_value=8000, max_value=48000),
-        frame_ms=_positive_int(raw.get("frame_ms"), 100, min_value=20, max_value=500),
-        endpoint_silence_ms=_positive_int(raw.get("endpoint_silence_ms"), 1200, min_value=100, max_value=10000),
-        partial_interval_ms=_positive_int(raw.get("partial_interval_ms"), 150, min_value=50, max_value=2000),
-    )
-
-
 def wake_word_config(config: Optional[dict[str, Any]] = None) -> WakeWordConfig:
     voice = (config or {}).get("voice") if isinstance(config, dict) else {}
     voice = voice if isinstance(voice, dict) else {}
@@ -168,65 +131,15 @@ def _import_sherpa_onnx():
     try:
         import sherpa_onnx  # type: ignore
     except ImportError as exc:
-        raise StreamingSttUnavailable(
+        raise WakeWordUnavailable(
             "sherpa-onnx is not installed. Run `hermes tools post-setup sherpa_onnx` "
-            "or install it with `pip install sherpa-onnx`. Keep stt.streaming.enabled "
-            "false to use batch faster-whisper."
+            "or install it with `pip install sherpa-onnx` to enable wake word."
         ) from exc
     return sherpa_onnx
 
 
 def _model_cache_dir(model_id: str) -> Path:
     return Path(get_hermes_dir(f"cache/sherpa-onnx/{model_id}", "sherpa_onnx_cache"))
-
-
-def _download_hf_file(repo: str, filename: str, target: Path) -> None:
-    target.parent.mkdir(parents=True, exist_ok=True)
-    url = f"https://huggingface.co/{repo}/resolve/main/{filename}"
-    tmp = target.with_suffix(target.suffix + ".part")
-    try:
-        with urllib.request.urlopen(url, timeout=60) as response, tmp.open("wb") as out:
-            out.write(response.read())
-        tmp.replace(target)
-    except (OSError, urllib.error.URLError) as exc:
-        try:
-            tmp.unlink()
-        except OSError:
-            pass
-        raise StreamingSttUnavailable(f"Could not download sherpa-onnx model file {filename}: {exc}") from exc
-
-
-def resolve_sherpa_model_files(cfg: StreamingSttConfig) -> dict[str, str]:
-    model_value = cfg.model.strip()
-    model_path = Path(model_value).expanduser()
-
-    if model_path.exists():
-        root = model_path
-        files = {
-            "encoder": next(root.glob("encoder*.onnx"), None),
-            "decoder": next(root.glob("decoder*.onnx"), None),
-            "joiner": next(root.glob("joiner*.onnx"), None),
-            "tokens": root / "tokens.txt",
-        }
-    elif model_value == DEFAULT_SHERPA_MODEL_ID:
-        root = _model_cache_dir(DEFAULT_SHERPA_MODEL_ID)
-        for filename in _SHERPA_EN_20M_FILES.values():
-            target = root / filename
-            if not target.exists():
-                logger.info("[StreamingSTT] Downloading %s", filename)
-                _download_hf_file(_SHERPA_EN_20M_REPO, filename, target)
-        files = {key: root / filename for key, filename in _SHERPA_EN_20M_FILES.items()}
-    else:
-        raise StreamingSttUnavailable(
-            f"Unknown streaming STT model {cfg.model!r}. Use {DEFAULT_SHERPA_MODEL_ID!r} "
-            "or set stt.streaming.model to a local sherpa-onnx model directory."
-        )
-
-    missing = [key for key, value in files.items() if not value or not Path(value).exists()]
-    if missing:
-        raise StreamingSttUnavailable(f"Sherpa streaming model is missing files: {', '.join(missing)}")
-
-    return {key: str(value) for key, value in files.items()}
 
 
 def _download_archive(url: str, target: Path) -> None:
@@ -241,7 +154,7 @@ def _download_archive(url: str, target: Path) -> None:
             tmp.unlink()
         except OSError:
             pass
-        raise StreamingSttUnavailable(f"Could not download sherpa-onnx wake-word model: {exc}") from exc
+        raise WakeWordUnavailable(f"Could not download sherpa-onnx wake-word model: {exc}") from exc
 
 
 def _extract_tar_bz2(archive: Path, target_dir: Path) -> None:
@@ -253,10 +166,10 @@ def _extract_tar_bz2(archive: Path, target_dir: Path) -> None:
                 for member in tar.getmembers():
                     destination = (root / member.name).resolve()
                     if root not in destination.parents and destination != root:
-                        raise StreamingSttUnavailable("Wake-word model archive contains an unsafe path")
+                        raise WakeWordUnavailable("Wake-word model archive contains an unsafe path")
                 tar.extractall(tmp_dir)
         except (tarfile.TarError, OSError) as exc:
-            raise StreamingSttUnavailable(f"Could not extract sherpa-onnx wake-word model: {exc}") from exc
+            raise WakeWordUnavailable(f"Could not extract sherpa-onnx wake-word model: {exc}") from exc
 
         roots = [path for path in tmp_dir.iterdir() if path.is_dir()]
         source = roots[0] if len(roots) == 1 else tmp_dir
@@ -285,7 +198,7 @@ def resolve_sherpa_kws_model_files(cfg: WakeWordConfig) -> dict[str, str]:
             _download_archive(_SHERPA_KWS_EN_REPO_ARCHIVE, archive)
             _extract_tar_bz2(archive, root)
     else:
-        raise StreamingSttUnavailable(
+        raise WakeWordUnavailable(
             f"Unknown wake-word model {cfg.model!r}. Use {DEFAULT_WAKE_WORD_MODEL_ID!r} "
             "or set voice.wake_word.model to a local sherpa-onnx KWS model directory."
         )
@@ -303,7 +216,7 @@ def resolve_sherpa_kws_model_files(cfg: WakeWordConfig) -> dict[str, str]:
     }
     missing = [key for key, value in files.items() if not value or not Path(value).exists()]
     if missing:
-        raise StreamingSttUnavailable(f"Sherpa wake-word model is missing files: {', '.join(missing)}")
+        raise WakeWordUnavailable(f"Sherpa wake-word model is missing files: {', '.join(missing)}")
 
     return {key: str(value) for key, value in files.items()}
 
@@ -338,7 +251,7 @@ def _write_wake_keywords_file(cfg: WakeWordConfig, files: dict[str, str]) -> str
         ]
         cli = next((str(path) for path in candidates if path.exists()), None)
     if not cli:
-        raise StreamingSttUnavailable(
+        raise WakeWordUnavailable(
             "sherpa-onnx-cli is not available. Re-run `hermes tools post-setup sherpa_onnx` "
             "or ensure the sherpa-onnx scripts directory is on PATH."
         )
@@ -361,10 +274,10 @@ def _write_wake_keywords_file(cfg: WakeWordConfig, files: dict[str, str]) -> str
         env.setdefault("PYTHONUTF8", "1")
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=30, check=False, env=env)
     except (OSError, subprocess.TimeoutExpired) as exc:
-        raise StreamingSttUnavailable(f"Could not tokenize wake-word phrases: {exc}") from exc
+        raise WakeWordUnavailable(f"Could not tokenize wake-word phrases: {exc}") from exc
 
     if result.returncode != 0:
-        raise StreamingSttUnavailable(
+        raise WakeWordUnavailable(
             "Could not tokenize wake-word phrases with sherpa-onnx-cli: "
             f"{(result.stderr or result.stdout or '').strip()[:300]}"
         )
@@ -386,59 +299,9 @@ def prepare_wake_word_assets(config: Optional[dict[str, Any]] = None) -> str:
         cooldown_ms=cfg.cooldown_ms,
     )
     if cfg.provider != "sherpa_onnx":
-        raise StreamingSttUnavailable(f"Unsupported wake-word provider: {cfg.provider}")
+        raise WakeWordUnavailable(f"Unsupported wake-word provider: {cfg.provider}")
     files = resolve_sherpa_kws_model_files(cfg)
     return _write_wake_keywords_file(cfg, files)
-
-
-class SherpaOnnxStreamingRecognizer:
-    def __init__(self, cfg: StreamingSttConfig):
-        self.cfg = cfg
-        sherpa_onnx = _import_sherpa_onnx()
-        files = resolve_sherpa_model_files(cfg)
-        self.recognizer = sherpa_onnx.OnlineRecognizer.from_transducer(
-            encoder=files["encoder"],
-            decoder=files["decoder"],
-            joiner=files["joiner"],
-            tokens=files["tokens"],
-            num_threads=2,
-            sample_rate=cfg.sample_rate,
-            feature_dim=80,
-            decoding_method="greedy_search",
-            provider="cpu",
-        )
-        self.stream = self.recognizer.create_stream()
-        self.sample_rate = cfg.sample_rate
-
-    def start(self, sample_rate: int = 16000) -> None:
-        self.sample_rate = sample_rate or self.cfg.sample_rate
-
-    def accept_waveform(self, samples: list[float]) -> str:
-        self.stream.accept_waveform(self.sample_rate, samples)
-        while self.recognizer.is_ready(self.stream):
-            self.recognizer.decode_stream(self.stream)
-        result = self.recognizer.get_result(self.stream)
-        return str(getattr(result, "text", result) or "").strip()
-
-    def finish(self) -> str:
-        self.stream.input_finished()
-        while self.recognizer.is_ready(self.stream):
-            self.recognizer.decode_stream(self.stream)
-        result = self.recognizer.get_result(self.stream)
-        return str(getattr(result, "text", result) or "").strip()
-
-
-class StreamingSttFactory:
-    def __init__(self, create_recognizer: Optional[Callable[[StreamingSttConfig], Any]] = None):
-        self._create_recognizer = create_recognizer or (lambda cfg: SherpaOnnxStreamingRecognizer(cfg))
-
-    def create(self, config: Optional[dict[str, Any]] = None):
-        cfg = streaming_stt_config(config)
-        if not cfg.enabled:
-            raise StreamingSttUnavailable("Streaming STT is disabled in stt.streaming.enabled")
-        if cfg.provider != "sherpa_onnx":
-            raise StreamingSttUnavailable(f"Unsupported streaming STT provider: {cfg.provider}")
-        return self._create_recognizer(cfg)
 
 
 class SherpaOnnxWakeWordSpotter:
@@ -487,7 +350,7 @@ class WakeWordFactory:
     def create(self, config: Optional[dict[str, Any]] = None):
         cfg = wake_word_config(config)
         if not cfg.enabled:
-            raise StreamingSttUnavailable("Wake word is disabled in voice.wake_word.enabled")
+            raise WakeWordUnavailable("Wake word is disabled in voice.wake_word.enabled")
         if cfg.provider != "sherpa_onnx":
-            raise StreamingSttUnavailable(f"Unsupported wake-word provider: {cfg.provider}")
+            raise WakeWordUnavailable(f"Unsupported wake-word provider: {cfg.provider}")
         return self._create_spotter(cfg)

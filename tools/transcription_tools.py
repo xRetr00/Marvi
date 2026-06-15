@@ -1127,13 +1127,19 @@ def _transcribe_local(file_path: str, model_name: str) -> Dict[str, Any]:
             _local_model = _load_local_whisper_model(model_name)
             _local_model_name = model_name
 
-        # Language: config.yaml (stt.local.language) > env var > auto-detect.
+        # Desktop voice commands are short English utterances by default; avoid
+        # auto-detect and beam-search overhead unless the user overrides it.
         _forced_lang = (
             _load_stt_config().get("local", {}).get("language")
             or os.getenv(LOCAL_STT_LANGUAGE_ENV)
-            or None
+            or DEFAULT_LOCAL_STT_LANGUAGE
         )
-        transcribe_kwargs = {"beam_size": 5}
+        transcribe_kwargs = {
+            "beam_size": 1,
+            "best_of": 1,
+            "condition_on_previous_text": False,
+            "without_timestamps": True,
+        }
         if _forced_lang:
             transcribe_kwargs["language"] = _forced_lang
 

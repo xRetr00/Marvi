@@ -164,7 +164,6 @@ export function ChatBar({
   focusKey,
   gateway,
   maxRecordingSeconds = 120,
-  sttStreamingEnabled = false,
   wakeWordConfig,
   queueSessionKey,
   sessionId,
@@ -1699,8 +1698,7 @@ export function ChatBar({
     onFatalError: () => setVoiceConversationActive(false),
     onSubmit: submitVoiceTurn,
     onTranscribeAudio,
-    pendingResponse,
-    sttStreamingEnabled
+    pendingResponse
   })
 
   const wakeWord = useWakeWord({
@@ -1715,8 +1713,7 @@ export function ChatBar({
         !hasComposerPayload
     ),
     onSubmit: submitVoiceTurn,
-    onTranscribeAudio,
-    sttStreamingEnabled
+    onTranscribeAudio
   })
 
   const contextMenu = (

@@ -65,7 +65,7 @@ from hermes_cli.config import (
 )
 from gateway.status import get_running_pid, read_runtime_status
 from utils import env_var_enabled
-from tools.streaming_stt import StreamingSttFactory, StreamingSttUnavailable, WakeWordFactory, streaming_stt_config, wake_word_config
+from tools.streaming_stt import WakeWordUnavailable, WakeWordFactory, wake_word_config
 
 try:
     from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
@@ -93,7 +93,6 @@ except ImportError:
 
 WEB_DIST = Path(os.environ["HERMES_WEB_DIST"]) if "HERMES_WEB_DIST" in os.environ else Path(__file__).parent / "web_dist"
 _log = logging.getLogger(__name__)
-_STREAMING_STT_FACTORY = StreamingSttFactory()
 _WAKE_WORD_FACTORY = WakeWordFactory()
 
 # ---------------------------------------------------------------------------
@@ -2407,122 +2406,6 @@ def _float32le_samples(data: bytes) -> list[float]:
     return list(struct.unpack("<" + "f" * (len(data) // 4), data))
 
 
-@app.websocket("/api/audio/transcribe/stream")
-async def transcribe_audio_stream(ws: WebSocket) -> None:
-    """Desktop-only streaming STT WebSocket.
-
-    Protocol:
-      - JSON start: {"type": "start", "sample_rate": 16000}
-      - Binary frames: Float32LE mono PCM
-      - JSON end: {"type": "end"}
-      - Server sends ready/partial/final/error JSON frames.
-    """
-    if not _ws_request_is_allowed(ws):
-        reason = _ws_request_reason(ws) or "forbidden"
-        await _close_ws_with_reason(ws, 1008, reason)
-        return
-
-    auth_reason, credential = _ws_auth_reason(ws)
-    if auth_reason is not None:
-        _log.warning(
-            "Rejecting streaming STT WebSocket from %s (%s via %s)",
-            ws.client.host if ws.client else "?",
-            auth_reason,
-            credential,
-        )
-        await _close_ws_with_reason(ws, 1008, auth_reason)
-        return
-
-    await ws.accept()
-    recognizer = None
-    last_partial = ""
-
-    try:
-        while True:
-            msg = await ws.receive()
-
-            if msg.get("type") == "websocket.disconnect":
-                break
-
-            if msg.get("bytes") is not None:
-                if recognizer is None:
-                    await ws.send_json({"type": "error", "error": "Send a start message before audio frames"})
-                    continue
-
-                try:
-                    samples = _float32le_samples(msg["bytes"] or b"")
-                except ValueError as exc:
-                    await ws.send_json({"type": "error", "error": str(exc)})
-                    continue
-
-                try:
-                    partial = str(recognizer.accept_waveform(samples) or "").strip()
-                except Exception as exc:
-                    _log.exception("Streaming STT frame processing failed")
-                    await ws.send_json({"type": "error", "error": f"Streaming STT frame processing failed: {exc}"})
-                    break
-                if partial and partial != last_partial:
-                    last_partial = partial
-                    await ws.send_json({"type": "partial", "text": partial})
-                continue
-
-            raw_text = msg.get("text")
-            if raw_text is None:
-                await ws.send_json({"type": "error", "error": "Expected JSON control message or binary audio frame"})
-                continue
-
-            try:
-                payload = json.loads(raw_text)
-            except json.JSONDecodeError:
-                await ws.send_json({"type": "error", "error": "Control messages must be JSON"})
-                continue
-
-            kind = str(payload.get("type") or "").strip().lower()
-            if kind == "start":
-                if recognizer is not None:
-                    await ws.send_json({"type": "error", "error": "Streaming STT already started"})
-                    continue
-
-                try:
-                    config = load_config()
-                    cfg = streaming_stt_config(config)
-                    sample_rate = int(payload.get("sample_rate") or cfg.sample_rate)
-                    _log.info(
-                        "Starting streaming STT WebSocket provider=%s model=%s sample_rate=%s",
-                        cfg.provider,
-                        cfg.model,
-                        sample_rate,
-                    )
-                    recognizer = _STREAMING_STT_FACTORY.create(config)
-                    recognizer.start(sample_rate=sample_rate)
-                    _log.info("Streaming STT WebSocket ready provider=%s", cfg.provider)
-                    await ws.send_json({"type": "ready", "sample_rate": sample_rate, "provider": cfg.provider})
-                except StreamingSttUnavailable as exc:
-                    _log.warning("Streaming STT unavailable: %s", exc)
-                    await ws.send_json({"type": "error", "error": str(exc)})
-                except Exception as exc:
-                    _log.exception("Streaming STT failed to start")
-                    await ws.send_json({"type": "error", "error": f"Streaming STT failed to start: {exc}"})
-                continue
-
-            if kind == "end":
-                if recognizer is None:
-                    await ws.send_json({"type": "error", "error": "Streaming STT has not started"})
-                    continue
-
-                try:
-                    final = str(recognizer.finish() or "").strip()
-                    await ws.send_json({"type": "final", "text": final})
-                except Exception as exc:
-                    _log.exception("Streaming STT finalization failed")
-                    await ws.send_json({"type": "error", "error": f"Streaming STT finalization failed: {exc}"})
-                break
-
-            await ws.send_json({"type": "error", "error": f"Unknown control message type: {kind or 'missing'}"})
-    except WebSocketDisconnect:
-        pass
-
-
 @app.websocket("/api/audio/wake-word/stream")
 async def wake_word_stream(ws: WebSocket) -> None:
     """Desktop-only wake-word WebSocket.
@@ -2612,7 +2495,7 @@ async def wake_word_stream(ws: WebSocket) -> None:
                     spotter.start(sample_rate=sample_rate)
                     _log.info("Wake-word WebSocket ready provider=%s", cfg.provider)
                     await ws.send_json({"type": "ready", "sample_rate": sample_rate, "provider": cfg.provider})
-                except StreamingSttUnavailable as exc:
+                except WakeWordUnavailable as exc:
                     _log.warning("Wake-word unavailable: %s", exc)
                     await ws.send_json({"type": "error", "error": str(exc)})
                 except Exception as exc:
@@ -9845,42 +9728,6 @@ async def save_toolset_env(name: str, body: ToolsetEnvUpdate, profile: Optional[
 class ToolsetPostSetup(BaseModel):
     key: str
     profile: Optional[str] = None
-
-
-class StreamingSttSetup(BaseModel):
-    profile: Optional[str] = None
-
-
-@app.post("/api/audio/streaming-stt/setup")
-async def run_streaming_stt_setup(
-    body: Optional[StreamingSttSetup] = None, profile: Optional[str] = None
-):
-    """Spawn the local streaming STT dependency installer.
-
-    Streaming STT is desktop runtime infrastructure, not a model toolset, so it
-    gets a dedicated setup endpoint while still reusing the post-setup runner
-    and allowlist behind ``hermes tools post-setup``.
-    """
-    from hermes_cli.tools_config import valid_post_setup_keys
-
-    key = "sherpa_onnx"
-    if key not in valid_post_setup_keys():
-        raise HTTPException(status_code=400, detail=f"Unknown post-setup key: {key}")
-
-    try:
-        proc = _spawn_hermes_action(
-            _profile_cli_args((body.profile if body else None) or profile)
-            + ["tools", "post-setup", key],
-            "tools-post-setup",
-        )
-    except HTTPException:
-        raise
-    except Exception as exc:
-        _log.exception("Failed to spawn streaming STT setup")
-        raise HTTPException(
-            status_code=500, detail=f"Failed to run streaming STT setup: {exc}"
-        )
-    return {"ok": True, "pid": proc.pid, "name": "tools-post-setup", "key": key}
 
 
 @app.post("/api/tools/toolsets/{name}/post-setup")

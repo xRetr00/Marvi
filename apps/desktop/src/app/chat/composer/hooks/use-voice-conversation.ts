@@ -1,10 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 
-import { getActionStatus, runStreamingSttSetup } from '@/hermes'
 import { useI18n } from '@/i18n'
-import { openStreamingSttSession, type StreamingSttSession } from '@/lib/streaming-stt'
 import { createSpeechPlaybackQueue, stopVoicePlayback, type SpeechPlaybackQueue } from '@/lib/voice-playback'
-import { upsertDesktopActionTask } from '@/store/activity'
 import { notify, notifyError } from '@/store/notifications'
 
 import { useMicRecorder } from './use-mic-recorder'
@@ -22,7 +19,6 @@ interface VoiceConversationOptions {
   enabled: boolean
   onFatalError?: () => void
   onSubmit: (text: string) => Promise<void> | void
-  sttStreamingEnabled?: boolean
   onTranscribeAudio?: (audio: Blob) => Promise<string>
   pendingResponse: () => PendingVoiceResponse | null
   consumePendingResponse: () => void
@@ -33,7 +29,6 @@ export function useVoiceConversation({
   enabled,
   onFatalError,
   onSubmit,
-  sttStreamingEnabled = false,
   onTranscribeAudio,
   pendingResponse,
   consumePendingResponse
@@ -57,7 +52,6 @@ export function useVoiceConversation({
   const busyRef = useRef(busy)
   const statusRef = useRef<ConversationStatus>('idle')
   const wasEnabledRef = useRef(enabled)
-  const streamingSessionRef = useRef<StreamingSttSession | null>(null)
 
   useEffect(() => {
     enabledRef.current = enabled
@@ -92,41 +86,6 @@ export function useVoiceConversation({
     speechQueueRef.current?.stop()
     speechQueueRef.current = null
   }, [])
-
-  const runStreamingSttInstaller = useCallback(async () => {
-    try {
-      const started = await runStreamingSttSetup()
-      notify({
-        kind: 'info',
-        title: voiceCopy.streamingUnavailable,
-        message: 'Streaming STT setup started.'
-      })
-
-      if (!started.ok) {
-        notifyError(new Error('spawn failed'), 'Failed to run streaming STT setup')
-
-        return
-      }
-
-      for (let attempt = 0; attempt < 150; attempt += 1) {
-        await new Promise(resolve => window.setTimeout(resolve, 1200))
-        const status = await getActionStatus(started.name, 300)
-        upsertDesktopActionTask(status)
-
-        if (!status.running) {
-          notify({
-            kind: status.exit_code === 0 ? 'success' : 'error',
-            title: status.exit_code === 0 ? 'Streaming STT setup complete' : 'Streaming STT setup failed',
-            message: status.exit_code === 0 ? 'Restart voice mode and try realtime STT again.' : 'Check the setup log.'
-          })
-
-          return
-        }
-      }
-    } catch (error) {
-      notifyError(error, 'Failed to run streaming STT setup')
-    }
-  }, [voiceCopy.streamingUnavailable])
 
   const appendSpeechText = (text: string) => {
     if (!text) {
@@ -202,21 +161,7 @@ export function useVoiceConversation({
         }
 
         try {
-          let transcript = ''
-          const streamingSession = streamingSessionRef.current
-          streamingSessionRef.current = null
-
-          if (streamingSession) {
-            try {
-              transcript = (await streamingSession.finish()).trim()
-            } catch {
-              transcript = ''
-            }
-          }
-
-          if (!transcript) {
-            transcript = (await onTranscribeAudio(result.audio)).trim()
-          }
+          const transcript = (await onTranscribeAudio(result.audio)).trim()
 
           setTranscriptPreview(transcript)
 
@@ -262,30 +207,10 @@ export function useVoiceConversation({
     }
 
     try {
-      streamingSessionRef.current = null
       setTranscriptPreview('')
-      if (sttStreamingEnabled) {
-        try {
-          streamingSessionRef.current = await openStreamingSttSession({
-            onPartial: text => setTranscriptPreview(text)
-          })
-        } catch (error) {
-          console.warn('[voice] Streaming STT unavailable; falling back to standard transcription.', error)
-          const message = error instanceof Error ? error.message : voiceCopy.streamingFallback
-          const canRunSetup = /sherpa[-_]onnx/i.test(message)
-          notify({
-            kind: 'warning',
-            title: voiceCopy.streamingUnavailable,
-            message,
-            action: canRunSetup ? { label: 'Run setup', onClick: () => void runStreamingSttInstaller() } : undefined
-          })
-          streamingSessionRef.current = null
-        }
-      }
 
       // VAD tuning mirrors `tools.voice_mode` defaults so the browser loop matches the CLI.
       await handle.start({
-        onAudioFrame: samples => streamingSessionRef.current?.sendFrame(samples),
         silenceLevel: 0.075,
         silenceMs: 1_250,
         idleSilenceMs: 12_000,
@@ -299,8 +224,6 @@ export function useVoiceConversation({
       setStatus('listening')
       turnTimeoutRef.current = window.setTimeout(() => void handleTurn(), 60_000)
     } catch (error) {
-      streamingSessionRef.current?.stop()
-      streamingSessionRef.current = null
       notifyError(error, voiceCopy.couldNotStartSession)
       pendingStartRef.current = false
       setStatus('idle')
@@ -310,12 +233,8 @@ export function useVoiceConversation({
     handle,
     handleTurn,
     onFatalError,
-    runStreamingSttInstaller,
-    sttStreamingEnabled,
     voiceCopy.couldNotStartSession,
-    voiceCopy.microphoneFailed,
-    voiceCopy.streamingFallback,
-    voiceCopy.streamingUnavailable
+    voiceCopy.microphoneFailed
   ])
 
   const ensureSpeechQueue = useCallback(() => {
@@ -400,8 +319,6 @@ export function useVoiceConversation({
     clearTurnTimeout()
     stopVoicePlayback()
     stopSpeechQueue()
-    streamingSessionRef.current?.stop()
-    streamingSessionRef.current = null
     handle.cancel()
     turnClosingRef.current = false
     awaitingSpokenResponseRef.current = false
@@ -426,8 +343,6 @@ export function useVoiceConversation({
         clearTurnTimeout()
         handle.cancel()
         stopSpeechQueue()
-        streamingSessionRef.current?.stop()
-        streamingSessionRef.current = null
         setTranscriptPreview('')
         setStatus('idle')
       } else if (enabledRef.current && !busyRef.current && statusRef.current === 'idle') {

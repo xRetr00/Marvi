@@ -525,6 +525,37 @@ class TestTranscribeLocalExtended:
         assert result["success"] is True
         assert result["transcript"] == "Hello world"
 
+    def test_local_transcription_uses_fast_english_command_defaults(self, tmp_path):
+        audio = tmp_path / "test.ogg"
+        audio.write_bytes(b"fake")
+
+        seg = MagicMock()
+        seg.text = "open settings"
+        info = MagicMock()
+        info.language = "en"
+        info.duration = 1.0
+
+        mock_model = MagicMock()
+        mock_model.transcribe.return_value = ([seg], info)
+
+        with patch("tools.transcription_tools._HAS_FASTER_WHISPER", True), \
+             patch("faster_whisper.WhisperModel", return_value=mock_model), \
+             patch("tools.transcription_tools._local_model", None), \
+             patch("tools.transcription_tools._local_model_name", None), \
+             patch("tools.transcription_tools._load_stt_config", return_value={"local": {}}):
+            from tools.transcription_tools import _transcribe_local
+            result = _transcribe_local(str(audio), "base")
+
+        assert result["success"] is True
+        mock_model.transcribe.assert_called_once_with(
+            str(audio),
+            beam_size=1,
+            best_of=1,
+            condition_on_previous_text=False,
+            language="en",
+            without_timestamps=True,
+        )
+
     def test_load_time_cuda_lib_failure_falls_back_to_cpu(self, tmp_path):
         """Missing libcublas at load time → reload on CPU, succeed."""
         audio = tmp_path / "test.ogg"

@@ -9,13 +9,10 @@ import {
   type WakeWordConfig,
   type WakeWordSession
 } from '@/lib/wake-word'
-import { openStreamingSttSession, type StreamingSttSession } from '@/lib/streaming-stt'
 
 import { useMicRecorder } from './use-mic-recorder'
 
 export type WakeWordStatus = 'idle' | 'arming' | 'armed' | 'woken' | 'listening' | 'transcribing'
-
-const WAKE_STT_PREROLL_FRAME_LIMIT = 6
 
 interface WakeWordOptions {
   busy: boolean
@@ -23,7 +20,49 @@ interface WakeWordOptions {
   enabled: boolean
   onSubmit: (text: string) => Promise<void> | void
   onTranscribeAudio?: (audio: Blob) => Promise<string>
-  sttStreamingEnabled?: boolean
+}
+
+function encodePcmFramesAsWav(frames: Float32Array[], sampleRate = 16000): Blob | null {
+  const sampleCount = frames.reduce((total, frame) => total + frame.length, 0)
+  if (!sampleCount) {
+    return null
+  }
+
+  const bytesPerSample = 2
+  const dataBytes = sampleCount * bytesPerSample
+  const buffer = new ArrayBuffer(44 + dataBytes)
+  const view = new DataView(buffer)
+
+  const writeAscii = (offset: number, value: string) => {
+    for (let i = 0; i < value.length; i += 1) {
+      view.setUint8(offset + i, value.charCodeAt(i))
+    }
+  }
+
+  writeAscii(0, 'RIFF')
+  view.setUint32(4, 36 + dataBytes, true)
+  writeAscii(8, 'WAVE')
+  writeAscii(12, 'fmt ')
+  view.setUint32(16, 16, true)
+  view.setUint16(20, 1, true)
+  view.setUint16(22, 1, true)
+  view.setUint32(24, sampleRate, true)
+  view.setUint32(28, sampleRate * bytesPerSample, true)
+  view.setUint16(32, bytesPerSample, true)
+  view.setUint16(34, 8 * bytesPerSample, true)
+  writeAscii(36, 'data')
+  view.setUint32(40, dataBytes, true)
+
+  let offset = 44
+  for (const frame of frames) {
+    for (const sample of frame) {
+      const clamped = Math.max(-1, Math.min(1, sample))
+      view.setInt16(offset, clamped < 0 ? clamped * 0x8000 : clamped * 0x7fff, true)
+      offset += bytesPerSample
+    }
+  }
+
+  return new Blob([buffer], { type: 'audio/wav' })
 }
 
 export function useWakeWord({
@@ -31,8 +70,7 @@ export function useWakeWord({
   config,
   enabled,
   onSubmit,
-  onTranscribeAudio,
-  sttStreamingEnabled = false
+  onTranscribeAudio
 }: WakeWordOptions) {
   const { t } = useI18n()
   const voiceCopy = t.notifications.voice
@@ -53,13 +91,10 @@ export function useWakeWord({
   const [startTick, setStartTick] = useState(0)
   const transcribeAvailable = Boolean(onTranscribeAudio)
   const wakeSessionRef = useRef<WakeWordSession | null>(null)
-  const streamingSessionRef = useRef<StreamingSttSession | null>(null)
   const detectedRef = useRef(false)
   const stoppingRef = useRef(false)
-  const openingStreamingRef = useRef(false)
   const startupFailedRef = useRef(false)
-  const preWakeFramesRef = useRef<Float32Array[]>([])
-  const pendingCommandFramesRef = useRef<Float32Array[]>([])
+  const commandFramesRef = useRef<Float32Array[]>([])
   const restartTimerRef = useRef<number | null>(null)
   const commandTimerRef = useRef<number | null>(null)
   const enabledRef = useRef(enabled)
@@ -112,21 +147,13 @@ export function useWakeWord({
     wakeSessionRef.current = null
   }
 
-  const stopStreamingSession = () => {
-    streamingSessionRef.current?.stop()
-    streamingSessionRef.current = null
-    openingStreamingRef.current = false
-    preWakeFramesRef.current = []
-    pendingCommandFramesRef.current = []
-  }
-
   const stop = useCallback(() => {
     clearTimers()
     stopWakeSession()
-    stopStreamingSession()
     handleRef.current.cancel()
     detectedRef.current = false
     stoppingRef.current = false
+    commandFramesRef.current = []
     setStatus('idle')
   }, [])
 
@@ -153,28 +180,19 @@ export function useWakeWord({
     stopWakeSession()
 
     try {
-      const recording = await handleRef.current.stop()
+      await handleRef.current.stop()
       const detected = detectedRef.current
+      const commandAudio = encodePcmFramesAsWav(commandFramesRef.current, wakeConfig.sampleRate)
       detectedRef.current = false
-      openingStreamingRef.current = false
-      preWakeFramesRef.current = []
-      pendingCommandFramesRef.current = []
+      commandFramesRef.current = []
 
       if (detected) {
         setStatus('transcribing')
         let transcript = ''
 
-        try {
-          transcript = (await streamingSessionRef.current?.finish())?.trim() ?? ''
-        } catch (error) {
-          console.warn('[wake-word] Streaming STT failed; falling back to standard transcription.', error)
-        } finally {
-          streamingSessionRef.current = null
-        }
-
         const transcribeAudio = onTranscribeAudioRef.current
-        if (!transcript && !sttStreamingEnabled && recording?.audio && transcribeAudio) {
-          transcript = (await transcribeAudio(recording.audio)).trim()
+        if (transcribeAudio && commandAudio) {
+          transcript = (await transcribeAudio(commandAudio)).trim()
         }
 
         const command = stripWakePhrase(transcript, wakeConfig.phrases)
@@ -184,8 +202,6 @@ export function useWakeWord({
         } else if (transcript) {
           notify({ kind: 'warning', title: voiceCopy.noSpeechDetected, message: voiceCopy.tryRecordingAgain })
         }
-      } else {
-        stopStreamingSession()
       }
     } catch (error) {
       notifyError(error, voiceCopy.transcriptionFailed)
@@ -198,7 +214,8 @@ export function useWakeWord({
     voiceCopy.noSpeechDetected,
     voiceCopy.transcriptionFailed,
     voiceCopy.tryRecordingAgain,
-    wakeConfig.phrases
+    wakeConfig.phrases,
+    wakeConfig.sampleRate
   ])
 
   useEffect(() => {
@@ -228,30 +245,9 @@ export function useWakeWord({
 
             detectedRef.current = true
             stopWakeSession()
+            commandFramesRef.current = []
             setStatus('woken')
             commandTimerRef.current = window.setTimeout(() => void finishCaptureRef.current?.(), wakeConfig.commandTimeoutMs)
-
-            if (sttStreamingEnabled && !openingStreamingRef.current && !streamingSessionRef.current) {
-              openingStreamingRef.current = true
-              pendingCommandFramesRef.current = preWakeFramesRef.current.splice(0)
-              void openStreamingSttSession()
-                .then(streamingSession => {
-                  openingStreamingRef.current = false
-                  streamingSessionRef.current = streamingSession
-                  const frames = pendingCommandFramesRef.current.splice(0)
-                  for (const frame of frames) {
-                    streamingSession.sendFrame(frame)
-                  }
-                  if (detectedRef.current && statusRef.current === 'woken') {
-                    setStatus('listening')
-                  }
-                })
-                .catch(error => {
-                  openingStreamingRef.current = false
-                  pendingCommandFramesRef.current = []
-                  console.warn('[wake-word] Streaming STT unavailable; falling back to standard transcription.', error)
-                })
-            }
           }
         })
 
@@ -267,25 +263,13 @@ export function useWakeWord({
           idleSilenceMs: 12_000,
           onAudioFrame: samples => {
             if (!detectedRef.current) {
-              preWakeFramesRef.current.push(new Float32Array(samples))
-              if (preWakeFramesRef.current.length > WAKE_STT_PREROLL_FRAME_LIMIT) {
-                preWakeFramesRef.current.shift()
-              }
               wakeSessionRef.current?.sendFrame(samples)
               return
             }
 
-            const streamingSession = streamingSessionRef.current
-            if (streamingSession) {
-              streamingSession.sendFrame(samples)
-              if (statusRef.current === 'woken') {
-                setStatus('listening')
-              }
-            } else if (openingStreamingRef.current) {
-              pendingCommandFramesRef.current.push(new Float32Array(samples))
-              if (pendingCommandFramesRef.current.length > 16) {
-                pendingCommandFramesRef.current.shift()
-              }
+            commandFramesRef.current.push(new Float32Array(samples))
+            if (statusRef.current === 'woken') {
+              setStatus('listening')
             }
           },
           onError: error => notifyError(error, voiceCopy.microphoneFailed),
@@ -304,10 +288,10 @@ export function useWakeWord({
           notifyError(error, voiceCopy.streamingUnavailable)
           clearTimers()
           stopWakeSession()
-          stopStreamingSession()
           handleRef.current.cancel()
           detectedRef.current = false
           stoppingRef.current = false
+          commandFramesRef.current = []
           setStatus('idle')
         }
       }
@@ -323,7 +307,6 @@ export function useWakeWord({
     enabled,
     startTick,
     stop,
-    sttStreamingEnabled,
     transcribeAvailable,
     voiceCopy.microphoneFailed,
     voiceCopy.streamingUnavailable,

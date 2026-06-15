@@ -69,7 +69,6 @@ interface ChatViewProps extends Omit<React.ComponentProps<'div'>, 'onSubmit'> {
   onAddUrl: (url: string) => void
   onBranchInNewChat: (messageId: string) => void
   maxVoiceRecordingSeconds?: number
-  sttStreamingEnabled?: boolean
   wakeWordConfig?: WakeWordConfig
   onAttachImageBlob: (blob: Blob) => Promise<boolean | void> | boolean | void
   onAttachDroppedItems: (candidates: DroppedFile[]) => Promise<boolean | void> | boolean | void
@@ -261,7 +260,6 @@ export function ChatView({
   onAttachDroppedItems,
   onBranchInNewChat,
   maxVoiceRecordingSeconds,
-  sttStreamingEnabled,
   wakeWordConfig,
   onPasteClipboardImage,
   onPickFiles,
@@ -458,7 +456,6 @@ export function ChatView({
                 onTranscribeAudio={onTranscribeAudio}
                 queueSessionKey={selectedSessionId}
                 sessionId={activeSessionId}
-                sttStreamingEnabled={sttStreamingEnabled}
                 wakeWordConfig={wakeWordConfig}
                 state={chatBarState}
               />

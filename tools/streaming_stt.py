@@ -10,6 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import hashlib
 import logging
+import os
 import shutil
 import subprocess
 import sys
@@ -351,7 +352,10 @@ def _write_wake_keywords_file(cfg: WakeWordConfig, files: dict[str, str]) -> str
         str(target),
     ]
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30, check=False)
+        env = os.environ.copy()
+        env.setdefault("PYTHONIOENCODING", "utf-8")
+        env.setdefault("PYTHONUTF8", "1")
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30, check=False, env=env)
     except (OSError, subprocess.TimeoutExpired) as exc:
         raise StreamingSttUnavailable(f"Could not tokenize wake-word phrases: {exc}") from exc
 

@@ -35,17 +35,35 @@ export function useWakeWord({
   const { t } = useI18n()
   const voiceCopy = t.notifications.voice
   const wakeConfig = config ?? normalizeWakeWordConfig(undefined)
+  const wakeConfigKey = [
+    enabled,
+    wakeConfig.enabled,
+    wakeConfig.provider,
+    wakeConfig.sampleRate,
+    wakeConfig.phrases.join('\u0000'),
+    wakeConfig.threshold,
+    wakeConfig.boost,
+    wakeConfig.commandTimeoutMs,
+    wakeConfig.cooldownMs
+  ].join('|')
   const { handle } = useMicRecorder(voiceCopy)
   const [status, setStatus] = useState<WakeWordStatus>('idle')
+  const [startTick, setStartTick] = useState(0)
+  const transcribeAvailable = Boolean(onTranscribeAudio)
   const wakeSessionRef = useRef<WakeWordSession | null>(null)
   const streamingSessionRef = useRef<StreamingSttSession | null>(null)
   const detectedRef = useRef(false)
   const stoppingRef = useRef(false)
+  const startupFailedRef = useRef(false)
   const restartTimerRef = useRef<number | null>(null)
   const commandTimerRef = useRef<number | null>(null)
   const enabledRef = useRef(enabled)
   const busyRef = useRef(busy)
   const statusRef = useRef<WakeWordStatus>('idle')
+  const handleRef = useRef(handle)
+  const onSubmitRef = useRef(onSubmit)
+  const onTranscribeAudioRef = useRef(onTranscribeAudio)
+  const finishCaptureRef = useRef<(() => Promise<void>) | null>(null)
 
   useEffect(() => {
     enabledRef.current = enabled
@@ -58,6 +76,19 @@ export function useWakeWord({
   useEffect(() => {
     statusRef.current = status
   }, [status])
+
+  useEffect(() => {
+    handleRef.current = handle
+  }, [handle])
+
+  useEffect(() => {
+    onSubmitRef.current = onSubmit
+    onTranscribeAudioRef.current = onTranscribeAudio
+  }, [onSubmit, onTranscribeAudio])
+
+  useEffect(() => {
+    startupFailedRef.current = false
+  }, [wakeConfigKey])
 
   const clearTimers = () => {
     if (restartTimerRef.current) {
@@ -85,11 +116,11 @@ export function useWakeWord({
     clearTimers()
     stopWakeSession()
     stopStreamingSession()
-    handle.cancel()
+    handleRef.current.cancel()
     detectedRef.current = false
     stoppingRef.current = false
     setStatus('idle')
-  }, [handle])
+  }, [])
 
   const scheduleRestart = useCallback(() => {
     if (!enabledRef.current || busyRef.current) {
@@ -100,6 +131,7 @@ export function useWakeWord({
     restartTimerRef.current = window.setTimeout(() => {
       restartTimerRef.current = null
       setStatus('idle')
+      setStartTick(tick => tick + 1)
     }, wakeConfig.cooldownMs)
   }, [wakeConfig.cooldownMs])
 
@@ -113,7 +145,7 @@ export function useWakeWord({
     stopWakeSession()
 
     try {
-      const recording = await handle.stop()
+      const recording = await handleRef.current.stop()
       const detected = detectedRef.current
       detectedRef.current = false
 
@@ -129,14 +161,15 @@ export function useWakeWord({
           streamingSessionRef.current = null
         }
 
-        if (!transcript && recording?.audio && onTranscribeAudio) {
-          transcript = (await onTranscribeAudio(recording.audio)).trim()
+        const transcribeAudio = onTranscribeAudioRef.current
+        if (!transcript && recording?.audio && transcribeAudio) {
+          transcript = (await transcribeAudio(recording.audio)).trim()
         }
 
         const command = stripWakePhrase(transcript, wakeConfig.phrases)
 
         if (command) {
-          await onSubmit(command)
+          await onSubmitRef.current(command)
         } else if (transcript) {
           notify({ kind: 'warning', title: voiceCopy.noSpeechDetected, message: voiceCopy.tryRecordingAgain })
         }
@@ -150,9 +183,6 @@ export function useWakeWord({
       scheduleRestart()
     }
   }, [
-    handle,
-    onSubmit,
-    onTranscribeAudio,
     scheduleRestart,
     voiceCopy.noSpeechDetected,
     voiceCopy.transcriptionFailed,
@@ -161,12 +191,16 @@ export function useWakeWord({
   ])
 
   useEffect(() => {
-    if (!wakeConfig.enabled || !enabled || busy || !onTranscribeAudio) {
+    finishCaptureRef.current = finishCapture
+  }, [finishCapture])
+
+  useEffect(() => {
+    if (!wakeConfig.enabled || !enabled || busy || !transcribeAvailable) {
       stop()
       return
     }
 
-    if (status !== 'idle' || stoppingRef.current || restartTimerRef.current) {
+    if (startupFailedRef.current || statusRef.current !== 'idle' || stoppingRef.current || restartTimerRef.current) {
       return
     }
 
@@ -183,7 +217,7 @@ export function useWakeWord({
 
             detectedRef.current = true
             setStatus('woken')
-            commandTimerRef.current = window.setTimeout(() => void finishCapture(), wakeConfig.commandTimeoutMs)
+            commandTimerRef.current = window.setTimeout(() => void finishCaptureRef.current?.(), wakeConfig.commandTimeoutMs)
           }
         })
 
@@ -203,7 +237,7 @@ export function useWakeWord({
           }
         }
 
-        await handle.start({
+        await handleRef.current.start({
           idleSilenceMs: 12_000,
           onAudioFrame: samples => {
             wakeSessionRef.current?.sendFrame(samples)
@@ -213,15 +247,22 @@ export function useWakeWord({
             }
           },
           onError: error => notifyError(error, voiceCopy.microphoneFailed),
-          onSilence: () => void finishCapture(),
+          onSilence: () => void finishCaptureRef.current?.(),
           silenceLevel: 0.075,
           silenceMs: 1_250
         })
         setStatus('armed')
       } catch (error) {
         if (!cancelled) {
+          startupFailedRef.current = true
           notifyError(error, voiceCopy.streamingUnavailable)
-          stop()
+          clearTimers()
+          stopWakeSession()
+          stopStreamingSession()
+          handleRef.current.cancel()
+          detectedRef.current = false
+          stoppingRef.current = false
+          setStatus('idle')
         }
       }
     }
@@ -234,12 +275,10 @@ export function useWakeWord({
   }, [
     busy,
     enabled,
-    finishCapture,
-    handle,
-    onTranscribeAudio,
+    startTick,
     stop,
-    status,
     sttStreamingEnabled,
+    transcribeAvailable,
     voiceCopy.microphoneFailed,
     voiceCopy.streamingUnavailable,
     wakeConfig.commandTimeoutMs,

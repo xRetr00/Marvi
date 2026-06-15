@@ -89,6 +89,28 @@ def _prepare_sherpa_wake_word_assets() -> None:
         _print_info("    Wake word can still retry model preparation on first use")
 
 
+def _ensure_sherpa_keyword_dependencies() -> bool:
+    if importlib.util.find_spec("pypinyin") is not None:
+        return True
+
+    _print_info("    Installing pypinyin for sherpa keyword tokenization...")
+    try:
+        result = _pip_install(["-U", "pypinyin", "--quiet"], timeout=120)
+    except subprocess.TimeoutExpired:
+        _print_warning("    pypinyin install timed out (>2min)")
+        _print_info("    Run manually: uv pip install -U pypinyin")
+        return False
+
+    if result.returncode == 0:
+        _print_success("    pypinyin installed")
+        return True
+
+    _print_warning("    pypinyin install failed:")
+    _print_info(f"      {(result.stderr or '').strip()[:300]}")
+    _print_info("    Run manually: uv pip install -U pypinyin")
+    return False
+
+
 
 
 
@@ -2127,6 +2149,8 @@ def _run_post_setup(post_setup_key: str):
         if importlib.util.find_spec("sherpa_onnx") is not None:
 
             _print_success("    sherpa-onnx is already installed")
+            if not _ensure_sherpa_keyword_dependencies():
+                return
             _prepare_sherpa_wake_word_assets()
 
             return
@@ -2135,7 +2159,7 @@ def _run_post_setup(post_setup_key: str):
 
         try:
 
-            result = _pip_install(["-U", "sherpa-onnx", "--quiet"], timeout=300)
+            result = _pip_install(["-U", "sherpa-onnx", "pypinyin", "--quiet"], timeout=300)
 
             if result.returncode == 0:
 

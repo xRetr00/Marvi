@@ -2959,7 +2959,7 @@ def test_sherpa_post_setup_installs_package_when_missing(monkeypatch):
 
     tools_config._run_post_setup("sherpa_onnx")
 
-    assert calls == [(["-U", "sherpa-onnx", "--quiet"], 300)]
+    assert calls == [(["-U", "sherpa-onnx", "pypinyin", "--quiet"], 300)]
     assert prepared == [True]
 
 
@@ -2974,6 +2974,30 @@ def test_sherpa_post_setup_prepares_wake_assets_when_already_installed(monkeypat
 
     tools_config._run_post_setup("sherpa_onnx")
 
+    assert prepared == [True]
+
+
+def test_sherpa_post_setup_installs_keyword_dependency_when_package_exists(monkeypatch):
+
+    from hermes_cli import tools_config
+
+    calls = []
+    prepared = []
+
+    def fake_find_spec(name):
+        if name == "sherpa_onnx":
+            return object()
+        if name == "pypinyin":
+            return None
+        return None
+
+    monkeypatch.setattr(tools_config.importlib.util, "find_spec", fake_find_spec)
+    monkeypatch.setattr(tools_config, "_pip_install", lambda args, timeout=300: calls.append((args, timeout)) or SimpleNamespace(returncode=0, stderr=""))
+    monkeypatch.setattr(tools_config, "_prepare_sherpa_wake_word_assets", lambda: prepared.append(True))
+
+    tools_config._run_post_setup("sherpa_onnx")
+
+    assert calls == [(["-U", "pypinyin", "--quiet"], 120)]
     assert prepared == [True]
 
 

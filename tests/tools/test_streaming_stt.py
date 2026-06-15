@@ -178,3 +178,28 @@ def test_prepare_wake_word_assets_resolves_model_and_keywords(monkeypatch):
         ("resolve", True, "sherpa_onnx", ("hey marvi",)),
         ("keywords", True, "tokens"),
     ]
+
+
+def test_wake_keywords_tokenizer_forces_utf8_stdio(monkeypatch, tmp_path):
+    from types import SimpleNamespace
+
+    from tools import streaming_stt
+    from tools.streaming_stt import WakeWordConfig
+
+    calls = []
+    monkeypatch.setattr(streaming_stt.shutil, "which", lambda _name: "sherpa-onnx-cli")
+    monkeypatch.setattr(streaming_stt, "_model_cache_dir", lambda _model: tmp_path)
+
+    def fake_run(cmd, **kwargs):
+        calls.append((cmd, kwargs))
+        return SimpleNamespace(returncode=0, stderr="", stdout="")
+
+    monkeypatch.setattr(streaming_stt.subprocess, "run", fake_run)
+
+    streaming_stt._write_wake_keywords_file(
+        WakeWordConfig(enabled=True, phrases=("hey marvi",)),
+        {"tokens": "tokens.txt", "bpe_model": "bpe.model"},
+    )
+
+    assert calls
+    assert calls[0][1]["env"]["PYTHONIOENCODING"] == "utf-8"

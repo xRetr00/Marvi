@@ -1703,7 +1703,7 @@ export function ChatBar({
     sttStreamingEnabled
   })
 
-  useWakeWord({
+  const wakeWord = useWakeWord({
     busy,
     config: wakeWordConfig,
     enabled: Boolean(
@@ -1715,7 +1715,8 @@ export function ChatBar({
         !hasComposerPayload
     ),
     onSubmit: submitVoiceTurn,
-    onTranscribeAudio
+    onTranscribeAudio,
+    sttStreamingEnabled
   })
 
   const contextMenu = (
@@ -1757,6 +1758,7 @@ export function ChatBar({
       onDictate={dictate}
       onSteer={steerDraft}
       state={state}
+      wakeWord={{ active: wakeWord.status !== 'idle', status: wakeWord.status }}
       voiceStatus={voiceStatus}
     />
   )

@@ -2980,13 +2980,30 @@ def test_sherpa_post_setup_installs_package_when_missing(monkeypatch):
     from hermes_cli import tools_config
 
     calls = []
+    prepared = []
 
     monkeypatch.setattr(tools_config.importlib.util, "find_spec", lambda _name: None)
     monkeypatch.setattr(tools_config, "_pip_install", lambda args, timeout=300: calls.append((args, timeout)) or SimpleNamespace(returncode=0, stderr=""))
+    monkeypatch.setattr(tools_config, "_prepare_sherpa_wake_word_assets", lambda: prepared.append(True))
 
     tools_config._run_post_setup("sherpa_onnx")
 
     assert calls == [(["-U", "sherpa-onnx", "--quiet"], 300)]
+    assert prepared == [True]
+
+
+def test_sherpa_post_setup_prepares_wake_assets_when_already_installed(monkeypatch):
+
+    from hermes_cli import tools_config
+
+    prepared = []
+
+    monkeypatch.setattr(tools_config.importlib.util, "find_spec", lambda name: object() if name == "sherpa_onnx" else None)
+    monkeypatch.setattr(tools_config, "_prepare_sherpa_wake_word_assets", lambda: prepared.append(True))
+
+    tools_config._run_post_setup("sherpa_onnx")
+
+    assert prepared == [True]
 
 
 

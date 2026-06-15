@@ -364,6 +364,25 @@ def _write_wake_keywords_file(cfg: WakeWordConfig, files: dict[str, str]) -> str
     return str(target)
 
 
+def prepare_wake_word_assets(config: Optional[dict[str, Any]] = None) -> str:
+    cfg = wake_word_config(config)
+    cfg = WakeWordConfig(
+        enabled=True,
+        provider=cfg.provider,
+        model=cfg.model,
+        sample_rate=cfg.sample_rate,
+        phrases=cfg.phrases,
+        threshold=cfg.threshold,
+        boost=cfg.boost,
+        command_timeout_ms=cfg.command_timeout_ms,
+        cooldown_ms=cfg.cooldown_ms,
+    )
+    if cfg.provider != "sherpa_onnx":
+        raise StreamingSttUnavailable(f"Unsupported wake-word provider: {cfg.provider}")
+    files = resolve_sherpa_kws_model_files(cfg)
+    return _write_wake_keywords_file(cfg, files)
+
+
 class SherpaOnnxStreamingRecognizer:
     def __init__(self, cfg: StreamingSttConfig):
         self.cfg = cfg

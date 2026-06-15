@@ -516,8 +516,13 @@ export const FIELD_DESCRIPTIONS: Record<string, string> = defineFieldCopy({
     autoTts: 'Automatically speak assistant responses.',
     wakeWord: {
       enabled: 'Listen for a local wake phrase and submit one spoken command, then return to wake-only mode.',
+      provider: 'Local keyword spotter used for wake detection.',
+      model: 'Sherpa KWS model used for local wake detection.',
       phrases: 'Phrases and common Marvi misrecognitions that can wake the one-shot command pipeline.',
-      threshold: 'Higher values reduce false wakes but may miss valid wake phrases.'
+      threshold: 'Higher values reduce false wakes but may miss valid wake phrases.',
+      boost: 'Keyword score boost. Increase only if valid wake phrases are missed.',
+      commandTimeoutMs: 'Maximum time to keep listening for the command after the wake phrase.',
+      cooldownMs: 'Delay before wake listening arms again after one command finishes.'
     }
   },
   tts: {

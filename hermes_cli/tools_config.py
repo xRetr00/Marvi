@@ -76,6 +76,19 @@ PROJECT_ROOT = Path(__file__).parent.parent.resolve()
 STANDALONE_POST_SETUP_KEYS = {"sherpa_onnx"}
 
 
+def _prepare_sherpa_wake_word_assets() -> None:
+    _print_info("    Preparing sherpa wake-word model and Marvi keywords...")
+    try:
+        from tools.streaming_stt import prepare_wake_word_assets
+
+        prepare_wake_word_assets()
+        _print_success("    sherpa wake-word model is ready")
+    except Exception as exc:
+        _print_warning("    sherpa wake-word model preparation failed:")
+        _print_info(f"      {str(exc)[:300]}")
+        _print_info("    Wake word can still retry model preparation on first use")
+
+
 
 
 
@@ -2114,6 +2127,7 @@ def _run_post_setup(post_setup_key: str):
         if importlib.util.find_spec("sherpa_onnx") is not None:
 
             _print_success("    sherpa-onnx is already installed")
+            _prepare_sherpa_wake_word_assets()
 
             return
 
@@ -2128,6 +2142,7 @@ def _run_post_setup(post_setup_key: str):
                 _print_success("    sherpa-onnx installed")
 
                 _print_info("    Default streaming model downloads on first realtime voice use")
+                _prepare_sherpa_wake_word_assets()
 
             else:
 

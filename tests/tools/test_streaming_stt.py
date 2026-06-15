@@ -151,3 +151,30 @@ def test_wake_word_factory_rejects_disabled_config():
 
     with pytest.raises(StreamingSttUnavailable, match="disabled"):
         factory.create({"voice": {"wake_word": {"enabled": False}}})
+
+
+def test_prepare_wake_word_assets_resolves_model_and_keywords(monkeypatch):
+    from tools import streaming_stt
+
+    calls = []
+
+    monkeypatch.setattr(
+        streaming_stt,
+        "resolve_sherpa_kws_model_files",
+        lambda cfg: calls.append(("resolve", cfg.enabled, cfg.provider, cfg.phrases)) or {"tokens": "tokens", "bpe_model": "bpe"},
+    )
+    monkeypatch.setattr(
+        streaming_stt,
+        "_write_wake_keywords_file",
+        lambda cfg, files: calls.append(("keywords", cfg.enabled, files["tokens"])) or "keywords.txt",
+    )
+
+    keywords = streaming_stt.prepare_wake_word_assets(
+        {"voice": {"wake_word": {"enabled": False, "phrases": ["Hey Marvi"], "threshold": 0.33}}}
+    )
+
+    assert keywords == "keywords.txt"
+    assert calls == [
+        ("resolve", True, "sherpa_onnx", ("hey marvi",)),
+        ("keywords", True, "tokens"),
+    ]

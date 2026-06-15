@@ -9,8 +9,11 @@ import {
   type WakeWordConfig,
   type WakeWordSession
 } from '@/lib/wake-word'
+import { openStreamingSttSession, type StreamingSttSession } from '@/lib/streaming-stt'
 
 import { useMicRecorder } from './use-mic-recorder'
+
+export type WakeWordStatus = 'idle' | 'arming' | 'armed' | 'woken' | 'listening' | 'transcribing'
 
 interface WakeWordOptions {
   busy: boolean
@@ -18,21 +21,31 @@ interface WakeWordOptions {
   enabled: boolean
   onSubmit: (text: string) => Promise<void> | void
   onTranscribeAudio?: (audio: Blob) => Promise<string>
+  sttStreamingEnabled?: boolean
 }
 
-export function useWakeWord({ busy, config, enabled, onSubmit, onTranscribeAudio }: WakeWordOptions) {
+export function useWakeWord({
+  busy,
+  config,
+  enabled,
+  onSubmit,
+  onTranscribeAudio,
+  sttStreamingEnabled = false
+}: WakeWordOptions) {
   const { t } = useI18n()
   const voiceCopy = t.notifications.voice
   const wakeConfig = config ?? normalizeWakeWordConfig(undefined)
   const { handle } = useMicRecorder(voiceCopy)
-  const [armed, setArmed] = useState(false)
+  const [status, setStatus] = useState<WakeWordStatus>('idle')
   const wakeSessionRef = useRef<WakeWordSession | null>(null)
+  const streamingSessionRef = useRef<StreamingSttSession | null>(null)
   const detectedRef = useRef(false)
   const stoppingRef = useRef(false)
   const restartTimerRef = useRef<number | null>(null)
   const commandTimerRef = useRef<number | null>(null)
   const enabledRef = useRef(enabled)
   const busyRef = useRef(busy)
+  const statusRef = useRef<WakeWordStatus>('idle')
 
   useEffect(() => {
     enabledRef.current = enabled
@@ -41,6 +54,10 @@ export function useWakeWord({ busy, config, enabled, onSubmit, onTranscribeAudio
   useEffect(() => {
     busyRef.current = busy
   }, [busy])
+
+  useEffect(() => {
+    statusRef.current = status
+  }, [status])
 
   const clearTimers = () => {
     if (restartTimerRef.current) {
@@ -59,24 +76,30 @@ export function useWakeWord({ busy, config, enabled, onSubmit, onTranscribeAudio
     wakeSessionRef.current = null
   }
 
+  const stopStreamingSession = () => {
+    streamingSessionRef.current?.stop()
+    streamingSessionRef.current = null
+  }
+
   const stop = useCallback(() => {
     clearTimers()
     stopWakeSession()
+    stopStreamingSession()
     handle.cancel()
     detectedRef.current = false
     stoppingRef.current = false
-    setArmed(false)
+    setStatus('idle')
   }, [handle])
 
   const scheduleRestart = useCallback(() => {
     if (!enabledRef.current || busyRef.current) {
-      setArmed(false)
+      setStatus('idle')
       return
     }
 
     restartTimerRef.current = window.setTimeout(() => {
       restartTimerRef.current = null
-      setArmed(false)
+      setStatus('idle')
     }, wakeConfig.cooldownMs)
   }, [wakeConfig.cooldownMs])
 
@@ -94,8 +117,22 @@ export function useWakeWord({ busy, config, enabled, onSubmit, onTranscribeAudio
       const detected = detectedRef.current
       detectedRef.current = false
 
-      if (detected && recording?.audio && onTranscribeAudio) {
-        const transcript = (await onTranscribeAudio(recording.audio)).trim()
+      if (detected) {
+        setStatus('transcribing')
+        let transcript = ''
+
+        try {
+          transcript = (await streamingSessionRef.current?.finish())?.trim() ?? ''
+        } catch (error) {
+          console.warn('[wake-word] Streaming STT failed; falling back to standard transcription.', error)
+        } finally {
+          streamingSessionRef.current = null
+        }
+
+        if (!transcript && recording?.audio && onTranscribeAudio) {
+          transcript = (await onTranscribeAudio(recording.audio)).trim()
+        }
+
         const command = stripWakePhrase(transcript, wakeConfig.phrases)
 
         if (command) {
@@ -103,6 +140,8 @@ export function useWakeWord({ busy, config, enabled, onSubmit, onTranscribeAudio
         } else if (transcript) {
           notify({ kind: 'warning', title: voiceCopy.noSpeechDetected, message: voiceCopy.tryRecordingAgain })
         }
+      } else {
+        stopStreamingSession()
       }
     } catch (error) {
       notifyError(error, voiceCopy.transcriptionFailed)
@@ -127,7 +166,7 @@ export function useWakeWord({ busy, config, enabled, onSubmit, onTranscribeAudio
       return
     }
 
-    if (armed || stoppingRef.current || restartTimerRef.current) {
+    if (status !== 'idle' || stoppingRef.current || restartTimerRef.current) {
       return
     }
 
@@ -135,6 +174,7 @@ export function useWakeWord({ busy, config, enabled, onSubmit, onTranscribeAudio
 
     const start = async () => {
       try {
+        setStatus('arming')
         const session = await openWakeWordSession({
           onDetected: () => {
             if (detectedRef.current) {
@@ -142,25 +182,42 @@ export function useWakeWord({ busy, config, enabled, onSubmit, onTranscribeAudio
             }
 
             detectedRef.current = true
+            setStatus('woken')
             commandTimerRef.current = window.setTimeout(() => void finishCapture(), wakeConfig.commandTimeoutMs)
           }
         })
 
         if (cancelled) {
           session.stop()
+          setStatus('idle')
           return
         }
 
         wakeSessionRef.current = session
+        if (sttStreamingEnabled) {
+          try {
+            streamingSessionRef.current = await openStreamingSttSession()
+          } catch (error) {
+            console.warn('[wake-word] Streaming STT unavailable; falling back to standard transcription.', error)
+            streamingSessionRef.current = null
+          }
+        }
+
         await handle.start({
           idleSilenceMs: 12_000,
-          onAudioFrame: samples => wakeSessionRef.current?.sendFrame(samples),
+          onAudioFrame: samples => {
+            wakeSessionRef.current?.sendFrame(samples)
+            streamingSessionRef.current?.sendFrame(samples)
+            if (detectedRef.current && statusRef.current === 'woken') {
+              setStatus('listening')
+            }
+          },
           onError: error => notifyError(error, voiceCopy.microphoneFailed),
           onSilence: () => void finishCapture(),
           silenceLevel: 0.075,
           silenceMs: 1_250
         })
-        setArmed(true)
+        setStatus('armed')
       } catch (error) {
         if (!cancelled) {
           notifyError(error, voiceCopy.streamingUnavailable)
@@ -175,13 +232,14 @@ export function useWakeWord({ busy, config, enabled, onSubmit, onTranscribeAudio
       cancelled = true
     }
   }, [
-    armed,
     busy,
     enabled,
     finishCapture,
     handle,
     onTranscribeAudio,
     stop,
+    status,
+    sttStreamingEnabled,
     voiceCopy.microphoneFailed,
     voiceCopy.streamingUnavailable,
     wakeConfig.commandTimeoutMs,
@@ -190,5 +248,5 @@ export function useWakeWord({ busy, config, enabled, onSubmit, onTranscribeAudio
 
   useEffect(() => () => stop(), [stop])
 
-  return { armed, stop }
+  return { armed: status !== 'idle', status, stop }
 }

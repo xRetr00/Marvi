@@ -10,6 +10,11 @@ const cancelMic = vi.fn()
 const startMic = vi.fn()
 const stopMic = vi.fn()
 
+interface RecorderOptionsForTest {
+  onAudioFrame?: (samples: Float32Array) => void
+  onSilence?: () => void
+}
+
 vi.mock('@/i18n', () => ({
   useI18n: () => ({
     t: {
@@ -97,13 +102,13 @@ describe('useWakeWord', () => {
   })
 
   it('keeps the idle wake listener open when silence fires before wake detection', async () => {
-    let recorderOptions: { onSilence: () => void } | null = null
+    const recorderState: { options?: RecorderOptionsForTest } = {}
     const wakeSession = { sendFrame: vi.fn(), stop: vi.fn() }
     const streamingSession = { finish: vi.fn(), sendFrame: vi.fn(), stop: vi.fn() }
     openWakeWordSession.mockResolvedValue(wakeSession)
     openStreamingSttSession.mockResolvedValue(streamingSession)
     startMic.mockImplementation(async options => {
-      recorderOptions = options
+      recorderState.options = options
     })
     stopMic.mockResolvedValue(null)
 
@@ -130,7 +135,7 @@ describe('useWakeWord', () => {
     await waitFor(() => expect(startMic).toHaveBeenCalled())
 
     await act(async () => {
-      recorderOptions?.onSilence()
+      recorderState.options?.onSilence?.()
       await Promise.resolve()
     })
 
@@ -138,5 +143,113 @@ describe('useWakeWord', () => {
     expect(wakeSession.stop).not.toHaveBeenCalled()
     expect(streamingSession.stop).not.toHaveBeenCalled()
     expect(openWakeWordSession).toHaveBeenCalledTimes(1)
+  })
+
+  it('starts streaming transcription only after wake detection', async () => {
+    let wakeOptions: { onDetected: () => void } | null = null
+    const recorderState: { options?: RecorderOptionsForTest } = {}
+    const wakeSession = { sendFrame: vi.fn(), stop: vi.fn() }
+    const streamingSession = { finish: vi.fn(), sendFrame: vi.fn(), stop: vi.fn() }
+    openWakeWordSession.mockImplementation(async options => {
+      wakeOptions = options
+      return wakeSession
+    })
+    openStreamingSttSession.mockResolvedValue(streamingSession)
+    startMic.mockImplementation(async options => {
+      recorderState.options = options
+    })
+    stopMic.mockResolvedValue(null)
+
+    renderHook(() =>
+      useWakeWord({
+        busy: false,
+        config: {
+          boost: 2,
+          commandTimeoutMs: 8000,
+          cooldownMs: 1000,
+          enabled: true,
+          phrases: ['hey marvi'],
+          provider: 'sherpa_onnx',
+          sampleRate: 16000,
+          threshold: 0.35
+        },
+        enabled: true,
+        onSubmit: vi.fn(),
+        onTranscribeAudio: vi.fn(),
+        sttStreamingEnabled: true
+      })
+    )
+
+    await waitFor(() => expect(startMic).toHaveBeenCalled())
+
+    const beforeWake = new Float32Array([0.1, 0.2])
+    recorderState.options?.onAudioFrame?.(beforeWake)
+
+    expect(wakeSession.sendFrame).toHaveBeenCalledWith(beforeWake)
+    expect(openStreamingSttSession).not.toHaveBeenCalled()
+    expect(streamingSession.sendFrame).not.toHaveBeenCalled()
+
+    await act(async () => {
+      wakeOptions?.onDetected()
+      await waitFor(() => expect(openStreamingSttSession).toHaveBeenCalledTimes(1))
+    })
+
+    const commandFrame = new Float32Array([0.3, 0.4])
+    recorderState.options?.onAudioFrame?.(commandFrame)
+
+    expect(streamingSession.sendFrame).toHaveBeenCalledWith(commandFrame)
+  })
+
+  it('replays only recent wake audio to streaming transcription after detection', async () => {
+    let wakeOptions: { onDetected: () => void } | null = null
+    const recorderState: { options?: RecorderOptionsForTest } = {}
+    const wakeSession = { sendFrame: vi.fn(), stop: vi.fn() }
+    const streamingSession = { finish: vi.fn(), sendFrame: vi.fn(), stop: vi.fn() }
+    openWakeWordSession.mockImplementation(async options => {
+      wakeOptions = options
+      return wakeSession
+    })
+    openStreamingSttSession.mockResolvedValue(streamingSession)
+    startMic.mockImplementation(async options => {
+      recorderState.options = options
+    })
+    stopMic.mockResolvedValue(null)
+
+    renderHook(() =>
+      useWakeWord({
+        busy: false,
+        config: {
+          boost: 2,
+          commandTimeoutMs: 8000,
+          cooldownMs: 1000,
+          enabled: true,
+          phrases: ['hey marvi'],
+          provider: 'sherpa_onnx',
+          sampleRate: 16000,
+          threshold: 0.35
+        },
+        enabled: true,
+        onSubmit: vi.fn(),
+        onTranscribeAudio: vi.fn(),
+        sttStreamingEnabled: true
+      })
+    )
+
+    await waitFor(() => expect(startMic).toHaveBeenCalled())
+
+    const staleFrame = new Float32Array([0])
+    const wakeFrame = new Float32Array([0.2])
+    for (let i = 0; i < 8; i += 1) {
+      recorderState.options?.onAudioFrame?.(new Float32Array([i]))
+    }
+    recorderState.options?.onAudioFrame?.(wakeFrame)
+
+    await act(async () => {
+      wakeOptions?.onDetected()
+      await waitFor(() => expect(openStreamingSttSession).toHaveBeenCalledTimes(1))
+    })
+
+    expect(streamingSession.sendFrame).toHaveBeenCalledWith(wakeFrame)
+    expect(streamingSession.sendFrame).not.toHaveBeenCalledWith(staleFrame)
   })
 })

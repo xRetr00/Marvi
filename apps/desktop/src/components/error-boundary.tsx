@@ -21,14 +21,25 @@ interface ErrorBoundaryState {
   error: Error | null
 }
 
+export const isTransientAssistantUiLookupError = (error: unknown): boolean =>
+  error instanceof Error && /tapClient(Lookup|Resource).*out of bounds/.test(error.message)
+
 export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
   state: ErrorBoundaryState = { error: null }
 
   static getDerivedStateFromError(error: Error): ErrorBoundaryState {
+    if (isTransientAssistantUiLookupError(error)) {
+      return { error: null }
+    }
+
     return { error }
   }
 
   componentDidCatch(error: Error, info: ErrorInfo) {
+    if (isTransientAssistantUiLookupError(error)) {
+      return
+    }
+
     const tag = this.props.label ? `[error-boundary:${this.props.label}]` : '[error-boundary]'
     console.error(tag, error, info.componentStack)
     this.props.onError?.(error, info)

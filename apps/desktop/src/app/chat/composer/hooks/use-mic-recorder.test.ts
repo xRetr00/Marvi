@@ -1,6 +1,6 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
-import { downsampleFloat32 } from './use-mic-recorder'
+import { downsampleFloat32, resumeAudioContextIfSuspended } from './use-mic-recorder'
 
 describe('downsampleFloat32', () => {
   it('averages source samples into the requested output rate', () => {
@@ -16,5 +16,23 @@ describe('downsampleFloat32', () => {
     expect(output).not.toBe(input)
     expect(output[0]).toBeCloseTo(0.1)
     expect(output[1]).toBeCloseTo(0.2)
+  })
+})
+
+describe('resumeAudioContextIfSuspended', () => {
+  it('resumes a suspended recording audio context', () => {
+    const resume = vi.fn()
+
+    resumeAudioContextIfSuspended({ resume, state: 'suspended' })
+
+    expect(resume).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not resume an already running recording audio context', () => {
+    const resume = vi.fn()
+
+    resumeAudioContextIfSuspended({ resume, state: 'running' })
+
+    expect(resume).not.toHaveBeenCalled()
   })
 })

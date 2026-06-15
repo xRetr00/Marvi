@@ -32,6 +32,22 @@ export function downsampleFloat32(input: Float32Array, inputRate: number, output
   return output
 }
 
+interface ResumableAudioContext {
+  state: AudioContextState
+  resume: () => Promise<void> | void
+}
+
+export function resumeAudioContextIfSuspended(audioContext: ResumableAudioContext): void {
+  if (audioContext.state !== 'suspended') {
+    return
+  }
+
+  const resumeResult = audioContext.resume()
+  if (resumeResult && typeof resumeResult.catch === 'function') {
+    void resumeResult.catch(() => undefined)
+  }
+}
+
 export interface MicRecorderOptions {
   onAudioFrame?: (samples: Float32Array) => void
   onLevel?: (level: number) => void
@@ -135,6 +151,7 @@ export function useMicRecorder(copy: MicRecorderErrorCopy): { handle: MicRecorde
 
     try {
       const audioContext = new AudioContextCtor()
+      resumeAudioContextIfSuspended(audioContext)
       const analyser = audioContext.createAnalyser()
       const source = audioContext.createMediaStreamSource(stream)
 

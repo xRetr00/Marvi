@@ -7,8 +7,21 @@ function BrokenView(): never {
   throw new Error('render failed')
 }
 
+let transientRenderCount = 0
+
+function TransientAssistantUiRace() {
+  transientRenderCount += 1
+
+  if (transientRenderCount === 1) {
+    throw new Error('tapClientLookup: Index 0 out of bounds (length: 0)')
+  }
+
+  return <div>recovered</div>
+}
+
 describe('ErrorBoundary', () => {
   beforeEach(() => {
+    transientRenderCount = 0
     vi.spyOn(console, 'error').mockImplementation(() => undefined)
     window.hermesDesktop = {
       updates: {
@@ -37,5 +50,17 @@ describe('ErrorBoundary', () => {
     )
 
     await waitFor(() => expect(screen.getByRole('button', { name: 'Update now' })).toBeTruthy())
+  })
+
+  it('recovers from transient assistant-ui lookup races without showing the crash screen', async () => {
+    render(
+      <ErrorBoundary label="test">
+        <TransientAssistantUiRace />
+      </ErrorBoundary>,
+      { onRecoverableError: () => undefined }
+    )
+
+    await waitFor(() => expect(screen.getByText('recovered')).toBeTruthy())
+    expect(screen.queryByRole('button', { name: 'Update now' })).toBeNull()
   })
 })

@@ -8,7 +8,7 @@ import { createRoot } from 'react-dom/client'
 import { HashRouter } from 'react-router-dom'
 
 import App from './app'
-import { ErrorBoundary } from './components/error-boundary'
+import { ErrorBoundary, isTransientAssistantUiLookupError } from './components/error-boundary'
 import { HapticsProvider } from './components/haptics-provider'
 import { I18nProvider } from './i18n'
 import { installClipboardShim } from './lib/clipboard'
@@ -26,7 +26,20 @@ if (import.meta.env.MODE !== 'production') {
   import('./app/chat/perf-probe')
 }
 
-createRoot(document.getElementById('root')!).render(
+const root = createRoot(document.getElementById('root')!, {
+  onRecoverableError: error => {
+    if (!isTransientAssistantUiLookupError(error)) {
+      console.error('[react-recoverable]', error)
+    }
+  },
+  onUncaughtError: error => {
+    if (!isTransientAssistantUiLookupError(error)) {
+      console.error('[react-uncaught]', error)
+    }
+  }
+})
+
+root.render(
   <StrictMode>
     <ErrorBoundary label="root">
       <QueryClientProvider client={queryClient}>

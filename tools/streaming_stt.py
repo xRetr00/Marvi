@@ -410,14 +410,14 @@ class SherpaOnnxStreamingRecognizer:
         self.sample_rate = sample_rate or self.cfg.sample_rate
 
     def accept_waveform(self, samples: list[float]) -> str:
-        self.recognizer.accept_waveform(self.stream, self.sample_rate, samples)
+        self.stream.accept_waveform(self.sample_rate, samples)
         while self.recognizer.is_ready(self.stream):
             self.recognizer.decode_stream(self.stream)
         result = self.recognizer.get_result(self.stream)
         return str(getattr(result, "text", result) or "").strip()
 
     def finish(self) -> str:
-        self.recognizer.input_finished(self.stream)
+        self.stream.input_finished()
         while self.recognizer.is_ready(self.stream):
             self.recognizer.decode_stream(self.stream)
         result = self.recognizer.get_result(self.stream)

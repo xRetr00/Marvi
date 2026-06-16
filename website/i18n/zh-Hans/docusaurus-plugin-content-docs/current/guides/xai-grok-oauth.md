@@ -45,9 +45,7 @@ Hermes Agent 通过基于浏览器的 OAuth 登录流程支持 xAI Grok，认证
 | 认证类型 | 浏览器 OAuth 2.0 PKCE（回环回调） |
 
 | 传输层 | xAI Responses API（`codex_responses`） |
-
-| 默认模型 | `grok-4.3` |
-
+| 默认模型 | `grok-build-0.1` |
 | 端点 | `https://api.x.ai/v1` |
 
 | 认证服务器 | `https://accounts.x.ai` |
@@ -95,9 +93,7 @@ hermes model
 # → Hermes 在浏览器中打开 accounts.x.ai
 
 # → 在浏览器中批准访问
-
-# → 选择模型（grok-4.3 在列表顶部）
-
+# → 选择模型（grok-build-0.1 在列表顶部）
 # → 开始对话
 
 
@@ -229,9 +225,7 @@ hermes doctor
 hermes model
 
 # → 选择 "xAI Grok OAuth (SuperGrok / X Premium+)"
-
-# → 从模型列表中选择（grok-4.3 固定在顶部）
-
+# → 从模型列表中选择（grok-build-0.1 固定在顶部）
 ```
 
 
@@ -241,9 +235,7 @@ hermes model
 
 
 ```bash
-
-hermes config set model.default grok-4.3
-
+hermes config set model.default grok-build-0.1
 hermes config set model.provider xai-oauth
 
 ```
@@ -261,9 +253,7 @@ hermes config set model.provider xai-oauth
 ```yaml
 
 model:
-
-  default: grok-4.3
-
+  default: grok-build-0.1
   provider: xai-oauth
 
   base_url: https://api.x.ai/v1
@@ -349,9 +339,8 @@ hermes tools
 | 工具 | 模型 | 说明 |
 
 |------|-------|-------|
-
-| 对话 | `grok-4.3` | 默认；通过 OAuth 登录时自动选择 |
-
+| 对话 | `grok-build-0.1` | 默认；通过 OAuth 登录时自动选择 |
+| 对话 | `grok-4.3` | 之前的默认 |
 | 对话 | `grok-4.20-0309-reasoning` | 推理变体 |
 
 | 对话 | `grok-4.20-0309-non-reasoning` | 非推理变体 |
@@ -368,9 +357,7 @@ hermes tools
 
 | TTS | （默认音色） | xAI `/v1/tts` 端点 |
 
-
-
-对话模型目录从磁盘上的 `models.dev` 缓存实时获取；缓存刷新后，新的 xAI 模型会自动出现。`grok-4.3` 始终固定在列表顶部。
+对话模型目录从磁盘上的 `models.dev` 缓存实时获取；缓存刷新后，新的 xAI 模型会自动出现。`grok-build-0.1` 始终固定在列表顶部。
 
 
 

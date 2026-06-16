@@ -62,6 +62,7 @@ class WakeWordConfig:
     phrases: tuple[str, ...] = DEFAULT_WAKE_WORD_PHRASES
     boost: float = 2.0
     threshold: float = 0.35
+    debug: bool = False
     command_timeout_ms: int = 8000
     cooldown_ms: int = 1200
 
@@ -122,6 +123,7 @@ def wake_word_config(config: Optional[dict[str, Any]] = None) -> WakeWordConfig:
         phrases=_normalize_phrases(raw.get("phrases")),
         boost=_float_value(raw.get("boost"), 2.0, min_value=0.1, max_value=10.0),
         threshold=_float_value(raw.get("threshold"), 0.35, min_value=0.05, max_value=0.95),
+        debug=raw.get("debug") is True,
         command_timeout_ms=_positive_int(raw.get("command_timeout_ms"), 8000, min_value=1000, max_value=30000),
         cooldown_ms=_positive_int(raw.get("cooldown_ms"), 1200, min_value=0, max_value=10000),
     )
@@ -295,6 +297,7 @@ def prepare_wake_word_assets(config: Optional[dict[str, Any]] = None) -> str:
         phrases=cfg.phrases,
         threshold=cfg.threshold,
         boost=cfg.boost,
+        debug=cfg.debug,
         command_timeout_ms=cfg.command_timeout_ms,
         cooldown_ms=cfg.cooldown_ms,
     )

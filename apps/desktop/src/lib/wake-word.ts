@@ -5,6 +5,7 @@ export interface WakeWordConfig {
   boost: number
   commandTimeoutMs: number
   cooldownMs: number
+  debug: boolean
   enabled: boolean
   phrases: string[]
   provider: string
@@ -18,6 +19,7 @@ export interface WakeWordSession {
 }
 
 export interface WakeWordOptions {
+  debug?: boolean
   onDetected: (phrase: string) => void
 }
 
@@ -60,6 +62,7 @@ export function normalizeWakeWordConfig(value: unknown): WakeWordConfig {
     boost: Number.isFinite(Number(record.boost)) ? Number(record.boost) : 2,
     commandTimeoutMs: clampNumber(record.command_timeout_ms, 8000, 1000, 30000),
     cooldownMs: clampNumber(record.cooldown_ms, 1200, 0, 10000),
+    debug: record.debug === true,
     enabled: record.enabled === true,
     phrases: phrases.length ? phrases : DEFAULT_WAKE_PHRASES,
     provider: normalizePhrase(record.provider) || 'sherpa_onnx',
@@ -112,7 +115,7 @@ export async function openWakeWordSession(options: WakeWordOptions): Promise<Wak
     ws.addEventListener(
       'open',
       () => {
-        ws.send(JSON.stringify({ type: 'start', sample_rate: 16000 }))
+        ws.send(JSON.stringify({ type: 'start', debug: options.debug === true, sample_rate: 16000 }))
       },
       { once: true }
     )

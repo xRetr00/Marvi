@@ -1746,6 +1746,7 @@ DEFAULT_CONFIG = {
             ],
             "boost": 2.0,
             "threshold": 0.35,
+            "debug": False,
             "command_timeout_ms": 8000,
             "cooldown_ms": 1200,
         },

@@ -871,6 +871,43 @@ class TestWebServerEndpoints:
         assert spotter.sample_rate == 16000
         assert len(spotter.frames) == 1
 
+    def test_wake_word_websocket_debug_logs_no_detection_frames(self, caplog, monkeypatch):
+        import logging
+        import struct
+
+        import hermes_cli.web_server as web_server
+
+        class FakeWakeSpotter:
+            def start(self, sample_rate=16000):
+                self.sample_rate = sample_rate
+
+            def accept_waveform(self, samples):
+                return ""
+
+            def stop(self):
+                pass
+
+        class FakeFactory:
+            def create(self, config=None):
+                return FakeWakeSpotter()
+
+        monkeypatch.setattr(web_server, "_WAKE_WORD_FACTORY", FakeFactory())
+        monkeypatch.setattr(
+            web_server,
+            "load_config",
+            lambda: {"voice": {"wake_word": {"enabled": True, "provider": "sherpa_onnx"}}},
+        )
+
+        caplog.set_level(logging.INFO, logger="hermes_cli.web_server")
+        with self.client.websocket_connect(f"/api/audio/wake-word/stream?token={web_server._SESSION_TOKEN}") as ws:
+            ws.send_json({"type": "start", "sample_rate": 16000, "debug": True})
+            assert ws.receive_json()["type"] == "ready"
+
+            ws.send_bytes(struct.pack("<4f", 0.0, 0.1, 0.2, 0.3))
+            ws.send_json({"type": "stop"})
+
+        assert "Wake-word debug no detection" in caplog.text
+
     def test_desktop_audio_routes_registered(self):
         """Desktop voice endpoints must exist.
 

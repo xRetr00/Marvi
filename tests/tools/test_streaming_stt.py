@@ -28,6 +28,7 @@ def test_wake_word_config_reads_nested_settings():
                     "phrases": ["Hey Marvi", "marfe", "", "hey marvi"],
                     "threshold": 0.42,
                     "boost": 2.5,
+                    "debug": True,
                     "command_timeout_ms": 9000,
                     "cooldown_ms": 500,
                 }
@@ -39,6 +40,7 @@ def test_wake_word_config_reads_nested_settings():
     assert cfg.phrases == ("hey marvi", "marfe")
     assert cfg.threshold == 0.42
     assert cfg.boost == 2.5
+    assert cfg.debug is True
     assert cfg.command_timeout_ms == 9000
     assert cfg.cooldown_ms == 500
 

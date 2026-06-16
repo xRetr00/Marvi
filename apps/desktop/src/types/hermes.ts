@@ -180,9 +180,6 @@ export interface HermesConfig {
   }
   stt?: {
     enabled?: boolean
-    streaming?: {
-      enabled?: boolean
-    }
   }
   voice?: {
     max_recording_seconds?: number
@@ -190,6 +187,7 @@ export interface HermesConfig {
       boost?: number
       command_timeout_ms?: number
       cooldown_ms?: number
+      debug?: boolean
       enabled?: boolean
       model?: string
       phrases?: string[]

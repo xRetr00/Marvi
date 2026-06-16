@@ -7,6 +7,7 @@ describe('normalizeWakeWordConfig', () => {
     const config = normalizeWakeWordConfig(undefined)
 
     expect(config.enabled).toBe(false)
+    expect(config.debug).toBe(false)
     expect(config.provider).toBe('sherpa_onnx')
     expect(config.phrases).toContain('hey marvi')
     expect(config.phrases).toContain('marvi')
@@ -18,12 +19,14 @@ describe('normalizeWakeWordConfig', () => {
   it('normalizes configured phrases and timing', () => {
     const config = normalizeWakeWordConfig({
       enabled: true,
+      debug: true,
       phrases: ['Hey Marvi', 'marfe', '', 'hey marvi'],
       command_timeout_ms: 9000,
       cooldown_ms: 500
     })
 
     expect(config.enabled).toBe(true)
+    expect(config.debug).toBe(true)
     expect(config.phrases).toEqual(['hey marvi', 'marfe'])
     expect(config.commandTimeoutMs).toBe(9000)
     expect(config.cooldownMs).toBe(500)

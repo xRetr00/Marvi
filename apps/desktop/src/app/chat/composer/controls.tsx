@@ -85,14 +85,11 @@ export function ComposerControls({
     return <ConversationPill {...conversation} disabled={disabled} />
   }
 
-  if (wakeWord.active) {
-    return <WakeWordPill disabled={disabled} status={wakeWord.status} />
-  }
-
   const showVoicePrimary = !busy && !hasComposerPayload
 
   return (
     <div className="ml-auto flex shrink-0 items-center gap-(--composer-control-gap)">
+      {wakeWord.active && <WakeWordPill disabled={disabled} status={wakeWord.status} />}
       <DictationButton disabled={disabled} onToggle={onDictate} state={state.voice} status={voiceStatus} />
       {canSteer && (
         <Tip label={steerTip}>
@@ -164,7 +161,7 @@ function WakeWordPill({ disabled, status }: Pick<WakeWordProps, 'status'> & { di
           : 'Wake word'
 
   return (
-    <div className="ml-auto flex shrink-0 items-center gap-(--composer-control-gap)">
+    <div className="flex shrink-0 items-center gap-(--composer-control-gap)">
       <Button
         aria-label={label}
         className={cn(

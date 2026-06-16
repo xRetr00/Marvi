@@ -2406,6 +2406,14 @@ def _float32le_samples(data: bytes) -> list[float]:
     return list(struct.unpack("<" + "f" * (len(data) // 4), data))
 
 
+def _audio_frame_stats(samples: list[float]) -> tuple[float, float]:
+    if not samples:
+        return 0.0, 0.0
+    peak = max(abs(sample) for sample in samples)
+    rms = (sum(sample * sample for sample in samples) / len(samples)) ** 0.5
+    return rms, peak
+
+
 @app.websocket("/api/audio/wake-word/stream")
 async def wake_word_stream(ws: WebSocket) -> None:
     """Desktop-only wake-word WebSocket.
@@ -2434,6 +2442,9 @@ async def wake_word_stream(ws: WebSocket) -> None:
 
     await ws.accept()
     spotter = None
+    debug_enabled = False
+    frame_count = 0
+    sample_count = 0
 
     try:
         while True:
@@ -2461,7 +2472,29 @@ async def wake_word_stream(ws: WebSocket) -> None:
                     break
                 if phrase:
                     _log.info("Wake-word detected phrase=%s", phrase)
+                    if debug_enabled:
+                        rms, peak = _audio_frame_stats(samples)
+                        _log.info(
+                            "Wake-word debug detection phrase=%s frames=%s samples=%s frame_rms=%.5f frame_peak=%.5f",
+                            phrase,
+                            frame_count,
+                            sample_count,
+                            rms,
+                            peak,
+                        )
                     await ws.send_json({"type": "detected", "phrase": phrase})
+                elif debug_enabled:
+                    frame_count += 1
+                    sample_count += len(samples)
+                    if frame_count == 1 or frame_count % 50 == 0:
+                        rms, peak = _audio_frame_stats(samples)
+                        _log.info(
+                            "Wake-word debug no detection frames=%s samples=%s frame_rms=%.5f frame_peak=%.5f",
+                            frame_count,
+                            sample_count,
+                            rms,
+                            peak,
+                        )
                 continue
 
             raw_text = msg.get("text")
@@ -2485,15 +2518,27 @@ async def wake_word_stream(ws: WebSocket) -> None:
                     config = load_config()
                     cfg = wake_word_config(config)
                     sample_rate = int(payload.get("sample_rate") or cfg.sample_rate)
+                    debug_enabled = payload.get("debug") is True or cfg.debug
+                    frame_count = 0
+                    sample_count = 0
                     _log.info(
-                        "Starting wake-word WebSocket provider=%s phrases=%s sample_rate=%s",
+                        "Starting wake-word WebSocket provider=%s phrases=%s sample_rate=%s debug=%s",
                         cfg.provider,
                         ",".join(cfg.phrases),
                         sample_rate,
+                        debug_enabled,
                     )
                     spotter = _WAKE_WORD_FACTORY.create(config)
                     spotter.start(sample_rate=sample_rate)
                     _log.info("Wake-word WebSocket ready provider=%s", cfg.provider)
+                    if debug_enabled:
+                        _log.info(
+                            "Wake-word debug armed model=%s threshold=%.3f boost=%.3f phrases=%s",
+                            cfg.model,
+                            cfg.threshold,
+                            cfg.boost,
+                            "|".join(cfg.phrases),
+                        )
                     await ws.send_json({"type": "ready", "sample_rate": sample_rate, "provider": cfg.provider})
                 except WakeWordUnavailable as exc:
                     _log.warning("Wake-word unavailable: %s", exc)

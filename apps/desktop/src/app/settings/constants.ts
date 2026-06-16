@@ -359,6 +359,7 @@ export const FIELD_LABELS: Record<string, string> = defineFieldCopy({
       phrases: 'Wake Word Phrases',
       boost: 'Wake Word Boost',
       threshold: 'Wake Word Threshold',
+      debug: 'Wake Word Debug Logs',
       commandTimeoutMs: 'Wake Command Timeout',
       cooldownMs: 'Wake Cooldown'
     }
@@ -514,6 +515,7 @@ export const FIELD_DESCRIPTIONS: Record<string, string> = defineFieldCopy({
       phrases: 'Phrases and common Marvi misrecognitions that can wake the one-shot command pipeline.',
       threshold: 'Higher values reduce false wakes but may miss valid wake phrases.',
       boost: 'Keyword score boost. Increase only if valid wake phrases are missed.',
+      debug: 'Write extra wake-word tuning logs for frames, energy, starts, and detections. Leave off unless diagnosing missed wakes.',
       commandTimeoutMs: 'Maximum time to keep listening for the command after the wake phrase.',
       cooldownMs: 'Delay before wake listening arms again after one command finishes.'
     }
@@ -649,6 +651,7 @@ export const SECTIONS: DesktopConfigSection[] = [
       'voice.wake_word.phrases',
       'voice.wake_word.threshold',
       'voice.wake_word.boost',
+      'voice.wake_word.debug',
       'voice.wake_word.command_timeout_ms',
       'voice.wake_word.cooldown_ms'
     ]

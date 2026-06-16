@@ -40,6 +40,7 @@ vi.mock('@/lib/wake-word', () => ({
     boost: 2,
     commandTimeoutMs: 8000,
     cooldownMs: 1000,
+    debug: false,
     enabled: false,
     model: 'kws-en-3.3m',
     phrases: ['hey marvi'],
@@ -80,6 +81,7 @@ describe('useWakeWord', () => {
           boost: 2,
           commandTimeoutMs: 8000,
           cooldownMs: 1000,
+          debug: false,
           enabled: true,
           phrases: ['hey marvi'],
           provider: 'sherpa_onnx',
@@ -116,6 +118,7 @@ describe('useWakeWord', () => {
           boost: 2,
           commandTimeoutMs: 8000,
           cooldownMs: 1000,
+          debug: false,
           enabled: true,
           phrases: ['hey marvi'],
           provider: 'sherpa_onnx',
@@ -141,7 +144,7 @@ describe('useWakeWord', () => {
   })
 
   it('transcribes only post-wake command audio with batch STT', async () => {
-    let wakeOptions: { onDetected: () => void } | null = null
+    let wakeOptions: { debug?: boolean; onDetected: (phrase: string) => void } | null = null
     const recorderState: { options?: RecorderOptionsForTest } = {}
     const wakeSession = { sendFrame: vi.fn(), stop: vi.fn() }
     const onTranscribeAudio = vi.fn().mockResolvedValue('hey marvi how are you')
@@ -162,6 +165,7 @@ describe('useWakeWord', () => {
           boost: 2,
           commandTimeoutMs: 8000,
           cooldownMs: 1000,
+          debug: false,
           enabled: true,
           phrases: ['hey marvi'],
           provider: 'sherpa_onnx',
@@ -182,7 +186,7 @@ describe('useWakeWord', () => {
     expect(wakeSession.sendFrame).toHaveBeenCalledWith(beforeWake)
 
     await act(async () => {
-      wakeOptions?.onDetected()
+      wakeOptions?.onDetected('hey marvi')
       await Promise.resolve()
     })
 
@@ -198,5 +202,35 @@ describe('useWakeWord', () => {
     const audio = onTranscribeAudio.mock.calls[0][0] as Blob
     expect(audio.type).toBe('audio/wav')
     expect(audio.size).toBeGreaterThan(44)
+  })
+
+  it('passes debug mode to the wake-word session', async () => {
+    const wakeSession = { sendFrame: vi.fn(), stop: vi.fn() }
+    openWakeWordSession.mockResolvedValue(wakeSession)
+    startMic.mockResolvedValue(undefined)
+
+    renderHook(() =>
+      useWakeWord({
+        busy: false,
+        config: {
+          boost: 2,
+          commandTimeoutMs: 8000,
+          cooldownMs: 1000,
+          debug: true,
+          enabled: true,
+          phrases: ['hey marvi'],
+          provider: 'sherpa_onnx',
+          sampleRate: 16000,
+          threshold: 0.35
+        },
+        enabled: true,
+        onSubmit: vi.fn(),
+        onTranscribeAudio: vi.fn()
+      })
+    )
+
+    await waitFor(() => expect(openWakeWordSession).toHaveBeenCalled())
+
+    expect(openWakeWordSession.mock.calls[0][0]).toMatchObject({ debug: true })
   })
 })

@@ -83,6 +83,7 @@ export function useWakeWord({
     wakeConfig.phrases.join('\u0000'),
     wakeConfig.threshold,
     wakeConfig.boost,
+    wakeConfig.debug,
     wakeConfig.commandTimeoutMs,
     wakeConfig.cooldownMs
   ].join('|')
@@ -104,6 +105,17 @@ export function useWakeWord({
   const onSubmitRef = useRef(onSubmit)
   const onTranscribeAudioRef = useRef(onTranscribeAudio)
   const finishCaptureRef = useRef<(() => Promise<void>) | null>(null)
+
+  const debugLog = useCallback(
+    (message: string, detail?: Record<string, unknown>) => {
+      if (!wakeConfig.debug) {
+        return
+      }
+
+      console.info(`[wake-word] ${message}`, detail ?? {})
+    },
+    [wakeConfig.debug]
+  )
 
   useEffect(() => {
     enabledRef.current = enabled
@@ -183,6 +195,11 @@ export function useWakeWord({
       await handleRef.current.stop()
       const detected = detectedRef.current
       const commandAudio = encodePcmFramesAsWav(commandFramesRef.current, wakeConfig.sampleRate)
+      debugLog('finish capture', {
+        commandAudioBytes: commandAudio?.size ?? 0,
+        commandFrames: commandFramesRef.current.length,
+        detected
+      })
       detectedRef.current = false
       commandFramesRef.current = []
 
@@ -196,11 +213,18 @@ export function useWakeWord({
         }
 
         const command = stripWakePhrase(transcript, wakeConfig.phrases)
+        debugLog('transcribed command', {
+          command,
+          transcript,
+          wakePhraseStripped: command !== transcript
+        })
 
         if (command) {
           await onSubmitRef.current(command)
         } else if (transcript) {
           notify({ kind: 'warning', title: voiceCopy.noSpeechDetected, message: voiceCopy.tryRecordingAgain })
+        } else {
+          debugLog('no command transcript after wake')
         }
       }
     } catch (error) {
@@ -214,6 +238,7 @@ export function useWakeWord({
     voiceCopy.noSpeechDetected,
     voiceCopy.transcriptionFailed,
     voiceCopy.tryRecordingAgain,
+    debugLog,
     wakeConfig.phrases,
     wakeConfig.sampleRate
   ])
@@ -238,11 +263,13 @@ export function useWakeWord({
       try {
         setStatus('arming')
         const session = await openWakeWordSession({
-          onDetected: () => {
+          debug: wakeConfig.debug,
+          onDetected: phrase => {
             if (detectedRef.current) {
               return
             }
 
+            debugLog('detected', { phrase })
             detectedRef.current = true
             stopWakeSession()
             commandFramesRef.current = []
@@ -268,6 +295,12 @@ export function useWakeWord({
             }
 
             commandFramesRef.current.push(new Float32Array(samples))
+            if (wakeConfig.debug && commandFramesRef.current.length % 20 === 1) {
+              debugLog('capturing command frames', {
+                frames: commandFramesRef.current.length,
+                samples: commandFramesRef.current.reduce((total, frame) => total + frame.length, 0)
+              })
+            }
             if (statusRef.current === 'woken') {
               setStatus('listening')
             }
@@ -304,6 +337,7 @@ export function useWakeWord({
     }
   }, [
     busy,
+    debugLog,
     enabled,
     startTick,
     stop,
@@ -311,6 +345,7 @@ export function useWakeWord({
     voiceCopy.microphoneFailed,
     voiceCopy.streamingUnavailable,
     wakeConfig.commandTimeoutMs,
+    wakeConfig.debug,
     wakeConfig.enabled
   ])
 

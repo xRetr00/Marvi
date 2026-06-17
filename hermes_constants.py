@@ -831,17 +831,21 @@ _container_detected: bool | None = None
 
 
 def is_container() -> bool:
+    """Return True when running inside a container.
 
-    """Return True when running inside a Docker/Podman container.
+    Recognizes Docker (``/.dockerenv``), Podman (``/run/.containerenv``),
+    and — via ``/proc/1/cgroup`` — the docker/podman/lxc cgroup-v1 markers.
 
+    cgroup v2 collapses ``/proc/1/cgroup`` to a single ``0::/`` line with no
+    runtime marker, so containerd/CRI-O runtimes (the common case on
+    Kubernetes/k3s) were previously missed. To cover those, also check:
+      * ``KUBERNETES_SERVICE_HOST`` env var — set in every Kubernetes pod.
+      * ``kubepods`` / ``containerd`` / ``crio`` markers in ``/proc/1/cgroup``.
+      * the same markers in ``/proc/self/mountinfo`` (cgroup-v2 fallback).
 
+    Result is cached for the process lifetime.  Import-safe — no heavy deps.
 
-    Checks ``/.dockerenv`` (Docker), ``/run/.containerenv`` (Podman),
-
-    and ``/proc/1/cgroup`` for container runtime markers.  Result is
-
-    cached for the process lifetime.  Import-safe — no heavy deps.
-
+    See: NousResearch/hermes-agent#47111
     """
 
     global _container_detected
@@ -862,14 +866,29 @@ def is_container() -> bool:
 
         return True
 
+    # Kubernetes always injects this into pod containers; absent on hosts.
+    if os.environ.get("KUBERNETES_SERVICE_HOST"):
+        _container_detected = True
+        return True
+    _CGROUP_MARKERS = ("docker", "podman", "/lxc/", "kubepods", "containerd", "crio")
+
     try:
 
         with open("/proc/1/cgroup", "r", encoding="utf-8") as f:
 
             cgroup = f.read()
-
-            if "docker" in cgroup or "podman" in cgroup or "/lxc/" in cgroup:
-
+            if any(marker in cgroup for marker in _CGROUP_MARKERS):
+                _container_detected = True
+                return True
+    except OSError:
+        pass
+    # cgroup v2: /proc/1/cgroup is just "0::/" with no marker. The container
+    # runtime still shows up in the mount table (overlay rootfs, runtime mount
+    # paths), so scan mountinfo as a last resort.
+    try:
+        with open("/proc/self/mountinfo", "r", encoding="utf-8") as f:
+            mountinfo = f.read()
+            if any(marker in mountinfo for marker in ("kubepods", "containerd", "crio")):
                 _container_detected = True
 
                 return True

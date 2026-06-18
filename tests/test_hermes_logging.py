@@ -1,17 +1,23 @@
 """Tests for hermes_logging — centralized logging setup."""
-
+import io
 import logging
 import os
 import stat
 import sys
 import threading
-from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from unittest.mock import patch
 
 import pytest
 
 import hermes_logging
+# Use whatever RotatingFileHandler class hermes_logging actually resolved so
+# the autouse fixture's isinstance checks (which strip rotating handlers
+# between tests) match the real handlers on every platform. hermes_logging
+# aliases concurrent-log-handler's ConcurrentRotatingFileHandler on Windows
+# (the #44873 fix) but keeps stdlib RotatingFileHandler on POSIX, so importing
+# the name from the module under test keeps the two in lockstep.
+from hermes_logging import RotatingFileHandler
 
 
 @pytest.fixture(autouse=True)
@@ -747,6 +753,7 @@ class TestAddRotatingHandler:
                 logger.removeHandler(h)
                 h.close()
 
+    @pytest.mark.skipif(sys.platform == "win32", reason="POSIX managed-mode permissions")
     def test_managed_mode_initial_open_sets_group_writable(self, tmp_path):
         log_path = tmp_path / "managed-open.log"
         logger = logging.getLogger("_test_rotating_managed_open")
@@ -771,6 +778,7 @@ class TestAddRotatingHandler:
                 logger.removeHandler(h)
                 h.close()
 
+    @pytest.mark.skipif(sys.platform == "win32", reason="POSIX managed-mode permissions")
     def test_managed_mode_rollover_sets_group_writable(self, tmp_path):
         log_path = tmp_path / "managed-rollover.log"
         logger = logging.getLogger("_test_rotating_managed_rollover")

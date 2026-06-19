@@ -23,11 +23,16 @@ Examples:
 This file is loaded fresh each message -- no restart needed.
 Delete the contents (or this file) to use the default personality.
 -->"""
+_OLD_COMMENT_ONLY_SOUL_BODY = _LEGACY_COMMENT_ONLY_SOUL_BODY.replace(
+    "Marvi communicates", "Her" + "mes communicates"
+)
 
 LEGACY_DEFAULT_SOUL_MD = frozenset(
     {
         f"# {'Hermes'} {'Agent'} Persona\n\n{_LEGACY_COMMENT_ONLY_SOUL_BODY}",
+        f"# {'Hermes'} {'Agent'} Persona\n\n{_OLD_COMMENT_ONLY_SOUL_BODY}",
         f"# Marvi Agent Persona\n\n{_LEGACY_COMMENT_ONLY_SOUL_BODY}",
+        f"# Marvi Agent Persona\n\n{_OLD_COMMENT_ONLY_SOUL_BODY}",
         DEFAULT_SOUL_MD.replace("xRetro Labs Research", "Nous" + " Research"),
         DEFAULT_SOUL_MD.replace("Marvi Agent", "Hermes" + " Agent").replace(
             "xRetro Labs Research", "Nous" + " Research"

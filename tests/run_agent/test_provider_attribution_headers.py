@@ -21,7 +21,7 @@ def test_openrouter_base_url_applies_or_headers(mock_openai):
 
     headers = agent._client_kwargs["default_headers"]
     assert headers["HTTP-Referer"] == "https://github.com/xRetr00/Marvi"
-    assert headers["X-Title"] == "Hermes Agent"
+    assert headers["X-Title"] == "Marvi Agent"
 
 
 @patch("run_agent.OpenAI")

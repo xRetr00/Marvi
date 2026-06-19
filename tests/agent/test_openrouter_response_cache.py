@@ -19,7 +19,7 @@ class TestBuildOrHeaders:
 
         headers = build_or_headers(or_config={"response_cache": False})
         assert headers["HTTP-Referer"] == "https://github.com/xRetr00/Marvi"
-        assert headers["X-Title"] == "Hermes Agent"
+        assert headers["X-Title"] == "Marvi Agent"
         assert headers["X-OpenRouter-Categories"] == "productivity,cli-agent"
 
     def test_cache_enabled(self):

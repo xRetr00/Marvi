@@ -1,11 +1,11 @@
 # ============================================================================
-# Hermes Agent Installer for Windows
+# Marvi Agent Installer for Windows
 # ============================================================================
 # Installation script for Windows (PowerShell).
 # Uses uv for fast Python provisioning and package management.
 #
 # Usage:
-#   iex (irm https://hermes-agent.nousresearch.com/install.ps1)
+#   iex (irm https://raw.githubusercontent.com/xRetr00/Marvi/main/scripts/install.ps1)
 #
 # Or download and run with options:
 #   .\install.ps1 -NoVenv -SkipSetup
@@ -43,15 +43,15 @@ param(
 
     # --- Desktop GUI build (opt-in) ---
     # When set, install.ps1 includes Stage-Desktop in the manifest and
-    # builds apps/desktop into a launchable Hermes.exe.
+    # builds apps/desktop into a launchable Marvi.exe.
     #
     # Why opt-in:
-    #   * Hermes-Setup.exe (the signed Tauri bootstrap installer) passes
+    #   * Marvi-Setup.exe (the signed Tauri bootstrap installer) passes
     #     -IncludeDesktop so a user who installed via the GUI ends up
     #     with a launchable desktop binary.
     #   * The Electron desktop's own bootstrap-runner.cjs runs install.ps1
-    #     from inside an already-launched Hermes.exe; if THAT recursively
-    #     built apps/desktop it would try to overwrite the live Hermes.exe
+    #     from inside an already-launched Marvi.exe; if THAT recursively
+    #     built apps/desktop it would try to overwrite the live Marvi.exe
     #     on disk and fail. The recursive path omits the flag.
     #   * The canonical CLI one-liner (irm | iex) omits the flag too;
     #     terminal users don't need a desktop binary built for them, and
@@ -92,8 +92,8 @@ try {
 # Configuration
 # ============================================================================
 
-$RepoUrlSsh = "git@github.com:NousResearch/hermes-agent.git"
-$RepoUrlHttps = "https://github.com/NousResearch/hermes-agent.git"
+$RepoUrlSsh = "git@github.com:xRetr00/Marvi.git"
+$RepoUrlHttps = "https://github.com/xRetr00/Marvi.git"
 $PythonVersion = "3.11"
 $NodeVersion = "22"
 
@@ -158,9 +158,9 @@ function Get-WindowsArch {
 function Write-Banner {
     Write-Host ""
     Write-Host "+---------------------------------------------------------+" -ForegroundColor Magenta
-    Write-Host "|             * Hermes Agent Installer                    |" -ForegroundColor Magenta
+    Write-Host "|              * Marvi Agent Installer                    |" -ForegroundColor Magenta
     Write-Host "+---------------------------------------------------------+" -ForegroundColor Magenta
-    Write-Host "|  An open source AI agent by Nous Research.              |" -ForegroundColor Magenta
+    Write-Host "|  An open source AI agent by xRetro Labs Research.       |" -ForegroundColor Magenta
     Write-Host "+---------------------------------------------------------+" -ForegroundColor Magenta
     Write-Host ""
 }
@@ -1784,7 +1784,7 @@ function Write-BootstrapMarker {
     #   BOOTSTRAP_MARKER_SCHEMA_VERSION = 1 (line 187)
     #
     # Pinned commit/branch come from -Commit + -Branch flags (passed by
-    # Hermes-Setup.exe) or fall back to whatever git resolves in the
+    # Marvi-Setup.exe) or fall back to whatever git resolves in the
     # checkout. The desktop validates schemaVersion + pinnedCommit
     # length but doesn't enforce that HEAD matches the pin (users
     # update via `hermes update` which moves HEAD legitimately).
@@ -1903,12 +1903,12 @@ function Copy-ConfigTemplates {
     $soulPath = "$HermesHome\SOUL.md"
     if (-not (Test-Path $soulPath)) {
         $soulContent = @"
-# Hermes Agent Persona
+# Marvi Agent Persona
 
 <!--
 This file defines the agent's personality and tone.
 The agent will embody whatever you write here.
-Edit this to customize how Hermes communicates with you.
+Edit this to customize how Marvi communicates with you.
 
 Examples:
   - "You are a warm, playful assistant who uses kaomoji occasionally."
@@ -1918,6 +1918,8 @@ Examples:
 This file is loaded fresh each message -- no restart needed.
 Delete the contents (or this file) to use the default personality.
 -->
+
+You are Marvi Agent, an intelligent AI assistant created by xRetro Labs Research.
 "@
         $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
         [System.IO.File]::WriteAllText($soulPath, $soulContent, $utf8NoBom)
@@ -1947,7 +1949,7 @@ Delete the contents (or this file) to use the default personality.
 
 function Install-NodeDeps {
     if (-not $HasNode) {
-        # Cross-process driver mode (Hermes-Setup.exe runs each -Stage NAME
+        # Cross-process driver mode (Marvi-Setup.exe runs each -Stage NAME
         # in a fresh powershell.exe) means $script:HasNode set by Stage-Node
         # in the previous process isn't visible here. Re-probe rather than
         # trust the stale global — Stage-Node already ran successfully or
@@ -2552,8 +2554,8 @@ function New-DesktopShortcuts {
         }
 
         $targets = @(
-            (Join-Path ([Environment]::GetFolderPath('Programs')) 'Hermes.lnk'),
-            (Join-Path ([Environment]::GetFolderPath('Desktop')) 'Hermes.lnk')
+            (Join-Path ([Environment]::GetFolderPath('Programs')) 'Marvi.lnk'),
+            (Join-Path ([Environment]::GetFolderPath('Desktop')) 'Marvi.lnk')
         )
 
         foreach ($lnkPath in $targets) {
@@ -2566,7 +2568,7 @@ function New-DesktopShortcuts {
                 $sc.TargetPath = $TargetExe
                 $sc.WorkingDirectory = $workDir
                 $sc.IconLocation = $iconLocation
-                $sc.Description = 'Hermes Agent'
+                $sc.Description = 'Marvi Agent'
                 $sc.Save()
                 Write-Success "Shortcut created: $lnkPath"
             } catch {
@@ -2577,7 +2579,7 @@ function New-DesktopShortcuts {
         # Bust the Windows shell icon cache so the desktop/Start-Menu shortcut
         # repaints with the (possibly newly-stamped) icon instead of a stale
         # cached bitmap. Critical on the --update path: the exe was re-stamped
-        # with the Hermes icon, but without this the shortcut can keep drawing
+        # with the Marvi icon, but without this the shortcut can keep drawing
         # the old Electron icon until the user manually refreshes / reboots.
         # Best-effort and silent — never fail the install over a cosmetic cache.
         try {
@@ -2951,7 +2953,7 @@ $InstallStages = @(
 if ($IncludeDesktop) {
     # Insert AFTER node-deps so workspace npm is already installed when
     # the desktop build runs. Inserted only when explicitly requested
-    # (Hermes-Setup.exe), never via the irm|iex CLI one-liner.
+    # (Marvi-Setup.exe), never via the irm|iex CLI one-liner.
     $InstallStages += @{ Name = "desktop"; Title = "Building desktop app"; Category = "install"; NeedsUserInput = $false; Worker = "Stage-Desktop" }
 }
 $InstallStages += @(

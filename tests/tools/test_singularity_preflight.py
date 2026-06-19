@@ -103,7 +103,6 @@ class TestEnsureSingularityAvailable:
 
 
         with patch("shutil.which", side_effect=lambda n: "/usr/bin/apptainer" if n == "apptainer" else None), \
-
              patch("subprocess.run", return_value=fake_result):
 
             assert _ensure_singularity_available() == "apptainer"
@@ -119,7 +118,6 @@ class TestEnsureSingularityAvailable:
 
 
         with patch("shutil.which", side_effect=lambda n: "/usr/bin/apptainer" if n == "apptainer" else None), \
-
              patch("subprocess.run", return_value=fake_result):
 
             with pytest.raises(RuntimeError, match="version.*failed"):
@@ -133,7 +131,6 @@ class TestEnsureSingularityAvailable:
         """Raises RuntimeError when version command times out."""
 
         with patch("shutil.which", side_effect=lambda n: "/usr/bin/apptainer" if n == "apptainer" else None), \
-
              patch("subprocess.run", side_effect=subprocess.TimeoutExpired("apptainer", 10)):
 
             with pytest.raises(RuntimeError, match="timed out"):

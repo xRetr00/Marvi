@@ -40,11 +40,25 @@ VISIBLE_TEXT_ROOTS = [
     "scripts/install.cmd",
     "scripts/install.ps1",
     "scripts/install.sh",
+    "docker/SOUL.md",
+    "gateway/platforms/email.py",
+    "gateway/platforms/matrix.py",
+    "gateway/platforms/whatsapp_common.py",
+    "gateway/slash_commands.py",
     "hermes_cli/banner.py",
     "hermes_cli/dashboard_auth/login_page.py",
     "hermes_cli/main.py",
     "hermes_cli/setup.py",
     "hermes_cli/uninstall.py",
+    "plugins/google_meet",
+    "plugins/observability/nemo_relay/__init__.py",
+    "plugins/platforms/homeassistant/adapter.py",
+    "plugins/platforms/irc/adapter.py",
+    "plugins/platforms/photon/adapter.py",
+    "plugins/platforms/photon/auth.py",
+    "plugins/platforms/photon/cli.py",
+    "tools/mcp_oauth.py",
+    "tools/send_message_tool.py",
 ]
 
 SKIP_PARTS = {
@@ -96,6 +110,8 @@ FORBIDDEN_PATTERNS = [
     re.compile(r"\bCaduceus banner\b"),
     re.compile(r"\bUpdate Hermes\b"),
     re.compile(r"\bUpdating Hermes\b"),
+    re.compile(r"\bOpenHuman\b", re.IGNORECASE),
+    re.compile(r"\bTinyHumans\b", re.IGNORECASE),
 ]
 
 # Code API names and backend compatibility names that are allowed even in

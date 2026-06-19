@@ -131,9 +131,7 @@ def _patch_managed_uv(request):
 
 
     with patch("hermes_cli.managed_uv.resolve_uv", side_effect=_fake_resolve_uv), \
-
          patch("hermes_cli.managed_uv.ensure_uv", side_effect=_fake_ensure_uv), \
-
          patch("hermes_cli.managed_uv.update_managed_uv", side_effect=_fake_update_managed_uv):
 
         yield
@@ -400,7 +398,10 @@ class TestCmdUpdateBranchFallback:
 
 
 
-        sync_mock.assert_called_once_with(["git"], PROJECT_ROOT)
+        sync_mock.assert_called_once_with(
+            ["git", "-c", "windows.appendAtomically=false"],
+            PROJECT_ROOT,
+        )
 
         captured = capsys.readouterr()
 
@@ -441,7 +442,6 @@ class TestCmdUpdateBranchFallback:
         build_ok = _subprocess.CompletedProcess([], 0, stdout="", stderr="")
 
         with patch.object(hm, "_is_termux_env", return_value=False), \
-
              patch.object(hm, "_run_with_idle_timeout", return_value=build_ok) as mock_idle:
 
             cmd_update(mock_args)

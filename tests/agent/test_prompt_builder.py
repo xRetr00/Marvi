@@ -23,6 +23,7 @@ from agent.prompt_builder import (
     _get_context_file_max_chars,
     _CONTEXT_FILE_DYNAMIC_CEILING,
     DEFAULT_AGENT_IDENTITY,
+    MARVI_AGENT_HELP_GUIDANCE,
     drain_truncation_warnings,
     TOOL_USE_ENFORCEMENT_GUIDANCE,
     TOOL_USE_ENFORCEMENT_MODELS,
@@ -43,6 +44,10 @@ from hermes_cli.nous_subscription import NousFeatureState, NousSubscriptionFeatu
 
 
 class TestGuidanceConstants:
+    def test_marvi_identity_guidance_requires_direct_self_identification(self):
+        assert "answer directly that you are Marvi Agent" in MARVI_AGENT_HELP_GUIDANCE
+        assert "never identify yourself as Hermes Agent, OpenHuman, or a Nous model" in MARVI_AGENT_HELP_GUIDANCE
+
     def test_memory_guidance_discourages_task_logs(self):
         assert "durable facts" in MEMORY_GUIDANCE
         assert "Do NOT save task progress" in MEMORY_GUIDANCE

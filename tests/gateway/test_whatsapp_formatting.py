@@ -150,6 +150,12 @@ class TestFormatMessage:
 # ---------------------------------------------------------------------------
 
 class TestMessageLimits:
+    def test_default_reply_prefix_uses_marvi_brand(self):
+        adapter = _make_adapter()
+
+        assert "Marvi Agent" in adapter.DEFAULT_REPLY_PREFIX
+        assert "Hermes Agent" not in adapter.DEFAULT_REPLY_PREFIX
+
     """WhatsApp message length limits."""
 
     def test_max_message_length_is_practical(self):

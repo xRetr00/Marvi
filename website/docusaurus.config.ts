@@ -7,7 +7,7 @@ const config: Config = {
   tagline: 'Assistant OS infrastructure',
   favicon: 'img/favicon.ico',
 
-  url: 'https://github.com/xRetr00/Marvi',
+  url: 'https://xretr00.github.io',
   baseUrl: '/docs/',
 
   organizationName: 'xRetr00',

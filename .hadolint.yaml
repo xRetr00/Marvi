@@ -1,0 +1,17 @@
+# hadolint configuration for the Marvi Agent Dockerfile.
+# See https://github.com/hadolint/hadolint#configure for rules.
+failure-threshold: warning
+
+ignored:
+  # Common distro tools receive security updates through base-image rebuilds.
+  - DL3008
+  # One-off frontend build subshells do not need persistent WORKDIR changes.
+  - DL3003
+  # Keep expensive dependency layers isolated for effective build caching.
+  - DL3059
+  # s6-overlay starts as root, then supervised services drop to the app user.
+  - DL3002
+
+trustedRegistries:
+  - docker.io
+  - ghcr.io

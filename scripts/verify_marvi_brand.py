@@ -128,7 +128,8 @@ ALLOWED_SNIPPETS = [
     "BUILD_PIN_COMMIT",
     "hermes update",
     "hermes desktop",
-    "hermes-agent",  # install checkout path / command examples
+    "git remote add hermes-upstream https://github.com/NousResearch/hermes-agent.git",
+    "Automated upstream sync from NousResearch/hermes-agent.",
     ".hermes-bootstrap-complete",
 ]
 

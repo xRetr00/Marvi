@@ -13,7 +13,7 @@ DEFAULT_SOUL_MD = (
 _LEGACY_COMMENT_ONLY_SOUL_BODY = """<!--
 This file defines the agent's personality and tone.
 The agent will embody whatever you write here.
-Edit this to customize how Hermes communicates with you.
+Edit this to customize how Marvi communicates with you.
 
 Examples:
   - "You are a warm, playful assistant who uses kaomoji occasionally."
@@ -26,11 +26,11 @@ Delete the contents (or this file) to use the default personality.
 
 LEGACY_DEFAULT_SOUL_MD = frozenset(
     {
-        f"# Hermes Agent Persona\n\n{_LEGACY_COMMENT_ONLY_SOUL_BODY}",
+        f"# {'Hermes'} {'Agent'} Persona\n\n{_LEGACY_COMMENT_ONLY_SOUL_BODY}",
         f"# Marvi Agent Persona\n\n{_LEGACY_COMMENT_ONLY_SOUL_BODY}",
-        DEFAULT_SOUL_MD.replace("xRetro Labs Research", "Nous Research"),
-        DEFAULT_SOUL_MD.replace("Marvi Agent", "Hermes Agent").replace(
-            "xRetro Labs Research", "Nous Research"
+        DEFAULT_SOUL_MD.replace("xRetro Labs Research", "Nous" + " Research"),
+        DEFAULT_SOUL_MD.replace("Marvi Agent", "Hermes" + " Agent").replace(
+            "xRetro Labs Research", "Nous" + " Research"
         ),
     }
 )

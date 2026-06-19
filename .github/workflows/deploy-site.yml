@@ -131,14 +131,7 @@ jobs:
             echo "::warning::Could not use skills-index artifact from run $SKILLS_INDEX_RUN_ID; trying live index"
           fi
 
-          echo "Downloading currently live skills index"
-          if curl -fsSL --retry 3 --retry-delay 5 \
-            "https://hermes-agent.nousresearch.com/docs/api/skills-index.json" \
-            -o "$INDEX_PATH" && validate_index; then
-            exit 0
-          fi
-
-          echo "::warning::Live skills index unavailable or unhealthy; falling back to a fresh crawl"
+          echo "::warning::No reusable skills index available; falling back to a fresh crawl"
           rm -f "$INDEX_PATH"
           python3 scripts/build_skills_index.py
           validate_index

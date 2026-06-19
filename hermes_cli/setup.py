@@ -3853,7 +3853,7 @@ def _write_slack_manifest_and_instruct():
 
             bot_name="Hermes",
 
-            bot_description="Your Hermes agent on Slack",
+            bot_description="Your Marvi agent on Slack",
 
         )
 

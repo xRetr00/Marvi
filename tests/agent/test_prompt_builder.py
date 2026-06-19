@@ -46,7 +46,7 @@ from hermes_cli.nous_subscription import NousFeatureState, NousSubscriptionFeatu
 class TestGuidanceConstants:
     def test_marvi_identity_guidance_requires_direct_self_identification(self):
         assert "answer directly that you are Marvi Agent" in MARVI_AGENT_HELP_GUIDANCE
-        assert "never identify yourself as Hermes Agent, OpenHuman, or a Nous model" in MARVI_AGENT_HELP_GUIDANCE
+        assert "never identify yourself as an upstream project, legacy implementation" in MARVI_AGENT_HELP_GUIDANCE
 
     def test_memory_guidance_discourages_task_logs(self):
         assert "durable facts" in MEMORY_GUIDANCE
@@ -681,7 +681,7 @@ class TestBuildNousSubscriptionPrompt:
         prompt = build_nous_subscription_prompt({"image_generate"})
 
         assert "prefer direct setup, OpenRouter/model-provider setup, or local alternatives" in prompt
-        assert "Do not mention legacy Nous Portal branding unless" in prompt
+        assert "Do not mention legacy hosted-backend branding unless" in prompt
 
     def test_feature_flag_off_returns_empty_prompt(self, monkeypatch):
         monkeypatch.setattr("tools.tool_backend_helpers.managed_nous_tools_enabled", lambda: False)

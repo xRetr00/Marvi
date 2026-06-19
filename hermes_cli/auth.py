@@ -8199,7 +8199,7 @@ def _login_nous(args, pconfig: ProviderConfig) -> None:
                         unavailable_message = (
                             format_nous_portal_entitlement_message(
                                 _account_info,
-                                capability="paid Nous models",
+                                capability="paid hosted models",
                             )
                             or ""
                         )

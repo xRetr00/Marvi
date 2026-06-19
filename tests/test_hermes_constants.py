@@ -41,6 +41,25 @@ class TestGetDefaultHermesRoot:
 
         assert get_default_hermes_root() == legacy
 
+    def test_unreadable_legacy_home_does_not_break_default_resolution(
+        self, tmp_path, monkeypatch
+    ):
+        """A sudo caller may not be allowed to stat another user's legacy home."""
+        monkeypatch.delenv("MARVI_HOME", raising=False)
+        monkeypatch.delenv("HERMES_HOME", raising=False)
+        monkeypatch.delenv("LOCALAPPDATA", raising=False)
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        monkeypatch.setattr(hermes_constants.sys, "platform", "linux")
+
+        def fake_exists(path):
+            if path == tmp_path / ".hermes":
+                raise PermissionError(path)
+            return False
+
+        monkeypatch.setattr(Path, "exists", fake_exists)
+
+        assert get_default_hermes_root() == tmp_path / ".marvi"
+
     def test_marvi_home_preferred_over_legacy_hermes_home(self, tmp_path, monkeypatch):
         """MARVI_HOME is the new primary env var; HERMES_HOME is a fallback."""
         marvi_home = tmp_path / "marvi-home"

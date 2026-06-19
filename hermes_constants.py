@@ -116,7 +116,15 @@ def _get_platform_default_hermes_home() -> Path:
     """
     marvi_home = _get_platform_default_marvi_home()
     legacy_home = _get_platform_legacy_hermes_home()
-    if legacy_home.exists() and not marvi_home.exists():
+    try:
+        legacy_exists = legacy_home.exists()
+    except OSError:
+        legacy_exists = False
+    try:
+        marvi_exists = marvi_home.exists()
+    except OSError:
+        marvi_exists = False
+    if legacy_exists and not marvi_exists:
         return legacy_home
     return marvi_home
 

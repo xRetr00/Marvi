@@ -10,7 +10,7 @@ When HERMES_HOME is unset but an active_profile file indicates a non-default
 
 profile is active, get_hermes_home() should:
 
-  1. STILL return ~/.hermes (raising would brick 30+ module-level callers)
+  1. STILL return the default Marvi home (raising would brick 30+ callers)
 
   2. Emit a loud one-shot warning to stderr so operators can diagnose
 
@@ -52,6 +52,20 @@ def fresh_constants(monkeypatch, tmp_path):
 
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
 
+    monkeypatch.setattr(
+        hermes_constants,
+        "_get_platform_default_marvi_home",
+        lambda: tmp_path / ".marvi",
+    )
+
+    monkeypatch.setattr(
+        hermes_constants,
+        "_get_platform_legacy_hermes_home",
+        lambda: tmp_path / ".hermes",
+    )
+
+    monkeypatch.delenv("MARVI_HOME", raising=False)
+
     monkeypatch.delenv("HERMES_HOME", raising=False)
 
     return hermes_constants
@@ -68,13 +82,13 @@ class TestGetHermesHomeProfileWarning:
 
     ):
 
-        """Classic mode: no active_profile file → silent, returns ~/.hermes."""
+        """No active profile is silent and uses the new Marvi default."""
 
         result = fresh_constants.get_hermes_home()
 
-        assert result == tmp_path / ".hermes"
+        assert result == tmp_path / ".marvi"
 
-        assert "HERMES_HOME fallback" not in capsys.readouterr().err
+        assert "MARVI_HOME fallback" not in capsys.readouterr().err
 
 
 
@@ -128,7 +142,7 @@ class TestGetHermesHomeProfileWarning:
 
         err = capsys.readouterr().err
 
-        assert err.count("HERMES_HOME fallback") == 1
+        assert err.count("MARVI_HOME fallback") == 1
 
         assert "'coder'" in err
 
@@ -144,7 +158,7 @@ class TestGetHermesHomeProfileWarning:
 
         err2 = capsys.readouterr().err
 
-        assert "HERMES_HOME fallback" not in err2
+        assert "MARVI_HOME fallback" not in err2
 
 
 

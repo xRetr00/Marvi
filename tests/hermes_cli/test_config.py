@@ -28,9 +28,15 @@ from hermes_cli.config import (
 class TestGetHermesHome:
     def test_default_path(self):
         with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("MARVI_HOME", None)
             os.environ.pop("HERMES_HOME", None)
             home = get_hermes_home()
-            assert home == Path.home() / ".hermes"
+            expected = (
+                Path(os.environ["LOCALAPPDATA"]) / "marvi"
+                if os.name == "nt"
+                else Path.home() / ".marvi"
+            )
+            assert home == expected
 
     def test_env_override(self):
         with patch.dict(os.environ, {"HERMES_HOME": "/custom/path"}):

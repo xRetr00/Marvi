@@ -274,7 +274,15 @@ def _write_wake_keywords_file(cfg: WakeWordConfig, files: dict[str, str]) -> str
         env = os.environ.copy()
         env.setdefault("PYTHONIOENCODING", "utf-8")
         env.setdefault("PYTHONUTF8", "1")
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30, check=False, env=env)
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+            env=env,
+            stdin=subprocess.DEVNULL,
+        )
     except (OSError, subprocess.TimeoutExpired) as exc:
         raise WakeWordUnavailable(f"Could not tokenize wake-word phrases: {exc}") from exc
 

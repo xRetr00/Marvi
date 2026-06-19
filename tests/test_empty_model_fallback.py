@@ -13,12 +13,11 @@ class TestGetDefaultModelForProvider:
         assert result
         assert isinstance(result, str)
 
-    def test_openrouter_returns_empty(self):
-        """OpenRouter uses dynamic model fetch, no static catalog entry."""
+    def test_openrouter_returns_safe_default(self):
+        """OpenRouter has a stable fallback when live fetching is unavailable."""
         from hermes_cli.models import get_default_model_for_provider
-        # OpenRouter is not in _PROVIDER_MODELS — it uses live fetching
         result = get_default_model_for_provider("openrouter")
-        assert result == ""
+        assert result == "deepseek/deepseek-v4-flash"
 
     def test_unknown_provider_returns_empty(self):
         from hermes_cli.models import get_default_model_for_provider

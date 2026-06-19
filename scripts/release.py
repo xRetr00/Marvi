@@ -1584,7 +1584,10 @@ def git(*args, cwd=None):
     """Run a git command and return stdout."""
     result = subprocess.run(
         ["git"] + list(args),
-        capture_output=True, text=True,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
         cwd=cwd or str(REPO_ROOT),
     )
     if result.returncode != 0:
@@ -1599,8 +1602,19 @@ def git_result(*args, cwd=None):
         ["git"] + list(args),
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         cwd=cwd or str(REPO_ROOT),
     )
+
+
+def _configure_utf8_stdio(streams=None) -> None:
+    """Keep release output portable across legacy Windows console encodings."""
+    for stream in streams or (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, OSError):
+            pass
 
 
 def get_last_tag():
@@ -2012,6 +2026,7 @@ def generate_changelog(commits, tag_name, semver, repo_url="https://github.com/x
 
 
 def main():
+    _configure_utf8_stdio()
     parser = argparse.ArgumentParser(description="Marvi Agent Release Tool")
     parser.add_argument("--bump", choices=["major", "minor", "patch"],
                         help="Which semver component to bump")

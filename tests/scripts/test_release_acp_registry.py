@@ -13,6 +13,7 @@ from __future__ import annotations
 import importlib.util
 import json
 from pathlib import Path
+import subprocess
 
 
 def _load_release_module(monkeypatch, tmp_root: Path):
@@ -44,7 +45,7 @@ def _write_manifest(root: Path, version: str) -> None:
                 "description": "test",
                 "distribution": {
                     "uvx": {
-                        "package": f"hermes-agent[acp]=={version}",
+                        "package": f"marvi-agent[acp]=={version}",
                         "args": ["hermes-acp"],
                     }
                 },
@@ -54,6 +55,40 @@ def _write_manifest(root: Path, version: str) -> None:
         + "\n",
         encoding="utf-8",
     )
+
+
+def test_git_decodes_output_as_utf8_on_windows(monkeypatch, tmp_path):
+    module = _load_release_module(monkeypatch, tmp_path)
+    calls = []
+
+    def fake_run(*args, **kwargs):
+        calls.append(kwargs)
+        return subprocess.CompletedProcess(args[0], 0, stdout="Marvi ✓\n", stderr="")
+
+    monkeypatch.setattr(module.subprocess, "run", fake_run)
+
+    assert module.git("log", "-1") == "Marvi ✓"
+    assert calls[0]["encoding"] == "utf-8"
+    assert calls[0]["errors"] == "replace"
+
+
+def test_release_configures_utf8_stdio(monkeypatch, tmp_path):
+    module = _load_release_module(monkeypatch, tmp_path)
+
+    class FakeStream:
+        def __init__(self):
+            self.calls = []
+
+        def reconfigure(self, **kwargs):
+            self.calls.append(kwargs)
+
+    stdout = FakeStream()
+    stderr = FakeStream()
+
+    module._configure_utf8_stdio((stdout, stderr))
+
+    assert stdout.calls == [{"encoding": "utf-8", "errors": "replace"}]
+    assert stderr.calls == [{"encoding": "utf-8", "errors": "replace"}]
 
 
 def test_update_acp_registry_versions_bumps_manifest_and_pin(monkeypatch, tmp_path):
@@ -66,7 +101,7 @@ def test_update_acp_registry_versions_bumps_manifest_and_pin(monkeypatch, tmp_pa
         (tmp_path / "acp_registry" / "agent.json").read_text(encoding="utf-8")
     )
     assert manifest["version"] == "0.14.0"
-    assert manifest["distribution"]["uvx"]["package"] == "hermes-agent[acp]==0.14.0"
+    assert manifest["distribution"]["uvx"]["package"] == "marvi-agent[acp]==0.14.0"
     # args stay untouched so we don't accidentally rewrite them.
     assert manifest["distribution"]["uvx"]["args"] == ["hermes-acp"]
 
@@ -88,7 +123,7 @@ def test_update_version_files_bumps_manifest_alongside_pyproject(
     calls, so it must drive the manifest bump too."""
     _write_manifest(tmp_path, "0.13.0")
     (tmp_path / "pyproject.toml").write_text(
-        '[project]\nname = "hermes-agent"\nversion = "0.13.0"\n', encoding="utf-8"
+        '[project]\nname = "marvi-agent"\nversion = "0.13.0"\n', encoding="utf-8"
     )
     version_dir = tmp_path / "hermes_cli"
     version_dir.mkdir()
@@ -110,4 +145,4 @@ def test_update_version_files_bumps_manifest_alongside_pyproject(
         (tmp_path / "acp_registry" / "agent.json").read_text(encoding="utf-8")
     )
     assert manifest["version"] == "0.14.0"
-    assert manifest["distribution"]["uvx"]["package"] == "hermes-agent[acp]==0.14.0"
+    assert manifest["distribution"]["uvx"]["package"] == "marvi-agent[acp]==0.14.0"

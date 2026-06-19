@@ -3,6 +3,7 @@
 
 
 import subprocess
+import sys
 
 from types import SimpleNamespace
 
@@ -398,10 +399,12 @@ class TestCmdUpdateBranchFallback:
 
 
 
-        sync_mock.assert_called_once_with(
-            ["git", "-c", "windows.appendAtomically=false"],
-            PROJECT_ROOT,
+        expected_git = (
+            ["git", "-c", "windows.appendAtomically=false"]
+            if sys.platform == "win32"
+            else ["git"]
         )
+        sync_mock.assert_called_once_with(expected_git, PROJECT_ROOT)
 
         captured = capsys.readouterr()
 

@@ -6,6 +6,7 @@ import os
 import subprocess
 import tarfile
 import time
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -1182,13 +1183,14 @@ class TestHermesHomeIsolation:
     def test_get_hermes_home_fallback(self):
         """Without HERMES_HOME set, falls back to the active OS home."""
         from tools.tirith_security import _get_hermes_home
+        expected = os.path.join(os.path.expanduser("~"), ".marvi")
         with patch.dict(os.environ, {}, clear=True):
-            # Remove HERMES_HOME entirely. With HOME also absent, expanduser
-            # falls back to the account database; compute expected under the
-            # same environment instead of after patch.dict restores HOME.
             os.environ.pop("HERMES_HOME", None)
-            expected = os.path.join(os.path.expanduser("~"), ".hermes")
-            result = _get_hermes_home()
+            with patch(
+                "hermes_constants._get_platform_default_hermes_home",
+                return_value=Path(expected),
+            ):
+                result = _get_hermes_home()
         assert result == expected
 
 

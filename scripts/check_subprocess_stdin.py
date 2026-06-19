@@ -146,7 +146,7 @@ def main() -> int:
             continue
 
         for py_file in dirpath.rglob("*.py"):
-            rel = str(py_file.relative_to(repo_root))
+            rel = py_file.relative_to(repo_root).as_posix()
 
             # Skip known-safe files.
             if rel in KNOWN_SAFE:

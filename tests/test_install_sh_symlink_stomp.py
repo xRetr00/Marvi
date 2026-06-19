@@ -28,7 +28,7 @@ INSTALL_SH = REPO_ROOT / "scripts" / "install.sh"
 
 def _extract_setup_path_shim_block() -> str:
     """Return the install.sh shim-write block used by setup_path()."""
-    text = INSTALL_SH.read_text()
+    text = INSTALL_SH.read_text(encoding="utf-8")
     match = re.search(
         r"(?P<block>mkdir -p \"\$command_link_dir\".*?chmod \+x \"\$command_link_dir/hermes\")",
         text,
@@ -43,7 +43,9 @@ def _extract_setup_path_shim_block() -> str:
 def test_setup_path_shim_block_removes_old_link_before_writing() -> None:
     """Static guard: the rm must precede the cat heredoc, not follow it."""
     block = _extract_setup_path_shim_block()
-    rm_idx = block.find('rm -f "$command_link_dir/hermes"')
+    rm_idx = block.find(
+        'rm -f "$command_link_dir/marvi" "$command_link_dir/hermes"'
+    )
     cat_idx = block.find('cat > "$command_link_dir/hermes" <<EOF')
     assert rm_idx != -1, (
         "setup_path() must `rm -f` $command_link_dir/hermes before the "

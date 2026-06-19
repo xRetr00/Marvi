@@ -54,7 +54,7 @@ export const en: Translations = {
 
   app: {
     brand: "Marvi Agent",
-    brandShort: "HA",
+    brandShort: "MA",
     closeNavigation: "Close navigation",
     closeModelTools: "Close model and tools",
     footer: {
@@ -127,8 +127,8 @@ export const en: Translations = {
     starting: "Starting",
     startedInBackground: "Started in background — check logs for progress",
     stopped: "Stopped",
-    updateHermes: "Update Marvi",
-    updatingHermes: "Updating Marvi…",
+    updateMarvi: "Update Marvi",
+    updatingMarvi: "Updating Marvi…",
     waitingForOutput: "Waiting for output…",
   },
 

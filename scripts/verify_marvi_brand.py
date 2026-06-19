@@ -40,6 +40,7 @@ VISIBLE_TEXT_ROOTS = [
     "scripts/install.cmd",
     "scripts/install.ps1",
     "scripts/install.sh",
+    "scripts/whatsapp-bridge",
     "docker/SOUL.md",
     "gateway/platforms/email.py",
     "gateway/platforms/matrix.py",

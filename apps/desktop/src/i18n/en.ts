@@ -1534,6 +1534,7 @@ export const en: Translations = {
       search: 'Search models',
       noModels: 'No models found',
       editModels: 'Edit Models…',
+      refreshModels: 'Refresh Models',
       fast: 'Fast',
       medium: 'Med'
     },

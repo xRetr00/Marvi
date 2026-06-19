@@ -1176,6 +1176,7 @@ export interface Translations {
       search: string
       noModels: string
       editModels: string
+      refreshModels: string
       fast: string
       medium: string
     }

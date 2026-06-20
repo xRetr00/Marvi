@@ -77,7 +77,7 @@ def _set_process_title() -> None:
       2. ctypes ``prctl(PR_SET_NAME)`` (Linux only, 15-char limit).
       3. ctypes ``pthread_setname_np`` (macOS only, kernel thread name —
          changes lldb/top but not ``ps aux``).
-      4. No-op on Windows (the .exe name is already ``hermes.exe``).
+      4. No-op on Windows (the .exe name is already ``marvi.exe``).
     """
     # Strategy 1: setproctitle (best — works on macOS, Linux, BSD)
     try:
@@ -100,7 +100,7 @@ def _set_process_title() -> None:
         elif system == "Darwin":
             libc = ctypes.CDLL("libc.dylib", use_errno=True)
             libc.pthread_setname_np(b"marvi")
-        # Windows: the .exe name is already ``hermes.exe`` — nothing to do.
+        # Windows: the .exe name is already ``marvi.exe`` — nothing to do.
     except Exception:
         pass
 
@@ -5539,7 +5539,7 @@ def cmd_gui(args: argparse.Namespace):
                 print("✗ Desktop GUI build failed")
                 print(f"  Run manually:  cd apps/desktop && npm run {build_script}")
                 if sys.platform == "win32":
-                    print("  If this says \"Access is denied\" on Hermes.exe, close any")
+                    print("  If this says \"Access is denied\" on marvi.exe, close any")
                     print("  running Hermes desktop window and retry.")
                 print("  If the log shows Electron download retries, rebuild via a mirror:")
                 print("    ELECTRON_MIRROR=<mirror-base-url> hermes desktop --force-build")
@@ -6904,7 +6904,7 @@ def _hermes_exe_shims(scripts_dir: Path) -> list[Path]:
     if not _is_windows():
         return []
     return [
-        scripts_dir / "hermes.exe",
+        scripts_dir / "marvi.exe",
         scripts_dir / "hermes-gateway.exe",
     ]
 

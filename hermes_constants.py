@@ -89,17 +89,8 @@ def get_hermes_home_override() -> str | None:
 
 
 
-def _get_platform_default_marvi_home() -> Path:
-    """Return the platform-native default Marvi home path for new installs."""
-    if sys.platform == "win32":
-        local_appdata = os.environ.get("LOCALAPPDATA", "").strip()
-        base = Path(local_appdata) if local_appdata else Path.home() / "AppData" / "Local"
-        return base / "marvi"
-    return Path.home() / ".marvi"
-
-
 def _get_platform_legacy_hermes_home() -> Path:
-    """Return the platform-native legacy Hermes home path."""
+    """Return the platform-native Hermes home path."""
     if sys.platform == "win32":
         local_appdata = os.environ.get("LOCALAPPDATA", "").strip()
         base = Path(local_appdata) if local_appdata else Path.home() / "AppData" / "Local"
@@ -108,25 +99,8 @@ def _get_platform_legacy_hermes_home() -> Path:
 
 
 def _get_platform_default_hermes_home() -> Path:
-    """Return the preferred default home, reusing existing legacy installs.
-
-    The compatibility function name is retained for existing imports. New
-    installs use Marvi paths; legacy Hermes homes are reused when present and
-    no Marvi home exists.
-    """
-    marvi_home = _get_platform_default_marvi_home()
-    legacy_home = _get_platform_legacy_hermes_home()
-    try:
-        legacy_exists = legacy_home.exists()
-    except OSError:
-        legacy_exists = False
-    try:
-        marvi_exists = marvi_home.exists()
-    except OSError:
-        marvi_exists = False
-    if legacy_exists and not marvi_exists:
-        return legacy_home
-    return marvi_home
+    """Return the platform-native Hermes home used by every install."""
+    return _get_platform_legacy_hermes_home()
 
 
 

@@ -19,12 +19,12 @@ test('isWslEnvironment detects WSL2 env vars on linux', () => {
 })
 
 test('isWindowsBinaryPathInWsl blocks Windows binary types on WSL', () => {
-  assert.equal(isWindowsBinaryPathInWsl('/mnt/c/Tools/hermes.exe', { isWsl: true }), true)
+  assert.equal(isWindowsBinaryPathInWsl('/mnt/c/Tools/marvi.exe', { isWsl: true }), true)
   assert.equal(isWindowsBinaryPathInWsl('/mnt/c/Tools/hermes.cmd', { isWsl: true }), true)
   assert.equal(isWindowsBinaryPathInWsl('/mnt/c/Tools/hermes.bat', { isWsl: true }), true)
   assert.equal(isWindowsBinaryPathInWsl('/mnt/c/Tools/install.ps1', { isWsl: true }), true)
   assert.equal(isWindowsBinaryPathInWsl('/usr/local/bin/hermes', { isWsl: true }), false)
-  assert.equal(isWindowsBinaryPathInWsl('/mnt/c/Tools/hermes.exe', { isWsl: false }), false)
+  assert.equal(isWindowsBinaryPathInWsl('/mnt/c/Tools/marvi.exe', { isWsl: false }), false)
 })
 
 test('bundledRuntimeImportCheck selects platform-specific import checks', () => {

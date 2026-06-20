@@ -40,8 +40,8 @@ class TestMarviHomeCompatibility:
         assert hc.get_hermes_home() == legacy_home
         assert hc.display_hermes_home() == "~/.hermes"
 
-    def test_default_root_prefers_marvi_profile_root(self, tmp_path, monkeypatch):
-        """Profile-level helpers should resolve from MARVI_HOME first."""
+    def test_default_root_honors_marvi_home_alias(self, tmp_path, monkeypatch):
+        """Profile-level helpers should continue accepting MARVI_HOME."""
         monkeypatch.setattr(Path, "home", lambda: tmp_path)
 
         marvi_profile = tmp_path / ".marvi" / "profiles" / "coder"

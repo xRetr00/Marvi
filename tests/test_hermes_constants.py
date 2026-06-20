@@ -23,14 +23,14 @@ class TestGetDefaultHermesRoot:
     """Tests for get_default_hermes_root() — Docker/custom deployment awareness."""
 
     def test_no_hermes_home_returns_native(self, tmp_path, monkeypatch):
-        """When no home env is set, new installs default to ~/.marvi."""
+        """When no home env is set, installs default to ~/.hermes."""
         monkeypatch.delenv("MARVI_HOME", raising=False)
         monkeypatch.delenv("HERMES_HOME", raising=False)
         monkeypatch.delenv("LOCALAPPDATA", raising=False)
         monkeypatch.setattr(Path, "home", lambda: tmp_path)
         monkeypatch.setattr(hermes_constants.sys, "platform", "linux")
 
-        assert get_default_hermes_root() == tmp_path / ".marvi"
+        assert get_default_hermes_root() == tmp_path / ".hermes"
 
     def test_existing_legacy_home_is_reused(self, tmp_path, monkeypatch):
         """Existing ~/.hermes installs remain the default until migrated."""
@@ -61,7 +61,7 @@ class TestGetDefaultHermesRoot:
 
         monkeypatch.setattr(Path, "exists", fake_exists)
 
-        assert get_default_hermes_root() == tmp_path / ".marvi"
+        assert get_default_hermes_root() == tmp_path / ".hermes"
 
     def test_marvi_home_preferred_over_legacy_hermes_home(self, tmp_path, monkeypatch):
         """MARVI_HOME is the new primary env var; HERMES_HOME is a fallback."""
@@ -121,7 +121,7 @@ class TestGetDefaultHermesRoot:
         assert get_default_hermes_root() == docker_root
 
     def test_no_hermes_home_returns_localappdata_root_on_windows(self, tmp_path, monkeypatch):
-        """Native Windows falls back to %LOCALAPPDATA%\\marvi for new installs."""
+        """Native Windows falls back to %LOCALAPPDATA%\\hermes."""
         local_appdata = tmp_path / "LocalAppData"
         monkeypatch.delenv("MARVI_HOME", raising=False)
         monkeypatch.delenv("HERMES_HOME", raising=False)
@@ -129,10 +129,10 @@ class TestGetDefaultHermesRoot:
         monkeypatch.setattr(Path, "home", lambda: tmp_path / "Home")
         monkeypatch.setattr(hermes_constants.sys, "platform", "win32")
 
-        assert get_default_hermes_root() == local_appdata / "marvi"
+        assert get_default_hermes_root() == local_appdata / "hermes"
 
     def test_no_hermes_home_uses_windows_path_when_localappdata_missing(self, tmp_path, monkeypatch):
-        """Windows fallback still uses AppData/Local/marvi without LOCALAPPDATA."""
+        """Windows fallback still uses AppData/Local/hermes without LOCALAPPDATA."""
         home = tmp_path / "Home"
         monkeypatch.delenv("MARVI_HOME", raising=False)
         monkeypatch.delenv("HERMES_HOME", raising=False)
@@ -140,14 +140,14 @@ class TestGetDefaultHermesRoot:
         monkeypatch.setattr(Path, "home", lambda: home)
         monkeypatch.setattr(hermes_constants.sys, "platform", "win32")
 
-        assert get_default_hermes_root() == home / "AppData" / "Local" / "marvi"
+        assert get_default_hermes_root() == home / "AppData" / "Local" / "hermes"
 
 
 class TestGetHermesHome:
     """Tests for get_hermes_home() platform-aware fallback."""
 
     def test_windows_fallback_uses_localappdata(self, tmp_path, monkeypatch):
-        """When home env vars are unset on Windows, use %LOCALAPPDATA%\\marvi."""
+        """When home env vars are unset on Windows, use %LOCALAPPDATA%\\hermes."""
         local_appdata = tmp_path / "LocalAppData"
         monkeypatch.delenv("MARVI_HOME", raising=False)
         monkeypatch.delenv("HERMES_HOME", raising=False)
@@ -156,7 +156,7 @@ class TestGetHermesHome:
         monkeypatch.setattr(hermes_constants.sys, "platform", "win32")
         monkeypatch.setattr(hermes_constants, "_profile_fallback_warned", False)
 
-        assert get_hermes_home() == local_appdata / "marvi"
+        assert get_hermes_home() == local_appdata / "hermes"
 
 
 class TestHermesManagedNode:

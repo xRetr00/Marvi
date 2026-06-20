@@ -178,7 +178,7 @@ async fn run_update(app: AppHandle) -> Result<()> {
     // `sys.exit(2)` and dead-end the handoff). By contract the desktop has
     // already exited and waited for the install locks to clear before launching
     // us, and wait_for_install_locks_free below force-kills any straggler — so by the
-    // time `hermes update` runs there is no legitimate hermes.exe to protect,
+    // time `hermes update` runs there is no legitimate marvi.exe to protect,
     // and the guard would only produce a false "Marvi is still running" stop.
     update_args.push("--force".into());
     update_args.push("--branch".into());
@@ -436,13 +436,13 @@ pub(crate) async fn wait_for_install_locks_free(install_root: &Path, app: &AppHa
             return;
         }
         if Instant::now() >= deadline {
-            // Last resort: a backend hermes.exe (or the desktop Hermes.exe
+            // Last resort: a backend marvi.exe (or the desktop Marvi.exe
             // itself) is still holding one of the update-sensitive files. The
             // desktop should have reaped its tree before handing off, but
             // SIGTERM races / detached grandchildren / AV handles can leave a
             // straggler. Rather than "proceed anyway" straight into uv's
             // "Access is denied" or install.ps1's locked app.asar failure,
-            // force-kill every Hermes.exe except ourselves, then give the OS a
+            // force-kill every Marvi.exe except ourselves, then give the OS a
             // beat to unload the image.
             emit_log(
                 app,
@@ -511,18 +511,18 @@ fn format_locked_paths(paths: &[PathBuf]) -> String {
     paths.iter().map(|p| p.display().to_string()).collect::<Vec<_>>().join(", ")
 }
 
-/// Force-kill any `hermes.exe` other than this process. Windows-only; a no-op
+/// Force-kill any `marvi.exe` other than this process. Windows-only; a no-op
 /// elsewhere (POSIX has no mandatory-lock contention). We can't selectively
 /// target "the backend" by PID here — the desktop already exited and we never
-/// knew its children — so we kill the whole `hermes.exe` image tree via
+/// knew its children — so we kill the whole `marvi.exe` image tree via
 /// taskkill, excluding our own PID.
 ///
 /// Safe w.r.t. our own update child: this runs inside the install-lock wait,
-/// which completes BEFORE we spawn `venv\Scripts\hermes.exe update`. At this
-/// point no update-driven hermes.exe exists yet, so the only hermes.exe images
+/// which completes BEFORE we spawn `venv\Scripts\marvi.exe update`. At this
+/// point no update-driven marvi.exe exists yet, so the only marvi.exe images
 /// are stragglers from the old desktop — exactly what we want gone. (`/FI PID
 /// ne <self>` also spares this Tauri process, though it isn't named
-/// hermes.exe.)
+/// marvi.exe.)
 fn force_kill_other_hermes() {
     if !cfg!(target_os = "windows") {
         return;
@@ -536,7 +536,7 @@ fn force_kill_other_hermes() {
                 "/F",
                 "/T",
                 "/IM",
-                "hermes.exe",
+                "marvi.exe",
                 "/FI",
                 &format!("PID ne {my_pid}"),
             ])
@@ -640,7 +640,7 @@ struct CmdResult {
 /// Path to the venv hermes shim under an install root, regardless of existence.
 fn venv_hermes(install_root: &Path) -> PathBuf {
     if cfg!(target_os = "windows") {
-        install_root.join("venv").join("Scripts").join("hermes.exe")
+        install_root.join("venv").join("Scripts").join("marvi.exe")
     } else {
         install_root.join("venv").join("bin").join("hermes")
     }
@@ -654,7 +654,7 @@ fn resolve_hermes(install_root: &Path) -> Option<PathBuf> {
         return Some(shim);
     }
     // PATH fallback. which-style probe via env, kept dependency-free.
-    let exe = if cfg!(target_os = "windows") { "hermes.exe" } else { "hermes" };
+    let exe = if cfg!(target_os = "windows") { "marvi.exe" } else { "hermes" };
     if let Ok(path) = std::env::var("PATH") {
         let sep = if cfg!(target_os = "windows") { ';' } else { ':' };
         for dir in path.split(sep) {

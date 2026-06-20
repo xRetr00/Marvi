@@ -209,7 +209,7 @@ def looks_like_gateway_command_line(command: str | None) -> bool:
     has_gateway_entry = (
         "hermes_cli.main" in joined
         or "hermes_cli/main.py" in joined
-        or any(t.rsplit("/", 1)[-1] in ("hermes", "hermes.exe") for t in tokens)
+        or any(t.rsplit("/", 1)[-1] in ("hermes", "marvi.exe") for t in tokens)
     )
     if not has_gateway_entry:
         return False

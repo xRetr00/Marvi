@@ -49,6 +49,7 @@ class TestConfigureWindowsStdio:
         yield
         sys.modules.pop("hermes_cli.stdio", None)
 
+    @pytest.mark.skipif(os.name == "nt", reason="POSIX-only behavior")
     def test_no_op_on_posix(self):
         from hermes_cli import stdio
 
@@ -284,6 +285,7 @@ class TestSigkillFallback:
         result = getattr(fake_signal, "SIGKILL", fake_signal.SIGTERM)
         assert result == 15
 
+    @pytest.mark.skipif(os.name == "nt", reason="SIGKILL is unavailable on Windows")
     def test_getattr_fallback_prefers_sigkill_when_present(self):
         """On POSIX the fallback is a no-op: real SIGKILL wins."""
         result = getattr(signal, "SIGKILL", signal.SIGTERM)
@@ -766,7 +768,7 @@ class TestNpmBareSpawnsResolved:
         [
             "hermes_cli/tools_config.py",
             "hermes_cli/doctor.py",
-            "gateway/platforms/whatsapp.py",
+            "plugins/platforms/whatsapp/adapter.py",
             "tools/browser_tool.py",
         ],
     )

@@ -1,7 +1,7 @@
 {
   "id": "hermes-agent",
   "name": "Marvi Agent",
-  "version": "0.16.1",
+  "version": "0.17.0",
   "description": "Self-improving open-source AI agent by xRetro Labs Research with ACP editor integration, persistent memory, skills, and rich tool support. Legacy compatibility keeps the `hermes` command, `HERMES_*` env vars, and `~/.hermes` home path available for existing installs.",
   "repository": "https://github.com/xRetr00/Marvi",
   "website": "https://github.com/xRetr00/Marvi",

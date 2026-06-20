@@ -7,8 +7,9 @@ sherpa-onnx is imported only when wake-word detection starts.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 import hashlib
+import json
 import logging
 import os
 import shutil
@@ -51,6 +52,7 @@ _SHERPA_KWS_EN_REPO_ARCHIVE = (
     "https://github.com/k2-fsa/sherpa-onnx/releases/download/kws-models/"
     "sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01.tar.bz2"
 )
+_SHERPA_NATIVE_PROBE_TIMEOUT_SECONDS = 10
 
 
 @dataclass(frozen=True)
@@ -315,6 +317,47 @@ def prepare_wake_word_assets(config: Optional[dict[str, Any]] = None) -> str:
     return _write_wake_keywords_file(cfg, files)
 
 
+def _run_sherpa_native_self_test(cfg: WakeWordConfig) -> None:
+    cmd = [
+        sys.executable,
+        "-X",
+        "faulthandler",
+        "-c",
+        (
+            "import json, sys; "
+            "from tools.streaming_stt import SherpaOnnxWakeWordSpotter, WakeWordConfig; "
+            "cfg = WakeWordConfig(**json.load(sys.stdin)); "
+            "spotter = SherpaOnnxWakeWordSpotter(cfg); "
+            "spotter.stop(); "
+            "print('ok')"
+        ),
+    ]
+    env = os.environ.copy()
+    env.setdefault("PYTHONIOENCODING", "utf-8")
+    env.setdefault("PYTHONUTF8", "1")
+    try:
+        result = subprocess.run(
+            cmd,
+            input=json.dumps(asdict(cfg)),
+            capture_output=True,
+            text=True,
+            timeout=_SHERPA_NATIVE_PROBE_TIMEOUT_SECONDS,
+            check=False,
+            env=env,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise WakeWordUnavailable("sherpa-onnx native self-test timed out") from exc
+    except OSError as exc:
+        raise WakeWordUnavailable(f"sherpa-onnx native self-test could not start: {exc}") from exc
+
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout or "").strip()
+        if detail:
+            detail = detail.splitlines()[0][:300]
+            raise WakeWordUnavailable(f"sherpa-onnx native self-test failed: {detail}")
+        raise WakeWordUnavailable(f"sherpa-onnx native self-test failed with exit code {result.returncode}")
+
+
 class SherpaOnnxWakeWordSpotter:
     def __init__(self, cfg: WakeWordConfig):
         self.cfg = cfg
@@ -355,8 +398,13 @@ class SherpaOnnxWakeWordSpotter:
 
 
 class WakeWordFactory:
-    def __init__(self, create_spotter: Optional[Callable[[WakeWordConfig], Any]] = None):
+    def __init__(
+        self,
+        create_spotter: Optional[Callable[[WakeWordConfig], Any]] = None,
+        native_self_test: Optional[Callable[[WakeWordConfig], None]] = None,
+    ):
         self._create_spotter = create_spotter or (lambda cfg: SherpaOnnxWakeWordSpotter(cfg))
+        self._native_self_test = native_self_test or _run_sherpa_native_self_test
 
     def create(self, config: Optional[dict[str, Any]] = None):
         cfg = wake_word_config(config)
@@ -364,4 +412,5 @@ class WakeWordFactory:
             raise WakeWordUnavailable("Wake word is disabled in voice.wake_word.enabled")
         if cfg.provider != "sherpa_onnx":
             raise WakeWordUnavailable(f"Unsupported wake-word provider: {cfg.provider}")
+        self._native_self_test(cfg)
         return self._create_spotter(cfg)

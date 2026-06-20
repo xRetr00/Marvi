@@ -69,7 +69,7 @@ def test_wake_word_factory_returns_fake_spotter_for_tests():
         pass
 
     spotter = FakeSpotter()
-    factory = WakeWordFactory(create_spotter=lambda _cfg: spotter)
+    factory = WakeWordFactory(create_spotter=lambda _cfg: spotter, native_self_test=lambda _cfg: None)
 
     assert factory.create({"voice": {"wake_word": {"enabled": True}}}) is spotter
 
@@ -77,10 +77,41 @@ def test_wake_word_factory_returns_fake_spotter_for_tests():
 def test_wake_word_factory_rejects_disabled_config():
     from tools.streaming_stt import WakeWordUnavailable, WakeWordFactory
 
-    factory = WakeWordFactory(create_spotter=lambda _cfg: object())
+    factory = WakeWordFactory(create_spotter=lambda _cfg: object(), native_self_test=lambda _cfg: None)
 
     with pytest.raises(WakeWordUnavailable, match="disabled"):
         factory.create({"voice": {"wake_word": {"enabled": False}}})
+
+
+def test_wake_word_factory_rejects_native_probe_failure():
+    from tools.streaming_stt import WakeWordUnavailable, WakeWordFactory
+
+    def fail_native_self_test(_cfg):
+        raise WakeWordUnavailable("sherpa-onnx native self-test failed: ORT mismatch")
+
+    factory = WakeWordFactory(create_spotter=lambda _cfg: object(), native_self_test=fail_native_self_test)
+
+    with pytest.raises(WakeWordUnavailable, match="native self-test failed"):
+        factory.create({"voice": {"wake_word": {"enabled": True}}})
+
+
+def test_sherpa_native_self_test_reports_child_process_failure(monkeypatch):
+    from types import SimpleNamespace
+
+    from tools import streaming_stt
+    from tools.streaming_stt import WakeWordConfig, WakeWordUnavailable
+
+    def fake_run(*_args, **_kwargs):
+        return SimpleNamespace(
+            returncode=3221225477,
+            stdout="",
+            stderr="The requested API version [24] is not available. Current ORT Version is: 1.17.1",
+        )
+
+    monkeypatch.setattr(streaming_stt.subprocess, "run", fake_run)
+
+    with pytest.raises(WakeWordUnavailable, match="Current ORT Version is: 1.17.1"):
+        streaming_stt._run_sherpa_native_self_test(WakeWordConfig(enabled=True))
 
 
 def test_prepare_wake_word_assets_resolves_model_and_keywords(monkeypatch):

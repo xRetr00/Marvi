@@ -4,6 +4,7 @@ import asyncio
 import os
 import json
 import shutil
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch, MagicMock
@@ -946,95 +947,10 @@ class TestWebServerEndpoints:
         assert resp.status_code == 400
         assert "base64" in resp.json()["detail"]
 
-    def test_wake_word_websocket_returns_detection(self, monkeypatch):
-        import struct
-
-        import hermes_cli.web_server as web_server
-
-        class FakeWakeSpotter:
-            def __init__(self):
-                self.started = False
-                self.frames = []
-
-            def start(self, sample_rate=16000):
-                self.started = True
-                self.sample_rate = sample_rate
-
-            def accept_waveform(self, samples):
-                self.frames.append(samples)
-                return "hey marvi"
-
-            def stop(self):
-                self.stopped = True
-
-        spotter = FakeWakeSpotter()
-
-        class FakeFactory:
-            def create(self, config=None):
-                return spotter
-
-        monkeypatch.setattr(web_server, "_WAKE_WORD_FACTORY", FakeFactory())
-        monkeypatch.setattr(
-            web_server,
-            "load_config",
-            lambda: {"voice": {"wake_word": {"enabled": True, "provider": "sherpa_onnx"}}},
-        )
-
-        with self.client.websocket_connect(f"/api/audio/wake-word/stream?token={web_server._SESSION_TOKEN}") as ws:
-            ws.send_json({"type": "start", "sample_rate": 16000})
-            assert ws.receive_json() == {"type": "ready", "sample_rate": 16000, "provider": "sherpa_onnx"}
-
-            ws.send_bytes(struct.pack("<4f", 0.0, 0.1, 0.2, 0.3))
-            assert ws.receive_json() == {"type": "detected", "phrase": "hey marvi"}
-
-            ws.send_json({"type": "stop"})
-
-        assert spotter.started is True
-        assert spotter.sample_rate == 16000
-        assert len(spotter.frames) == 1
-
-    def test_wake_word_websocket_debug_logs_no_detection_frames(self, caplog, monkeypatch):
-        import logging
-        import struct
-
-        import hermes_cli.web_server as web_server
-
-        class FakeWakeSpotter:
-            def start(self, sample_rate=16000):
-                self.sample_rate = sample_rate
-
-            def accept_waveform(self, samples):
-                return ""
-
-            def stop(self):
-                pass
-
-        class FakeFactory:
-            def create(self, config=None):
-                return FakeWakeSpotter()
-
-        monkeypatch.setattr(web_server, "_WAKE_WORD_FACTORY", FakeFactory())
-        monkeypatch.setattr(
-            web_server,
-            "load_config",
-            lambda: {"voice": {"wake_word": {"enabled": True, "provider": "sherpa_onnx"}}},
-        )
-
-        caplog.set_level(logging.INFO, logger="hermes_cli.web_server")
-        with self.client.websocket_connect(f"/api/audio/wake-word/stream?token={web_server._SESSION_TOKEN}") as ws:
-            ws.send_json({"type": "start", "sample_rate": 16000, "debug": True})
-            assert ws.receive_json()["type"] == "ready"
-
-            ws.send_bytes(struct.pack("<4f", 0.0, 0.1, 0.2, 0.3))
-            ws.send_json({"type": "stop"})
-
-        assert "Wake-word debug no detection" in caplog.text
-
     def test_desktop_audio_routes_registered(self):
-        """Desktop voice endpoints must exist.
+        """All three desktop voice endpoints must exist.
 
-        The renderer (apps/desktop) calls /api/audio/transcribe,
-        /api/audio/wake-word/stream, /speak, /tts/warm, and
+        The renderer (apps/desktop) calls /api/audio/transcribe, /speak, and
         /elevenlabs/voices. /speak + /voices were silently dropped in a merge
         once; this guards the contract so a future merge can't lose them
         without failing CI.
@@ -1043,26 +959,8 @@ class TestWebServerEndpoints:
 
         paths = {getattr(r, "path", None) for r in app.routes}
         assert "/api/audio/transcribe" in paths
-        assert "/api/audio/transcribe/stream" not in paths
-        assert "/api/audio/wake-word/stream" in paths
         assert "/api/audio/speak" in paths
-        assert "/api/audio/tts/warm" in paths
         assert "/api/audio/elevenlabs/voices" in paths
-
-    def test_tts_warm_endpoint_uses_current_config(self, monkeypatch):
-        import hermes_cli.web_server as web_server
-        from tools import tts_tool
-
-        warmed = {}
-
-        monkeypatch.setattr(web_server, "load_config", lambda: {"tts": {"provider": "pockettts"}})
-        monkeypatch.setattr(tts_tool, "warm_tts_provider", lambda cfg: warmed.setdefault("cfg", cfg) or True)
-
-        resp = self.client.post("/api/audio/tts/warm")
-
-        assert resp.status_code == 200
-        assert resp.json() == {"ok": True, "warmed": True, "provider": "pockettts"}
-        assert warmed["cfg"] == {"provider": "pockettts"}
 
     def test_elevenlabs_voices_unavailable_without_key(self, monkeypatch):
         import hermes_cli.web_server as web_server
@@ -1126,7 +1024,7 @@ class TestWebServerEndpoints:
         assert data["name"] == "hermes-update"
         assert data["pid"] is None
         assert data["error"] == "docker_update_unsupported"
-        assert "docker pull xretr00/marvi:latest" in data["message"]
+        assert "docker pull nousresearch/hermes-agent:latest" in data["message"]
         assert spawned is False
 
         status = self.client.get("/api/actions/hermes-update/status")
@@ -1135,7 +1033,7 @@ class TestWebServerEndpoints:
         assert status_data["running"] is False
         assert status_data["exit_code"] == 1
         assert status_data["pid"] is None
-        assert any("docker pull xretr00/marvi:latest" in line for line in status_data["lines"])
+        assert any("docker pull nousresearch/hermes-agent:latest" in line for line in status_data["lines"])
 
     def test_update_hermes_returns_managed_runtime_guidance_without_spawning(self, monkeypatch):
         import hermes_cli.web_server as web_server
@@ -1739,7 +1637,9 @@ class TestWebServerEndpoints:
         assert weixin["name"] == "Weixin / WeChat (Personal)"
         assert "personal WeChat" in weixin["description"]
         assert "Official Account" not in f"{weixin['name']} {weixin['description']}"
-        assert weixin["docs_url"] == "https://github.com/xRetr00/Marvi"
+        assert weixin["docs_url"] == (
+            "https://hermes-agent.nousresearch.com/docs/user-guide/messaging/weixin/"
+        )
 
         fields = {field["key"]: field for field in weixin["env_vars"]}
         for key in ("WEIXIN_ACCOUNT_ID", "WEIXIN_TOKEN", "WEIXIN_BASE_URL"):
@@ -3093,8 +2993,6 @@ class TestNewEndpoints:
         assert resp.json()["command"] == "hermes setup"
 
     def test_profiles_create_creates_wrapper_alias_when_safe(self, monkeypatch, tmp_path):
-        import sys
-
         import hermes_cli.profiles as profiles_mod
 
         wrapper_dir = tmp_path / "bin"
@@ -3108,14 +3006,14 @@ class TestNewEndpoints:
         )
 
         assert resp.status_code == 200
-        if sys.platform == "win32":
-            wrapper_path = wrapper_dir / "writer.bat"
-            assert wrapper_path.exists()
-            assert wrapper_path.read_text() == "@echo off\nhermes -p writer %*\n"
+        is_windows = sys.platform == "win32"
+        wrapper_path = wrapper_dir / ("writer.bat" if is_windows else "writer")
+        assert wrapper_path.exists()
+        lines = [line.strip() for line in wrapper_path.read_text().splitlines() if line.strip()]
+        if is_windows:
+            assert lines == ["@echo off", "hermes -p writer %*"]
         else:
-            wrapper_path = wrapper_dir / "writer"
-            assert wrapper_path.exists()
-            assert wrapper_path.read_text() == '#!/bin/sh\nexec /opt/hermes/bin/hermes -p writer "$@"\n'
+            assert lines == ["#!/bin/sh", 'exec /opt/hermes/bin/hermes -p writer "$@"']
 
     def test_profiles_create_with_clone_from_copies_source_skills(self, monkeypatch):
         from hermes_constants import get_hermes_home
@@ -4371,6 +4269,149 @@ class TestStatusRemoteGateway:
         assert data["gateway_running"] is True
         assert data["gateway_pid"] is None
         assert data["gateway_state"] == "running"
+
+
+class TestGatewayBusyReadout:
+    """Tests for the NAS busy/drainable readout on /api/status.
+
+    Behaviour contracts (not snapshots): assert how gateway_busy / gateway_drainable
+    must RELATE to gateway_running + gateway_state + active_agents, and that every
+    field degrades to a safe falsy value when the gateway is down or its status
+    file is absent. Liveness must key off gateway_running, NEVER gateway_updated_at.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _setup_test_client(self):
+        try:
+            from starlette.testclient import TestClient
+        except ImportError:
+            pytest.skip("fastapi/starlette not installed")
+
+        from hermes_cli.web_server import app, _SESSION_HEADER_NAME, _SESSION_TOKEN
+        self.client = TestClient(app)
+        self.client.headers[_SESSION_HEADER_NAME] = _SESSION_TOKEN
+
+    def test_busy_when_running_with_active_agents(self, monkeypatch):
+        """gateway_busy is True iff running AND active_agents > 0."""
+        import hermes_cli.web_server as ws
+
+        monkeypatch.setattr(ws, "get_running_pid", lambda: 1234)
+        monkeypatch.setattr(ws, "read_runtime_status", lambda: {
+            "gateway_state": "running",
+            "platforms": {},
+            "active_agents": 2,
+            # A deliberately stale timestamp: busy must NOT depend on it.
+            "updated_at": "2020-01-01T00:00:00+00:00",
+        })
+
+        data = self.client.get("/api/status").json()
+        assert data["active_agents"] == 2
+        assert data["gateway_busy"] is True
+        assert data["gateway_drainable"] is True
+
+    def test_idle_running_is_drainable_but_not_busy(self, monkeypatch):
+        """A running gateway with zero in-flight turns is drainable, not busy."""
+        import hermes_cli.web_server as ws
+
+        monkeypatch.setattr(ws, "get_running_pid", lambda: 1234)
+        monkeypatch.setattr(ws, "read_runtime_status", lambda: {
+            "gateway_state": "running",
+            "platforms": {},
+            "active_agents": 0,
+        })
+
+        data = self.client.get("/api/status").json()
+        assert data["active_agents"] == 0
+        assert data["gateway_busy"] is False
+        assert data["gateway_drainable"] is True
+
+    def test_draining_state_is_neither_busy_nor_drainable(self, monkeypatch):
+        """While draining, the gateway is not a fresh begin-drain target, and
+        busy is False even with a stale active_agents>0 in the file — the state
+        gate dominates."""
+        import hermes_cli.web_server as ws
+
+        monkeypatch.setattr(ws, "get_running_pid", lambda: 1234)
+        monkeypatch.setattr(ws, "read_runtime_status", lambda: {
+            "gateway_state": "draining",
+            "platforms": {},
+            "active_agents": 3,
+        })
+
+        data = self.client.get("/api/status").json()
+        assert data["gateway_busy"] is False
+        assert data["gateway_drainable"] is False
+
+    def test_down_gateway_degrades_to_safe_falsy(self, monkeypatch):
+        """Gateway down (no PID, no remote probe): busy/drainable False,
+        active_agents 0 — never a spurious busy that would wedge NAS."""
+        import hermes_cli.web_server as ws
+
+        monkeypatch.setattr(ws, "get_running_pid", lambda: None)
+        monkeypatch.setattr(ws, "read_runtime_status", lambda: None)
+        monkeypatch.setattr(ws, "_GATEWAY_HEALTH_URL", None)
+
+        data = self.client.get("/api/status").json()
+        assert data["gateway_running"] is False
+        assert data["active_agents"] == 0
+        assert data["gateway_busy"] is False
+        assert data["gateway_drainable"] is False
+
+    def test_down_gateway_with_stale_busy_file_still_not_busy(self, monkeypatch):
+        """A leftover status file claiming running + active_agents>0 must NOT
+        read as busy when the live PID probe says the gateway is down. Liveness
+        wins over the file."""
+        import hermes_cli.web_server as ws
+
+        monkeypatch.setattr(ws, "get_running_pid", lambda: None)
+        monkeypatch.setattr(ws, "_GATEWAY_HEALTH_URL", None)
+        # File says running with active turns, but get_running_pid()==None and
+        # get_runtime_status_running_pid finds no live PID → gateway_running False.
+        monkeypatch.setattr(ws, "get_runtime_status_running_pid", lambda *_a, **_k: None)
+        monkeypatch.setattr(ws, "read_runtime_status", lambda: {
+            "gateway_state": "running",
+            "platforms": {},
+            "active_agents": 5,
+        })
+
+        data = self.client.get("/api/status").json()
+        assert data["gateway_running"] is False
+        assert data["gateway_busy"] is False
+        assert data["gateway_drainable"] is False
+
+    def test_restart_drain_timeout_surfaced_and_numeric(self, monkeypatch):
+        """restart_drain_timeout is present and resolves to a non-negative
+        float so NAS can size its poll deadline without out-of-band knowledge."""
+        import hermes_cli.web_server as ws
+
+        monkeypatch.setattr(ws, "get_running_pid", lambda: 1234)
+        monkeypatch.setattr(ws, "read_runtime_status", lambda: {
+            "gateway_state": "running",
+            "platforms": {},
+            "active_agents": 0,
+        })
+        monkeypatch.setenv("HERMES_RESTART_DRAIN_TIMEOUT", "90")
+
+        data = self.client.get("/api/status").json()
+        assert "restart_drain_timeout" in data
+        assert isinstance(data["restart_drain_timeout"], (int, float))
+        assert data["restart_drain_timeout"] == 90.0
+
+    def test_active_agents_unparseable_in_file_degrades_to_zero(self, monkeypatch):
+        """A corrupt active_agents value in the status file must not 500 or
+        produce a spurious busy — it degrades to 0/not-busy."""
+        import hermes_cli.web_server as ws
+
+        monkeypatch.setattr(ws, "get_running_pid", lambda: 1234)
+        monkeypatch.setattr(ws, "read_runtime_status", lambda: {
+            "gateway_state": "running",
+            "platforms": {},
+            "active_agents": "garbage",
+        })
+
+        data = self.client.get("/api/status").json()
+        assert data["active_agents"] == 0
+        assert data["gateway_busy"] is False
 
 
 # ---------------------------------------------------------------------------

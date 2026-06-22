@@ -1191,7 +1191,7 @@ def setup_terminal_backend(config: dict):
     print_header("Terminal Backend")
     print_info("Choose where Marvi runs shell commands and code.")
     print_info("This affects tool execution, file access, and isolation.")
-    print_info(f"   Guide: {_DOCS_BASE}/developer-guide/environments")
+    print_info(f"   Guide: {_DOCS_BASE}/user-guide/configuration#terminal-backend-configuration")
     print()
 
     current_backend = cfg_get(config, "terminal", "backend", default="local")
@@ -1948,7 +1948,7 @@ def _setup_webhooks():
     print_warning("   internet. For security, run the gateway in a sandboxed environment")
     print_warning("   (Docker, VM, etc.) to limit blast radius from prompt injection.")
     print()
-    print_info("   Full guide: https://hermes-agent.nousresearch.com/docs/user-guide/messaging/webhooks/")
+    print_info("   Full guide: https://github.com/xRetr00/Marvi")
     print()
 
     port = prompt("Webhook port (default 8644)")
@@ -1975,7 +1975,7 @@ def _setup_webhooks():
     print_info("      http://your-server:8644/webhooks/<route-name>")
     print()
     print_info("   Route configuration guide:")
-    print_info("   https://hermes-agent.nousresearch.com/docs/user-guide/messaging/webhooks/#configuring-routes")
+    print_info("   https://github.com/xRetr00/Marvi#configuring-routes")
     print()
     print_info("   Open config in your editor:  hermes config edit")
     print_info("   Open config in your editor:  hermes config edit")

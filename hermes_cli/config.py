@@ -169,8 +169,8 @@ _ENV_VAR_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 #   the dashboard. ``config.yaml`` is the supported surface for these.
 #
 # IMPORTANT: ``HERMES_*`` overall is NOT blocked. Many legitimate
-# integration credentials follow that prefix (HERMES_GEMINI_CLIENT_ID,
-# HERMES_LANGFUSE_PUBLIC_KEY, HERMES_SPOTIFY_CLIENT_ID, ...). The
+# integration credentials follow that prefix (HERMES_LANGFUSE_PUBLIC_KEY,
+# HERMES_SPOTIFY_CLIENT_ID, ...). The
 # denylist is name-by-name on purpose so the gate stays narrow and
 # doesn't accidentally break provider setup wizards.
 #
@@ -299,7 +299,7 @@ _EXTRA_ENV_KEYS = frozenset({
 import yaml
 
 from hermes_cli.colors import Colors, color
-from hermes_cli.default_soul import DEFAULT_SOUL_MD, is_legacy_default_soul
+from hermes_cli.default_soul import DEFAULT_SOUL_MD
 
 
 # =============================================================================
@@ -404,7 +404,7 @@ def detect_install_method(project_root: Optional[Path] = None) -> str:
     The supported installs self-identify via the code-scoped stamp:
       - the curl installer (scripts/install.sh, the README/website install
         command) git-clones the repo and stamps ``git`` next to the code;
-      - the published ``xretr00/marvi`` image bakes a ``docker``
+      - the published ``nousresearch/hermes-agent`` image bakes a ``docker``
         stamp into ``/opt/hermes`` at build time.
     An unsupported manual install dropped into a container (no stamp) falls
     through to the ``.git``/pip checks and behaves like any off-path install.
@@ -510,7 +510,7 @@ def recommended_update_command_for_method(method: str) -> str:
     if method == "homebrew":
         return "brew upgrade hermes-agent"
     if method == "docker":
-        return "docker pull xretr00/marvi:latest"
+        return "docker pull nousresearch/hermes-agent:latest"
     if method == "pip":
         if is_uv_tool_install():
             return "uv tool upgrade hermes-agent"
@@ -548,23 +548,23 @@ def recommended_update_command() -> str:
 _DOCKER_UPDATE_MESSAGE = """\
 ✗ ``hermes update`` doesn't apply inside the Docker container.
 
-Marvi runs as a published image (xretr00/marvi), not a
+Hermes Agent runs as a published image (nousresearch/hermes-agent), not a
 git checkout — the container has no working tree to pull into.  Update by
 pulling a fresh image and restarting your container instead:
 
-  docker pull xretr00/marvi:latest
+  docker pull nousresearch/hermes-agent:latest
   # then restart whatever started the container, e.g.:
   docker compose up -d --force-recreate hermes-agent
   # or, for ad-hoc runs, exit the current container and `docker run` again
 
 Verify the new version after restart:
-  docker run --rm xretr00/marvi:latest --version
+  docker run --rm nousresearch/hermes-agent:latest --version
 
 Notes:
   • If you pinned a specific tag (e.g. ``:v0.14.0``) the ``:latest`` tag
     won't move your container — pull the newer tag you actually want, or
     switch to ``:latest`` / ``:main`` for rolling updates.  See available
-    tags at https://hub.docker.com/r/xretr00/marvi/tags
+    tags at https://hub.docker.com/r/nousresearch/hermes-agent/tags
   • Your config and session history live under ``$HERMES_HOME`` (``/opt/data``
     in the container, typically bind-mounted from the host) and persist
     across image upgrades — re-pulling doesn't lose any state.
@@ -819,17 +819,9 @@ def _secure_file(path):
 
 
 def _ensure_default_soul_md(home: Path) -> None:
-    """Seed or migrate the distribution-owned default SOUL.md."""
+    """Seed a default SOUL.md into HERMES_HOME if the user doesn't have one yet."""
     soul_path = home / "SOUL.md"
     if soul_path.exists():
-        try:
-            existing = soul_path.read_text(encoding="utf-8")
-        except OSError:
-            return
-        if not is_legacy_default_soul(existing):
-            return
-        soul_path.write_text(DEFAULT_SOUL_MD, encoding="utf-8")
-        _secure_file(soul_path)
         return
     soul_path.write_text(DEFAULT_SOUL_MD, encoding="utf-8")
     _secure_file(soul_path)
@@ -1023,12 +1015,18 @@ DEFAULT_CONFIG = {
         "image_input_mode": "auto",
         "disabled_toolsets": [],
     },
-
+    
     "terminal": {
         "backend": "local",
         "modal_mode": "auto",
         "cwd": ".",  # Use current directory
         "timeout": 180,
+        # Bounded grace period (seconds) between SIGTERM and an escalated
+        # SIGKILL when terminating a host process tree (browser daemons, etc.).
+        # A daemon that stalls in its SIGTERM handler is force-killed after this
+        # window so it can't leak indefinitely. 0 disables escalation (SIGTERM
+        # only — the historical behavior). Floored internally at 0.
+        "daemon_term_grace_seconds": 2.0,
         # Environment variables to pass through to sandboxed execution
         # (terminal and execute_code).  Skill-declared required_environment_variables
         # are passed through automatically; this list is for non-skill use cases.
@@ -1267,7 +1265,7 @@ DEFAULT_CONFIG = {
         "threshold": 0.50,            # compress when context usage exceeds this ratio
         "target_ratio": 0.20,         # fraction of threshold to preserve as recent tail
         "protect_last_n": 20,         # minimum recent messages to keep uncompressed
-        "hygiene_hard_message_limit": 400,  # gateway session-hygiene force-compress threshold by message count
+        "hygiene_hard_message_limit": 5000,  # gateway session-hygiene force-compress threshold by message count
         "protect_first_n": 3,         # non-system head messages always preserved
                                       # verbatim, in ADDITION to the system prompt
                                       # (which is always implicitly protected). Set to
@@ -1538,7 +1536,7 @@ DEFAULT_CONFIG = {
             "extra_body": {},
         },
     },
-
+    
     "display": {
         "compact": False,
         "personality": "",
@@ -1575,6 +1573,10 @@ DEFAULT_CONFIG = {
         "tui_agents_nudge": True,
         "bell_on_complete": False,
         "show_reasoning": False,
+        # When reasoning display is on, the post-response "Reasoning" recap box
+        # collapses long thinking to the first 10 lines. Set true to print the
+        # complete thinking text uncollapsed (live streaming is always full).
+        "reasoning_full": False,
         # Background self-improvement review notifications surfaced in chat.
         #   "off"     — no chat notification (the review still runs and writes)
         #   "on"      — generic "💾 Memory updated" line (default)
@@ -1776,14 +1778,14 @@ DEFAULT_CONFIG = {
     "privacy": {
         "redact_pii": False,  # When True, hash user IDs and strip phone numbers from LLM context
     },
-
+    
     # Text-to-speech configuration
     # Each provider supports an optional `max_text_length:` override for the
     # per-request input-character cap. Omit it to use the provider's documented
     # limit (OpenAI 4096, xAI 15000, MiniMax 10000, ElevenLabs 5k-40k model-aware,
-    # Gemini 32000, Edge 5000, Mistral 4000, NeuTTS/KittenTTS 2000, PocketTTS/Piper 5000).
+    # Gemini 32000, Edge 5000, Mistral 4000, NeuTTS/KittenTTS 2000).
     "tts": {
-        "provider": "edge",  # "edge" (free) | "elevenlabs" (premium) | "openai" | "xai" | "minimax" | "mistral" | "gemini" | "neutts" (local) | "kittentts" (local) | "piper" (local) | "pockettts" (local)
+        "provider": "edge",  # "edge" (free) | "elevenlabs" (premium) | "openai" | "xai" | "minimax" | "mistral" | "gemini" | "neutts" (local) | "kittentts" (local) | "piper" (local)
         "edge": {
             "voice": "en-US-AriaNeural",
             # Popular: AriaNeural, JennyNeural, AndrewNeural, BrianNeural, SoniaNeural
@@ -1839,28 +1841,11 @@ DEFAULT_CONFIG = {
             # "volume": 1.0,
             # "normalize_audio": True,
         },
-        "pockettts": {
-            # Built-in voices include alba, marius, javert, jean, fantine,
-            # cosette, eponine, and azelma. A local wav/safetensors path can
-            # also be used for custom voice prompts.
-            "voice": "alba",
-        },
     },
-
+    
     "stt": {
         "enabled": True,
         "provider": "local",  # "local" (free, faster-whisper) | "groq" | "openai" (Whisper API) | "mistral" (Voxtral Transcribe) | "elevenlabs" (Scribe)
-        "streaming": {
-            # Desktop realtime voice only. Disabled by default so the stable
-            # batch transcription endpoint remains the default behavior.
-            "enabled": False,
-            "provider": "sherpa_onnx",
-            "model": "en-20m-int8",
-            "sample_rate": 16000,
-            "frame_ms": 100,
-            "endpoint_silence_ms": 1200,
-            "partial_interval_ms": 150,
-        },
         "local": {
             "model": "base",  # tiny, base, small, medium, large-v3
             "language": "",  # auto-detect by default; set to "en", "es", "fr", etc. to force
@@ -1883,51 +1868,17 @@ DEFAULT_CONFIG = {
         "record_key": "ctrl+b",
         "max_recording_seconds": 120,
         "auto_tts": False,
-        "wake_word": {
-            # Desktop-only one-shot wake mode. Disabled by default because it
-            # keeps the microphone open while armed. Detection is local via
-            # sherpa-onnx KWS; the command after the wake phrase is submitted
-            # as one normal turn, then Marvi returns to wake-only listening.
-            "enabled": False,
-            "provider": "sherpa_onnx",
-            "model": "kws-en-3.3m",
-            "phrases": [
-                "hey marvi",
-                "hi marvi",
-                "okay marvi",
-                "ok marvi",
-                "yo marvi",
-                "marvi",
-                "hey marve",
-                "hey marvy",
-                "hey marvie",
-                "hey marfi",
-                "hey marfe",
-                "hey marvey",
-                "marve",
-                "marvy",
-                "marvie",
-                "marfi",
-                "marfe",
-                "marvey",
-            ],
-            "boost": 2.0,
-            "threshold": 0.35,
-            "debug": False,
-            "command_timeout_ms": 8000,
-            "cooldown_ms": 1200,
-        },
         "beep_enabled": True,         # Play record start/stop beeps in CLI voice mode
         "silence_threshold": 200,     # RMS below this = silence (0-32767)
         "silence_duration": 3.0,      # Seconds of silence before auto-stop
     },
-
+    
     "human_delay": {
         "mode": "off",
         "min_ms": 800,
         "max_ms": 2500,
     },
-
+    
     # Context engine -- controls how the context window is managed when
     # approaching the model's token limit.
     # "compressor" = built-in lossy summarization (default).
@@ -2167,12 +2118,11 @@ DEFAULT_CONFIG = {
         # list_roles, member_info, search_members, fetch_messages, list_pins,
         # pin_message, unpin_message, create_thread, add_role, remove_role.
         "server_actions": "",
-        # Accept arbitrary attachment file types (not just SUPPORTED_DOCUMENT_TYPES).
-        # When True, any uploaded file is cached to disk with mime
-        # application/octet-stream and the path is surfaced to the agent so it
-        # can use terminal/read_file/etc. against it. Default False preserves
-        # the historical allowlist behaviour.
-        # Env override: DISCORD_ALLOW_ANY_ATTACHMENT.
+        # DEPRECATED / no-op. Any uploaded file is now always cached and
+        # surfaced to the agent regardless of file type — authorization to
+        # message the agent is the gate, not the extension. Kept so existing
+        # configs that set it do not error. Env override:
+        # DISCORD_ALLOW_ANY_ATTACHMENT.
         "allow_any_attachment": False,
         # Maximum bytes per attachment the gateway will cache. The whole file
         # is held in memory while being written, so unlimited uploads carry a
@@ -2217,7 +2167,7 @@ DEFAULT_CONFIG = {
         "channel_prompts": {},         # Per-chat/topic ephemeral system prompts (topics inherit from parent group)
         "allowed_chats": "",           # If set, bot ONLY responds in these group/supergroup chat IDs (whitelist)
         "extra": {
-            "rich_messages": True,      # Bot API 10.1 rich messages (tables/task lists/details/math) render natively; set False to force legacy MarkdownV2
+            "rich_messages": False,     # Bot API 10.1 rich messages (tables/task lists/details/math) render natively; set True to opt in. Default stays legacy MarkdownV2 because rich messages can be hard to copy as plain text in Telegram clients.
         },
     },
 
@@ -2493,11 +2443,11 @@ DEFAULT_CONFIG = {
     # Remotely-hosted model catalog manifest.  When enabled, the CLI fetches
     # curated model lists for OpenRouter and Nous Portal from this URL,
     # falling back to the in-repo snapshot on network failure.  Lets us
-    # update model picker lists without shipping a Marvi release.
-    # The default URL is served from the Marvi repo's raw GitHub manifest.
+    # update model picker lists without shipping a hermes-agent release.
+    # The default URL is served by the docs site GitHub Pages deploy.
     "model_catalog": {
         "enabled": True,
-        "url": "https://raw.githubusercontent.com/xRetr00/Marvi/main/website/static/api/model-catalog.json",
+        "url": "https://hermes-agent.nousresearch.com/docs/api/model-catalog.json",
         # Disk cache TTL in hours.  Beyond this, the CLI refetches on the
         # next /model or `hermes model` invocation; network failures
         # silently fall back to the stale cache.
@@ -2532,6 +2482,16 @@ DEFAULT_CONFIG = {
         "message_timestamps": {
             "enabled": False,
         },
+
+        # Maximum bytes for an inbound image / audio / video payload the
+        # gateway will buffer into memory and cache to disk. Inbound media is
+        # read fully into RAM before being written, so an unbounded upload
+        # (Discord Nitro allows 500 MB) or a remote media URL pointing at a
+        # huge file can spike memory and OOM-kill the gateway on constrained
+        # deployments. Enforced in the shared cache helpers
+        # (gateway/platforms/base.py), so the cap holds across every platform
+        # adapter. ``0`` disables the cap. Default 128 MiB.
+        "max_inbound_media_bytes": 134217728,
 
         # When false (default), any file path the agent emits is delivered
         # as a native attachment as long as it isn't under the credential /
@@ -2570,6 +2530,18 @@ DEFAULT_CONFIG = {
         # multi-tool agent turn. Bridged to HERMES_MEDIA_TRUST_RECENT_SECONDS.
         # Only consulted when ``strict`` is true.
         "trust_recent_files_seconds": 600,
+
+        # OpenAI-compatible API server platform
+        # (gateway/platforms/api_server.py).
+        "api_server": {
+            # Maximum number of agent runs the API server will service
+            # concurrently. Requests to /v1/chat/completions, /v1/responses,
+            # and /v1/runs that arrive while this many runs are already
+            # in flight are rejected with HTTP 429 + a Retry-After header,
+            # bounding CPU / memory / upstream-LLM-quota exhaustion from a
+            # request flood. Set to 0 to disable the cap entirely.
+            "max_concurrent_runs": 10,
+        },
     },
 
     # Real-time token streaming to messaging platforms (Telegram, Discord,
@@ -3108,30 +3080,6 @@ OPTIONAL_ENV_VARS = {
     "HERMES_QWEN_BASE_URL": {
         "description": "Qwen Portal base URL override (default: https://portal.qwen.ai/v1)",
         "prompt": "Qwen Portal base URL (leave empty for default)",
-        "url": None,
-        "password": False,
-        "category": "provider",
-        "advanced": True,
-    },
-    "HERMES_GEMINI_CLIENT_ID": {
-        "description": "Google OAuth client ID for google-gemini-cli (optional; defaults to Google's public gemini-cli client)",
-        "prompt": "Google OAuth client ID (optional — leave empty to use the public default)",
-        "url": "https://console.cloud.google.com/apis/credentials",
-        "password": False,
-        "category": "provider",
-        "advanced": True,
-    },
-    "HERMES_GEMINI_CLIENT_SECRET": {
-        "description": "Google OAuth client secret for google-gemini-cli (optional)",
-        "prompt": "Google OAuth client secret (optional)",
-        "url": "https://console.cloud.google.com/apis/credentials",
-        "password": True,
-        "category": "provider",
-        "advanced": True,
-    },
-    "HERMES_GEMINI_PROJECT_ID": {
-        "description": "GCP project ID for paid Gemini tiers (free tier auto-provisions)",
-        "prompt": "GCP project ID for Gemini OAuth (leave empty for free tier)",
         "url": None,
         "password": False,
         "category": "provider",
@@ -3920,22 +3868,22 @@ OPTIONAL_ENV_VARS = {
 def get_missing_env_vars(required_only: bool = False) -> List[Dict[str, Any]]:
     """
     Check which environment variables are missing.
-
+    
     Returns list of dicts with var info for missing variables.
     """
     missing = []
-
+    
     # Check required vars
     for var_name, info in REQUIRED_ENV_VARS.items():
         if not get_env_value(var_name):
             missing.append({"name": var_name, **info, "is_required": True})
-
+    
     # Check optional vars (if not required_only)
     if not required_only:
         for var_name, info in OPTIONAL_ENV_VARS.items():
             if not get_env_value(var_name):
                 missing.append({"name": var_name, **info, "is_required": False})
-
+    
     return missing
 
 
@@ -4017,7 +3965,7 @@ def clear_model_endpoint_credentials(
 def get_missing_config_fields() -> List[Dict[str, Any]]:
     """
     Check which config fields are missing or outdated (recursive).
-
+    
     Walks the DEFAULT_CONFIG tree at arbitrary depth and reports any keys
     present in defaults but absent from the user's loaded config.
     """
@@ -4678,11 +4626,11 @@ def warn_deprecated_cwd_env_vars(config: Optional[Dict[str, Any]] = None) -> Non
 def migrate_config(interactive: bool = True, quiet: bool = False) -> Dict[str, Any]:
     """
     Migrate config to latest version, prompting for new required fields.
-
+    
     Args:
         interactive: If True, prompt user for missing values
         quiet: If True, suppress output
-
+        
     Returns:
         Dict with migration results: {"env_added": [...], "config_added": [...], "warnings": [...]}
     """
@@ -4698,7 +4646,7 @@ def migrate_config(interactive: bool = True, quiet: bool = False) -> Dict[str, A
 
     # Check config version
     current_ver, latest_ver = check_config_version()
-
+    
     # ── Version 3 → 4: migrate tool progress from .env to config.yaml ──
     if current_ver < 4:
         config = load_config()
@@ -4721,7 +4669,7 @@ def migrate_config(interactive: bool = True, quiet: bool = False) -> Dict[str, A
             save_config(config)
             if not quiet:
                 print(f"  ✓ Migrated tool progress to config.yaml: {display['tool_progress']}")
-
+    
     # ── Version 4 → 5: add timezone field ──
     if current_ver < 5:
         config = load_config()
@@ -5204,26 +5152,26 @@ def migrate_config(interactive: bool = True, quiet: bool = False) -> Dict[str, A
 
     if current_ver < latest_ver and not quiet:
         print(f"Config version: {current_ver} → {latest_ver}")
-
+    
     # Check for missing required env vars
     missing_env = get_missing_env_vars(required_only=True)
-
+    
     if missing_env and not quiet:
         print("\n⚠️  Missing required environment variables:")
         for var in missing_env:
             print(f"   • {var['name']}: {var['description']}")
-
+    
     if interactive and missing_env:
         print("\nLet's configure them now:\n")
         for var in missing_env:
             if var.get("url"):
                 print(f"  Get your key at: {var['url']}")
-
+            
             if var.get("password"):
                 value = masked_secret_prompt(f"  {var['prompt']}: ")
             else:
                 value = input(f"  {var['prompt']}: ").strip()
-
+            
             if value:
                 save_env_value(var["name"], value)
                 results["env_added"].append(var["name"])
@@ -5231,7 +5179,7 @@ def migrate_config(interactive: bool = True, quiet: bool = False) -> Dict[str, A
             else:
                 results["warnings"].append(f"Skipped {var['name']} - some features may not work")
             print()
-
+    
     # Check for missing optional env vars and offer to configure interactively
     # Skip "advanced" vars (like OPENAI_BASE_URL) -- those are for power users
     missing_optional = get_missing_env_vars(required_only=False)
@@ -5240,7 +5188,7 @@ def migrate_config(interactive: bool = True, quiet: bool = False) -> Dict[str, A
         v for v in missing_optional
         if v["name"] not in required_names and not v.get("advanced")
     ]
-
+    
     # Only offer to configure env vars that are NEW since the user's previous version
     new_var_names = set()
     for ver in range(current_ver + 1, latest_ver + 1):
@@ -5283,22 +5231,22 @@ def migrate_config(interactive: bool = True, quiet: bool = False) -> Dict[str, A
                     print()
             else:
                 print("  Set later with: hermes config set <key> <value>")
-
+    
     # Check for missing config fields
     missing_config = get_missing_config_fields()
-
+    
     if missing_config:
         config = load_config()
-
+        
         for field in missing_config:
             key = field["key"]
             default = field["default"]
-
+            
             _set_nested(config, key, default)
             results["config_added"].append(key)
             if not quiet:
                 print(f"  ✓ Added {key} = {default}")
-
+        
         # Update version and save
         config["_config_version"] = latest_ver
         save_config(config)
@@ -5505,23 +5453,44 @@ def _normalize_root_model_keys(config: Dict[str, Any]) -> Dict[str, Any]:
     ``model.*`` key is empty — they never override an existing value.
     After migration the root-level keys are removed so they can't cause
     confusion on subsequent loads.
+
+    Also aliases ``api_base`` → ``base_url`` (issue #8919). ``api_base`` is the
+    intuitive name OpenAI-SDK / LiteLLM users reach for, and ``hermes config set``
+    blindly accepts any dotted key — so ``model.api_base`` got written, confirmed,
+    and then silently ignored by the runtime resolver (which reads only
+    ``model.base_url``), causing requests to fall back to OpenRouter. We migrate
+    the alias to the canonical key (fallback-only — never override an explicit
+    ``base_url``) and drop the alias so it can't confuse later loads.
     """
-    # Only act if there are root-level keys to migrate
-    has_root = any(config.get(k) for k in ("provider", "base_url", "context_length"))
-    if not has_root:
+    # Only act if there are root-level keys (or an api_base alias) to migrate
+    model_in = config.get("model")
+    model_has_alias = isinstance(model_in, dict) and model_in.get("api_base")
+    has_root = any(
+        config.get(k) for k in ("provider", "base_url", "context_length", "api_base")
+    )
+    if not has_root and not model_has_alias:
         return config
 
     config = dict(config)
     model = config.get("model")
     if not isinstance(model, dict):
         model = {"default": model} if model else {}
-        config["model"] = model
+    else:
+        model = dict(model)
+    config["model"] = model
 
     for key in ("provider", "base_url", "context_length"):
         root_val = config.get(key)
         if root_val and not model.get(key):
             model[key] = root_val
         config.pop(key, None)
+
+    # api_base is an alias for base_url, at the root OR inside model.
+    for alias_val in (config.get("api_base"), model.get("api_base")):
+        if alias_val and not model.get("base_url"):
+            model["base_url"] = alias_val
+    config.pop("api_base", None)
+    model.pop("api_base", None)
 
     return config
 
@@ -5665,6 +5634,34 @@ def load_config_readonly() -> Dict[str, Any]:
     safety guarantee is purely documented, not enforced — be careful.
     """
     return _load_config_impl(want_deepcopy=False)
+
+
+def write_platform_config_field(
+    platform_key: str,
+    field_key: str,
+    value: Any,
+    *,
+    raw: bool = False,
+) -> None:
+    """Persist one scalar field under ``platforms.<platform_key>``.
+
+    ``raw=True`` preserves CLI setup flows that intentionally edit only the
+    user's raw config file. Dashboard routes use the default loaded-config path
+    so they retain their existing profile-scoped ``load_config`` behavior.
+    """
+    config = read_raw_config() if raw else load_config()
+    platforms = config.setdefault("platforms", {})
+    if not isinstance(platforms, dict):
+        platforms = {}
+        config["platforms"] = platforms
+
+    platform_config = platforms.setdefault(platform_key, {})
+    if not isinstance(platform_config, dict):
+        platform_config = {}
+        platforms[platform_key] = platform_config
+
+    platform_config[field_key] = value
+    save_config(config)
 
 
 TERMINAL_CONFIG_ENV_MAP = {
@@ -6261,7 +6258,7 @@ def save_env_value(key: str, value: str):
         if lines and not lines[-1].endswith("\n"):
             lines[-1] += "\n"
         lines.append(f"{key}={value}\n")
-
+    
     fd, tmp_path = tempfile.mkstemp(dir=str(env_path.parent), suffix='.tmp', prefix='.env_')
     # Preserve original permissions so Docker volume mounts aren't clobbered.
     original_mode = None
@@ -6427,7 +6424,7 @@ def get_env_value(key: str) -> Optional[str]:
     # Check environment first
     if key in os.environ:
         return os.environ[key]
-
+    
     # Then check .env file
     env_vars = load_env()
     return env_vars.get(key)
@@ -6445,6 +6442,60 @@ def redact_key(key: str) -> str:
     """
     from agent.redact import mask_secret
     return mask_secret(key, empty=color("(not set)", Colors.DIM))
+
+
+# Key names (case-insensitive, exact match) whose VALUE is a credential and
+# must be masked before printing any config dict to the terminal. Covers the
+# fields a custom provider stuffs into the `model`/`custom_providers` blocks
+# (`api_key`) plus the usual token/secret/password shapes. Exact-match only so
+# benign keys like `token_count` or `secret_santa` don't get masked.
+_SECRET_CONFIG_KEYS = frozenset({
+    "api_key",
+    "apikey",
+    "key",
+    "token",
+    "access_token",
+    "refresh_token",
+    "id_token",
+    "secret",
+    "client_secret",
+    "password",
+    "passwd",
+    "auth",
+    "authorization",
+    "private_key",
+    "bearer",
+    "jwt",
+})
+
+
+def redact_config_value(value: Any, _depth: int = 0) -> Any:
+    """Return a copy of ``value`` with credential-shaped keys masked for display.
+
+    Recursively walks dicts/lists and replaces the value of any key in
+    ``_SECRET_CONFIG_KEYS`` (case-insensitive) with a masked form via
+    :func:`agent.redact.mask_secret`. Non-secret keys and scalar values pass
+    through unchanged. Use this before ``print``-ing any config sub-tree that
+    might carry a custom-provider ``api_key`` — ``print`` bypasses the logging
+    redactor, and opaque tokens (e.g. Cloudflare ``cfut_...``) don't match the
+    vendor-prefix regexes either, so structural key-name masking is required.
+    """
+    from agent.redact import mask_secret
+
+    # Defensive bound on recursion depth for pathological/cyclic configs.
+    if _depth > 20:
+        return value
+    if isinstance(value, dict):
+        out = {}
+        for k, v in value.items():
+            if isinstance(k, str) and k.lower() in _SECRET_CONFIG_KEYS and isinstance(v, str) and v:
+                out[k] = mask_secret(v)
+            else:
+                out[k] = redact_config_value(v, _depth + 1)
+        return out
+    if isinstance(value, list):
+        return [redact_config_value(v, _depth + 1) for v in value]
+    return value
 
 
 def show_config():
@@ -6488,11 +6539,11 @@ def show_config():
     print(f"  Config:       {get_config_path()}")
     print(f"  Secrets:      {get_env_path()}")
     print(f"  Install:      {get_project_root()}")
-
+    
     # API Keys
     print()
     print(color("◆ API Keys", Colors.CYAN, Colors.BOLD))
-
+    
     keys = [
         ("OPENROUTER_API_KEY", "OpenRouter"),
         ("VOICE_TOOLS_OPENAI_KEY", "OpenAI (STT/TTS)"),
@@ -6504,18 +6555,18 @@ def show_config():
         ("BROWSER_USE_API_KEY", "Browser Use"),
         ("FAL_KEY", "FAL"),
     ]
-
+    
     for env_key, name in keys:
         value = get_env_value(env_key)
         print(f"  {name:<14} {redact_key(value)}")
     from hermes_cli.auth import get_anthropic_key
     anthropic_value = get_anthropic_key()
     print(f"  {'Anthropic':<14} {redact_key(anthropic_value)}")
-
+    
     # Model settings
     print()
     print(color("◆ Model", Colors.CYAN, Colors.BOLD))
-    print(f"  Model:        {config.get('model', 'not set')}")
+    print(f"  Model:        {redact_config_value(config.get('model', 'not set'))}")
     _cfg_max_turns = config.get('agent', {}).get('max_turns', DEFAULT_CONFIG['agent']['max_turns'])
     print(f"  Max turns:    {_cfg_max_turns}")
     # Warn on stale HERMES_MAX_ITERATIONS ghost in .env that disagrees with
@@ -6531,7 +6582,7 @@ def show_config():
             ))
     except Exception:
         pass
-
+    
     # Display
     print()
     print(color("◆ Display", Colors.CYAN, Colors.BOLD))
@@ -6551,7 +6602,7 @@ def show_config():
     print(f"  Backend:      {terminal.get('backend', 'local')}")
     print(f"  Working dir:  {terminal.get('cwd', '.')}")
     print(f"  Timeout:      {terminal.get('timeout', 60)}s")
-
+    
     if terminal.get('backend') == 'docker':
         print(f"  Docker image: {terminal.get('docker_image', 'nikolaik/python-nodejs:python3.11-nodejs20')}")
     elif terminal.get('backend') == 'singularity':
@@ -6569,7 +6620,7 @@ def show_config():
         ssh_user = get_env_value('TERMINAL_SSH_USER')
         print(f"  SSH host:     {ssh_host or '(not set)'}")
         print(f"  SSH user:     {ssh_user or '(not set)'}")
-
+    
     # Timezone
     print()
     print(color("◆ Timezone", Colors.CYAN, Colors.BOLD))
@@ -6596,7 +6647,7 @@ def show_config():
         comp_provider = _aux_comp.get('provider', 'auto')
         if comp_provider and comp_provider != 'auto':
             print(f"  Provider:     {comp_provider}")
-
+    
     # Auxiliary models
     auxiliary = config.get('auxiliary', {})
     aux_tasks = {
@@ -6618,17 +6669,17 @@ def show_config():
                 if mdl:
                     parts.append(f"model={mdl}")
                 print(f"  {label:12s}  {', '.join(parts)}")
-
+    
     # Messaging
     print()
     print(color("◆ Messaging Platforms", Colors.CYAN, Colors.BOLD))
-
+    
     telegram_token = get_env_value('TELEGRAM_BOT_TOKEN')
     discord_token = get_env_value('DISCORD_BOT_TOKEN')
-
+    
     print(f"  Telegram:     {'configured' if telegram_token else color('not configured', Colors.DIM)}")
     print(f"  Discord:      {'configured' if discord_token else color('not configured', Colors.DIM)}")
-
+    
     # Skill config
     try:
         from agent.skill_utils import discover_all_skill_config_vars, resolve_skill_config_values
@@ -6660,12 +6711,12 @@ def edit_config():
         managed_error("edit configuration")
         return
     config_path = get_config_path()
-
+    
     # Ensure config exists
     if not config_path.exists():
         save_config(DEFAULT_CONFIG)
         print(f"Created {config_path}")
-
+    
     # Find editor
     editor = os.getenv('EDITOR') or os.getenv('VISUAL')
 
@@ -6684,12 +6735,12 @@ def edit_config():
             if shutil.which(cmd):
                 editor = cmd
                 break
-
+    
     if not editor:
         print("No editor found. Config file is at:")
         print(f"  {config_path}")
         return
-
+    
     print(f"Opening {config_path} in {editor}...")
     subprocess.run([editor, str(config_path)])
 
@@ -6727,12 +6778,12 @@ def set_config_value(key: str, value: str):
         'SUDO_PASSWORD', 'SLACK_BOT_TOKEN', 'SLACK_APP_TOKEN',
         'GITHUB_TOKEN', 'HONCHO_API_KEY',
     ]
-
+    
     if key.upper() in api_keys or key.upper().endswith(('_API_KEY', '_TOKEN')) or key.upper().startswith('TERMINAL_SSH'):
         save_env_value(key.upper(), value)
         print(f"✓ Set {key} in {get_env_path()}")
         return
-
+    
     # Otherwise it goes to config.yaml
     # Read the raw user config (not merged with defaults) to avoid
     # dumping all default values back to the file
@@ -6744,7 +6795,7 @@ def set_config_value(key: str, value: str):
                 user_config = yaml.safe_load(f) or {}
         except Exception:
             user_config = {}
-
+    
     # Handle nested keys (e.g., "tts.provider") including numeric list
     # indices (e.g., "custom_providers.0.api_key").  Delegates to
     # _set_nested which preserves list-typed nodes; before #17876 the
@@ -6761,19 +6812,37 @@ def set_config_value(key: str, value: str):
         value = float(value)
 
     _set_nested(user_config, key, value)
-
+    # Normalize the api_base → base_url alias at set-time too (issue #8919),
+    # so a fresh `hermes config set model.api_base ...` lands on the canonical
+    # key the runtime resolver actually reads, instead of being silently
+    # ignored. Mirrors the load-time migration in _normalize_root_model_keys.
+    _alias_norm = key.strip().lower()
+    if _alias_norm in ("model.api_base", "api_base"):
+        user_config = _normalize_root_model_keys(user_config)
+        key = "model.base_url"
+        print("  (note: 'api_base' is an alias — saved as model.base_url)")
     # Write only user config back (not the full merged defaults)
     ensure_hermes_home()
     from utils import atomic_yaml_write
     atomic_yaml_write(config_path, user_config, sort_keys=False)
-
+    
     # Keep .env in sync for keys that terminal_tool reads directly from env vars.
     # config.yaml is authoritative, but terminal_tool only reads TERMINAL_ENV etc.
     env_var = terminal_config_env_var_for_key(key)
     if env_var and key != "terminal.cwd":
         save_env_value(env_var, _terminal_env_value(value))
 
-    print(f"✓ Set {key} = {value} in {config_path}")
+    # Mask the echoed value when the (possibly nested) key is credential-shaped
+    # — e.g. `hermes config set model.api_key cfut_...` routes to config.yaml
+    # (lowercase, so it misses the .env api_keys list above) and would otherwise
+    # print the raw secret to the terminal.
+    _leaf_key = key.rsplit(".", 1)[-1].lower()
+    if _leaf_key in _SECRET_CONFIG_KEYS and isinstance(value, str) and value:
+        from agent.redact import mask_secret
+        _display_value = mask_secret(value)
+    else:
+        _display_value = value
+    print(f"✓ Set {key} = {_display_value} in {config_path}")
 
 
 # =============================================================================
@@ -6783,13 +6852,13 @@ def set_config_value(key: str, value: str):
 def config_command(args):
     """Handle config subcommands."""
     subcmd = getattr(args, 'config_command', None)
-
+    
     if subcmd is None or subcmd == "show":
         show_config()
-
+    
     elif subcmd == "edit":
         edit_config()
-
+    
     elif subcmd == "set":
         key = getattr(args, 'key', None)
         value = getattr(args, 'value', None)
@@ -6802,81 +6871,81 @@ def config_command(args):
             print("  hermes config set OPENROUTER_API_KEY sk-or-...")
             sys.exit(1)
         set_config_value(key, value)
-
+    
     elif subcmd == "path":
         print(get_config_path())
-
+    
     elif subcmd == "env-path":
         print(get_env_path())
-
+    
     elif subcmd == "migrate":
         print()
         print(color("🔄 Checking configuration for updates...", Colors.CYAN, Colors.BOLD))
         print()
-
+        
         # Check what's missing
         missing_env = get_missing_env_vars(required_only=False)
         missing_config = get_missing_config_fields()
         current_ver, latest_ver = check_config_version()
-
+        
         if not missing_env and not missing_config and current_ver >= latest_ver:
             print(color("✓ Configuration is up to date!", Colors.GREEN))
             print()
             return
-
+        
         # Show what needs to be updated
         if current_ver < latest_ver:
             print(f"  Config version: {current_ver} → {latest_ver}")
-
+        
         if missing_config:
             print(f"\n  {len(missing_config)} new config option(s) will be added with defaults")
-
+        
         required_missing = [v for v in missing_env if v.get("is_required")]
         optional_missing = [
             v for v in missing_env
             if not v.get("is_required") and not v.get("advanced")
         ]
-
+        
         if required_missing:
             print(f"\n  ⚠️  {len(required_missing)} required API key(s) missing:")
             for var in required_missing:
                 print(f"     • {var['name']}")
-
+        
         if optional_missing:
             print(f"\n  ℹ️  {len(optional_missing)} optional API key(s) not configured:")
             for var in optional_missing:
                 tools = var.get("tools", [])
                 tools_str = f" (enables: {', '.join(tools[:2])})" if tools else ""
                 print(f"     • {var['name']}{tools_str}")
-
+        
         print()
-
+        
         # Run migration
         results = migrate_config(interactive=True, quiet=False)
-
+        
         print()
         if results["env_added"] or results["config_added"]:
             print(color("✓ Configuration updated!", Colors.GREEN))
-
+        
         if results["warnings"]:
             print()
             for warning in results["warnings"]:
                 print(color(f"  ⚠️  {warning}", Colors.YELLOW))
-
+        
         print()
-
+    
     elif subcmd == "check":
         # Non-interactive check for what's missing
         print()
         print(color("📋 Configuration Status", Colors.CYAN, Colors.BOLD))
         print()
-
+        
         current_ver, latest_ver = check_config_version()
         if current_ver >= latest_ver:
             print(f"  Config version: {current_ver} ✓")
         else:
             print(color(f"  Config version: {current_ver} → {latest_ver} (update available)", Colors.YELLOW))
-
+        
         print()
         print(color("  Required:", Colors.BOLD))
         for var_name in REQUIRED_ENV_VARS:
@@ -6884,7 +6953,7 @@ def config_command(args):
                 print(f"    ✓ {var_name}")
             else:
                 print(color(f"    ✗ {var_name} (missing)", Colors.RED))
-
+        
         print()
         print(color("  Optional:", Colors.BOLD))
         for var_name, info in OPTIONAL_ENV_VARS.items():
@@ -6894,15 +6963,15 @@ def config_command(args):
                 tools = info.get("tools", [])
                 tools_str = f" → {', '.join(tools[:2])}" if tools else ""
                 print(color(f"    ○ {var_name}{tools_str}", Colors.DIM))
-
+        
         missing_config = get_missing_config_fields()
         if missing_config:
             print()
             print(color(f"  {len(missing_config)} new config option(s) available", Colors.YELLOW))
             print("    Run 'hermes config migrate' to add them")
-
+        
         print()
-
+    
     else:
         print(f"Unknown config command: {subcmd}")
         print()

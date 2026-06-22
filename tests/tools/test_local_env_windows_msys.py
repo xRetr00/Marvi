@@ -196,3 +196,69 @@ class TestExtractCwdFromOutputWindowsMsys:
             env._extract_cwd_from_output(result)
 
         assert env.cwd == str(new_dir)
+
+# ---------------------------------------------------------------------------
+# _quote_cwd_for_cd — backslash-to-forward-slash normalisation
+# ---------------------------------------------------------------------------
+
+from tools.environments.base import BaseEnvironment
+
+
+class TestQuoteCwdForCdBackslashFix:
+    """On Windows, Git Bash cannot ``cd`` to backslash paths like
+    ``C:\\Users\\xRetro`` — bash interprets backslashes as escape
+    characters and the path is not found.  ``_quote_cwd_for_cd`` must
+    normalise backslashes to forward slashes before quoting so the
+    resulting ``cd`` command works in Git Bash / MSYS bash.
+    """
+
+    def test_windows_backslash_path_converted_to_forward_slash(self):
+        result = BaseEnvironment._quote_cwd_for_cd(r"C:\Users\xRetro")
+        # The quoted result must contain forward slashes, not backslashes
+        assert "\\" not in result, f"Backslash found in result: {result!r}"
+        assert "C:/Users/xRetro" in result, f"Expected forward-slash path in: {result!r}"
+
+    def test_windows_nested_backslash_path_converted(self):
+        result = BaseEnvironment._quote_cwd_for_cd(
+            r"C:\Users\xRetro\AppData\Local"
+        )
+        assert "\\" not in result, f"Backslash found in result: {result!r}"
+        assert "C:/Users/xRetro/AppData/Local" in result
+
+    def test_posix_path_unchanged(self):
+        result = BaseEnvironment._quote_cwd_for_cd("/home/user")
+        assert result == "/home/user"
+
+    def test_msys_path_unchanged(self):
+        result = BaseEnvironment._quote_cwd_for_cd("/c/Users/xRetro")
+        assert result == "/c/Users/xRetro"
+
+    def test_tilde_preserved(self):
+        assert BaseEnvironment._quote_cwd_for_cd("~") == "~"
+
+    def test_tilde_with_suffix_preserved(self):
+        result = BaseEnvironment._quote_cwd_for_cd("~/projects")
+        assert "$HOME" in result
+        assert "projects" in result
+
+    def test_empty_string(self):
+        assert BaseEnvironment._quote_cwd_for_cd("") == "''"
+
+    def test_wrap_command_cd_uses_forward_slash_on_windows(self):
+        """End-to-end: ``_wrap_command`` must emit a ``cd`` with
+        forward-slash paths when the cwd contains backslashes."""
+        from unittest.mock import MagicMock
+        env = MagicMock(spec=BaseEnvironment)
+        env._snapshot_ready = True
+        env._snapshot_path = "/tmp/snap.sh"
+        env._cwd_file = "/tmp/cwd.txt"
+        env._cwd_marker = "%%CWD%%"
+        env._quote_cwd_for_cd = BaseEnvironment._quote_cwd_for_cd
+
+        wrapped = BaseEnvironment._wrap_command(
+            env, "echo hello", r"C:\Users\xRetro"
+        )
+        # The cd line must not contain backslash paths
+        cd_line = [l for l in wrapped.split("\n") if "builtin cd" in l][0]
+        assert "\\" not in cd_line, f"Backslash in cd line: {cd_line!r}"
+        assert "C:/Users/xRetro" in cd_line, f"Forward slash missing: {cd_line!r}"

@@ -359,7 +359,7 @@ class BaseEnvironment(ABC):
         # Restore configured cwd after login shell profile scripts, which may
         # change the working directory (e.g. bashrc `cd ~`).  Without this,
         # pwd -P captures the profile's directory, not terminal.cwd.
-        _quoted_cwd = shlex.quote(self.cwd)
+        _quoted_cwd = shlex.quote(self.cwd.replace("\\", "/") if "\\" in self.cwd else self.cwd)
         # Quote the snapshot / cwd-file paths so Git Bash on Windows handles
         # ``C:/Users/...``-shaped paths without glob-splitting the colon or
         # tripping on drive letters.  On POSIX this is a no-op (no colons /
@@ -412,6 +412,13 @@ class BaseEnvironment(ABC):
             return "$HOME"
         if cwd.startswith("~/"):
             return f"$HOME/{shlex.quote(cwd[2:])}"
+        # On Windows, Git Bash / MSYS bash cannot ``cd`` to backslash paths
+        # (``C:\\Users\\x`` -> "No such file or directory").  Forward slashes
+        # work in both Git Bash and native Windows APIs, so normalise before
+        # quoting.  On POSIX this is a no-op — backslashes in directory names
+        # are vanishingly rare in practice and shlex.quote handles them.
+        if "\\" in cwd:
+            cwd = cwd.replace("\\", "/")
         return shlex.quote(cwd)
 
     def _wrap_command(self, command: str, cwd: str) -> str:

@@ -33,9 +33,9 @@ class TestGetHermesHome:
             os.environ.pop("HERMES_HOME", None)
             home = get_hermes_home()
             expected = (
-                Path(os.environ["LOCALAPPDATA"]) / "marvi"
+                Path(os.environ["LOCALAPPDATA"]) / "hermes"
                 if os.name == "nt"
-                else Path.home() / ".marvi"
+                else Path.home() / ".hermes"
             )
             assert home == expected
 
@@ -68,45 +68,29 @@ class TestEnsureHermesHome:
             ensure_hermes_home()
             assert soul_path.read_text(encoding="utf-8") == "custom soul"
 
-    def test_migrates_legacy_comment_only_soul_template(self, tmp_path):
+    def test_upgrades_legacy_template_soul_md(self, tmp_path):
+        # Older installers seeded a comment-only scaffold that shadowed the
+        # runtime default. A SOUL.md still matching that scaffold carries no
+        # user persona and should be upgraded in place to DEFAULT_SOUL_MD.
+        from hermes_cli.default_soul import DEFAULT_SOUL_MD, _LEGACY_TEMPLATE_SOULS
+
         with patch.dict(os.environ, {"HERMES_HOME": str(tmp_path)}):
             soul_path = tmp_path / "SOUL.md"
-            soul_path.write_text(
-                """# Marvi Agent Persona
-
-<!--
-This file defines the agent's personality and tone.
-The agent will embody whatever you write here.
-Edit this to customize how Hermes communicates with you.
-
-Examples:
-  - "You are a warm, playful assistant who uses kaomoji occasionally."
-  - "You are a concise technical expert. No fluff, just facts."
-  - "You speak like a friendly coworker who happens to know everything."
-
-This file is loaded fresh each message -- no restart needed.
-Delete the contents (or this file) to use the default personality.
--->
-""",
-                encoding="utf-8",
-            )
-
+            soul_path.write_text(_LEGACY_TEMPLATE_SOULS[0] + "\n", encoding="utf-8")
             ensure_hermes_home()
+            assert soul_path.read_text(encoding="utf-8") == DEFAULT_SOUL_MD
 
-            content = soul_path.read_text(encoding="utf-8")
-            assert content.startswith("You are Marvi Agent")
-            assert "xRetro Labs Research" in content
-            assert "Hermes communicates" not in content
+    def test_preserves_legacy_template_with_user_persona(self, tmp_path):
+        # If the user typed a persona alongside the scaffold, the content no
+        # longer matches the known empty template — leave it untouched.
+        from hermes_cli.default_soul import _LEGACY_TEMPLATE_SOULS
 
-    def test_preserves_custom_soul_that_mentions_legacy_brand(self, tmp_path):
+        mixed = _LEGACY_TEMPLATE_SOULS[0] + "\nYou are a helpful pirate."
         with patch.dict(os.environ, {"HERMES_HOME": str(tmp_path)}):
             soul_path = tmp_path / "SOUL.md"
-            custom = "You are a custom persona. Explain Hermes compatibility when asked."
-            soul_path.write_text(custom, encoding="utf-8")
-
+            soul_path.write_text(mixed, encoding="utf-8")
             ensure_hermes_home()
-
-            assert soul_path.read_text(encoding="utf-8") == custom
+            assert soul_path.read_text(encoding="utf-8") == mixed
 
 
 class TestLoadConfigDefaults:

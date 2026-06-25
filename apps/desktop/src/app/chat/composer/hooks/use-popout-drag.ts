@@ -10,6 +10,7 @@ import {
 import {
   POPOUT_ESTIMATED_HEIGHT,
   POPOUT_WIDTH_REM,
+  readPopoutBounds,
   setComposerPopoutPosition,
   type PopoutPosition,
   type PopoutSize
@@ -148,7 +149,7 @@ export function useComposerPopoutGestures({
   const beginFloatDrag = useCallback(
     (state: PressState, clientX: number, clientY: number, next: PopoutPosition, size?: PopoutSize) => {
       clearTimer()
-      const clamped = setComposerPopoutPosition(next, { size })
+      const clamped = setComposerPopoutPosition(next, { area: readPopoutBounds(composerRef.current), size })
       liveRef.current = clamped
 
       state.mode = 'float'
@@ -160,7 +161,7 @@ export function useComposerPopoutGestures({
 
       setDragging(true)
     },
-    [clearTimer]
+    [clearTimer, composerRef]
   )
 
   const peelOffFromDock = useCallback(
@@ -267,7 +268,7 @@ export function useComposerPopoutGestures({
           bottom: state.startBottom - (pending.y - state.startY),
           right: state.startRight - (pending.x - state.startX)
         },
-        { size }
+        { area: readPopoutBounds(composer), size }
       )
 
       if (composer) {
@@ -329,7 +330,7 @@ export function useComposerPopoutGestures({
         } else {
           // Persist the resting position once, on release — never per move.
           const size = composer ? { height: composer.offsetHeight, width: composer.offsetWidth } : undefined
-          setComposerPopoutPosition(liveRef.current, { persist: true, size })
+          setComposerPopoutPosition(liveRef.current, { area: readPopoutBounds(composer), persist: true, size })
         }
       }
 

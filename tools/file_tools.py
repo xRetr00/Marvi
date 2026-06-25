@@ -23,6 +23,29 @@ logger = logging.getLogger(__name__)
 
 _EXPECTED_WRITE_ERRNOS = {errno.EACCES, errno.EPERM, errno.EROFS}
 
+
+def _expand_tilde(path: str) -> str:
+    """Expand ``~`` using the effective profile home when available.
+
+    In-process file tools share the gateway process's HOME, which may differ
+    from the profile-specific HOME that interactive CLI sessions use.  This
+    mirrors ``hermes_constants.get_subprocess_home()`` so that ``~`` resolves
+    consistently regardless of whether the tool runs interactively or inside a
+    gateway-driven cron job (#48552).
+    """
+    if not path or "~" not in path:
+        return path
+    try:
+        from hermes_constants import get_subprocess_home
+
+        home = get_subprocess_home()
+    except Exception:
+        home = None
+    if home and (path == "~" or path.startswith("~/")):
+        return home if path == "~" else os.path.join(home, path[2:])
+    return os.path.expanduser(path)
+
+
 # ---------------------------------------------------------------------------
 # Read-size guard: cap the character count returned to the model.
 # We're model-agnostic so we can't count tokens; characters are a safe proxy.
@@ -107,7 +130,7 @@ def _sentinel_free_abs_cwd(raw: str | None) -> str | None:
     raw = str(raw or "").strip()
     if raw.lower() in _TERMINAL_CWD_SENTINELS:
         return None
-    expanded = os.path.expanduser(raw)
+    expanded = _expand_tilde(raw)
     if not os.path.isabs(expanded):
         return None
     return expanded
@@ -222,7 +245,7 @@ def _resolve_base_dir(task_id: str = "default") -> Path:
     """
     root = _authoritative_workspace_root(task_id)
     if root:
-        base = Path(root).expanduser()
+        base = Path(_expand_tilde(root))
     else:
         base = Path(os.getcwd())
     if not base.is_absolute():
@@ -239,7 +262,7 @@ def _resolve_path_for_task(filepath: str, task_id: str = "default") -> Path:
     See :func:`_resolve_base_dir` for how the base is chosen. Absolute input
     paths are returned resolved-but-unanchored.
     """
-    p = Path(filepath).expanduser()
+    p = Path(_expand_tilde(filepath))
     if p.is_absolute():
         return p.resolve()
     return (_resolve_base_dir(task_id) / p).resolve()
@@ -261,12 +284,12 @@ def _path_resolution_warning(filepath: str, resolved: Path, task_id: str = "defa
     (no ``cd`` run yet) is warned on the very first write.
     """
     try:
-        if Path(filepath).expanduser().is_absolute():
+        if Path(_expand_tilde(filepath)).is_absolute():
             return None
         workspace_root = _authoritative_workspace_root(task_id)
         if not workspace_root:
             return None  # No authoritative workspace root to compare against.
-        root = Path(workspace_root).expanduser().resolve()
+        root = Path(_expand_tilde(workspace_root)).resolve()
         # Is `resolved` inside `root`?
         try:
             resolved.relative_to(root)
@@ -285,7 +308,7 @@ def _path_resolution_warning(filepath: str, resolved: Path, task_id: str = "defa
 
 def _is_blocked_device_path(path: str) -> bool:
     """Return True for concrete device/fd paths that can hang reads."""
-    normalized = os.path.normpath(os.path.expanduser(path))
+    normalized = os.path.normpath(_expand_tilde(path))
     if normalized in _BLOCKED_DEVICE_PATHS:
         return True
     # /proc/self/fd/0-2 and /proc/<pid>/fd/0-2 are Linux aliases for stdio
@@ -309,7 +332,7 @@ def _is_blocked_device(filepath: str, base_dir: str | Path | None = None) -> boo
     they resolve to terminal-specific paths. Then check each symlink hop before
     the final resolved path so aliases to devices cannot bypass the guard.
     """
-    expanded = os.path.expanduser(filepath)
+    expanded = _expand_tilde(filepath)
     if base_dir is not None and not os.path.isabs(expanded):
         expanded = os.path.join(os.fspath(base_dir), expanded)
     normalized = os.path.normpath(expanded)
@@ -365,7 +388,7 @@ def _get_hermes_config_resolved() -> str | None:
         _hermes_config_resolved = str(get_config_path().resolve())
     except Exception:
         try:
-            _hermes_config_resolved = str(Path("~/.hermes/config.yaml").expanduser().resolve())
+            _hermes_config_resolved = str(Path(_expand_tilde("~/.hermes/config.yaml")).resolve())
         except Exception:
             _hermes_config_resolved = None
     return _hermes_config_resolved
@@ -377,7 +400,7 @@ def _check_sensitive_path(filepath: str, task_id: str = "default") -> str | None
         resolved = str(_resolve_path_for_task(filepath, task_id))
     except (OSError, ValueError):
         resolved = filepath
-    normalized = os.path.normpath(os.path.expanduser(filepath))
+    normalized = os.path.normpath(_expand_tilde(filepath))
     _err = (
         f"Refusing to write to sensitive system path: {filepath}\n"
         "Use the terminal tool with sudo if you need to modify system files."
@@ -1243,8 +1266,43 @@ def _check_file_staleness(filepath: str, task_id: str) -> str | None:
     return None
 
 
+def _mark_verification_stale(
+    task_id: str,
+    resolved_paths: list[str],
+    session_id: str | None = None,
+) -> None:
+    """Best-effort note that successful edits made prior verification stale."""
+    paths = [p for p in resolved_paths if p]
+    if not paths:
+        return
+    try:
+        from agent.coding_context import project_facts_for
+        from agent.verification_evidence import mark_workspace_edited
+
+        cwd = None
+        for path in paths:
+            try:
+                candidate = str(Path(path).parent)
+            except Exception:
+                continue
+            if project_facts_for(candidate):
+                cwd = candidate
+                break
+        if cwd is None:
+            cwd = _authoritative_workspace_root(task_id)
+        if cwd is None:
+            try:
+                cwd = str(Path(paths[0]).parent)
+            except Exception:
+                cwd = None
+        mark_workspace_edited(session_id=session_id or task_id, cwd=cwd, paths=paths)
+    except Exception:
+        logger.debug("verification stale marker failed", exc_info=True)
+
+
 def write_file_tool(path: str, content: str, task_id: str = "default",
-                    cross_profile: bool = False) -> str:
+                    cross_profile: bool = False,
+                    session_id: str | None = None) -> str:
     """Write content to a file.
 
     ``cross_profile`` opts out of the soft cross-Hermes-profile guard. The
@@ -1282,6 +1340,8 @@ def write_file_tool(path: str, content: str, task_id: str = "default",
             result_dict = result.to_dict()
             if stale_warning:
                 result_dict["_warning"] = stale_warning
+            if not result_dict.get("error"):
+                _mark_verification_stale(task_id, [path], session_id=session_id)
             _update_read_timestamp(path, task_id)
             return json.dumps(result_dict, ensure_ascii=False)
 
@@ -1308,6 +1368,7 @@ def write_file_tool(path: str, content: str, task_id: str = "default",
             result_dict["resolved_path"] = _resolved
             if not result_dict.get("error"):
                 result_dict["files_modified"] = [_resolved]
+                _mark_verification_stale(task_id, [_resolved], session_id=session_id)
             # Refresh stamps after the successful write so consecutive
             # writes by this task don't trigger false staleness warnings.
             _update_read_timestamp(path, task_id)
@@ -1324,7 +1385,8 @@ def write_file_tool(path: str, content: str, task_id: str = "default",
 
 def patch_tool(mode: str = "replace", path: str = None, old_string: str = None,
                new_string: str = None, replace_all: bool = False, patch: str = None,
-               task_id: str = "default", cross_profile: bool = False) -> str:
+               task_id: str = "default", cross_profile: bool = False,
+               session_id: str | None = None) -> str:
     """Patch a file using replace mode or V4A patch format.
 
     ``cross_profile`` opts out of the soft cross-Hermes-profile guard for
@@ -1442,6 +1504,7 @@ def patch_tool(mode: str = "replace", path: str = None, old_string: str = None,
                 result_dict["files_modified"] = _resolved_modified
                 if len(_resolved_modified) == 1:
                     result_dict["resolved_path"] = _resolved_modified[0]
+                _mark_verification_stale(task_id, _resolved_modified, session_id=session_id)
                 for _p in _paths_to_check:
                     _update_read_timestamp(_p, task_id)
                     _r = _path_to_resolved.get(_p)
@@ -1707,6 +1770,7 @@ def _handle_write_file(args, **kw):
     return write_file_tool(
         path=args["path"], content=args["content"], task_id=tid,
         cross_profile=bool(args.get("cross_profile", False)),
+        session_id=kw.get("session_id"),
     )
 
 
@@ -1717,6 +1781,7 @@ def _handle_patch(args, **kw):
         old_string=args.get("old_string"), new_string=args.get("new_string"),
         replace_all=args.get("replace_all", False), patch=args.get("patch"), task_id=tid,
         cross_profile=bool(args.get("cross_profile", False)),
+        session_id=kw.get("session_id"),
     )
 
 

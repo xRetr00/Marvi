@@ -35,6 +35,7 @@ from agent.turn_context import build_turn_context
 from agent.turn_retry_state import TurnRetryState
 from agent.memory_manager import build_memory_context_block
 from agent.message_sanitization import (
+    close_interrupted_tool_sequence,
     _repair_tool_call_arguments,
     _sanitize_messages_non_ascii,
     _sanitize_messages_surrogates,
@@ -55,7 +56,7 @@ from agent.model_metadata import (
 )
 from agent.process_bootstrap import _install_safe_stdio
 from agent.prompt_caching import apply_anthropic_cache_control
-from agent.retry_utils import jittered_backoff
+from agent.retry_utils import adaptive_rate_limit_backoff, jittered_backoff
 from agent.trajectory import has_incomplete_scratchpad
 from agent.usage_pricing import estimate_usage_cost, normalize_usage
 from hermes_constants import PARTIAL_STREAM_STUB_ID
@@ -1396,10 +1397,12 @@ def run_conversation(
                     while time.time() < sleep_end:
                         if agent._interrupt_requested:
                             agent._vprint(f"{agent.log_prefix}⚡ Interrupt detected during retry wait, aborting.", force=True)
+                            _interrupt_text = f"Operation interrupted during retry ({_failure_hint}, attempt {retry_count}/{max_retries})."
+                            close_interrupted_tool_sequence(messages, _interrupt_text)
                             agent._persist_session(messages, conversation_history)
                             agent.clear_interrupt()
                             return {
-                                "final_response": f"Operation interrupted during retry ({_failure_hint}, attempt {retry_count}/{max_retries}).",
+                                "final_response": _interrupt_text,
                                 "messages": messages,
                                 "api_calls": api_call_count,
                                 "completed": False,
@@ -2663,10 +2666,12 @@ def run_conversation(
                 # Check for interrupt before deciding to retry
                 if agent._interrupt_requested:
                     agent._vprint(f"{agent.log_prefix}⚡ Interrupt detected during error handling, aborting retries.", force=True)
+                    _interrupt_text = f"Operation interrupted: handling API error ({error_type}: {agent._clean_error_message(str(api_error))})."
+                    close_interrupted_tool_sequence(messages, _interrupt_text)
                     agent._persist_session(messages, conversation_history)
                     agent.clear_interrupt()
                     return {
-                        "final_response": f"Operation interrupted: handling API error ({error_type}: {agent._clean_error_message(str(api_error))}).",
+                        "final_response": _interrupt_text,
                         "messages": messages,
                         "api_calls": api_call_count,
                         "completed": False,
@@ -3537,16 +3542,38 @@ def run_conversation(
                             except (TypeError, ValueError):
                                 pass
                 wait_time = _retry_after if _retry_after else jittered_backoff(retry_count, base_delay=2.0, max_delay=60.0)
+                _backoff_policy = None
+                if is_rate_limited and not _retry_after:
+                    wait_time, _backoff_policy = adaptive_rate_limit_backoff(
+                        retry_count,
+                        base_url=str(_base),
+                        model=_model,
+                        error=api_error,
+                        default_wait=wait_time,
+                    )
                 if is_rate_limited:
-                    agent._buffer_status(f"⏱️ Rate limited. Waiting {wait_time:.1f}s (attempt {retry_count + 1}/{max_retries})...")
+                    _policy_note = ""
+                    if _backoff_policy == "zai_coding_overload_long":
+                        _policy_note = " (Z.AI Coding overload adaptive long backoff)"
+                    elif _backoff_policy == "zai_coding_overload_short":
+                        _policy_note = " (Z.AI Coding overload short retry)"
+                    _rate_limit_status = f"⏱️ Rate limited. Waiting {wait_time:.1f}s (attempt {retry_count + 1}/{max_retries}){_policy_note}..."
+                    # Normal retries are buffered to avoid noisy transient chatter. Long
+                    # Z.AI Coding waits are different: they can last minutes, so surface
+                    # progress immediately instead of making the TUI look frozen.
+                    if _backoff_policy == "zai_coding_overload_long":
+                        agent._emit_status(_rate_limit_status)
+                    else:
+                        agent._buffer_status(_rate_limit_status)
                 else:
                     agent._buffer_status(f"⏳ Retrying in {wait_time:.1f}s (attempt {retry_count}/{max_retries})...")
                 logger.warning(
-                    "Retrying API call in %ss (attempt %s/%s) %s error=%s",
+                    "Retrying API call in %ss (attempt %s/%s) %s policy=%s error=%s",
                     wait_time,
                     retry_count,
                     max_retries,
                     agent._client_log_context(),
+                    _backoff_policy or "default",
                     api_error,
                 )
                 # Sleep in small increments so we can respond to interrupts quickly
@@ -3556,10 +3583,12 @@ def run_conversation(
                 while time.time() < sleep_end:
                     if agent._interrupt_requested:
                         agent._vprint(f"{agent.log_prefix}⚡ Interrupt detected during retry wait, aborting.", force=True)
+                        _interrupt_text = f"Operation interrupted: retrying API call after error (retry {retry_count}/{max_retries})."
+                        close_interrupted_tool_sequence(messages, _interrupt_text)
                         agent._persist_session(messages, conversation_history)
                         agent.clear_interrupt()
                         return {
-                            "final_response": f"Operation interrupted: retrying API call after error (retry {retry_count}/{max_retries}).",
+                            "final_response": _interrupt_text,
                             "messages": messages,
                             "api_calls": api_call_count,
                             "completed": False,
@@ -4050,6 +4079,19 @@ def run_conversation(
 
                 messages.append(assistant_msg)
                 agent._emit_interim_assistant_message(assistant_msg)
+                try:
+                    # Persist the assistant tool-call turn before any tool
+                    # side effects run. If a destructive tool restarts or
+                    # terminates Hermes mid-turn, resume logic still sees the
+                    # exact tool-call block that already executed.
+                    agent._flush_messages_to_session_db(messages, conversation_history)
+                except Exception as exc:
+                    logger.warning(
+                        "Incremental tool-call persistence failed before execution "
+                        "(session=%s): %s",
+                        agent.session_id or "none",
+                        exc,
+                    )
 
                 # Close any open streaming display (response box, reasoning
                 # box) before tool execution begins.  Intermediate turns may
@@ -4479,9 +4521,10 @@ def run_conversation(
                 final_msg = agent._build_assistant_message(assistant_message, finish_reason)
 
                 # Pop thinking-only prefill and empty-response retry
-                # scaffolding before appending the final response.  These
-                # internal turns are only for the next API retry and should
-                # not become durable transcript context.
+                # scaffolding before appending either a final response or a
+                # verification-stop follow-up. These internal turns are only
+                # for the next API retry and should not become durable
+                # transcript context.
                 while (
                     messages
                     and isinstance(messages[-1], dict)
@@ -4492,6 +4535,44 @@ def run_conversation(
                     )
                 ):
                     messages.pop()
+
+                try:
+                    from agent.verification_stop import (
+                        build_verify_on_stop_nudge,
+                        verify_on_stop_enabled,
+                    )
+
+                    if verify_on_stop_enabled():
+                        _verify_nudge = build_verify_on_stop_nudge(
+                            session_id=getattr(agent, "session_id", None),
+                            changed_paths=getattr(agent, "_turn_file_mutation_paths", set()),
+                            attempts=getattr(agent, "_verification_stop_nudges", 0),
+                        )
+                    else:
+                        _verify_nudge = None
+                except Exception:
+                    logger.debug("verification stop-loop check failed", exc_info=True)
+                    _verify_nudge = None
+
+                if _verify_nudge:
+                    agent._verification_stop_nudges = (
+                        getattr(agent, "_verification_stop_nudges", 0) + 1
+                    )
+                    final_msg["finish_reason"] = "verification_required"
+                    messages.append(final_msg)
+                    # Keep the attempted final answer in model history so the
+                    # synthetic user nudge preserves role alternation, but do
+                    # not surface it to the user as an interim answer. The
+                    # whole point of this guard is to prevent premature
+                    # "done" claims before checks run.
+                    messages.append({
+                        "role": "user",
+                        "content": _verify_nudge,
+                        "_verification_stop_synthetic": True,
+                    })
+                    agent._session_messages = messages
+                    agent._emit_status("↻ Verification required before finishing")
+                    continue
 
                 messages.append(final_msg)
                 

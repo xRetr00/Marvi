@@ -44,6 +44,7 @@ import {
   $composerPopoutPosition,
   $composerPoppedOut,
   POPOUT_WIDTH_REM,
+  readPopoutBounds,
   setComposerPoppedOut,
   setComposerPopoutPosition
 } from '@/store/composer-popout'
@@ -59,6 +60,7 @@ import {
   updateQueuedPrompt
 } from '@/store/composer-queue'
 import { $statusItemsBySession } from '@/store/composer-status'
+import { $previewStatusBySession } from '@/store/preview-status'
 import { notify } from '@/store/notifications'
 import { $gatewayState, $messages, setSessionPickerOpen } from '@/store/session'
 import { $threadScrolledUp } from '@/store/thread-scroll'
@@ -77,7 +79,8 @@ import {
   markActiveComposer,
   onComposerFocusRequest,
   onComposerInsertRefsRequest,
-  onComposerInsertRequest
+  onComposerInsertRequest,
+  onComposerVoiceToggleRequest
 } from './focus'
 import { HelpHint } from './help-hint'
 import { useAtCompletions } from './hooks/use-at-completions'
@@ -85,7 +88,6 @@ import { useComposerPopoutGestures } from './hooks/use-popout-drag'
 import { useSlashCompletions } from './hooks/use-slash-completions'
 import { useVoiceConversation } from './hooks/use-voice-conversation'
 import { useVoiceRecorder } from './hooks/use-voice-recorder'
-import { useWakeWord } from './hooks/use-wake-word'
 import {
   dragHasAttachments,
   droppedFileInlineRefs,
@@ -110,7 +112,7 @@ import { detectTrigger, extractClipboardImageBlobs, textBeforeCaret, type Trigge
 import { ComposerTriggerPopover } from './trigger-popover'
 import type { ChatBarProps } from './types'
 import { UrlDialog } from './url-dialog'
-import { VoiceActivity, VoiceConversationActivity, VoicePlaybackActivity } from './voice-activity'
+import { VoiceActivity, VoicePlaybackActivity } from './voice-activity'
 
 const COMPOSER_STACK_BREAKPOINT_PX = 320
 
@@ -174,7 +176,6 @@ export function ChatBar({
   focusKey,
   gateway,
   maxRecordingSeconds = 120,
-  wakeWordConfig,
   queueSessionKey,
   sessionId,
   state,
@@ -193,9 +194,36 @@ export function ChatBar({
 }: ChatBarProps) {
   const aui = useAui()
   const draft = useAuiState(s => s.composer.text)
+
+  // assistant-ui's composer *mutators* (setText/send/…) throw "Composer is not
+  // available" when the thread's composer core isn't bound yet — and unlike the
+  // read path (`s.composer.text`, which is null-safe), there's no graceful
+  // fallback. There's a startup/thread-swap window where this ChatBar's mount
+  // effects (draft restore, clearDraft, external inserts) run before the core
+  // binds; the popout refactor (#49488) widened it by moving the composer out
+  // of the contain wrapper into a sibling of the thread, so the throw began
+  // surfacing as an uncaught error that wedged the desktop input (#49903).
+  //
+  // Guard every mutation: if the core isn't ready, no-op the assistant-ui write.
+  // The contentEditable DOM + draftRef already hold the text, and the
+  // draft⇄editor sync reconciles composer state once the core attaches, so the
+  // draft is never lost — only the (premature) state push is skipped.
+  const setComposerText = useCallback(
+    (value: string) => {
+      try {
+        aui.composer().setText(value)
+      } catch {
+        // Composer core not bound yet — DOM/draftRef carry the text; the sync
+        // effect re-applies it after bind. Swallow so the input stays usable.
+      }
+    },
+    [aui]
+  )
+
   const attachments = useStore($composerAttachments)
   const queuedPromptsBySession = useStore($queuedPromptsBySession)
   const statusItemsBySession = useStore($statusItemsBySession)
+  const previewStatusBySession = useStore($previewStatusBySession)
   const scrolledUp = useStore($threadScrolledUp)
   // Pop-out is a shared, persisted state — but secondary windows (the Ctrl+Shift+N
   // tiny window, subagent watch windows) always start docked and can't pop out:
@@ -218,8 +246,12 @@ export function ChatBar({
 
   const statusStackVisible = useMemo(
     () =>
-      queuedPrompts.length > 0 || (statusSessionId ? (statusItemsBySession[statusSessionId]?.length ?? 0) > 0 : false),
-    [queuedPrompts.length, statusItemsBySession, statusSessionId]
+      queuedPrompts.length > 0 ||
+      (statusSessionId
+        ? (statusItemsBySession[statusSessionId]?.length ?? 0) > 0 ||
+          (previewStatusBySession[statusSessionId]?.length ?? 0) > 0
+        : false),
+    [previewStatusBySession, queuedPrompts.length, statusItemsBySession, statusSessionId]
   )
 
   const composerRef = useRef<HTMLFormElement | null>(null)
@@ -333,7 +365,7 @@ export function ChatBar({
   }, [followUpPlaceholders, newSessionPlaceholders, sessionId])
 
   // When the transport is disabled it's because the gateway isn't open.
-  // Distinguish a cold start ("Starting Marvi...") from a dropped connection
+  // Distinguish a cold start ("Starting Hermes...") from a dropped connection
   // we're trying to restore. During reconnect, keep the textbox editable so a
   // flaky network doesn't block drafting; only submit/backend actions stay
   // disabled until the gateway is open again.
@@ -365,7 +397,7 @@ export function ChatBar({
       const next = `${base}${sep}${value}`
 
       draftRef.current = next
-      aui.composer().setText(next)
+      setComposerText(next)
 
       const editor = editorRef.current
 
@@ -376,7 +408,7 @@ export function ChatBar({
 
       setFocusRequestId(id => id + 1)
     },
-    [aui]
+    [setComposerText]
   )
 
   useEffect(() => {
@@ -544,9 +576,12 @@ export function ChatBar({
     syncComposerMetrics()
   }, [poppedOut, syncComposerMetrics])
 
-  // Keep the floating box on-screen: re-clamp (with the real measured size) when
-  // it pops out and whenever the window resizes — so a position persisted on a
-  // bigger/other monitor, or a shrunk window, can never strand it out of reach.
+  // Keep the floating box on-screen: re-clamp (with the real measured size +
+  // thread bounds) when it pops out and on every window resize — so a position
+  // persisted on a bigger/other monitor, a shrunk window, or now-wider sidebar
+  // can never strand it. The rAF pass re-clamps after layout settles (sidebar
+  // widths, fonts), so anyone loading in out of bounds is pulled back + saved
+  // even if the first measure was premature.
   useEffect(() => {
     if (!poppedOut) {
       return undefined
@@ -555,14 +590,18 @@ export function ChatBar({
     const reclamp = (persist: boolean) => {
       const el = composerRef.current
       const size = el ? { height: el.offsetHeight, width: el.offsetWidth } : undefined
-      setComposerPopoutPosition($composerPopoutPosition.get(), { persist, size })
+      setComposerPopoutPosition($composerPopoutPosition.get(), { area: readPopoutBounds(el), persist, size })
     }
 
     reclamp(true)
+    const raf = requestAnimationFrame(() => reclamp(true))
     const onResize = () => reclamp(false)
     window.addEventListener('resize', onResize)
 
-    return () => window.removeEventListener('resize', onResize)
+    return () => {
+      cancelAnimationFrame(raf)
+      window.removeEventListener('resize', onResize)
+    }
   }, [poppedOut])
 
   useEffect(() => {
@@ -579,7 +618,7 @@ export function ChatBar({
     const nextDraft = `${currentDraft}${sep}${text}`
 
     draftRef.current = nextDraft
-    aui.composer().setText(nextDraft)
+    setComposerText(nextDraft)
 
     // Push the new text into the contentEditable editor directly. Setting the
     // assistant-ui composer state alone is not enough: the draft→editor sync
@@ -612,7 +651,7 @@ export function ChatBar({
     }
 
     draftRef.current = nextDraft
-    aui.composer().setText(nextDraft)
+    setComposerText(nextDraft)
     requestMainFocus()
 
     return true
@@ -698,7 +737,7 @@ export function ChatBar({
 
     if (nextDraft !== draftRef.current) {
       draftRef.current = nextDraft
-      aui.composer().setText(nextDraft)
+      setComposerText(nextDraft)
     }
 
     window.setTimeout(refreshTrigger, 0)
@@ -824,7 +863,7 @@ export function ChatBar({
       renderComposerContents(editor, prefix)
       placeCaretEnd(editor)
       draftRef.current = composerPlainText(editor)
-      aui.composer().setText(draftRef.current)
+      setComposerText(draftRef.current)
       closeTrigger()
       runAction()
       requestMainFocus()
@@ -852,7 +891,7 @@ export function ChatBar({
 
     const finish = () => {
       draftRef.current = composerPlainText(editor)
-      aui.composer().setText(draftRef.current)
+      setComposerText(draftRef.current)
       requestMainFocus()
       keepTriggerOpen ? window.setTimeout(refreshTrigger, 0) : closeTrigger()
     }
@@ -1304,17 +1343,17 @@ export function ChatBar({
   }
 
   const clearDraft = useCallback(() => {
-    aui.composer().setText('')
+    setComposerText('')
     draftRef.current = ''
 
     if (editorRef.current) {
       editorRef.current.replaceChildren()
     }
-  }, [aui])
+  }, [setComposerText])
 
   const loadIntoComposer = (text: string, attachments: ComposerAttachment[]) => {
     draftRef.current = text
-    aui.composer().setText(text)
+    setComposerText(text)
     $composerAttachments.set(cloneAttachments(attachments))
 
     const editor = editorRef.current
@@ -1687,7 +1726,7 @@ export function ChatBar({
 
       if (domText !== draftRef.current) {
         draftRef.current = domText
-        aui.composer().setText(domText)
+        setComposerText(domText)
       }
     }
 
@@ -1806,20 +1845,23 @@ export function ChatBar({
     pendingResponse
   })
 
-  const wakeWord = useWakeWord({
-    busy,
-    config: wakeWordConfig,
-    enabled: Boolean(
-      wakeWordConfig?.enabled &&
-        state.voice.enabled &&
-        !disabled &&
-        !voiceConversationActive &&
-        voiceStatus === 'idle' &&
-        !hasComposerPayload
-    ),
-    onSubmit: submitVoiceTurn,
-    onTranscribeAudio
-  })
+  // The `composer.voice` hotkey (Ctrl+B) toggles the conversation. Starting
+  // with STT unconfigured lets the conversation surface its own "configure
+  // speech-to-text" notice rather than silently no-opping.
+  const toggleVoiceConversation = useCallback(() => {
+    if (disabled) {
+      return
+    }
+
+    if (voiceConversationActive) {
+      setVoiceConversationActive(false)
+      void conversation.end()
+    } else {
+      setVoiceConversationActive(true)
+    }
+  }, [conversation, disabled, voiceConversationActive])
+
+  useEffect(() => onComposerVoiceToggleRequest(toggleVoiceConversation), [toggleVoiceConversation])
 
   const contextMenu = (
     <ContextMenu
@@ -1862,7 +1904,6 @@ export function ChatBar({
       onSteer={steerDraft}
       state={state}
       voiceStatus={voiceStatus}
-      wakeWord={{ active: wakeWord.status !== 'idle', status: wakeWord.status }}
     />
   )
 
@@ -2081,7 +2122,6 @@ export function ChatBar({
                 data-slot="composer-fade"
               >
                 <VoiceActivity state={voiceActivityState} />
-                <VoiceConversationActivity status={conversation.status} transcript={conversation.transcriptPreview} />
                 <VoicePlaybackActivity />
                 {queueEdit && editingQueuedPrompt && (
                   <div className="flex items-center justify-between gap-2 rounded-lg border border-[color-mix(in_srgb,var(--dt-composer-ring)_32%,transparent)] bg-accent/18 px-2 py-1">

@@ -493,9 +493,7 @@ pip install 'mautrix[encryption]'
 
 
 # 或通过 hermes extras 安装
-
-pip install 'hermes-agent[matrix]'
-
+cd ~/.hermes/hermes-agent && uv pip install -e ".[matrix]"
 ```
 
 
@@ -855,9 +853,7 @@ pip install 'mautrix[encryption]'
 
 
 ```bash
-
-pip install 'hermes-agent[matrix]'
-
+cd ~/.hermes/hermes-agent && uv pip install -e ".[matrix]"
 ```
 
 
@@ -1179,8 +1175,7 @@ FROM python:3.11-slim
 
 
 RUN apt-get update && apt-get install -y libolm-dev && rm -rf /var/lib/apt/lists/*
-
-RUN pip install 'hermes-agent[matrix]'
+RUN cd ~/.hermes/hermes-agent && uv pip install -e ".[matrix]"
 
 
 

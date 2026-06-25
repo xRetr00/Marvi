@@ -68,7 +68,7 @@ export function ComposerControls({
   disabled: boolean
   hasComposerPayload: boolean
   state: ChatBarState
-  wakeWord: WakeWordProps
+  wakeWord?: WakeWordProps
   voiceStatus: VoiceStatus
   onDictate: () => void
   onSteer: () => void
@@ -94,7 +94,7 @@ export function ComposerControls({
   return (
     <div className="ml-auto flex shrink-0 items-center gap-(--composer-control-gap)">
       <ModelPill compact={compactModelPill} disabled={disabled} model={state.model} />
-      {wakeWord.active && <WakeWordPill disabled={disabled} status={wakeWord.status} />}
+      {wakeWord?.active && <WakeWordPill disabled={disabled} status={wakeWord.status} />}
       {/* While the agent runs and the user is typing, steer takes over the mic's
           slot rather than crowding the row with an extra button. */}
       {canSteer ? (

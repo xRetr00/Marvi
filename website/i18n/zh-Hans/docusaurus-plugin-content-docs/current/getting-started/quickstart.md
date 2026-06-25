@@ -96,27 +96,13 @@ description: "与 Hermes Agent 的第一次对话——从安装到开始聊天�
 
 ## 1. 安装 Hermes Agent
 
+### 在 macOS 或 Windows 上使用 Marvi Desktop 安装器（推荐）
 
+如需同时安装命令行与桌面应用，请从我们的官网[下载 Marvi Desktop 安装器](https://hermes-agent.nousresearch.com/)并运行。
 
-**方式 A — pip（最简单）：**
+### 不使用 Marvi Desktop：
 
-
-
-```bash
-
-pip install hermes-agent
-
-hermes postinstall     # 可选：安装 Node.js、浏览器、ripgrep、ffmpeg 并运行 setup
-
-```
-
-
-
-PyPI 发布版本跟踪带标签的版本（主/次版本发布），而非 `main` 分支上的每次提交。如需最新代码，请使用方式 B。
-
-
-
-**方式 B — git 安装器（跟踪 main 分支）：**
+仅安装命令行版本（跟踪 main 分支）：
 
 
 
@@ -128,7 +114,7 @@ curl -fsSL https://raw.githubusercontent.com/xRetr00/Marvi/main/scripts/install.
 
 ```
 
-
+安装脚本会在 `~/.hermes/hermes-agent` 创建一个受管理的隔离环境（独立的 uv 托管解释器和 venv），这是唯一受支持的安装方式 —— 包括开发用途。请勿使用 `pip install hermes-agent`。
 
 :::tip Android / Termux
 

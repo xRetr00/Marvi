@@ -667,6 +667,7 @@ class ContextCompressor(ContextEngine):
         api_key: Any = "",
         provider: str = "",
         api_mode: str = "",
+        max_tokens: int | None = None,
     ) -> None:
         """Update model info after a model switch or fallback activation."""
         self.model = model
@@ -675,8 +676,13 @@ class ContextCompressor(ContextEngine):
         self.provider = provider
         self.api_mode = api_mode
         self.context_length = context_length
+        # max_tokens=None here means "caller didn't specify" → keep the existing
+        # output reservation. A switch that genuinely changes the output budget
+        # passes the new value explicitly. (#43547)
+        if max_tokens is not None:
+            self.max_tokens = self._coerce_max_tokens(max_tokens)
         self.threshold_tokens = self._compute_threshold_tokens(
-            context_length, self.threshold_percent
+            context_length, self.threshold_percent, self.max_tokens,
         )
         # Recalculate token budgets for the new context length so the
         # compressor stays calibrated after a model switch (e.g. 200K → 32K).
@@ -716,11 +722,30 @@ class ContextCompressor(ContextEngine):
     _MIN_CTX_TRIGGER_RATIO = 0.85
 
     @staticmethod
-    def _compute_threshold_tokens(context_length: int, threshold_percent: float) -> int:
+    def _coerce_max_tokens(value: Any) -> int | None:
+        """Normalize a max_tokens value to a positive int or None.
+
+        Only a positive integer is a real output reservation. None (provider
+        default), non-numeric values, or <= 0 all mean "no reservation" — this
+        keeps the threshold arithmetic safe from non-int inputs (e.g. a test
+        MagicMock reaching ContextCompressor via a mocked parent agent).
+        """
+        if value is None:
+            return None
+        try:
+            ivalue = int(value)
+        except (TypeError, ValueError):
+            return None
+        return ivalue if ivalue > 0 else None
+
+    @staticmethod
+    def _compute_threshold_tokens(
+        context_length: int, threshold_percent: float, max_tokens: int | None = None,
+    ) -> int:
         """Compute the compaction trigger threshold in tokens.
 
-        The base value is ``context_length * threshold_percent``, floored at
-        ``MINIMUM_CONTEXT_LENGTH`` so large-context models don't compress
+        The base value is ``effective_input_budget * threshold_percent``, floored
+        at ``MINIMUM_CONTEXT_LENGTH`` so large-context models don't compress
         prematurely at 50%. BUT that floor degenerates at small windows: for a
         model whose ``context_length`` is at/below the minimum (e.g. a 64K
         local model), ``max(0.5*64000, 64000) == 64000`` makes the threshold
@@ -731,15 +756,28 @@ class ContextCompressor(ContextEngine):
         ``_MIN_CTX_TRIGGER_RATIO`` (85%) of the window — high enough that a
         small model uses most of its context before compacting, but below
         100% so compaction fires before the provider rejects the request.
+
+        The provider reserves ``max_tokens`` of output space out of the same
+        window, so the usable INPUT budget is ``context_length - max_tokens``.
+        With a large ``max_tokens`` (e.g. 65536 on a custom provider) the input
+        budget is materially smaller than the raw window, and a threshold based
+        on the full window lets the session hit a provider 400 before compaction
+        fires (#43547). The percentage and the degenerate-window check below both
+        operate on the effective input budget. ``max_tokens=None`` (provider
+        default) conservatively assumes no reservation (full window).
         """
-        pct_value = int(context_length * threshold_percent)
+        effective_window = context_length - (max_tokens or 0)
+        if effective_window <= 0:
+            effective_window = context_length
+        pct_value = int(effective_window * threshold_percent)
         floored = max(pct_value, MINIMUM_CONTEXT_LENGTH)
-        # If flooring pushed the threshold to/over the window it can never be
-        # reached. Trigger at 85% of the window so a minimum-context model
-        # rides most of its budget before compacting instead of wasting half.
-        if context_length > 0 and floored >= context_length:
-            return max(1, min(int(context_length * ContextCompressor._MIN_CTX_TRIGGER_RATIO),
-                              context_length - 1))
+        # If flooring pushed the threshold to/over the effective window it can
+        # never be reached. Trigger at 85% of the effective input budget so a
+        # minimum-context model rides most of its budget before compacting
+        # instead of wasting half.
+        if effective_window > 0 and floored >= effective_window:
+            return max(1, min(int(effective_window * ContextCompressor._MIN_CTX_TRIGGER_RATIO),
+                              effective_window - 1))
         return floored
 
     def __init__(
@@ -757,6 +795,7 @@ class ContextCompressor(ContextEngine):
         provider: str = "",
         api_mode: str = "",
         abort_on_summary_failure: bool = False,
+        max_tokens: int | None = None,
     ):
         self.model = model
         self.base_url = base_url
@@ -768,6 +807,13 @@ class ContextCompressor(ContextEngine):
         self.protect_last_n = protect_last_n
         self.summary_target_ratio = max(0.10, min(summary_target_ratio, 0.80))
         self.quiet_mode = quiet_mode
+        # Output-token reservation: the provider carves max_tokens out of the
+        # context window, so the usable input budget is context_length -
+        # max_tokens. None = provider default => assume no reservation. (#43547)
+        # Coerce defensively: only a positive int is a real reservation; any
+        # other value (None, non-numeric, <=0) means "no reservation" so the
+        # threshold arithmetic never sees a non-int (e.g. a test MagicMock).
+        self.max_tokens = self._coerce_max_tokens(max_tokens)
         # When True, summary-generation failure aborts compression entirely
         # (returns messages unchanged, sets _last_compress_aborted=True).
         # When False (default = historical behavior), insert a
@@ -786,7 +832,7 @@ class ContextCompressor(ContextEngine):
         # guards the degenerate case where the floor would equal/exceed the
         # window (small models), so auto-compression can still fire (#14690).
         self.threshold_tokens = self._compute_threshold_tokens(
-            self.context_length, threshold_percent
+            self.context_length, threshold_percent, self.max_tokens,
         )
         self.compression_count = 0
 
@@ -844,7 +890,15 @@ class ContextCompressor(ContextEngine):
         # This is independent of the abort_on_summary_failure config flag:
         # rotating on a broken credential is never the right behavior.
         self._last_summary_auth_failure: bool = False
-        # When a user-configured summary model fails and we recover by
+        # Set when summary generation ultimately fails due to a transient
+        # network/connection error (httpx/httpcore connection drop, premature
+        # stream close, etc.) — distinct from auth failures but treated the
+        # same way by compress(): ABORT and preserve the session unchanged
+        # rather than destroy the middle window for a deterministic
+        # "summary unavailable" marker. Retrying once the network recovers is
+        # strictly better than discarding context for a transient blip
+        # (#29559, #25585). Independent of abort_on_summary_failure.
+        self._last_summary_network_failure: bool = False
         # retrying on the main model, record the failure so gateway /
         # CLI callers can still warn the user even though compression
         # succeeded.  Silent recovery would hide the broken config.
@@ -1641,6 +1695,7 @@ This compaction should PRIORITISE preserving all information related to the focu
             self._summary_model_fallen_back = False
             self._last_summary_error = None
             self._last_summary_auth_failure = False
+            self._last_summary_network_failure = False
             return self._with_summary_prefix(summary)
         except Exception as e:
             # ``call_llm`` raises ``RuntimeError`` for two very different cases:
@@ -1773,6 +1828,15 @@ This compaction should PRIORITISE preserving all information related to the focu
             if len(err_text) > 220:
                 err_text = err_text[:217].rstrip() + "..."
             self._last_summary_error = err_text
+            # A terminal connection/network failure (we reach this branch only
+            # after any main-model fallback has already been tried or is
+            # unavailable). Flag it so compress() ABORTS and preserves the
+            # session unchanged instead of destroying the middle window for a
+            # placeholder marker — retrying once the network recovers is
+            # strictly better than dropping context (#29559, #25585). Mirrors
+            # the auth-failure carve-out; independent of abort_on_summary_failure.
+            if _is_streaming_closed:
+                self._last_summary_network_failure = True
             logger.warning(
                 "Failed to generate context summary: %s. "
                 "Further summary attempts paused for %d seconds.",
@@ -2336,6 +2400,7 @@ This compaction should PRIORITISE preserving all information related to the focu
         self._last_aux_model_failure_model = None
         self._last_compress_aborted = False
         self._last_summary_auth_failure = False
+        self._last_summary_network_failure = False
 
         # Manual /compress (force=True) bypasses the failure cooldown so the
         # user can retry immediately after an auto-compress abort.  Without
@@ -2452,15 +2517,21 @@ This compaction should PRIORITISE preserving all information related to the focu
         #           surface a warning.
         # Default is False (historical behavior).
         #
-        # EXCEPTION — auth failures always abort. A 401/403 from the summary
-        # call means the credential or endpoint is broken (invalid/blocked
-        # key, or a token pointed at the wrong inference host). Rotating into
+        # EXCEPTION — auth AND transient network failures always abort. A
+        # 401/403 from the summary call means the credential or endpoint is
+        # broken (invalid/blocked key, or a token pointed at the wrong
+        # inference host). A connection/stream-close error means the network
+        # blipped at the compaction moment (#29559). In BOTH cases rotating into
         # a child session with a placeholder summary on a broken credential
         # strands the user on a degraded session for zero benefit — every
         # subsequent call fails the same way. So when the failure was an auth
         # error we abort regardless of abort_on_summary_failure, preserving
         # the conversation unchanged until the credential is fixed.
-        if not summary and (self.abort_on_summary_failure or self._last_summary_auth_failure):
+        if not summary and (
+            self.abort_on_summary_failure
+            or self._last_summary_auth_failure
+            or self._last_summary_network_failure
+        ):
             n_skipped = compress_end - compress_start
             self._last_summary_dropped_count = 0  # nothing actually dropped
             self._last_summary_fallback_used = False
@@ -2473,6 +2544,15 @@ This compaction should PRIORITISE preserving all information related to the focu
                         "unchanged; the session was NOT rotated. Check your "
                         "provider credential / inference endpoint, then retry "
                         "with /compress or start fresh with /new.",
+                        n_skipped,
+                    )
+                elif self._last_summary_network_failure:
+                    logger.warning(
+                        "Summary generation failed with a network/connection "
+                        "error — aborting compression. %d message(s) preserved "
+                        "unchanged; the session was NOT rotated. This is "
+                        "transient: retry with /compress once connectivity "
+                        "recovers, or continue the conversation as-is.",
                         n_skipped,
                     )
                 else:

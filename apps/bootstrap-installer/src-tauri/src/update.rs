@@ -50,7 +50,7 @@ const DESKTOP_EXIT_POLL: Duration = Duration::from_millis(500);
 /// in prod). Two `run_update` tasks racing on `git stash` corrupt the working
 /// tree — one stashes the changes the other then can't find. Exactly one task
 /// may hold this flag at a time.
-static UPDATE_RUNNING: AtomicBool = AtomicBool::new(false);
+pub static UPDATE_RUNNING: AtomicBool = AtomicBool::new(false);
 
 /// Frontend → Rust: kick off the update flow. Mirrors `start_bootstrap`'s
 /// fire-and-forget shape; progress arrives on the `bootstrap` event channel.

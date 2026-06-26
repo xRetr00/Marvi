@@ -249,6 +249,7 @@ export function ConfigSettings({
       .catch(err => notifyError(err, c.failedLoad))
 
     return () => void (cancelled = true)
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- load once on mount; copy is stable
   }, [])
 
   useEffect(() => {
@@ -298,6 +299,7 @@ export function ConfigSettings({
     }, 550)
 
     return () => window.clearTimeout(t)
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- copy is stable; avoid re-scheduling autosave on locale change
   }, [config, onConfigSaved, saveVersion])
 
   const updateConfig = (next: HermesConfigRecord) => {
@@ -378,8 +380,7 @@ export function ConfigSettings({
     return <LoadingState label={c.loading} />
   }
 
-  const visibleFields =
-    activeSectionId === 'voice' ? fields.filter(([key]) => voiceFieldVisible(key, config)) : fields
+  const visibleFields = activeSectionId === 'voice' ? fields.filter(([key]) => voiceFieldVisible(key, config)) : fields
 
   return (
     <SettingsContent>

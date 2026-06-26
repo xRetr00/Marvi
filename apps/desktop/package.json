@@ -4,7 +4,7 @@
   "private": true,
   "version": "0.17.0",
   "description": "Native desktop shell for Marvi Agent.",
-  "author": "xRetro Labs Research",
+  "author": "Nous Research",
   "type": "module",
   "main": "electron/main.cjs",
   "engines": {
@@ -80,24 +80,25 @@
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "cmdk": "^1.1.1",
+    "dnd-core": "^14.0.1",
+    "dompurify": "^3.4.11",
     "hast-util-from-html-isomorphic": "^2.0.0",
     "hast-util-to-text": "^4.0.2",
     "ignore": "^7.0.5",
     "katex": "^0.16.45",
     "leva": "^0.10.1",
-    "mdast-util-to-string": "^4.0.0",
+    "mermaid": "^11.15.0",
     "motion": "^12.38.0",
     "nanostores": "^1.3.0",
     "node-pty": "1.1.0",
     "radix-ui": "^1.4.3",
     "react": "^19.2.5",
     "react-arborist": "^3.5.0",
+    "react-dnd-html5-backend": "^14.0.3",
     "react-dom": "^19.2.5",
     "react-router-dom": "^7.17.0",
     "react-shiki": "^0.9.3",
-    "remark-gfm": "^4.0.1",
     "remark-math": "^6.0.0",
-    "remark-parse": "^11.0.0",
     "remend": "^1.3.0",
     "shiki": "^4.0.2",
     "simple-git": "^3.36.0",
@@ -117,8 +118,7 @@
     "@testing-library/dom": "^10.4.0",
     "@testing-library/react": "^16.3.2",
     "@types/hast": "^3.0.4",
-    "@types/mdast": "^4.0.4",
-    "@types/node": "^24.12.0",
+    "@types/node": "^24.13.2",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
     "@typescript-eslint/eslint-plugin": "^8.59.1",
@@ -155,7 +155,7 @@
         ]
       }
     ],
-    "artifactName": "Marvi-${version}-${os}-${arch}.${ext}",
+    "artifactName": "Hermes-${version}-${os}-${arch}.${ext}",
     "icon": "assets/icon",
     "directories": {
       "output": "release"
@@ -199,8 +199,8 @@
         "CFBundleDisplayName": "Marvi",
         "CFBundleExecutable": "Marvi",
         "CFBundleName": "Marvi",
-        "NSAudioCaptureUsageDescription": "Marvi uses audio capture for voice conversations.",
-        "NSMicrophoneUsageDescription": "Marvi uses the microphone for voice input and voice conversations."
+        "NSAudioCaptureUsageDescription": "Hermes uses audio capture for voice conversations.",
+        "NSMicrophoneUsageDescription": "Hermes uses the microphone for voice input and voice conversations."
       },
       "gatekeeperAssess": false,
       "hardenedRuntime": true,
@@ -210,7 +210,7 @@
       ]
     },
     "dmg": {
-      "title": "Install Marvi",
+      "title": "Install Hermes",
       "backgroundColor": "#f5f5f7",
       "iconSize": 96,
       "window": {
@@ -241,7 +241,7 @@
     },
     "linux": {
       "category": "Development",
-      "maintainer": "xRetro Labs Research <contact@xretro.dev>",
+      "maintainer": "Nous Research <support@nousresearch.com>",
       "synopsis": "Native desktop shell for Marvi Agent.",
       "target": [
         "AppImage",

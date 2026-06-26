@@ -256,7 +256,7 @@ PROVIDER_MAX_TEXT_LENGTH: Dict[str, int] = {
     "mistral": 4000,      # conservative; no published per-request cap
     "gemini": 32000,      # Gemini TTS has a 32k-token context window; char cap is conservative
     "elevenlabs": 10000,  # fallback when model-aware lookup can't resolve (multilingual_v2)
-    "neutts": 2000,       # local model, quality falls off on long text
+    "neutts": 1200,       # local model, capped below llama_cpp 2048-token context (phonemes expand ~1.5x), quality falls off on long text
     "kittentts": 2000,    # local 25MB model
     "piper": 5000,        # local VITS model, phoneme-based; practical cap
     "pockettts": 5000,    # local Kyutai CPU model; practical cap

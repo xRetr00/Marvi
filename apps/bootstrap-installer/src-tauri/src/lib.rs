@@ -163,6 +163,27 @@ pub fn run() {
                     tracing::error!("main installer window not found; installer UI will not appear");
                 }
             }
+
+            // Fallback: if the installer was launched in Update mode (--update)
+            // and the frontend webview fails to load or call start_update within
+            // 5 seconds, auto-start the update from the Rust side. This prevents
+            // the installer from silently dying when the desktop hands off and
+            // the webview never renders (a known Windows WebView2 race condition
+            // when spawned from a detaching parent process).
+            if mode == AppMode::Update {
+                let app_handle = app.handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                    if !update::UPDATE_RUNNING.load(std::sync::atomic::Ordering::SeqCst) {
+                        tracing::warn!(
+                            "frontend did not call start_update within 5s; \
+                             auto-starting update from Rust fallback"
+                        );
+                        let _ = update::start_update(app_handle).await;
+                    }
+                });
+            }
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

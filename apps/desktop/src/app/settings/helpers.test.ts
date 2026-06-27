@@ -149,6 +149,7 @@ describe('settings helpers', () => {
       const opts = enumOptionsFor('tts.provider', 'edge', config)
       expect(opts).toBeDefined()
       expect(opts).toContain('xai')
+      expect(opts).toContain('qwen3')
       expect(opts).toContain('pockettts')
       expect(opts).toContain('edge')
       expect(opts).toContain('elevenlabs')
@@ -161,8 +162,20 @@ describe('settings helpers', () => {
 
     it('renders dropdowns for per-backend model/device sub-fields', () => {
       expect(enumOptionsFor('stt.openai.model', 'whisper-1', config)).toContain('gpt-4o-transcribe')
+      expect(enumOptionsFor('stt.local.device', 'cuda', config)).toEqual(['auto', 'cuda', 'cpu'])
+      expect(enumOptionsFor('stt.local.compute_type', 'float16', config)).toContain('int8_float16')
+      expect(enumOptionsFor('stt.streaming.provider', 'whisperlive', config)).toEqual(['', 'whisperlive'])
+      expect(enumOptionsFor('stt.streaming.backend', 'faster_whisper', config)).toEqual([
+        'faster_whisper',
+        'tensorrt',
+        'openvino'
+      ])
       expect(enumOptionsFor('tts.openai.model', 'gpt-4o-mini-tts', config)).toContain('tts-1-hd')
       expect(enumOptionsFor('tts.neutts.device', 'cpu', config)).toEqual(['cpu', 'cuda', 'mps'])
+      expect(enumOptionsFor('tts.qwen3.mode', 'clone', config)).toEqual(['clone', 'custom', 'design'])
+      expect(enumOptionsFor('tts.qwen3.model', 'Qwen/Qwen3-TTS-12Hz-0.6B-Base', config)).toContain(
+        'Qwen/Qwen3-TTS-12Hz-0.6B-VoiceDesign'
+      )
     })
 
     it('renders a dropdown for PocketTTS preset voices', () => {
@@ -192,8 +205,8 @@ describe('settings helpers', () => {
     })
 
     it('renders dropdowns for local wake-word options', () => {
-      expect(enumOptionsFor('voice.wake_word.provider', 'sherpa_onnx', config)).toEqual(['sherpa_onnx'])
-      expect(enumOptionsFor('voice.wake_word.model', 'kws-en-3.3m', config)).toEqual(['kws-en-3.3m'])
+      expect(enumOptionsFor('voice.wake_word.provider', 'sherpa_onnx', config)).toEqual(['sherpa_onnx', 'livekit'])
+      expect(enumOptionsFor('voice.wake_word.model', 'kws-en-3.3m', config)).toEqual(['kws-en-3.3m', 'livekit-marvi'])
     })
 
     it('renders a dropdown for the terminal execution backend', () => {

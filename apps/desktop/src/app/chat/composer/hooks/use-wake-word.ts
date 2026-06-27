@@ -9,6 +9,7 @@ import {
   type WakeWordConfig,
   type WakeWordSession
 } from '@/lib/wake-word'
+import { openStreamingTranscription, type StreamingTranscriptionSession } from '@/lib/streaming-transcription'
 
 import { useMicRecorder } from './use-mic-recorder'
 
@@ -20,6 +21,7 @@ interface WakeWordOptions {
   enabled: boolean
   onSubmit: (text: string) => Promise<void> | void
   onTranscribeAudio?: (audio: Blob) => Promise<string>
+  streamingSttEnabled?: boolean
 }
 
 function encodePcmFramesAsWav(frames: Float32Array[], sampleRate = 16000): Blob | null {
@@ -70,7 +72,8 @@ export function useWakeWord({
   config,
   enabled,
   onSubmit,
-  onTranscribeAudio
+  onTranscribeAudio,
+  streamingSttEnabled
 }: WakeWordOptions) {
   const { t } = useI18n()
   const voiceCopy = t.notifications.voice
@@ -92,6 +95,9 @@ export function useWakeWord({
   const [startTick, setStartTick] = useState(0)
   const transcribeAvailable = Boolean(onTranscribeAudio)
   const wakeSessionRef = useRef<WakeWordSession | null>(null)
+  const streamingSessionRef = useRef<StreamingTranscriptionSession | null>(null)
+  const streamingOpenRef = useRef<Promise<StreamingTranscriptionSession | null> | null>(null)
+  const streamedCommandFramesRef = useRef(0)
   const detectedRef = useRef(false)
   const stoppingRef = useRef(false)
   const startupFailedRef = useRef(false)
@@ -159,9 +165,17 @@ export function useWakeWord({
     wakeSessionRef.current = null
   }
 
+  const stopStreamingSession = () => {
+    void streamingSessionRef.current?.finish().catch(() => '')
+    streamingSessionRef.current = null
+    streamingOpenRef.current = null
+    streamedCommandFramesRef.current = 0
+  }
+
   const stop = useCallback(() => {
     clearTimers()
     stopWakeSession()
+    stopStreamingSession()
     handleRef.current.cancel()
     detectedRef.current = false
     stoppingRef.current = false
@@ -194,10 +208,11 @@ export function useWakeWord({
     try {
       await handleRef.current.stop()
       const detected = detectedRef.current
-      const commandAudio = encodePcmFramesAsWav(commandFramesRef.current, wakeConfig.sampleRate)
+      const commandFrames = commandFramesRef.current
+      const commandAudio = encodePcmFramesAsWav(commandFrames, wakeConfig.sampleRate)
       debugLog('finish capture', {
         commandAudioBytes: commandAudio?.size ?? 0,
-        commandFrames: commandFramesRef.current.length,
+        commandFrames: commandFrames.length,
         detected
       })
       detectedRef.current = false
@@ -206,11 +221,22 @@ export function useWakeWord({
       if (detected) {
         setStatus('transcribing')
         let transcript = ''
+        const streamingSession = streamingSessionRef.current ?? (await streamingOpenRef.current)
 
-        const transcribeAudio = onTranscribeAudioRef.current
-        if (transcribeAudio && commandAudio) {
-          transcript = (await transcribeAudio(commandAudio)).trim()
+        if (streamingSession) {
+          for (const frame of commandFrames.slice(streamedCommandFramesRef.current)) {
+            streamingSession.sendFrame(frame)
+          }
+          transcript = (await streamingSession.finish()).trim()
+        } else {
+          const transcribeAudio = onTranscribeAudioRef.current
+          if (transcribeAudio && commandAudio) {
+            transcript = (await transcribeAudio(commandAudio)).trim()
+          }
         }
+        streamingSessionRef.current = null
+        streamingOpenRef.current = null
+        streamedCommandFramesRef.current = 0
 
         const command = stripWakePhrase(transcript, wakeConfig.phrases)
         debugLog('transcribed command', {
@@ -230,6 +256,9 @@ export function useWakeWord({
     } catch (error) {
       notifyError(error, voiceCopy.transcriptionFailed)
     } finally {
+      streamingSessionRef.current = null
+      streamingOpenRef.current = null
+      streamedCommandFramesRef.current = 0
       stoppingRef.current = false
       scheduleRestart()
     }
@@ -272,7 +301,20 @@ export function useWakeWord({
             debugLog('detected', { phrase })
             detectedRef.current = true
             stopWakeSession()
+            stopStreamingSession()
             commandFramesRef.current = []
+            if (streamingSttEnabled) {
+              streamingOpenRef.current = openStreamingTranscription()
+                .then(session => {
+                  streamingSessionRef.current = session
+                  for (const frame of commandFramesRef.current) {
+                    session.sendFrame(frame)
+                  }
+                  streamedCommandFramesRef.current = commandFramesRef.current.length
+                  return session
+                })
+                .catch(() => null)
+            }
             setStatus('woken')
             commandTimerRef.current = window.setTimeout(() => void finishCaptureRef.current?.(), wakeConfig.commandTimeoutMs)
           }
@@ -295,6 +337,10 @@ export function useWakeWord({
             }
 
             commandFramesRef.current.push(new Float32Array(samples))
+            if (streamingSessionRef.current) {
+              streamingSessionRef.current.sendFrame(samples)
+              streamedCommandFramesRef.current = commandFramesRef.current.length
+            }
             if (wakeConfig.debug && commandFramesRef.current.length % 20 === 1) {
               debugLog('capturing command frames', {
                 frames: commandFramesRef.current.length,
@@ -321,6 +367,7 @@ export function useWakeWord({
           notifyError(error, voiceCopy.streamingUnavailable)
           clearTimers()
           stopWakeSession()
+          stopStreamingSession()
           handleRef.current.cancel()
           detectedRef.current = false
           stoppingRef.current = false
@@ -346,7 +393,8 @@ export function useWakeWord({
     voiceCopy.streamingUnavailable,
     wakeConfig.commandTimeoutMs,
     wakeConfig.debug,
-    wakeConfig.enabled
+    wakeConfig.enabled,
+    streamingSttEnabled
   ])
 
   useEffect(() => () => stop(), [stop])

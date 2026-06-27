@@ -227,8 +227,12 @@ export const ENUM_OPTIONS: Record<string, string[]> = {
   'terminal.backend': ['local', 'docker', 'singularity', 'modal', 'daytona', 'ssh'],
   'stt.elevenlabs.model_id': ['scribe_v2', 'scribe_v1'],
   'stt.local.model': ['tiny', 'base', 'small', 'medium', 'large-v3'],
-  'voice.wake_word.provider': ['sherpa_onnx'],
-  'voice.wake_word.model': ['kws-en-3.3m'],
+  'stt.local.device': ['auto', 'cuda', 'cpu'],
+  'stt.local.compute_type': ['auto', 'float16', 'int8_float16', 'int8'],
+  'stt.streaming.provider': ['', 'whisperlive'],
+  'stt.streaming.backend': ['faster_whisper', 'tensorrt', 'openvino'],
+  'voice.wake_word.provider': ['sherpa_onnx', 'livekit'],
+  'voice.wake_word.model': ['kws-en-3.3m', 'livekit-marvi'],
   // Speech-to-text backends — kept in sync with the stt block in
   // hermes_cli/config.py (local/groq/openai/mistral/elevenlabs).
   'stt.provider': ['local', 'groq', 'openai', 'mistral', 'xai', 'elevenlabs'],
@@ -244,11 +248,22 @@ export const ENUM_OPTIONS: Record<string, string[]> = {
     'minimax',
     'mistral',
     'gemini',
+    'qwen3',
     'neutts',
     'kittentts',
     'piper',
     'pockettts'
   ],
+  'tts.qwen3.mode': ['clone', 'custom', 'design'],
+  'tts.qwen3.model': [
+    'Qwen/Qwen3-TTS-12Hz-0.6B-Base',
+    'Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice',
+    'Qwen/Qwen3-TTS-12Hz-0.6B-VoiceDesign',
+    'Qwen/Qwen3-TTS-12Hz-1.7B-Base',
+    'Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice',
+    'Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign'
+  ],
+  'tts.qwen3.dtype': ['bfloat16', 'float16'],
   'stt.openai.model': ['whisper-1', 'gpt-4o-mini-transcribe', 'gpt-4o-transcribe'],
   'stt.mistral.model': ['voxtral-mini-latest', 'voxtral-mini-2602'],
   'tts.openai.model': ['gpt-4o-mini-tts', 'tts-1', 'tts-1-hd'],
@@ -357,7 +372,21 @@ export const FIELD_LABELS: Record<string, string> = defineFieldCopy({
     provider: 'Speech-To-Text Provider',
     local: {
       model: 'Local Transcription Model',
-      language: 'Transcription Language'
+      language: 'Transcription Language',
+      device: 'Local STT Device',
+      computeType: 'Local STT Precision',
+      batchSize: 'Local STT Batch Size',
+      vadFilter: 'Local STT VAD'
+    },
+    streaming: {
+      provider: 'Streaming STT Provider',
+      host: 'WhisperLive Host',
+      port: 'WhisperLive Port',
+      backend: 'WhisperLive Backend',
+      model: 'WhisperLive Model',
+      maxClients: 'WhisperLive Max Clients',
+      maxConnectionTime: 'WhisperLive Max Seconds',
+      singleModel: 'WhisperLive Single Model'
     },
     openai: {
       model: 'OpenAI STT Model'
@@ -403,6 +432,18 @@ export const FIELD_LABELS: Record<string, string> = defineFieldCopy({
     gemini: {
       model: 'Gemini TTS Model',
       voice: 'Gemini Voice'
+    },
+    qwen3: {
+      model: 'Qwen3 Model',
+      mode: 'Qwen3 Mode',
+      language: 'Qwen3 Language',
+      refAudio: 'Clone Reference Audio',
+      refText: 'Clone Reference Text',
+      speaker: 'Custom Voice Speaker',
+      instruct: 'Voice Design Prompt',
+      chunkSize: 'Streaming Chunk Size',
+      device: 'Qwen3 Device',
+      dtype: 'Qwen3 Precision'
     },
     neutts: {
       model: 'NeuTTS Model',
@@ -509,6 +550,14 @@ export const FIELD_DESCRIPTIONS: Record<string, string> = defineFieldCopy({
     }
   },
   tts: {
+    qwen3: {
+      model: 'Local Qwen3 TTS model. The 0.6B models fit better on a 12GB GPU.',
+      mode: 'Clone a reference voice, use a named custom voice, or design a voice from a prompt.',
+      refAudio: 'Reference audio file used when mode is clone.',
+      refText: 'Transcript of the reference audio used for voice cloning.',
+      instruct: 'Style prompt used when mode is design.',
+      chunkSize: 'Lower values reduce time to first audio; 2 is tuned for fast streaming.'
+    },
     xai: {
       voiceId: 'xAI voice ID (e.g. eve) or a custom voice ID.',
       language: 'Spoken language code, e.g. en.'
@@ -519,6 +568,17 @@ export const FIELD_DESCRIPTIONS: Record<string, string> = defineFieldCopy({
   },
   stt: {
     enabled: 'Enable local or provider-backed speech transcription.',
+    local: {
+      device: 'Use cuda on an NVIDIA GPU; auto falls back when CUDA is unavailable.',
+      computeType: 'Use float16 on CUDA for speed, or int8 on CPU/low-memory systems.',
+      batchSize: 'Batched faster-whisper decode size. Higher can be faster but uses more VRAM.',
+      vadFilter: 'Skip non-speech sections before transcription.'
+    },
+    streaming: {
+      provider: 'Optional live STT backend. WhisperLive gives lower latency than batch file transcription.',
+      backend: 'Use faster_whisper for the built-in GPU path. TensorRT needs prebuilt engines.',
+      model: 'WhisperLive model or faster-whisper model path.'
+    },
     elevenlabs: {
       languageCode: 'Optional ISO-639-3 language code. Blank lets ElevenLabs auto-detect.'
     }
@@ -616,6 +676,16 @@ export const SECTIONS: DesktopConfigSection[] = [
       'tts.mistral.voice_id',
       'tts.gemini.model',
       'tts.gemini.voice',
+      'tts.qwen3.model',
+      'tts.qwen3.mode',
+      'tts.qwen3.language',
+      'tts.qwen3.ref_audio',
+      'tts.qwen3.ref_text',
+      'tts.qwen3.speaker',
+      'tts.qwen3.instruct',
+      'tts.qwen3.chunk_size',
+      'tts.qwen3.device',
+      'tts.qwen3.dtype',
       'tts.neutts.model',
       'tts.neutts.device',
       'tts.kittentts.model',
@@ -624,6 +694,18 @@ export const SECTIONS: DesktopConfigSection[] = [
       'tts.pockettts.voice',
       'stt.local.model',
       'stt.local.language',
+      'stt.local.device',
+      'stt.local.compute_type',
+      'stt.local.batch_size',
+      'stt.local.vad_filter',
+      'stt.streaming.provider',
+      'stt.streaming.host',
+      'stt.streaming.port',
+      'stt.streaming.backend',
+      'stt.streaming.model',
+      'stt.streaming.max_clients',
+      'stt.streaming.max_connection_time',
+      'stt.streaming.single_model',
       'stt.openai.model',
       'stt.groq.model',
       'stt.mistral.model',

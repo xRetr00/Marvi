@@ -45,6 +45,15 @@ def test_wake_word_config_reads_nested_settings():
     assert cfg.cooldown_ms == 500
 
 
+def test_wake_word_config_defaults_livekit_model_for_livekit_provider():
+    from tools.streaming_stt import DEFAULT_LIVEKIT_WAKE_WORD_MODEL_ID, wake_word_config
+
+    cfg = wake_word_config({"voice": {"wake_word": {"enabled": True, "provider": "livekit"}}})
+
+    assert cfg.provider == "livekit"
+    assert cfg.model == DEFAULT_LIVEKIT_WAKE_WORD_MODEL_ID
+
+
 def test_missing_sherpa_error_points_to_setup(monkeypatch):
     from tools import streaming_stt
     from tools.streaming_stt import WakeWordUnavailable
@@ -72,6 +81,47 @@ def test_wake_word_factory_returns_fake_spotter_for_tests():
     factory = WakeWordFactory(create_spotter=lambda _cfg: spotter, native_self_test=lambda _cfg: None)
 
     assert factory.create({"voice": {"wake_word": {"enabled": True}}}) is spotter
+
+
+def test_wake_word_factory_dispatches_livekit_provider():
+    from tools.streaming_stt import WakeWordFactory
+
+    class FakeSpotter:
+        pass
+
+    spotter = FakeSpotter()
+    factory = WakeWordFactory(
+        create_spotter=lambda _cfg: pytest.fail("sherpa spotter should not be used"),
+        create_livekit_spotter=lambda cfg: spotter if cfg.provider == "livekit" else None,
+        native_self_test=lambda _cfg: pytest.fail("livekit should not run sherpa self-test"),
+    )
+
+    assert factory.create({"voice": {"wake_word": {"enabled": True, "provider": "livekit"}}}) is spotter
+
+
+def test_livekit_spotter_loads_onnx_models_from_directory(monkeypatch, tmp_path):
+    from tools import streaming_stt
+    from tools.streaming_stt import LiveKitWakeWordSpotter, WakeWordConfig
+
+    model_dir = tmp_path / "models"
+    model_dir.mkdir()
+    (model_dir / "hey_marvi.onnx").write_text("x", encoding="utf-8")
+    (model_dir / "marvy.onnx").write_text("x", encoding="utf-8")
+    captured = {}
+
+    class FakeWakeWordModel:
+        def __init__(self, models):
+            captured["models"] = models
+
+        def predict(self, _samples):
+            return {"hey_marvi": 0.2, "marvy": 0.8}
+
+    monkeypatch.setattr(streaming_stt, "_import_livekit_wakeword_model", lambda: FakeWakeWordModel)
+    spotter = LiveKitWakeWordSpotter(WakeWordConfig(enabled=True, provider="livekit", model=str(model_dir), threshold=0.5))
+
+    assert [path.name for path in captured["models"]] == ["hey_marvi.onnx", "marvy.onnx"]
+    assert spotter.accept_waveform([0.1, 0.2]) == ""
+    assert spotter.accept_waveform([0.1] * 32000) == "marvy"
 
 
 def test_wake_word_factory_rejects_disabled_config():

@@ -55,6 +55,7 @@ import { ChatDropOverlay } from './chat-drop-overlay'
 import { ChatSwapOverlay } from './chat-swap-overlay'
 import { ChatBar, ChatBarFallback } from './composer'
 import { requestComposerInsert, requestComposerInsertRefs } from './composer/focus'
+import { useWakeWord } from './composer/hooks/use-wake-word'
 import { droppedFileInlineRefs, type SessionDragPayload, sessionInlineRef } from './composer/inline-refs'
 import type { ChatBarState } from './composer/types'
 import { type DroppedFile, partitionDroppedFiles } from './hooks/use-composer-actions'
@@ -91,6 +92,7 @@ interface ChatViewProps extends Omit<React.ComponentProps<'div'>, 'onSubmit'> {
   onRestoreToMessage?: (messageId: string, target?: { text?: string; userOrdinal?: number | null }) => Promise<void>
   onRetryResume: (sessionId: string) => void
   onTranscribeAudio?: (audio: Blob) => Promise<string>
+  streamingSttEnabled?: boolean
   onDismissError?: (messageId: string) => void
   wakeWordConfig?: import('@/lib/wake-word').WakeWordConfig
 }
@@ -280,6 +282,7 @@ export function ChatView({
   onRestoreToMessage,
   onRetryResume,
   onTranscribeAudio,
+  streamingSttEnabled,
   onDismissError,
   wakeWordConfig
 }: ChatViewProps) {
@@ -422,6 +425,17 @@ export function ChatView({
 
   const { dragKind, dropHandlers } = useFileDropZone({ enabled: showChatBar, onDropFiles, onDropSession })
 
+  useWakeWord({
+    busy,
+    config: wakeWordConfig,
+    enabled: gatewayOpen,
+    onSubmit: async text => {
+      await onSubmit(text)
+    },
+    onTranscribeAudio,
+    streamingSttEnabled
+  })
+
   return (
     <div
       className={cn(
@@ -515,10 +529,10 @@ export function ChatView({
               onSteer={onSteer}
               onSubmit={onSubmit}
               onTranscribeAudio={onTranscribeAudio}
+              streamingSttEnabled={streamingSttEnabled}
               queueSessionKey={selectedSessionId}
               sessionId={activeSessionId}
               state={chatBarState}
-              wakeWordConfig={wakeWordConfig}
             />
           </Suspense>
         )}

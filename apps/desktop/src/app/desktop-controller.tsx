@@ -606,7 +606,7 @@ export function DesktopController() {
     requestGateway
   })
 
-  const { refreshHermesConfig, sttEnabled, voiceMaxRecordingSeconds, wakeWordConfig } = useHermesConfig({
+  const { refreshHermesConfig, streamingSttEnabled, sttEnabled, voiceMaxRecordingSeconds, wakeWordConfig } = useHermesConfig({
     activeSessionIdRef,
     refreshProjectBranch
   })
@@ -1215,6 +1215,7 @@ export function DesktopController() {
       onThreadMessagesChange={handleThreadMessagesChange}
       onToggleSelectedPin={toggleSelectedPin}
       onTranscribeAudio={transcribeVoiceAudio}
+      streamingSttEnabled={streamingSttEnabled}
       wakeWordConfig={wakeWordConfig}
     />
   )

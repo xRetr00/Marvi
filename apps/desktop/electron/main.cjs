@@ -3,6 +3,7 @@ const {
   BrowserWindow,
   Menu,
   Notification,
+  Tray,
   clipboard,
   dialog,
   ipcMain,
@@ -403,6 +404,7 @@ const BOOT_FAKE_STEP_MS = (() => {
 })()
 const APP_NAME = 'Marvi'
 const WINDOW_TITLE = 'Marvi by Marvex'
+const START_HIDDEN = process.argv.includes('--hidden')
 const TITLEBAR_HEIGHT = 34
 const MACOS_TRAFFIC_LIGHTS_HEIGHT = 14
 const WINDOW_BUTTON_POSITION = {
@@ -420,6 +422,8 @@ const APP_ICON_PATHS = [
 ]
 
 let rendererTitleBarTheme = null
+let tray = null
+let isQuitting = false
 const terminalSessions = new Map()
 
 // Force the NATIVE window appearance (vibrancy material, titlebar, the
@@ -5585,6 +5589,34 @@ function focusWindow(win) {
   win.focus()
 }
 
+function createTray() {
+  if (tray || !IS_WINDOWS) return
+  const icon = getAppIconPath()
+  if (!icon) return
+
+  tray = new Tray(nativeImage.createFromPath(icon))
+  tray.setToolTip(WINDOW_TITLE)
+  tray.setContextMenu(
+    Menu.buildFromTemplate([
+      { label: 'Show Marvi', click: () => focusWindow(mainWindow) },
+      { label: 'Quit', click: () => {
+        isQuitting = true
+        app.quit()
+      } }
+    ])
+  )
+  tray.on('click', () => focusWindow(mainWindow))
+}
+
+function registerWindowsLoginStartup() {
+  if (!IS_WINDOWS || !IS_PACKAGED) return
+  try {
+    app.setLoginItemSettings({ openAtLogin: true, args: ['--hidden'] })
+  } catch (error) {
+    rememberLog(`Windows login startup registration failed: ${error.message}`)
+  }
+}
+
 function spawnSecondaryWindow({ sessionId, watch, newSession } = {}) {
   const icon = getAppIconPath()
   const win = new BrowserWindow({
@@ -5836,7 +5868,7 @@ function createWindow() {
   if (savedWindowState?.isMaximized) mainWindow.maximize()
 
   mainWindow.once('ready-to-show', () => {
-    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.show()
+    if (mainWindow && !mainWindow.isDestroyed() && !START_HIDDEN) mainWindow.show()
   })
 
   mainWindow.on('will-enter-full-screen', () => sendWindowStateChanged(true))
@@ -5850,7 +5882,13 @@ function createWindow() {
   mainWindow.on('moved', schedulePersistWindowState)
   mainWindow.on('maximize', schedulePersistWindowState)
   mainWindow.on('unmaximize', schedulePersistWindowState)
-  mainWindow.on('close', () => schedulePersistWindowState.flush())
+  mainWindow.on('close', event => {
+    schedulePersistWindowState.flush()
+    if (IS_WINDOWS && !isQuitting) {
+      event.preventDefault()
+      mainWindow.hide()
+    }
+  })
 
   // The overlay rides the main window — closing the app's primary window must
   // tear it down too (otherwise it strands as an orphan that blocks
@@ -7427,10 +7465,12 @@ app.whenReady().then(() => {
   registerMediaProtocol()
   installEmbedReferer()
   registerDeepLinkProtocol()
+  registerWindowsLoginStartup()
   ensureWslWindowsFonts()
   configureSpellChecker()
   registerPowerResumeListeners()
   createWindow()
+  createTray()
 
   // Win/Linux cold start: the launching hermes:// URL is in our own argv.
   const _coldStartLink = _extractDeepLink(process.argv)
@@ -7472,6 +7512,7 @@ function configureSpellChecker() {
 }
 
 app.on('before-quit', () => {
+  isQuitting = true
   // The always-on-top overlay isn't a "real" app window; close it so a stray
   // pet can't keep the process alive or float over a quit app.
   closePetOverlay()

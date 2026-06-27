@@ -32,6 +32,10 @@ import { ProviderConfigPanel } from './provider-config-panel'
 // crazy" wall of ~30 fields). Top-level keys (tts.provider, stt.enabled,
 // voice.*) always show; STT provider fields hide entirely when STT is off.
 export function voiceFieldVisible(key: string, config: HermesConfigRecord): boolean {
+  if (key.startsWith('stt.streaming.')) {
+    return true
+  }
+
   const match = /^(tts|stt)\.([^.]+)\./.exec(key)
 
   if (!match) {

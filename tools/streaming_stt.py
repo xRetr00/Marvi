@@ -28,6 +28,7 @@ logger = logging.getLogger(__name__)
 
 
 DEFAULT_WAKE_WORD_MODEL_ID = "kws-en-3.3m"
+DEFAULT_LIVEKIT_WAKE_WORD_MODEL_ID = "livekit-marvi"
 DEFAULT_WAKE_WORD_PHRASES = (
     "hey marvi",
     "hi marvi",
@@ -116,11 +117,13 @@ def wake_word_config(config: Optional[dict[str, Any]] = None) -> WakeWordConfig:
     voice = voice if isinstance(voice, dict) else {}
     raw = voice.get("wake_word")
     raw = raw if isinstance(raw, dict) else {}
+    provider = str(raw.get("provider") or "sherpa_onnx").strip().lower() or "sherpa_onnx"
+    default_model = DEFAULT_LIVEKIT_WAKE_WORD_MODEL_ID if provider == "livekit" else DEFAULT_WAKE_WORD_MODEL_ID
 
     return WakeWordConfig(
         enabled=raw.get("enabled") is True,
-        provider=str(raw.get("provider") or "sherpa_onnx").strip().lower() or "sherpa_onnx",
-        model=str(raw.get("model") or DEFAULT_WAKE_WORD_MODEL_ID).strip() or DEFAULT_WAKE_WORD_MODEL_ID,
+        provider=provider,
+        model=str(raw.get("model") or default_model).strip() or default_model,
         sample_rate=_positive_int(raw.get("sample_rate"), 16000, min_value=8000, max_value=48000),
         phrases=_normalize_phrases(raw.get("phrases")),
         boost=_float_value(raw.get("boost"), 2.0, min_value=0.1, max_value=10.0),
@@ -142,8 +145,23 @@ def _import_sherpa_onnx():
     return sherpa_onnx
 
 
+def _import_livekit_wakeword_model():
+    try:
+        from livekit.wakeword import WakeWordModel  # type: ignore
+    except ImportError as exc:
+        raise WakeWordUnavailable(
+            "livekit-wakeword is not installed. Run `hermes tools post-setup livekit_wakeword` "
+            "or install it with `pip install livekit-wakeword` to enable LiveKit wake word."
+        ) from exc
+    return WakeWordModel
+
+
 def _model_cache_dir(model_id: str) -> Path:
     return Path(get_hermes_dir(f"cache/sherpa-onnx/{model_id}", "sherpa_onnx_cache"))
+
+
+def _livekit_model_cache_dir(model_id: str) -> Path:
+    return Path(get_hermes_dir(f"cache/livekit-wakeword/{model_id}", "livekit_wakeword_cache"))
 
 
 def _download_archive(url: str, target: Path) -> None:
@@ -397,20 +415,81 @@ class SherpaOnnxWakeWordSpotter:
             pass
 
 
+def resolve_livekit_wakeword_models(cfg: WakeWordConfig) -> list[Path]:
+    model_value = cfg.model.strip()
+    model_path = Path(model_value).expanduser()
+
+    if model_path.is_file():
+        models = [model_path]
+    elif model_path.is_dir():
+        models = sorted(model_path.glob("*.onnx"))
+    elif model_value == DEFAULT_LIVEKIT_WAKE_WORD_MODEL_ID:
+        root = _livekit_model_cache_dir(DEFAULT_LIVEKIT_WAKE_WORD_MODEL_ID)
+        models = sorted(root.glob("*.onnx")) if root.exists() else []
+    else:
+        raise WakeWordUnavailable(
+            f"Unknown LiveKit wake-word model {cfg.model!r}. Set voice.wake_word.model "
+            "to a .onnx file or a directory containing hey_marvi/marvi variant .onnx models."
+        )
+
+    if not models:
+        raise WakeWordUnavailable(
+            "LiveKit wake-word model files are missing. Set voice.wake_word.model "
+            "to a .onnx file or a directory containing hey_marvi/marvi variant .onnx models."
+        )
+
+    return models
+
+
+class LiveKitWakeWordSpotter:
+    def __init__(self, cfg: WakeWordConfig):
+        self.cfg = cfg
+        WakeWordModel = _import_livekit_wakeword_model()
+        self.model = WakeWordModel(models=resolve_livekit_wakeword_models(cfg))
+        self._samples: list[float] = []
+
+    def start(self, sample_rate: int = 16000) -> None:
+        if sample_rate and sample_rate != 16000:
+            logger.warning("[WakeWord] LiveKit wakeword expects 16kHz audio, got %s", sample_rate)
+
+    def accept_waveform(self, samples: list[float]) -> str:
+        import numpy as np
+
+        self._samples.extend(float(sample) for sample in samples)
+        self._samples = self._samples[-32000:]
+        if len(self._samples) < 32000:
+            return ""
+
+        scores = self.model.predict(np.asarray(self._samples, dtype=np.float32))
+        if not isinstance(scores, dict) or not scores:
+            return ""
+        label, score = max(scores.items(), key=lambda item: float(item[1] or 0))
+        return str(label).replace("_", " ") if float(score or 0) >= self.cfg.threshold else ""
+
+    def stop(self) -> None:
+        close = getattr(self.model, "close", None)
+        if callable(close):
+            close()
+
+
 class WakeWordFactory:
     def __init__(
         self,
         create_spotter: Optional[Callable[[WakeWordConfig], Any]] = None,
+        create_livekit_spotter: Optional[Callable[[WakeWordConfig], Any]] = None,
         native_self_test: Optional[Callable[[WakeWordConfig], None]] = None,
     ):
         self._create_spotter = create_spotter or (lambda cfg: SherpaOnnxWakeWordSpotter(cfg))
+        self._create_livekit_spotter = create_livekit_spotter or (lambda cfg: LiveKitWakeWordSpotter(cfg))
         self._native_self_test = native_self_test or _run_sherpa_native_self_test
 
     def create(self, config: Optional[dict[str, Any]] = None):
         cfg = wake_word_config(config)
         if not cfg.enabled:
             raise WakeWordUnavailable("Wake word is disabled in voice.wake_word.enabled")
-        if cfg.provider != "sherpa_onnx":
-            raise WakeWordUnavailable(f"Unsupported wake-word provider: {cfg.provider}")
-        self._native_self_test(cfg)
-        return self._create_spotter(cfg)
+        if cfg.provider == "sherpa_onnx":
+            self._native_self_test(cfg)
+            return self._create_spotter(cfg)
+        if cfg.provider == "livekit":
+            return self._create_livekit_spotter(cfg)
+        raise WakeWordUnavailable(f"Unsupported wake-word provider: {cfg.provider}")

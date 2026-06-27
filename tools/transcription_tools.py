@@ -32,6 +32,7 @@ import os
 import shlex
 import shutil
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
 from typing import Optional, Dict, Any
@@ -85,6 +86,7 @@ _HAS_MISTRAL = _safe_find_spec("mistralai")
 
 DEFAULT_PROVIDER = "local"
 DEFAULT_LOCAL_MODEL = "base"
+DEFAULT_WHISPERLIVE_PORT = 9090
 DEFAULT_LOCAL_STT_LANGUAGE = "en"
 DEFAULT_STT_MODEL = os.getenv("STT_OPENAI_MODEL", "whisper-1")
 DEFAULT_GROQ_STT_MODEL = os.getenv("STT_GROQ_MODEL", "whisper-large-v3-turbo")
@@ -109,7 +111,7 @@ GROQ_MODELS = {"whisper-large-v3", "whisper-large-v3-turbo", "distil-whisper-lar
 
 # Singleton for the local model — loaded once, reused across calls
 _local_model: Optional[object] = None
-_local_model_name: Optional[str] = None
+_local_model_name: Optional[object] = None
 
 # ---------------------------------------------------------------------------
 # Config helpers
@@ -1085,6 +1087,40 @@ def _looks_like_cuda_lib_error(exc: BaseException) -> bool:
     return any(marker in msg for marker in _CUDA_LIB_ERROR_MARKERS)
 
 
+def _local_whisper_runtime_config() -> tuple[str, str]:
+    local_cfg = _load_stt_config().get("local", {})
+    device = str(local_cfg.get("device") or "auto").strip() or "auto"
+    compute_type = str(local_cfg.get("compute_type") or "auto").strip() or "auto"
+    return device, compute_type
+
+
+def whisperlive_server_command(stt_config: Optional[dict] = None) -> list[str]:
+    """Return the command that starts the configured WhisperLive server."""
+    streaming = (stt_config or _load_stt_config()).get("streaming", {})
+    host = str(streaming.get("host") or "127.0.0.1")
+    port = int(streaming.get("port") or DEFAULT_WHISPERLIVE_PORT)
+    backend = str(streaming.get("backend") or "faster_whisper")
+    model = str(streaming.get("model") or "small")
+    max_clients = int(streaming.get("max_clients") or 1)
+    max_connection_time = int(streaming.get("max_connection_time") or 900)
+    single_model = bool(streaming.get("single_model", True))
+
+    args = [
+        f"host={host!r}",
+        f"port={port}",
+        f"backend={backend!r}",
+        f"max_clients={max_clients}",
+        f"max_connection_time={max_connection_time}",
+    ]
+    if backend == "faster_whisper":
+        args.append(f"faster_whisper_custom_model_path={model!r}")
+    if single_model:
+        args.append("single_model=True")
+
+    code = f"from whisper_live.server import TranscriptionServer; TranscriptionServer().run({', '.join(args)})"
+    return [sys.executable, "-c", code]
+
+
 def _load_local_whisper_model(model_name: str):
     """Load faster-whisper with graceful CUDA → CPU fallback.
 
@@ -1099,8 +1135,9 @@ def _load_local_whisper_model(model_name: str):
     library load failure fall back to CPU + int8.
     """
     from faster_whisper import WhisperModel
+    device, compute_type = _local_whisper_runtime_config()
     try:
-        return WhisperModel(model_name, device="auto", compute_type="auto")
+        return WhisperModel(model_name, device=device, compute_type=compute_type)
     except Exception as exc:
         if not _looks_like_cuda_lib_error(exc):
             raise
@@ -1121,16 +1158,23 @@ def _transcribe_local(file_path: str, model_name: str) -> Dict[str, Any]:
             return {"success": False, "transcript": "", "error": "faster-whisper not installed"}
 
     try:
+        stt_config = _load_stt_config()
+        device, compute_type = _local_whisper_runtime_config()
+        model_key = (model_name, device, compute_type)
+
         # Lazy-load the model (downloads on first use, ~150 MB for 'base')
-        if _local_model is None or _local_model_name != model_name:
-            logger.info("Loading faster-whisper model '%s' (first load downloads the model)...", model_name)
+        if _local_model is None or _local_model_name != model_key:
+            logger.info(
+                "Loading faster-whisper model '%s' (device=%s, compute_type=%s)...",
+                model_name, device, compute_type,
+            )
             _local_model = _load_local_whisper_model(model_name)
-            _local_model_name = model_name
+            _local_model_name = model_key
 
         # Desktop voice commands are short English utterances by default; avoid
         # auto-detect and beam-search overhead unless the user overrides it.
         _forced_lang = (
-            _load_stt_config().get("local", {}).get("language")
+            stt_config.get("local", {}).get("language")
             or os.getenv(LOCAL_STT_LANGUAGE_ENV)
             or DEFAULT_LOCAL_STT_LANGUAGE
         )
@@ -1140,6 +1184,12 @@ def _transcribe_local(file_path: str, model_name: str) -> Dict[str, Any]:
             "condition_on_previous_text": False,
             "without_timestamps": True,
         }
+        local_cfg = stt_config.get("local", {})
+        batch_size = local_cfg.get("batch_size")
+        if isinstance(batch_size, int) and not isinstance(batch_size, bool) and batch_size > 0:
+            transcribe_kwargs["batch_size"] = batch_size
+        if "vad_filter" in local_cfg:
+            transcribe_kwargs["vad_filter"] = is_truthy_value(local_cfg.get("vad_filter"), default=False)
         if _forced_lang:
             transcribe_kwargs["language"] = _forced_lang
 
@@ -1163,7 +1213,7 @@ def _transcribe_local(file_path: str, model_name: str) -> Dict[str, Any]:
             _local_model_name = None
             from faster_whisper import WhisperModel
             _local_model = WhisperModel(model_name, device="cpu", compute_type="int8")
-            _local_model_name = model_name
+            _local_model_name = (model_name, "cpu", "int8")
             segments, info = _local_model.transcribe(file_path, **transcribe_kwargs)
             transcript = " ".join(segment.text.strip() for segment in segments)
 
@@ -1401,11 +1451,11 @@ def _transcribe_mistral(file_path: str, model_name: str) -> Dict[str, Any]:
 
     try:
         try:
+            from mistralai.client import Mistral
+        except ImportError:
             from tools.lazy_deps import ensure as _lazy_ensure
             _lazy_ensure("stt.mistral", prompt=False)
-        except ImportError:
-            pass
-        from mistralai.client import Mistral
+            from mistralai.client import Mistral
 
         with Mistral(api_key=api_key) as client:
             with open(file_path, "rb") as audio_file:

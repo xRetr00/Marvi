@@ -520,6 +520,15 @@ def _print_setup_summary(config: dict, hermes_home):
         tool_status.append(("Text-to-Speech (Mistral Voxtral)", True, None))
     elif tts_provider == "gemini" and (get_env_value("GEMINI_API_KEY") or get_env_value("GOOGLE_API_KEY")):
         tool_status.append(("Text-to-Speech (Google Gemini)", True, None))
+    elif tts_provider == "qwen3":
+        try:
+            qwen3_ok = importlib.util.find_spec("faster_qwen3_tts") is not None
+        except Exception:
+            qwen3_ok = False
+        if qwen3_ok:
+            tool_status.append(("Text-to-Speech (Qwen3 local CUDA)", True, None))
+        else:
+            tool_status.append(("Text-to-Speech (Qwen3 — not installed)", False, "run 'hermes setup tts'"))
     elif tts_provider == "neutts":
         try:
             neutts_ok = importlib.util.find_spec("neutts") is not None
@@ -892,6 +901,51 @@ def _install_pockettts_deps() -> bool:
         return False
 
 
+def _install_qwen3_deps() -> bool:
+    """Install Qwen3 TTS dependencies. Returns True on success."""
+    import subprocess
+    import sys
+
+    print()
+    print_info("Installing faster-qwen3-tts and audio playback support...")
+    print_info("The Qwen3 model downloads from Hugging Face on first use.")
+    print()
+    try:
+        subprocess.run(
+            [sys.executable, "-m", "pip", "install", "-U", "faster-qwen3-tts", "sounddevice", "--quiet"],
+            check=True,
+            timeout=900,
+        )
+        print_success("faster-qwen3-tts installed successfully")
+        return True
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
+        print_error(f"Failed to install faster-qwen3-tts: {e}")
+        print_info("Try manually: python -m pip install -U faster-qwen3-tts sounddevice")
+        return False
+
+
+def _install_whisperlive_deps() -> bool:
+    """Install WhisperLive dependencies. Returns True on success."""
+    import subprocess
+    import sys
+
+    print()
+    print_info("Installing WhisperLive for streaming STT...")
+    print()
+    try:
+        subprocess.run(
+            [sys.executable, "-m", "pip", "install", "-U", "whisper-live", "--quiet"],
+            check=True,
+            timeout=900,
+        )
+        print_success("whisper-live installed successfully")
+        return True
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
+        print_error(f"Failed to install whisper-live: {e}")
+        print_info("Try manually: python -m pip install -U whisper-live")
+        return False
+
+
 def _xai_oauth_logged_in_for_setup() -> bool:
     """True iff xAI Grok OAuth credentials are already stored locally.
 
@@ -958,6 +1012,7 @@ def _setup_tts_provider(config: dict):
         "minimax": "MiniMax TTS",
         "mistral": "Mistral Voxtral TTS",
         "gemini": "Google Gemini TTS",
+        "qwen3": "Qwen3 TTS",
         "neutts": "NeuTTS",
         "kittentts": "KittenTTS",
         "pockettts": "PocketTTS",
@@ -983,12 +1038,13 @@ def _setup_tts_provider(config: dict):
             "MiniMax TTS (high quality with voice cloning, needs API key)",
             "Mistral Voxtral TTS (multilingual, native Opus, needs API key)",
             "Google Gemini TTS (30 prebuilt voices, prompt-controllable, needs API key)",
+            "Qwen3 TTS (local CUDA, fast streaming, voice clone/custom/design)",
             "NeuTTS (local on-device, free, ~300MB model download)",
             "KittenTTS (local on-device, free, lightweight ~25-80MB ONNX)",
             "PocketTTS (local CPU TTS, free, Kyutai preset/custom voices)",
         ]
     )
-    providers.extend(["edge", "elevenlabs", "openai", "xai", "minimax", "mistral", "gemini", "neutts", "kittentts", "pockettts"])
+    providers.extend(["edge", "elevenlabs", "openai", "xai", "minimax", "mistral", "gemini", "qwen3", "neutts", "kittentts", "pockettts"])
     choices.append(f"Keep current ({current_label})")
     keep_current_idx = len(choices) - 1
     idx = prompt_choice("Select TTS provider:", choices, keep_current_idx)
@@ -1151,6 +1207,98 @@ def _setup_tts_provider(config: dict):
             else:
                 print_warning("No API key provided. Falling back to Edge TTS.")
                 selected = "edge"
+
+    elif selected == "qwen3":
+        try:
+            already_installed = importlib.util.find_spec("faster_qwen3_tts") is not None
+        except Exception:
+            already_installed = False
+
+        if already_installed:
+            print_success("faster-qwen3-tts is already installed")
+        else:
+            print()
+            print_info("Qwen3 TTS requires a CUDA-capable PyTorch install and a Hugging Face model download on first use.")
+            print_info("Recommended for your RTX 3060 12GB: 0.6B model, device=cuda, dtype=bfloat16, chunk_size=2.")
+            print()
+            if prompt_yes_no("Install Qwen3 TTS dependencies now?", True):
+                if not _install_qwen3_deps():
+                    print_warning("Qwen3 TTS installation incomplete. Falling back to Edge TTS.")
+                    selected = "edge"
+            else:
+                print_info("Skipping install. Set tts.provider to 'qwen3' after installing the package.")
+                selected = "edge"
+
+        if selected == "qwen3":
+            print()
+            mode_idx = prompt_choice(
+                "Qwen3 TTS mode:",
+                [
+                    "Voice cloning (reference audio + transcript)",
+                    "Custom voice (named speaker)",
+                    "Voice design (prompted style)",
+                ],
+                0,
+            )
+            modes = ["clone", "custom", "design"]
+            mode = modes[mode_idx]
+            model_defaults = {
+                "clone": "Qwen/Qwen3-TTS-12Hz-0.6B-Base",
+                "custom": "Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice",
+                "design": "Qwen/Qwen3-TTS-12Hz-0.6B-VoiceDesign",
+            }
+            qwen_cfg = config.setdefault("tts", {}).setdefault("qwen3", {})
+            qwen_cfg["mode"] = mode
+            model = prompt(f"Qwen3 model (Enter for {model_defaults[mode]})")
+            qwen_cfg["model"] = model.strip() if model and model.strip() else model_defaults[mode]
+            language = prompt("Qwen3 language (Enter for English)")
+            qwen_cfg["language"] = language.strip() if language and language.strip() else "English"
+            qwen_cfg["device"] = "cuda"
+            qwen_cfg["dtype"] = "bfloat16"
+
+            if mode == "clone":
+                ref_audio = prompt("Qwen3 reference audio path")
+                ref_text = prompt("Qwen3 reference text")
+                qwen_cfg["ref_audio"] = ref_audio.strip() if ref_audio else ""
+                qwen_cfg["ref_text"] = ref_text.strip() if ref_text else ""
+            elif mode == "custom":
+                speaker = prompt("Qwen3 speaker name (Enter for aiden)")
+                qwen_cfg["speaker"] = speaker.strip() if speaker and speaker.strip() else "aiden"
+            else:
+                instruct = prompt("Qwen3 voice design prompt")
+                qwen_cfg["instruct"] = instruct.strip() if instruct and instruct.strip() else "Warm, clear, natural voice"
+
+            chunk_size = prompt("Qwen3 streaming chunk size (Enter for 2)")
+            try:
+                qwen_cfg["chunk_size"] = max(1, int(chunk_size.strip())) if chunk_size and chunk_size.strip() else 2
+            except ValueError:
+                qwen_cfg["chunk_size"] = 2
+
+            stt_local = config.setdefault("stt", {}).setdefault("local", {})
+            config["stt"].setdefault("provider", "local")
+            stt_local.setdefault("model", "base")
+            stt_local["device"] = "cuda"
+            stt_local["compute_type"] = "float16"
+            stt_local.setdefault("batch_size", 8)
+            stt_local.setdefault("vad_filter", True)
+            try:
+                whisperlive_installed = importlib.util.find_spec("whisper_live") is not None
+            except Exception:
+                whisperlive_installed = False
+            if not whisperlive_installed:
+                print()
+                if prompt_yes_no("Install WhisperLive for streaming STT now?", True):
+                    whisperlive_installed = _install_whisperlive_deps()
+            if whisperlive_installed:
+                streaming = config["stt"].setdefault("streaming", {})
+                streaming["provider"] = "whisperlive"
+                streaming["host"] = "127.0.0.1"
+                streaming["port"] = 9090
+                streaming["backend"] = "faster_whisper"
+                streaming["model"] = "small"
+                streaming["max_clients"] = 1
+                streaming["max_connection_time"] = 900
+                streaming["single_model"] = True
 
     elif selected == "kittentts":
         # Check if already installed

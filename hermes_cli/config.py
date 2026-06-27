@@ -1891,9 +1891,9 @@ DEFAULT_CONFIG = {
     # Each provider supports an optional `max_text_length:` override for the
     # per-request input-character cap. Omit it to use the provider's documented
     # limit (OpenAI 4096, xAI 15000, MiniMax 10000, ElevenLabs 5k-40k model-aware,
-    # Gemini 32000, Edge 5000, Mistral 4000, NeuTTS/KittenTTS 2000).
+    # Gemini 32000, Edge 5000, Mistral 4000, Qwen3/NeuTTS/KittenTTS 2000).
     "tts": {
-        "provider": "edge",  # "edge" (free) | "elevenlabs" (premium) | "openai" | "xai" | "minimax" | "mistral" | "gemini" | "neutts" (local) | "kittentts" (local) | "piper" (local)
+        "provider": "edge",  # "edge" (free) | "elevenlabs" (premium) | "openai" | "xai" | "minimax" | "mistral" | "gemini" | "qwen3" (local GPU) | "neutts" (local) | "kittentts" (local) | "piper" (local)
         "edge": {
             "voice": "en-US-AriaNeural",
             # Popular: AriaNeural, JennyNeural, AndrewNeural, BrianNeural, SoniaNeural
@@ -1930,6 +1930,18 @@ DEFAULT_CONFIG = {
             "model": "voxtral-mini-tts-2603",
             "voice_id": "c69964a6-ab8b-4f8a-9465-ec0925096ec8",  # Paul - Neutral
         },
+        "qwen3": {
+            "model": "Qwen/Qwen3-TTS-12Hz-0.6B-Base",
+            "mode": "clone",  # clone | custom | design
+            "language": "English",
+            "ref_audio": "",  # Voice cloning reference audio path
+            "ref_text": "",   # Transcript for the reference audio
+            "speaker": "aiden",  # CustomVoice speaker name
+            "instruct": "Warm, clear, natural voice",  # VoiceDesign prompt
+            "chunk_size": 2,  # Lower = faster TTFA, higher = more stable streaming
+            "device": "cuda",
+            "dtype": "bfloat16",
+        },
         "neutts": {
             "ref_audio": "",  # Path to reference voice audio (empty = bundled default)
             "ref_text": "",   # Path to reference voice transcript (empty = bundled default)
@@ -1957,6 +1969,20 @@ DEFAULT_CONFIG = {
         "local": {
             "model": "base",  # tiny, base, small, medium, large-v3
             "language": "",  # auto-detect by default; set to "en", "es", "fr", etc. to force
+            "device": "auto",  # auto, cuda, or cpu for faster-whisper
+            "compute_type": "auto",  # auto, float16, int8_float16, int8
+            "batch_size": 8,  # faster-whisper batched inference
+            "vad_filter": True,
+        },
+        "streaming": {
+            "provider": "",  # "" = off, "whisperlive" = live WebSocket STT
+            "host": "127.0.0.1",
+            "port": 9090,
+            "backend": "faster_whisper",  # faster_whisper, tensorrt, openvino
+            "model": "small",
+            "max_clients": 1,
+            "max_connection_time": 900,
+            "single_model": True,
         },
         "openai": {
             "model": "whisper-1",  # whisper-1, gpt-4o-mini-transcribe, gpt-4o-transcribe

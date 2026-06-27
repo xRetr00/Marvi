@@ -15,7 +15,7 @@ describe('voiceFieldVisible', () => {
   it('always shows top-level + non-provider keys', () => {
     const config = cfg()
 
-    for (const key of ['tts.provider', 'stt.enabled', 'stt.provider', 'voice.auto_tts', 'voice.record_key']) {
+    for (const key of ['tts.provider', 'stt.enabled', 'stt.provider', 'stt.streaming.provider', 'voice.auto_tts', 'voice.record_key']) {
       expect(voiceFieldVisible(key, config)).toBe(true)
     }
   })
@@ -44,5 +44,11 @@ describe('voiceFieldVisible', () => {
   it('tracks a provider switch', () => {
     expect(voiceFieldVisible('tts.openai.voice', cfg({ tts: { provider: 'openai', openai: {} } }))).toBe(true)
     expect(voiceFieldVisible('tts.edge.voice', cfg({ tts: { provider: 'openai', openai: {} } }))).toBe(false)
+  })
+
+  it('shows Qwen3 TTS fields only when Qwen3 is selected', () => {
+    expect(voiceFieldVisible('tts.qwen3.model', cfg())).toBe(false)
+    expect(voiceFieldVisible('tts.qwen3.ref_audio', cfg({ tts: { provider: 'qwen3', qwen3: {} } }))).toBe(true)
+    expect(voiceFieldVisible('tts.qwen3.instruct', cfg({ tts: { provider: 'qwen3', qwen3: {} } }))).toBe(true)
   })
 })

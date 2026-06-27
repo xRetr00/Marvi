@@ -1091,6 +1091,27 @@ def _run_post_setup(post_setup_key: str):
         _print_info("    Full voice list: https://github.com/OHF-Voice/piper1-gpl/blob/main/docs/VOICES.md")
         _print_info("    Switch voices by setting tts.piper.voice in ~/.hermes/config.yaml")
 
+    elif post_setup_key == "livekit_wakeword":
+        try:
+            __import__("livekit_wakeword")
+            _print_success("    livekit-wakeword is already installed")
+            return
+        except ImportError:
+            pass
+        _print_info("    Installing livekit-wakeword...")
+        try:
+            result = _pip_install(["-U", "livekit-wakeword", "--quiet"], timeout=300)
+            if result.returncode == 0:
+                _print_success("    livekit-wakeword installed")
+                _print_info("    Set voice.wake_word.model to a .onnx file or a directory of Marvi variant models.")
+            else:
+                _print_warning("    livekit-wakeword install failed:")
+                _print_info(f"      {(result.stderr or '').strip()[:300]}")
+                _print_info("    Run manually: uv pip install -U livekit-wakeword")
+        except subprocess.TimeoutExpired:
+            _print_warning("    livekit-wakeword install timed out (>5min)")
+            _print_info("    Run manually: uv pip install -U livekit-wakeword")
+
     elif post_setup_key == "ddgs":
         try:
             __import__("ddgs")
@@ -1249,7 +1270,7 @@ def valid_post_setup_keys() -> Set[str]:
     command and the dashboard post-setup endpoint validate against, so a
     caller can't drive ``_run_post_setup`` with an arbitrary key.
     """
-    keys: Set[str] = set()
+    keys: Set[str] = {"livekit_wakeword"}
     for cat in TOOL_CATEGORIES.values():
         for prov in cat.get("providers", []):
             ps = prov.get("post_setup")

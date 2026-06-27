@@ -901,6 +901,16 @@ platform_toolsets:
 #     voice: "Kore"
 #     audio_tags: false
 #     persona_prompt_file: ""  # e.g. ~/.hermes/tts/radio-host.md
+#
+# Local CUDA Qwen3-TTS via faster-qwen3-tts:
+#   provider: "qwen3"
+#   qwen3:
+#     model: "Qwen/Qwen3-TTS-12Hz-0.6B-Base"
+#     mode: "clone"             # clone | custom | design
+#     language: "English"
+#     ref_audio: "C:/voices/me.wav"
+#     ref_text: "Transcript of the reference clip."
+#     chunk_size: 2              # lower = faster TTFA, higher = better throughput
 
 # =============================================================================
 # Voice Transcription (Speech-to-Text)
@@ -913,11 +923,36 @@ stt:
   # provider: "local"          # auto-detected if omitted
   local:
     model: "base"              # tiny | base | small | medium | large-v3 | turbo
+    # device: "cuda"            # auto | cuda | cpu
+    # compute_type: "int8_float16"  # good RTX 3060 12GB default; use float16 for quality/speed if VRAM allows
+    # batch_size: 8             # faster for longer files; keep low for short push-to-talk clips
+    # vad_filter: true          # skip silence before decoding
     # language: ""             # auto-detect; set to "en", "es", "fr", etc. to force
+  # WhisperLive is the optional live WebSocket STT path. Use faster_whisper for
+  # direct CUDA setup; TensorRT is faster only after you build TensorRT engines.
+  streaming:
+    provider: ""                # "" | whisperlive
+    host: "127.0.0.1"
+    port: 9090
+    backend: "faster_whisper"   # faster_whisper | tensorrt | openvino
+    model: "small"
+    max_clients: 1
+    max_connection_time: 900
+    single_model: true
   openai:
     model: "whisper-1"         # whisper-1 | gpt-4o-mini-transcribe | gpt-4o-transcribe
   # mistral:
   #   model: "voxtral-mini-latest"  # voxtral-mini-latest | voxtral-mini-2602
+
+# Desktop wake word. Sherpa supports editable phrases. LiveKit wakeword uses
+# trained ONNX classifier files; set model to one .onnx file or a directory of
+# variants such as hey_marvi.onnx, marvi.onnx, marve.onnx, and marvy.onnx.
+# voice:
+#   wake_word:
+#     enabled: false
+#     provider: "sherpa_onnx"      # sherpa_onnx | livekit
+#     model: "kws-en-3.3m"         # or "livekit-marvi" / C:/voices/marvi-wake/
+#     phrases: ["hey marvi", "marvi", "marve", "marvy", "marvie", "marfi", "marfe"]
 
 # =============================================================================
 # Response Pacing (Messaging Platforms)

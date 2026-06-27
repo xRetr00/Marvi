@@ -1,7 +1,6 @@
 import type { ReactNode } from 'react'
 
 import type { HermesGateway } from '@/hermes'
-import type { WakeWordConfig } from '@/lib/wake-word'
 import type { ComposerAttachment } from '@/store/composer'
 
 import type { DroppedFile } from '../hooks/use-composer-actions'
@@ -37,7 +36,6 @@ export interface ChatBarProps {
   disabled: boolean
   focusKey?: string | null
   maxRecordingSeconds?: number
-  wakeWordConfig?: WakeWordConfig
   state: ChatBarState
   gateway?: HermesGateway | null
   queueSessionKey?: string | null
@@ -59,6 +57,7 @@ export interface ChatBarProps {
     options?: { attachments?: ComposerAttachment[]; fromQueue?: boolean }
   ) => Promise<boolean> | boolean
   onTranscribeAudio?: (audio: Blob) => Promise<string>
+  streamingSttEnabled?: boolean
 }
 
 export type VoiceStatus = 'idle' | 'recording' | 'transcribing'

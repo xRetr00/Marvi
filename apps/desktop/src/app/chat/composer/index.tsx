@@ -195,6 +195,7 @@ export function ChatBar({
   onRemoveAttachment,
   onSteer,
   onSubmit,
+  streamingSttEnabled,
   onTranscribeAudio
 }: ChatBarProps) {
   const aui = useAui()
@@ -1949,7 +1950,8 @@ export function ChatBar({
     focusInput,
     maxRecordingSeconds,
     onTranscript: insertText,
-    onTranscribeAudio
+    onTranscribeAudio,
+    streamingSttEnabled
   })
 
   const pendingResponse = () => {
@@ -2000,6 +2002,7 @@ export function ChatBar({
     onFatalError: () => setVoiceConversationActive(false),
     onSubmit: submitVoiceTurn,
     onTranscribeAudio,
+    streamingSttEnabled,
     pendingResponse
   })
 

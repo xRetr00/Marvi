@@ -221,6 +221,9 @@ export interface HermesConfig {
   }
   stt?: {
     enabled?: boolean
+    streaming?: {
+      provider?: string
+    }
   }
   voice?: {
     max_recording_seconds?: number

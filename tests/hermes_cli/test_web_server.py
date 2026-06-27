@@ -1076,6 +1076,7 @@ class TestWebServerEndpoints:
         audio_file.write_bytes(b"ID3fake-audio-bytes")
 
         def fake_tts(text):
+            assert text == "Result\n\nUse PocketTTS for voice."
             return json.dumps({
                 "success": True,
                 "file_path": str(audio_file),
@@ -1084,7 +1085,7 @@ class TestWebServerEndpoints:
 
         monkeypatch.setattr(tts_tool, "text_to_speech_tool", fake_tts)
 
-        resp = self.client.post("/api/audio/speak", json={"text": "hello there"})
+        resp = self.client.post("/api/audio/speak", json={"text": "## Result\n\nUse `PocketTTS` for **voice**."})
         assert resp.status_code == 200
         body = resp.json()
         assert body["ok"] is True
@@ -1097,6 +1098,27 @@ class TestWebServerEndpoints:
     def test_speak_text_requires_nonempty_text(self):
         resp = self.client.post("/api/audio/speak", json={"text": "   "})
         assert resp.status_code == 400
+
+    def test_speak_text_stream_returns_ndjson_chunks(self, monkeypatch):
+        import tools.tts_tool as tts_tool
+
+        def fake_stream(text):
+            assert text == "Hello"
+            yield {"type": "start", "sample_rate": 24000, "provider": "qwen3"}
+            yield {"type": "chunk", "audio": "AAE="}
+            yield {"type": "end", "provider": "qwen3"}
+
+        monkeypatch.setattr(tts_tool, "stream_text_to_speech_chunks", fake_stream, raising=False)
+
+        resp = self.client.post("/api/audio/speak/stream", json={"text": "Hello"})
+        assert resp.status_code == 200
+        assert resp.headers["content-type"].startswith("application/x-ndjson")
+        lines = [json.loads(line) for line in resp.text.splitlines()]
+        assert lines == [
+            {"type": "start", "sample_rate": 24000, "provider": "qwen3"},
+            {"type": "chunk", "audio": "AAE="},
+            {"type": "end", "provider": "qwen3"},
+        ]
 
     def test_update_hermes_returns_docker_guidance_without_spawning(self, monkeypatch):
         import hermes_cli.web_server as web_server
@@ -2755,6 +2777,45 @@ class TestBuildSchemaFromConfig:
             assert entry["type"] == "select"
             assert "options" in entry
             assert "local" in entry["options"]
+
+    def test_qwen3_tts_fields_are_in_schema(self):
+        from hermes_cli.web_server import CONFIG_SCHEMA
+
+        assert "qwen3" in CONFIG_SCHEMA["tts.provider"]["options"]
+        assert CONFIG_SCHEMA["tts.qwen3.model"]["type"] == "string"
+        assert CONFIG_SCHEMA["tts.qwen3.mode"]["type"] == "string"
+        assert CONFIG_SCHEMA["tts.qwen3.ref_audio"]["type"] == "string"
+        assert CONFIG_SCHEMA["tts.qwen3.chunk_size"]["type"] == "number"
+
+    def test_whisperlive_streaming_stt_fields_are_in_schema(self):
+        from hermes_cli.web_server import CONFIG_SCHEMA
+
+        assert CONFIG_SCHEMA["stt.streaming.provider"]["type"] == "select"
+        assert "whisperlive" in CONFIG_SCHEMA["stt.streaming.provider"]["options"]
+        assert CONFIG_SCHEMA["stt.streaming.port"]["type"] == "number"
+        assert CONFIG_SCHEMA["stt.streaming.backend"]["type"] == "select"
+        assert "faster_whisper" in CONFIG_SCHEMA["stt.streaming.backend"]["options"]
+
+    def test_whisperlive_start_payload_uses_streaming_config(self):
+        from hermes_cli.web_server import _whisperlive_start_payload
+
+        payload = _whisperlive_start_payload({
+            "stt": {
+                "local": {"language": "en"},
+                "streaming": {
+                    "model": "small",
+                    "use_vad": False,
+                    "send_last_n_segments": 3,
+                    "no_speech_thresh": 0.2,
+                },
+            }
+        })
+
+        assert payload["language"] == "en"
+        assert payload["model"] == "small"
+        assert payload["use_vad"] is False
+        assert payload["send_last_n_segments"] == 3
+        assert payload["no_speech_thresh"] == 0.2
 
     def test_empty_prefix_produces_correct_keys(self):
         from hermes_cli.web_server import _build_schema_from_config

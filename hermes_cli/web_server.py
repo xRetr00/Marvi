@@ -34,6 +34,7 @@ import threading
 import time
 import urllib.error
 import urllib.parse
+import uuid
 
 from hermes_cli._subprocess_compat import windows_detach_flags, windows_hide_flags
 import urllib.request
@@ -89,7 +90,7 @@ try:
         WebSocket, WebSocketDisconnect,
     )
     from fastapi.middleware.cors import CORSMiddleware
-    from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
+    from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response, StreamingResponse
     from fastapi.staticfiles import StaticFiles
     from pydantic import BaseModel
 except ImportError:
@@ -104,7 +105,7 @@ except ImportError:
             WebSocket, WebSocketDisconnect,
         )
         from fastapi.middleware.cors import CORSMiddleware
-        from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
+        from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response, StreamingResponse
         from fastapi.staticfiles import StaticFiles
         from pydantic import BaseModel
     except Exception:
@@ -558,7 +559,7 @@ _SCHEMA_OVERRIDES: Dict[str, Dict[str, Any]] = {
     "tts.provider": {
         "type": "select",
         "description": "Text-to-speech provider",
-        "options": ["edge", "elevenlabs", "openai", "neutts", "kittentts", "piper", "pockettts"],
+        "options": ["edge", "elevenlabs", "openai", "xai", "minimax", "mistral", "gemini", "qwen3", "neutts", "kittentts", "piper", "pockettts"],
     },
     "stt.provider": {
         "type": "select",
@@ -566,6 +567,16 @@ _SCHEMA_OVERRIDES: Dict[str, Dict[str, Any]] = {
         # "mistral" temporarily removed — mistralai PyPI package quarantined
         # (malicious 2.4.6 release on 2026-05-12). Restore once available.
         "options": ["local", "groq", "openai", "xai", "elevenlabs"],
+    },
+    "stt.streaming.provider": {
+        "type": "select",
+        "description": "Streaming speech-to-text provider",
+        "options": ["", "whisperlive"],
+    },
+    "stt.streaming.backend": {
+        "type": "select",
+        "description": "WhisperLive inference backend",
+        "options": ["faster_whisper", "tensorrt", "openvino"],
     },
     "stt.elevenlabs.model_id": {
         "type": "select",
@@ -2973,6 +2984,120 @@ async def transcribe_audio_upload(payload: AudioTranscriptionRequest):
     }
 
 
+def _whisperlive_start_payload(config: Optional[dict] = None) -> dict:
+    config = config or load_config()
+    stt = config.get("stt", {}) if isinstance(config, dict) else {}
+    local = stt.get("local", {}) if isinstance(stt, dict) else {}
+    streaming = stt.get("streaming", {}) if isinstance(stt, dict) else {}
+    return {
+        "uid": str(uuid.uuid4()),
+        "language": local.get("language") or None,
+        "task": "transcribe",
+        "model": streaming.get("model") or local.get("model") or "small",
+        "use_vad": streaming.get("use_vad", True),
+        "send_last_n_segments": int(streaming.get("send_last_n_segments") or 10),
+        "no_speech_thresh": float(streaming.get("no_speech_thresh", 0.45)),
+        "clip_audio": False,
+        "same_output_threshold": 10,
+        "enable_translation": False,
+        "target_language": "en",
+        "hotwords": None,
+        "enable_diarization": False,
+        "max_speakers": 10,
+        "word_timestamps": False,
+    }
+
+
+def _whisperlive_url(config: Optional[dict] = None) -> str:
+    config = config or load_config()
+    streaming = config.get("stt", {}).get("streaming", {})
+    scheme = "wss" if streaming.get("use_wss") else "ws"
+    host = str(streaming.get("host") or "127.0.0.1")
+    port = int(streaming.get("port") or 9090)
+    return f"{scheme}://{host}:{port}"
+
+
+@app.websocket("/api/audio/transcribe/stream")
+async def transcribe_audio_stream(ws: WebSocket) -> None:
+    """Proxy desktop PCM frames to a configured WhisperLive server."""
+    if not _ws_request_is_allowed(ws):
+        await _close_ws_with_reason(ws, 1008, _ws_request_reason(ws) or "forbidden")
+        return
+
+    auth_reason, _credential = _ws_auth_reason(ws)
+    if auth_reason is not None:
+        await _close_ws_with_reason(ws, 1008, auth_reason)
+        return
+
+    config = load_config()
+    streaming = config.get("stt", {}).get("streaming", {})
+    if streaming.get("provider") != "whisperlive":
+        await _close_ws_with_reason(ws, 1008, "WhisperLive streaming STT is not enabled")
+        return
+
+    await ws.accept()
+    upstream = None
+    last_text = ""
+
+    try:
+        import websockets
+
+        upstream = await websockets.connect(_whisperlive_url(config))
+        start = await ws.receive_json()
+        if start.get("type") != "start":
+            await ws.send_json({"type": "error", "error": "Send a start message before audio frames"})
+            return
+
+        payload = _whisperlive_start_payload(config)
+        uid = payload["uid"]
+        await upstream.send(json.dumps(payload))
+
+        async def recv_upstream() -> None:
+            nonlocal last_text
+            async for raw in upstream:
+                message = json.loads(raw)
+                if message.get("uid") != uid:
+                    continue
+                if message.get("message") == "SERVER_READY":
+                    await ws.send_json({"type": "ready"})
+                elif "segments" in message:
+                    texts = [str(seg.get("text") or "").strip() for seg in message["segments"]]
+                    text = " ".join(t for t in texts if t).strip()
+                    if text:
+                        last_text = text
+                        await ws.send_json({"type": "partial", "text": last_text})
+                elif message.get("status") == "ERROR":
+                    await ws.send_json({"type": "error", "error": message.get("message") or "WhisperLive failed"})
+
+        recv_task = asyncio.create_task(recv_upstream())
+        while True:
+            msg = await ws.receive()
+            if msg.get("type") == "websocket.disconnect":
+                break
+            if msg.get("bytes") is not None:
+                await upstream.send(msg["bytes"] or b"")
+                continue
+            if msg.get("text"):
+                data = json.loads(msg["text"])
+                if data.get("type") == "stop":
+                    await upstream.send(b"END_OF_AUDIO")
+                    await asyncio.sleep(0.5)
+                    await ws.send_json({"type": "final", "text": last_text})
+                    break
+        recv_task.cancel()
+    except WebSocketDisconnect:
+        pass
+    except Exception as exc:
+        _log.exception("Streaming transcription failed")
+        try:
+            await ws.send_json({"type": "error", "error": f"Streaming transcription failed: {exc}"})
+        except Exception:
+            pass
+    finally:
+        if upstream is not None:
+            await upstream.close()
+
+
 async def _close_ws_with_reason(ws: WebSocket, code: int, reason: str) -> None:
     try:
         await ws.close(code=code, reason=reason)
@@ -3232,8 +3357,11 @@ async def speak_text(payload: TTSSpeakRequest):
         raise HTTPException(status_code=400, detail="Text is required")
 
     try:
-        from tools.tts_tool import text_to_speech_tool
+        from tools.tts_tool import _strip_markdown_for_tts, text_to_speech_tool
         loop = asyncio.get_running_loop()
+        text = _strip_markdown_for_tts(text)
+        if not text:
+            raise HTTPException(status_code=400, detail="Text is required")
         result_json = await loop.run_in_executor(None, text_to_speech_tool, text)
     except Exception as exc:
         _log.exception("Desktop voice TTS failed")
@@ -3281,6 +3409,25 @@ async def speak_text(payload: TTSSpeakRequest):
         "mime_type": mime_type,
         "provider": result.get("provider"),
     }
+
+
+@app.post("/api/audio/speak/stream")
+async def speak_text_stream(payload: TTSSpeakRequest):
+    """Stream TTS as NDJSON PCM chunks for browser-side playback."""
+    text = (payload.text or "").strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="Text is required")
+
+    def _iter_lines():
+        from tools.tts_tool import _strip_markdown_for_tts, stream_text_to_speech_chunks
+
+        cleaned = _strip_markdown_for_tts(text)
+        if not cleaned:
+            raise ValueError("Text is required")
+        for event in stream_text_to_speech_chunks(cleaned):
+            yield json.dumps(event, ensure_ascii=False) + "\n"
+
+    return StreamingResponse(_iter_lines(), media_type="application/x-ndjson")
 
 
 @app.get("/api/actions/{name}/status")

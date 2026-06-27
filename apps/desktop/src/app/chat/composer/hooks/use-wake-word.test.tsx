@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { useWakeWord } from './use-wake-word'
 
 const openWakeWordSession = vi.fn()
+const openStreamingTranscription = vi.fn()
 const notifyError = vi.fn()
 const cancelMic = vi.fn()
 const startMic = vi.fn()
@@ -33,6 +34,10 @@ vi.mock('@/i18n', () => ({
 vi.mock('@/store/notifications', () => ({
   notify: vi.fn(),
   notifyError: (...args: unknown[]) => notifyError(...args)
+}))
+
+vi.mock('@/lib/streaming-transcription', () => ({
+  openStreamingTranscription: (...args: unknown[]) => openStreamingTranscription(...args)
 }))
 
 vi.mock('@/lib/wake-word', () => ({
@@ -204,6 +209,62 @@ describe('useWakeWord', () => {
     expect(audio.size).toBeGreaterThan(44)
   })
 
+  it('streams post-wake command audio when streaming STT is enabled', async () => {
+    let wakeOptions: { debug?: boolean; onDetected: (phrase: string) => void } | null = null
+    const recorderState: { options?: RecorderOptionsForTest } = {}
+    const wakeSession = { sendFrame: vi.fn(), stop: vi.fn() }
+    const streamSession = { finish: vi.fn().mockResolvedValue('hey marvi stream this'), sendFrame: vi.fn() }
+    const onSubmit = vi.fn()
+    openWakeWordSession.mockImplementation(async options => {
+      wakeOptions = options
+      return wakeSession
+    })
+    openStreamingTranscription.mockResolvedValue(streamSession)
+    startMic.mockImplementation(async options => {
+      recorderState.options = options
+    })
+    stopMic.mockResolvedValue({ audio: new Blob(['idle'], { type: 'audio/webm' }), durationMs: 1200, heardSpeech: true })
+
+    renderHook(() =>
+      useWakeWord({
+        busy: false,
+        config: {
+          boost: 2,
+          commandTimeoutMs: 8000,
+          cooldownMs: 1000,
+          debug: false,
+          enabled: true,
+          phrases: ['hey marvi'],
+          provider: 'sherpa_onnx',
+          sampleRate: 16000,
+          threshold: 0.35
+        },
+        enabled: true,
+        onSubmit,
+        onTranscribeAudio: vi.fn(),
+        streamingSttEnabled: true
+      })
+    )
+
+    await waitFor(() => expect(startMic).toHaveBeenCalled())
+    await act(async () => {
+      wakeOptions?.onDetected('hey marvi')
+      await Promise.resolve()
+    })
+
+    const commandFrame = new Float32Array([0.3, 0.4])
+    recorderState.options?.onAudioFrame?.(commandFrame)
+
+    await act(async () => {
+      recorderState.options?.onSilence?.()
+      await waitFor(() => expect(onSubmit).toHaveBeenCalledWith('stream this'))
+    })
+
+    expect(openStreamingTranscription).toHaveBeenCalledTimes(1)
+    expect(streamSession.sendFrame).toHaveBeenCalledWith(commandFrame)
+    expect(streamSession.finish).toHaveBeenCalledTimes(1)
+  })
+
   it('passes debug mode to the wake-word session', async () => {
     const wakeSession = { sendFrame: vi.fn(), stop: vi.fn() }
     openWakeWordSession.mockResolvedValue(wakeSession)
@@ -231,6 +292,6 @@ describe('useWakeWord', () => {
 
     await waitFor(() => expect(openWakeWordSession).toHaveBeenCalled())
 
-    expect(openWakeWordSession.mock.calls[0][0]).toMatchObject({ debug: true })
+    expect(openWakeWordSession.mock.calls.at(-1)?.[0]).toMatchObject({ debug: true })
   })
 })

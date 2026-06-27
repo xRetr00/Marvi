@@ -9,7 +9,6 @@ import { formatCombo } from '@/lib/keybinds/combo'
 import { cn } from '@/lib/utils'
 
 import type { ConversationStatus } from './hooks/use-voice-conversation'
-import type { WakeWordStatus } from './hooks/use-wake-word'
 import { ModelPill } from './model-pill'
 import type { ChatBarState, VoiceStatus } from './types'
 
@@ -39,11 +38,6 @@ interface ConversationProps {
   onToggleMute: () => void
 }
 
-interface WakeWordProps {
-  active: boolean
-  status: WakeWordStatus
-}
-
 export function ComposerControls({
   busy,
   busyAction,
@@ -54,7 +48,6 @@ export function ComposerControls({
   disabled,
   hasComposerPayload,
   state,
-  wakeWord,
   voiceStatus,
   onDictate,
   onSteer
@@ -68,7 +61,6 @@ export function ComposerControls({
   disabled: boolean
   hasComposerPayload: boolean
   state: ChatBarState
-  wakeWord?: WakeWordProps
   voiceStatus: VoiceStatus
   onDictate: () => void
   onSteer: () => void
@@ -94,7 +86,6 @@ export function ComposerControls({
   return (
     <div className="ml-auto flex shrink-0 items-center gap-(--composer-control-gap)">
       <ModelPill compact={compactModelPill} disabled={disabled} model={state.model} />
-      {wakeWord?.active && <WakeWordPill disabled={disabled} status={wakeWord.status} />}
       {/* While the agent runs and the user is typing, steer takes over the mic's
           slot rather than crowding the row with an extra button. */}
       {canSteer ? (
@@ -150,42 +141,6 @@ export function ComposerControls({
           </Button>
         </Tip>
       )}
-    </div>
-  )
-}
-
-function WakeWordPill({ disabled, status }: Pick<WakeWordProps, 'status'> & { disabled: boolean }) {
-  const { t } = useI18n()
-  const c = t.composer
-  const listening = status === 'listening' || status === 'woken'
-  const transcribing = status === 'transcribing'
-
-  const label =
-    status === 'transcribing'
-      ? c.transcribing
-      : status === 'listening'
-        ? c.listening
-        : status === 'woken'
-          ? 'Waked'
-          : 'Wake word'
-
-  return (
-    <div className="flex shrink-0 items-center gap-(--composer-control-gap)">
-      <Button
-        aria-label={label}
-        className={cn(
-          'h-(--composer-control-size) gap-1.5 rounded-full bg-primary px-3 text-xs font-medium text-primary-foreground hover:bg-primary/90',
-          disabled && 'opacity-70'
-        )}
-        disabled={disabled}
-        type="button"
-      >
-        <ConversationIndicator level={listening ? 0.8 : 0} listening={listening} speaking={transcribing} />
-        <span>{label}</span>
-      </Button>
-      <span className="sr-only" role="status">
-        {label}
-      </span>
     </div>
   )
 }

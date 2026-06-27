@@ -11602,13 +11602,19 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin):
                         _load_tts_config as _load_tts_cfg,
                         _get_provider as _get_prov,
                         _import_elevenlabs,
+                        _import_qwen3_tts,
                         _import_sounddevice,
                         stream_tts_to_speaker,
                     )
                     _tts_cfg = _load_tts_cfg()
-                    if _get_prov(_tts_cfg) == "elevenlabs":
+                    _tts_provider = _get_prov(_tts_cfg)
+                    if _tts_provider == "elevenlabs":
                         # Verify both ElevenLabs SDK and audio output are available
                         _import_elevenlabs()
+                        _import_sounddevice()
+                        use_streaming_tts = True
+                    elif _tts_provider == "qwen3":
+                        _import_qwen3_tts()
                         _import_sounddevice()
                         use_streaming_tts = True
                 except (ImportError, OSError):

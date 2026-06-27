@@ -37,6 +37,99 @@ export interface VoicePlaybackOptions {
   source: VoicePlaybackSource
 }
 
+function pcm16Base64ToFloat32(encoded: string): Float32Array {
+  const raw = atob(encoded)
+  const bytes = new Uint8Array(raw.length)
+  for (let i = 0; i < raw.length; i += 1) {
+    bytes[i] = raw.charCodeAt(i)
+  }
+
+  const pcm = new Int16Array(bytes.buffer)
+  const samples = new Float32Array(pcm.length)
+  for (let i = 0; i < pcm.length; i += 1) {
+    samples[i] = Math.max(-1, pcm[i] / 32768)
+  }
+  return samples
+}
+
+async function playStreamingSpeechText(text: string, options: VoicePlaybackOptions): Promise<boolean> {
+  const conn = await window.hermesDesktop.getConnection().catch(() => null)
+
+  if (!conn || conn.authMode === 'oauth' || !conn.token) {
+    return false
+  }
+
+  const response = await fetch(`${conn.baseUrl.replace(/\/+$/, '')}/api/audio/speak/stream`, {
+    body: JSON.stringify({ text }),
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Hermes-Session-Token': conn.token
+    },
+    method: 'POST'
+  })
+
+  if (!response.ok || !response.body) {
+    return false
+  }
+
+  const audioContext = new AudioContext()
+  const reader = response.body.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ''
+  let sampleRate = 24000
+  let nextTime = audioContext.currentTime
+  let stopped = false
+
+  currentStop = () => {
+    stopped = true
+    void audioContext.close?.()
+  }
+  setVoicePlaybackState(currentState('speaking', options))
+
+  const playChunk = (encoded: string) => {
+    const samples = pcm16Base64ToFloat32(encoded)
+    const audioBuffer = audioContext.createBuffer(1, samples.length, sampleRate)
+    audioBuffer.getChannelData(0).set(samples)
+    const source = audioContext.createBufferSource()
+    source.buffer = audioBuffer
+    source.connect(audioContext.destination)
+    source.start(nextTime)
+    nextTime += samples.length / sampleRate
+  }
+
+  while (!stopped) {
+    const { done, value } = await reader.read()
+    if (done) {
+      break
+    }
+
+    buffer += decoder.decode(value, { stream: true })
+    const lines = buffer.split('\n')
+    buffer = lines.pop() ?? ''
+
+    for (const line of lines) {
+      if (!line.trim()) {
+        continue
+      }
+
+      const event = JSON.parse(line) as { audio?: string; sample_rate?: number; type?: string }
+      if (event.type === 'start' && event.sample_rate) {
+        sampleRate = event.sample_rate
+      } else if (event.type === 'chunk' && event.audio) {
+        playChunk(event.audio)
+      }
+    }
+  }
+
+  if (!stopped) {
+    await new Promise(resolve => window.setTimeout(resolve, Math.max(0, (nextTime - audioContext.currentTime) * 1000)))
+  }
+
+  currentStop = null
+  await audioContext.close?.()
+  return !stopped
+}
+
 export function stopVoicePlayback() {
   sequence += 1
   currentStop?.()
@@ -73,6 +166,17 @@ export async function playSpeechText(text: string, options: VoicePlaybackOptions
   setVoicePlaybackState(currentState('preparing', options))
 
   try {
+    if (await playStreamingSpeechText(speakableText, options).catch(() => false)) {
+      if (isCurrent()) {
+        setVoicePlaybackState(currentState('idle'))
+      }
+      return true
+    }
+
+    if (!isCurrent()) {
+      return false
+    }
+
     const response = await speakText(speakableText)
 
     if (!isCurrent()) {

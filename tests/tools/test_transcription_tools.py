@@ -426,6 +426,72 @@ class TestTranscribeLocalCommand:
         assert result["provider"] == "local_command"
 
 
+class TestLocalWhisperGpuConfig:
+    def test_load_local_whisper_model_uses_explicit_cuda_config(self):
+        call_args = []
+
+        def fake_whisper(model_name, **kwargs):
+            call_args.append((model_name, kwargs))
+            return object()
+
+        cfg = {"local": {"device": "cuda", "compute_type": "int8_float16"}}
+        with patch("tools.transcription_tools._load_stt_config", return_value=cfg), \
+             patch("faster_whisper.WhisperModel", side_effect=fake_whisper):
+            from tools.transcription_tools import _load_local_whisper_model
+            _load_local_whisper_model("base")
+
+        assert call_args == [("base", {"device": "cuda", "compute_type": "int8_float16"})]
+
+    def test_transcribe_local_passes_configured_batch_size(self, sample_wav):
+        segment = types.SimpleNamespace(text=" hello ")
+        info = types.SimpleNamespace(language="en", duration=1.0)
+        mock_model = MagicMock()
+        mock_model.transcribe.return_value = ([segment], info)
+
+        cfg = {"local": {"batch_size": 8, "vad_filter": True}}
+        with patch("tools.transcription_tools._HAS_FASTER_WHISPER", True), \
+             patch("tools.transcription_tools._load_stt_config", return_value=cfg), \
+             patch("tools.transcription_tools._load_local_whisper_model", return_value=mock_model), \
+             patch("tools.transcription_tools._local_model", None), \
+             patch("tools.transcription_tools._local_model_name", None):
+            from tools.transcription_tools import _transcribe_local
+            result = _transcribe_local(sample_wav, "base")
+
+        assert result["success"] is True
+        kwargs = mock_model.transcribe.call_args.kwargs
+        assert kwargs["batch_size"] == 8
+        assert kwargs["vad_filter"] is True
+
+
+class TestWhisperLiveConfig:
+    def test_builds_whisperlive_server_command_from_config(self):
+        import sys
+
+        from tools.transcription_tools import whisperlive_server_command
+
+        command = whisperlive_server_command({
+            "streaming": {
+                "host": "127.0.0.1",
+                "port": 9091,
+                "backend": "faster_whisper",
+                "model": "small",
+                "max_clients": 1,
+                "max_connection_time": 900,
+                "single_model": True,
+            }
+        })
+
+        assert command == [
+            sys.executable,
+            "-c",
+            (
+                "from whisper_live.server import TranscriptionServer; "
+                "TranscriptionServer().run(host='127.0.0.1', port=9091, backend='faster_whisper', "
+                "max_clients=1, max_connection_time=900, faster_whisper_custom_model_path='small', single_model=True)"
+            ),
+        ]
+
+
 # ============================================================================
 # _transcribe_local — additional tests
 # ============================================================================

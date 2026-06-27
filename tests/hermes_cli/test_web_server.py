@@ -2817,6 +2817,72 @@ class TestBuildSchemaFromConfig:
         assert payload["send_last_n_segments"] == 3
         assert payload["no_speech_thresh"] == 0.2
 
+    def test_whisperlive_server_command_uses_isolated_venv(self, tmp_path):
+        from hermes_cli.web_server import _whisperlive_server_command
+
+        config = {
+            "stt": {
+                "local": {"model": "base"},
+                "streaming": {
+                    "host": "127.0.0.1",
+                    "port": 9191,
+                    "backend": "faster_whisper",
+                    "model": "small",
+                },
+            }
+        }
+
+        argv = _whisperlive_server_command(config, tmp_path)
+
+        assert str(tmp_path / "whisperlive-venv") in argv[0]
+        assert argv[1] == "-c"
+        assert "TranscriptionServer().run" in argv[2]
+        assert "port=9191" in argv[2]
+        assert "faster_whisper_custom_model_path='small'" in argv[2]
+
+    def test_desktop_whisperlive_autostart_spawns_hidden_subprocess(self, monkeypatch, tmp_path):
+        import hermes_cli.web_server as web_server
+
+        python_exe = tmp_path / "whisperlive-venv" / ("Scripts" if os.name == "nt" else "bin") / (
+            "python.exe" if os.name == "nt" else "python"
+        )
+        python_exe.parent.mkdir(parents=True)
+        python_exe.write_text("", encoding="utf-8")
+        config = {
+            "stt": {
+                "streaming": {
+                    "provider": "whisperlive",
+                    "host": "127.0.0.1",
+                    "port": 9090,
+                    "backend": "faster_whisper",
+                    "model": "small",
+                }
+            }
+        }
+        calls = {}
+
+        class FakePopen:
+            pid = 1234
+
+            def __init__(self, argv, **kwargs):
+                calls["argv"] = argv
+                calls["kwargs"] = kwargs
+
+            def poll(self):
+                return None
+
+        monkeypatch.setattr(web_server, "get_hermes_home", lambda: tmp_path)
+        monkeypatch.setattr(web_server, "_whisperlive_port_open", lambda _config, timeout=0.25: False)
+        monkeypatch.setattr(web_server.subprocess, "Popen", FakePopen)
+
+        proc = web_server._start_desktop_whisperlive(config)
+
+        assert proc.pid == 1234
+        assert calls["argv"][0] == str(python_exe)
+        assert calls["kwargs"]["stdin"] is web_server.subprocess.DEVNULL
+        assert calls["kwargs"]["stderr"] is web_server.subprocess.STDOUT
+        assert (tmp_path / "logs" / "whisperlive.log").exists()
+
     def test_empty_prefix_produces_correct_keys(self):
         from hermes_cli.web_server import _build_schema_from_config
         test_config = {"model": "test", "nested": {"key": "val"}}

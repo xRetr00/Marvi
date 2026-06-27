@@ -307,6 +307,14 @@ TOOL_CATEGORIES = {
                 "tts_provider": "gemini",
             },
             {
+                "name": "Qwen3 TTS",
+                "badge": "local · CUDA",
+                "tag": "Local streaming TTS with custom, design, and clone modes",
+                "env_vars": [],
+                "tts_provider": "qwen3",
+                "post_setup": "qwen3_tts",
+            },
+            {
                 "name": "KittenTTS",
                 "badge": "local · free",
                 "tag": "Lightweight local ONNX TTS (~25MB), no API key",
@@ -901,6 +909,7 @@ def _run_cua_driver_installer(label: str = "Installing", verbose: bool = True) -
 def _run_post_setup(post_setup_key: str):
     """Run post-setup hooks for tools that need extra installation steps."""
     import shutil
+    import subprocess
     if post_setup_key in {"agent_browser", "browserbase"}:
         node_modules = PROJECT_ROOT / "node_modules" / "agent-browser"
         npm_bin = shutil.which("npm")
@@ -1093,7 +1102,7 @@ def _run_post_setup(post_setup_key: str):
 
     elif post_setup_key == "livekit_wakeword":
         try:
-            __import__("livekit_wakeword")
+            from livekit.wakeword import WakeWordModel  # noqa: F401
             _print_success("    livekit-wakeword is already installed")
             return
         except ImportError:
@@ -1111,6 +1120,72 @@ def _run_post_setup(post_setup_key: str):
         except subprocess.TimeoutExpired:
             _print_warning("    livekit-wakeword install timed out (>5min)")
             _print_info("    Run manually: uv pip install -U livekit-wakeword")
+
+    elif post_setup_key == "qwen3_tts":
+        try:
+            __import__("faster_qwen3_tts")
+            _print_success("    faster-qwen3-tts is already installed")
+            return
+        except ImportError:
+            pass
+        _print_info("    Installing faster-qwen3-tts...")
+        try:
+            result = _pip_install(["-U", "faster-qwen3-tts", "--quiet"], timeout=600)
+            if result.returncode == 0:
+                _print_success("    faster-qwen3-tts installed")
+                _print_info("    Models download on first use; set tts.qwen3.device to cuda for GPU.")
+            else:
+                _print_warning("    faster-qwen3-tts install failed:")
+                _print_info(f"      {(result.stderr or '').strip()[:300]}")
+                _print_info("    Run manually: uv pip install -U faster-qwen3-tts")
+        except subprocess.TimeoutExpired:
+            _print_warning("    faster-qwen3-tts install timed out (>10min)")
+            _print_info("    Run manually: uv pip install -U faster-qwen3-tts")
+
+    elif post_setup_key == "whisperlive":
+        from hermes_constants import get_hermes_home
+
+        venv_dir = get_hermes_home() / "whisperlive-venv"
+        py = venv_dir / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+        start_cmd = (
+            f'"{py}" -c "from whisper_live.server import TranscriptionServer; '
+            "TranscriptionServer().run(host='127.0.0.1', port=9090, backend='faster_whisper', "
+            "faster_whisper_custom_model_path='en-20m-int8', single_model=True, max_clients=1, "
+            'max_connection_time=900)"'
+        )
+        try:
+            if py.exists():
+                result = subprocess.run(
+                    [str(py), "-c", "import whisper_live"],
+                    capture_output=True, text=True, timeout=30,
+                )
+                if result.returncode == 0:
+                    _print_success(f"    WhisperLive is already installed in {venv_dir}")
+                    _print_info(f"    Start it with: {start_cmd}")
+                    return
+        except (subprocess.TimeoutExpired, OSError):
+            pass
+
+        _print_info(f"    Installing WhisperLive into isolated venv: {venv_dir}")
+        try:
+            if not py.exists():
+                subprocess.run([sys.executable, "-m", "venv", str(venv_dir)], check=True, timeout=120)
+            result = subprocess.run(
+                [str(py), "-m", "pip", "install", "-U", "pip", "setuptools", "wheel", "whisper-live"],
+                capture_output=True, text=True, timeout=900,
+            )
+            if result.returncode == 0:
+                _print_success("    WhisperLive installed")
+                _print_info(f"    Start it with: {start_cmd}")
+                return
+            _print_warning("    WhisperLive install failed:")
+            _print_info(f"      {(result.stderr or '').strip()[:300]}")
+            _print_info(f"    Run manually: \"{py}\" -m pip install -U whisper-live")
+        except subprocess.TimeoutExpired:
+            _print_warning("    WhisperLive install timed out (>15min)")
+            _print_info(f"    Run manually: \"{py}\" -m pip install -U whisper-live")
+        except Exception as e:
+            _print_warning(f"    WhisperLive install failed: {e}")
 
     elif post_setup_key == "ddgs":
         try:
@@ -1270,7 +1345,7 @@ def valid_post_setup_keys() -> Set[str]:
     command and the dashboard post-setup endpoint validate against, so a
     caller can't drive ``_run_post_setup`` with an arbitrary key.
     """
-    keys: Set[str] = {"livekit_wakeword"}
+    keys: Set[str] = {"livekit_wakeword", "whisperlive"}
     for cat in TOOL_CATEGORIES.values():
         for prov in cat.get("providers", []):
             ps = prov.get("post_setup")

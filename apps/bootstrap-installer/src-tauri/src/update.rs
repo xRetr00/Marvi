@@ -533,7 +533,7 @@ pub(crate) async fn wait_for_install_locks_free(install_root: &Path, app: &AppHa
 }
 
 fn install_lock_probe_paths(install_root: &Path) -> Vec<PathBuf> {
-    let mut paths = vec![venv_hermes(install_root)];
+    let mut paths = venv_hermes_candidates(install_root);
     paths.extend(desktop_app_payload_paths(install_root));
     paths
 }
@@ -691,30 +691,45 @@ struct CmdResult {
     exit_code: Option<i32>,
 }
 
-/// Path to the venv hermes shim under an install root, regardless of existence.
+/// Primary path to the venv Hermes shim under an install root, regardless of existence.
 fn venv_hermes(install_root: &Path) -> PathBuf {
+    venv_hermes_candidates(install_root)
+        .into_iter()
+        .next()
+        .expect("venv_hermes_candidates is never empty")
+}
+
+fn venv_hermes_candidates(install_root: &Path) -> Vec<PathBuf> {
     if cfg!(target_os = "windows") {
-        install_root.join("venv").join("Scripts").join("marvi.exe")
+        let scripts = install_root.join("venv").join("Scripts");
+        vec![scripts.join("hermes.exe"), scripts.join("marvi.exe")]
     } else {
-        install_root.join("venv").join("bin").join("hermes")
+        vec![install_root.join("venv").join("bin").join("hermes")]
     }
 }
 
 /// Resolve the hermes CLI to drive. Prefer the venv shim in the install we
 /// just updated; fall back to `hermes` on PATH.
 fn resolve_hermes(install_root: &Path) -> Option<PathBuf> {
-    let shim = venv_hermes(install_root);
-    if shim.exists() {
-        return Some(shim);
+    for shim in venv_hermes_candidates(install_root) {
+        if shim.exists() {
+            return Some(shim);
+        }
     }
     // PATH fallback. which-style probe via env, kept dependency-free.
-    let exe = if cfg!(target_os = "windows") { "marvi.exe" } else { "hermes" };
+    let exes = if cfg!(target_os = "windows") {
+        &["hermes.exe", "marvi.exe"][..]
+    } else {
+        &["hermes"][..]
+    };
     if let Ok(path) = std::env::var("PATH") {
         let sep = if cfg!(target_os = "windows") { ';' } else { ':' };
         for dir in path.split(sep) {
-            let cand = Path::new(dir).join(exe);
-            if cand.exists() {
-                return Some(cand);
+            for exe in exes {
+                let cand = Path::new(dir).join(exe);
+                if cand.exists() {
+                    return Some(cand);
+                }
             }
         }
     }
@@ -1016,6 +1031,21 @@ mod tests {
         let shim = venv_hermes(root);
         assert!(shim.starts_with(root));
         assert!(shim.to_string_lossy().contains("venv"));
+    }
+
+    #[test]
+    fn resolve_hermes_accepts_legacy_hermes_exe_on_windows() {
+        let root = unique_tmp_dir("resolve-hermes");
+        let scripts = root.join("venv").join("Scripts");
+        std::fs::create_dir_all(&scripts).unwrap();
+        let shim = scripts.join("hermes.exe");
+        std::fs::write(&shim, "").unwrap();
+
+        if cfg!(target_os = "windows") {
+            assert_eq!(resolve_hermes(&root), Some(shim));
+        }
+
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]

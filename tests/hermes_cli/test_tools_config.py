@@ -1596,3 +1596,13 @@ def test_real_configurable_changes_still_reported_in_diff():
     # User adds 'vision' (configurable) — must still report as added.
     new_enabled2 = (current - {"kanban"}) | {"vision"}
     assert ((new_enabled2 - current) & universe) == {"vision"}
+
+
+def test_voice_post_setup_keys_are_allowed():
+    from hermes_cli.tools_config import valid_post_setup_keys
+
+    keys = valid_post_setup_keys()
+
+    assert "livekit_wakeword" in keys
+    assert "qwen3_tts" in keys
+    assert "whisperlive" in keys

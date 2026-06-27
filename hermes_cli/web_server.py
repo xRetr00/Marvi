@@ -25,6 +25,7 @@ import os
 import re
 import secrets
 import shutil
+import socket
 import stat
 import subprocess
 import struct
@@ -191,6 +192,7 @@ async def _lifespan(app: "FastAPI"):
     # dashboard` is unaffected — it relies on its own gateway.
     cron_stop: "threading.Event | None" = None
     cron_thread: "threading.Thread | None" = None
+    whisperlive_proc: "subprocess.Popen | None" = None
     if os.getenv("HERMES_DESKTOP") == "1":
         cron_stop = threading.Event()
         cron_thread = threading.Thread(
@@ -200,12 +202,16 @@ async def _lifespan(app: "FastAPI"):
             name="desktop-cron-ticker",
         )
         cron_thread.start()
+        whisperlive_proc = _start_desktop_whisperlive(load_config())
+        app.state.whisperlive_proc = whisperlive_proc
 
     try:
         yield
     finally:
         if cron_stop is not None:
             cron_stop.set()
+        if whisperlive_proc is not None and whisperlive_proc.poll() is None:
+            whisperlive_proc.terminate()
 
 
 def _get_event_state(app: "FastAPI"):
@@ -3017,6 +3023,107 @@ def _whisperlive_url(config: Optional[dict] = None) -> str:
     return f"{scheme}://{host}:{port}"
 
 
+def _whisperlive_host_port(config: Optional[dict] = None) -> tuple[str, int]:
+    config = config or load_config()
+    streaming = config.get("stt", {}).get("streaming", {})
+    return str(streaming.get("host") or "127.0.0.1"), int(streaming.get("port") or 9090)
+
+
+def _whisperlive_venv_python(home: Optional[Path] = None) -> Path:
+    home = home or get_hermes_home()
+    scripts_dir = "Scripts" if os.name == "nt" else "bin"
+    exe_name = "python.exe" if os.name == "nt" else "python"
+    return home / "whisperlive-venv" / scripts_dir / exe_name
+
+
+def _whisperlive_port_open(config: Optional[dict] = None, timeout: float = 0.25) -> bool:
+    host, port = _whisperlive_host_port(config)
+    try:
+        with socket.create_connection((host, port), timeout=timeout):
+            return True
+    except OSError:
+        return False
+
+
+def _whisperlive_server_command(config: Optional[dict] = None, home: Optional[Path] = None) -> list[str]:
+    config = config or load_config()
+    stt = config.get("stt", {}) if isinstance(config, dict) else {}
+    local = stt.get("local", {}) if isinstance(stt, dict) else {}
+    streaming = stt.get("streaming", {}) if isinstance(stt, dict) else {}
+    host, port = _whisperlive_host_port(config)
+    backend = str(streaming.get("backend") or "faster_whisper")
+    model = str(streaming.get("model") or local.get("model") or "small")
+    single_model = bool(streaming.get("single_model", True))
+    max_clients = int(streaming.get("max_clients") or 1)
+    max_connection_time = int(streaming.get("max_connection_time") or 900)
+    server = (
+        "from whisper_live.server import TranscriptionServer; "
+        "TranscriptionServer().run("
+        f"host={host!r}, port={port!r}, backend={backend!r}, "
+        f"faster_whisper_custom_model_path={model!r}, single_model={single_model!r}, "
+        f"max_clients={max_clients!r}, max_connection_time={max_connection_time!r})"
+    )
+    return [str(_whisperlive_venv_python(home)), "-c", server]
+
+
+def _start_desktop_whisperlive(config: Optional[dict] = None) -> "subprocess.Popen | None":
+    config = config or load_config()
+    streaming = config.get("stt", {}).get("streaming", {}) if isinstance(config, dict) else {}
+    if streaming.get("provider") != "whisperlive":
+        return None
+    if _whisperlive_port_open(config):
+        _log.info("WhisperLive already running at %s", _whisperlive_url(config))
+        return None
+
+    python_exe = _whisperlive_venv_python()
+    if not python_exe.exists():
+        _log.warning(
+            "WhisperLive is enabled but %s is missing. Run `hermes setup tts` or "
+            "`hermes tools post-setup whisperlive` first.",
+            python_exe,
+        )
+        return None
+
+    logs_dir = get_hermes_home() / "logs"
+    logs_dir.mkdir(parents=True, exist_ok=True)
+    log_handle = (logs_dir / "whisperlive.log").open("a", encoding="utf-8")
+    argv = _whisperlive_server_command(config)
+    popen_kwargs: dict[str, Any] = (
+        {"creationflags": windows_hide_flags()} if os.name == "nt" else {"start_new_session": True}
+    )
+    try:
+        proc = subprocess.Popen(
+            argv,
+            cwd=str(PROJECT_ROOT),
+            stdin=subprocess.DEVNULL,
+            stdout=log_handle,
+            stderr=subprocess.STDOUT,
+            close_fds=True,
+            **popen_kwargs,
+        )
+    except OSError as exc:
+        log_handle.close()
+        _log.warning("Failed to start WhisperLive: %s", exc)
+        return None
+    finally:
+        try:
+            log_handle.close()
+        except OSError:
+            pass
+
+    _log.info("Started WhisperLive at %s (pid %s)", _whisperlive_url(config), proc.pid)
+    return proc
+
+
+async def _wait_for_whisperlive(config: Optional[dict] = None, timeout: float = 12.0) -> bool:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if _whisperlive_port_open(config):
+            return True
+        await asyncio.sleep(0.25)
+    return False
+
+
 @app.websocket("/api/audio/transcribe/stream")
 async def transcribe_audio_stream(ws: WebSocket) -> None:
     """Proxy desktop PCM frames to a configured WhisperLive server."""
@@ -3042,6 +3149,7 @@ async def transcribe_audio_stream(ws: WebSocket) -> None:
     try:
         import websockets
 
+        await _wait_for_whisperlive(config)
         upstream = await websockets.connect(_whisperlive_url(config))
         start = await ws.receive_json()
         if start.get("type") != "start":

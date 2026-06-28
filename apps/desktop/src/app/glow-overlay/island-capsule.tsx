@@ -15,6 +15,10 @@ export function IslandCapsule() {
     // glow window. Capture clicks while a card with actions is shown.
     const interactive = Boolean(card?.actions?.length)
     window.hermesDesktop?.glowOverlay?.setIgnoreMouse(!interactive)
+    return () => {
+      // Never leave the fullscreen window mouse-capturing if this unmounts.
+      window.hermesDesktop?.glowOverlay?.setIgnoreMouse(true)
+    }
   }, [card])
 
   if (!card) {

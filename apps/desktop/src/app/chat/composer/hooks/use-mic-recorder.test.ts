@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 
-import { downsampleFloat32, resumeAudioContextIfSuspended } from './use-mic-recorder'
+import { downsampleFloat32, getMicrophoneStream, resumeAudioContextIfSuspended } from './use-mic-recorder'
 
 describe('downsampleFloat32', () => {
   it('averages source samples into the requested output rate', () => {
@@ -34,5 +34,21 @@ describe('resumeAudioContextIfSuspended', () => {
     resumeAudioContextIfSuspended({ resume, state: 'running' })
 
     expect(resume).not.toHaveBeenCalled()
+  })
+})
+
+describe('getMicrophoneStream', () => {
+  it('retries with plain audio when device constraints fail', async () => {
+    const stream = {} as MediaStream
+    const getUserMedia = vi
+      .fn()
+      .mockRejectedValueOnce(new DOMException('No device matched constraints', 'NotFoundError'))
+      .mockResolvedValueOnce(stream)
+
+    await expect(getMicrophoneStream({ getUserMedia } as unknown as MediaDevices)).resolves.toBe(stream)
+    expect(getUserMedia).toHaveBeenNthCalledWith(1, {
+      audio: { echoCancellation: true, noiseSuppression: true }
+    })
+    expect(getUserMedia).toHaveBeenNthCalledWith(2, { audio: true })
   })
 })

@@ -106,6 +106,24 @@ function micError(error: unknown, copy: MicRecorderErrorCopy): Error {
   return new Error(copy.microphoneStartFailed)
 }
 
+function shouldRetryPlainAudio(error: unknown): boolean {
+  const name = error instanceof DOMException ? error.name : ''
+  return name === 'NotFoundError' || name === 'DevicesNotFoundError' || name === 'OverconstrainedError'
+}
+
+export async function getMicrophoneStream(mediaDevices: MediaDevices): Promise<MediaStream> {
+  try {
+    return await mediaDevices.getUserMedia({
+      audio: { echoCancellation: true, noiseSuppression: true }
+    })
+  } catch (error) {
+    if (!shouldRetryPlainAudio(error)) {
+      throw error
+    }
+    return mediaDevices.getUserMedia({ audio: true })
+  }
+}
+
 export function useMicRecorder(copy: MicRecorderErrorCopy): {
   handle: MicRecorderHandle
   level: number
@@ -249,9 +267,7 @@ export function useMicRecorder(copy: MicRecorderErrorCopy): {
     let stream: MediaStream
 
     try {
-      stream = await navigator.mediaDevices.getUserMedia({
-        audio: { echoCancellation: true, noiseSuppression: true }
-      })
+      stream = await getMicrophoneStream(navigator.mediaDevices)
     } catch (error) {
       throw micError(error, copy)
     }

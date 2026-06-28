@@ -5,7 +5,7 @@ import { Tip } from '@/components/ui/tooltip'
 import { getHermesConfigDefaults, getHermesConfigRecord, saveHermesConfig } from '@/hermes'
 import { useI18n } from '@/i18n'
 import { triggerHaptic } from '@/lib/haptics'
-import { Archive, Bell, Download, Globe, Info, KeyRound, RefreshCw, Settings2, Upload, Wrench, Zap } from '@/lib/icons'
+import { Archive, Bell, Download, Globe, Info, KeyRound, Mic, RefreshCw, Settings2, Upload, Wrench, Zap } from '@/lib/icons'
 import { notifyError } from '@/store/notifications'
 
 import { useRouteEnumParam } from '../hooks/use-route-enum-param'
@@ -24,6 +24,7 @@ import { NotificationsSettings } from './notifications-settings'
 import { PROVIDER_VIEWS, ProvidersSettings, type ProviderView } from './providers-settings'
 import { SessionsSettings } from './sessions-settings'
 import type { SettingsPageProps, SettingsView as SettingsViewId } from './types'
+import { VoicePresenceSettings } from './voice-presence-settings'
 
 const SETTINGS_VIEWS: readonly SettingsViewId[] = [
   ...SECTIONS.map(s => `config:${s.id}` as SettingsViewId),
@@ -32,6 +33,7 @@ const SETTINGS_VIEWS: readonly SettingsViewId[] = [
   'keys',
   'mcp',
   'notifications',
+  'voice-presence',
   'sessions',
   'about'
 ]
@@ -108,6 +110,12 @@ export function SettingsView({ gateway, onClose, onConfigSaved, onMainModelChang
             icon={Bell}
             label={t.settings.nav.notifications}
             onClick={() => setActiveView('notifications')}
+          />
+          <OverlayNavItem
+            active={activeView === 'voice-presence'}
+            icon={Mic}
+            label="Voice presence"
+            onClick={() => setActiveView('voice-presence')}
           />
           <div className="my-2 h-px bg-border/30" />
           <OverlayNavItem
@@ -235,6 +243,8 @@ export function SettingsView({ gateway, onClose, onConfigSaved, onMainModelChang
             <McpSettings gateway={gateway} onConfigSaved={onConfigSaved} />
           ) : activeView === 'notifications' ? (
             <NotificationsSettings />
+          ) : activeView === 'voice-presence' ? (
+            <VoicePresenceSettings onOpenVoiceConfig={() => setActiveView('config:voice')} />
           ) : (
             <SessionsSettings />
           )}

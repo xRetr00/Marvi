@@ -1,6 +1,6 @@
 import { $voiceState } from './voice-presence'
 import { $islandCards } from './island-cards'
-import { $glowEnabled } from './voice-presence-settings'
+import { $glowEnabled, $presenceEnabled } from './voice-presence-settings'
 
 /**
  * Main-renderer controller for the voice presence glow window. The glow window
@@ -13,6 +13,7 @@ import { $glowEnabled } from './voice-presence-settings'
 let unsub: (() => void) | null = null
 let unsubCards: (() => void) | null = null
 let unsubGlow: (() => void) | null = null
+let unsubPresence: (() => void) | null = null
 let open = false
 let closeTimer: ReturnType<typeof setTimeout> | null = null
 
@@ -64,7 +65,9 @@ function cancelClose(): void {
 // show — an active voice phase or a card. The glow toggle gates the whole window
 // (the capsule lives in it too), so turning the glow off hides the presence.
 function shouldBeOpen(): boolean {
-  if (!$glowEnabled.get()) {
+  // Master presence switch gates the whole window; the glow toggle gates the
+  // visual specifically.
+  if (!$presenceEnabled.get() || !$glowEnabled.get()) {
     return false
   }
 
@@ -95,6 +98,7 @@ export function initGlowOverlayBridge(): () => void {
   unsub = $voiceState.subscribe(() => evaluate())
   unsubCards = $islandCards.subscribe(() => evaluate())
   unsubGlow = $glowEnabled.subscribe(() => evaluate())
+  unsubPresence = $presenceEnabled.subscribe(() => evaluate())
 
   return () => {
     unsub?.()
@@ -103,6 +107,8 @@ export function initGlowOverlayBridge(): () => void {
     unsubCards = null
     unsubGlow?.()
     unsubGlow = null
+    unsubPresence?.()
+    unsubPresence = null
     cancelClose()
     open = false
   }

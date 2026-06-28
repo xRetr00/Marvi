@@ -2,7 +2,7 @@ import { atom } from 'nanostores'
 
 import { createIslandQueue, type IslandCard, type IslandQueueSnapshot } from '@/lib/island-queue'
 
-import { $presenceCardsEnabled } from './voice-presence-settings'
+import { $presenceCardsEnabled, $presenceEnabled } from './voice-presence-settings'
 
 const MAX_ISLAND_QUEUE = 3
 
@@ -11,8 +11,8 @@ export const $islandCards = atom<IslandQueueSnapshot>({ active: null, queued: []
 const queue = createIslandQueue({ maxQueue: MAX_ISLAND_QUEUE, onChange: snap => $islandCards.set(snap) })
 
 export function showIslandCard(card: IslandCard): void {
-  // Respect the desktop "show cards on presence" preference.
-  if (!$presenceCardsEnabled.get()) {
+  // Respect the desktop presence master switch and the "show cards" preference.
+  if (!$presenceEnabled.get() || !$presenceCardsEnabled.get()) {
     return
   }
 

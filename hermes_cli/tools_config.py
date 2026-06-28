@@ -52,6 +52,65 @@ from hermes_cli.cli_output import (  # noqa: E402 — late import block
     prompt as _prompt,
 )
 
+
+def _has_nvidia_gpu() -> bool:
+    try:
+        result = subprocess.run(
+            ["nvidia-smi"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=5,
+        )
+        return result.returncode == 0
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+
+
+def _ensure_whisperlive_cuda_torch(py: Path) -> None:
+    if not _has_nvidia_gpu():
+        return
+    try:
+        check = subprocess.run(
+            [
+                str(py),
+                "-c",
+                "import torch; raise SystemExit(0 if torch.cuda.is_available() else 1)",
+            ],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=30,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        check = None
+    if check is not None and check.returncode == 0:
+        return
+    _print_info("    Installing CUDA PyTorch for WhisperLive GPU inference...")
+    try:
+        result = subprocess.run(
+            [
+                str(py),
+                "-m",
+                "pip",
+                "install",
+                "--force-reinstall",
+                "torch==2.11.0+cu128",
+                "--index-url",
+                "https://download.pytorch.org/whl/cu128",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=1800,
+        )
+    except subprocess.TimeoutExpired:
+        _print_warning("    CUDA PyTorch install timed out; WhisperLive may fall back to CPU.")
+        return
+    if result.returncode == 0:
+        _print_success("    CUDA PyTorch installed for WhisperLive")
+        return
+    _print_warning("    CUDA PyTorch install failed; WhisperLive may fall back to CPU:")
+    _print_info(f"      {(result.stderr or '').strip()[:300]}")
+
+
 # ─── Toolset Registry ─────────────────────────────────────────────────────────
 
 # Toolsets shown in the configurator, grouped for display.
@@ -1161,6 +1220,7 @@ def _run_post_setup(post_setup_key: str):
                 )
                 if result.returncode == 0:
                     _print_success(f"    WhisperLive is already installed in {venv_dir}")
+                    _ensure_whisperlive_cuda_torch(py)
                     _print_info(f"    Start it with: {start_cmd}")
                     return
         except (subprocess.TimeoutExpired, OSError):
@@ -1176,6 +1236,7 @@ def _run_post_setup(post_setup_key: str):
             )
             if result.returncode == 0:
                 _print_success("    WhisperLive installed")
+                _ensure_whisperlive_cuda_torch(py)
                 _print_info(f"    Start it with: {start_cmd}")
                 return
             _print_warning("    WhisperLive install failed:")

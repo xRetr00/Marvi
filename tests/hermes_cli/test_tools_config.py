@@ -1,6 +1,8 @@
 """Tests for hermes_cli.tools_config platform tool persistence."""
 
 import logging
+import subprocess
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -41,6 +43,25 @@ def test_agent_disabled_toolsets_suppresses_across_platforms():
 
     assert "memory" not in cli_enabled
     assert "memory" not in discord_enabled
+
+
+def test_ensure_whisperlive_cuda_torch_installs_when_torch_is_cpu(monkeypatch):
+    import hermes_cli.tools_config as tools_config
+
+    calls = []
+
+    def fake_run(argv, **kwargs):
+        calls.append(argv)
+        if argv[1:3] == ["-c", "import torch; raise SystemExit(0 if torch.cuda.is_available() else 1)"]:
+            return subprocess.CompletedProcess(argv, 1)
+        return subprocess.CompletedProcess(argv, 0)
+
+    monkeypatch.setattr(tools_config, "_has_nvidia_gpu", lambda: True)
+    monkeypatch.setattr(tools_config.subprocess, "run", fake_run)
+
+    tools_config._ensure_whisperlive_cuda_torch(Path("python.exe"))
+
+    assert any("torch==2.11.0+cu128" in call for call in calls)
 
 
 def test_agent_disabled_toolsets_with_explicit_platform_config():

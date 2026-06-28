@@ -133,6 +133,15 @@ def test_wake_word_factory_rejects_disabled_config():
         factory.create({"voice": {"wake_word": {"enabled": False}}})
 
 
+def test_wake_word_factory_accepts_resolved_config():
+    from tools.streaming_stt import WakeWordConfig, WakeWordFactory
+
+    factory = WakeWordFactory(create_spotter=lambda cfg: cfg, native_self_test=lambda _cfg: None)
+    cfg = WakeWordConfig(enabled=True)
+
+    assert factory.create(cfg) is cfg
+
+
 def test_wake_word_factory_rejects_native_probe_failure():
     from tools.streaming_stt import WakeWordUnavailable, WakeWordFactory
 

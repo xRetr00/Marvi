@@ -483,8 +483,8 @@ class WakeWordFactory:
         self._create_livekit_spotter = create_livekit_spotter or (lambda cfg: LiveKitWakeWordSpotter(cfg))
         self._native_self_test = native_self_test or _run_sherpa_native_self_test
 
-    def create(self, config: Optional[dict[str, Any]] = None):
-        cfg = wake_word_config(config)
+    def create(self, config: Optional[dict[str, Any] | WakeWordConfig] = None):
+        cfg = config if isinstance(config, WakeWordConfig) else wake_word_config(config)
         if not cfg.enabled:
             raise WakeWordUnavailable("Wake word is disabled in voice.wake_word.enabled")
         if cfg.provider == "sherpa_onnx":

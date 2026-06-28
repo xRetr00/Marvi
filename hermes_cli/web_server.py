@@ -25,7 +25,6 @@ import os
 import re
 import secrets
 import shutil
-import socket
 import stat
 import subprocess
 import struct
@@ -3050,11 +3049,12 @@ def _whisperlive_venv_python(home: Optional[Path] = None) -> Path:
 
 
 def _whisperlive_port_open(config: Optional[dict] = None, timeout: float = 0.25) -> bool:
-    host, port = _whisperlive_host_port(config)
     try:
-        with socket.create_connection((host, port), timeout=timeout):
+        from websockets.sync.client import connect
+
+        with connect(_whisperlive_url(config), open_timeout=timeout, close_timeout=timeout):
             return True
-    except OSError:
+    except Exception:
         return False
 
 

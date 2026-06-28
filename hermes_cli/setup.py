@@ -927,22 +927,28 @@ def _install_qwen3_deps() -> bool:
 def _install_whisperlive_deps() -> bool:
     """Install WhisperLive dependencies. Returns True on success."""
     import subprocess
-    import sys
 
     print()
     print_info("Installing WhisperLive for streaming STT...")
     print()
     try:
+        from hermes_cli.tools_config import _run_post_setup
+        from hermes_constants import get_hermes_home
+
+        _run_post_setup("whisperlive")
+        py = get_hermes_home() / "whisperlive-venv" / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
         subprocess.run(
-            [sys.executable, "-m", "pip", "install", "-U", "whisper-live", "--quiet"],
+            [str(py), "-c", "import whisper_live"],
             check=True,
-            timeout=900,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=30,
         )
         print_success("whisper-live installed successfully")
         return True
-    except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError) as e:
         print_error(f"Failed to install whisper-live: {e}")
-        print_info("Try manually: python -m pip install -U whisper-live")
+        print_info("Try manually: hermes tools post-setup whisperlive")
         return False
 
 

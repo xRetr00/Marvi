@@ -36,7 +36,7 @@ import { notify } from '@/store/notifications'
 import { requestDesktopOnboarding } from '@/store/onboarding'
 import { flashPetActivity, markPetUnread, setPetActivity } from '@/store/pet'
 import { followActiveSessionCwd } from '@/store/projects'
-import { showIslandCard } from '@/store/island-cards'
+import { dismissIslandCard, showIslandCard } from '@/store/island-cards'
 import { clearAllPrompts, setApprovalRequest, setSecretRequest, setSudoRequest } from '@/store/prompts'
 import {
   $currentCwd,
@@ -916,6 +916,7 @@ export function useMessageStream({
         clearAllPrompts(sessionId)
         clearClarifyRequest(undefined, sessionId)
         setSessionCompacting(sessionId, false)
+        dismissIslandCard('approval')
 
         flushQueuedDeltas(sessionId)
 
@@ -1102,6 +1103,16 @@ export function useMessageStream({
           sessionId,
           title: translateNow('notifications.native.approvalTitle')
         })
+
+        // Mirror onto the voice presence capsule so the glow overlay surfaces
+        // the prompt even when the app is minimised. No actions — resolution
+        // still happens through the existing in-app approval flow.
+        showIslandCard({
+          id: 'approval',
+          kind: 'approval',
+          title: translateNow('notifications.native.approvalTitle'),
+          body: command || description
+        })
       } else if (event.type === 'sudo.request') {
         // Sudo password capture (tools/terminal_tool.py). Blocked on
         // sudo.respond {request_id, password}.
@@ -1211,6 +1222,7 @@ export function useMessageStream({
           setSessionCompacting(sessionId, false)
           compactedTurnRef.current.delete(sessionId)
         }
+        dismissIslandCard('approval')
 
         if (isActiveEvent) {
           setPetActivity({ reasoning: false, toolRunning: false })

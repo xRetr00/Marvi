@@ -3988,6 +3988,15 @@ class APIServerAdapter(BasePlatformAdapter):
                     except Exception:
                         pass
 
+                def _ui_event_notify(ui_event: dict) -> None:
+                    event = dict(ui_event or {})
+                    event.setdefault("run_id", run_id)
+                    event.setdefault("timestamp", time.time())
+                    try:
+                        loop.call_soon_threadsafe(q.put_nowait, event)
+                    except Exception:
+                        pass
+
                 def _run_sync():
                     from gateway.session_context import clear_session_vars
                     from tools.approval import (
@@ -3995,6 +4004,10 @@ class APIServerAdapter(BasePlatformAdapter):
                         reset_current_session_key,
                         set_current_session_key,
                         unregister_gateway_notify,
+                    )
+                    from tools.ui_events import (
+                        register_ui_event_notify,
+                        unregister_ui_event_notify,
                     )
 
                     effective_task_id = session_id or run_id
@@ -4009,6 +4022,7 @@ class APIServerAdapter(BasePlatformAdapter):
                             session_key=approval_session_key,
                         )
                         register_gateway_notify(approval_session_key, _approval_notify)
+                        register_ui_event_notify(approval_session_key, _ui_event_notify)
                         r = agent.run_conversation(
                             user_message=user_message,
                             conversation_history=conversation_history,
@@ -4018,6 +4032,10 @@ class APIServerAdapter(BasePlatformAdapter):
                         try:
                             unregister_gateway_notify(approval_session_key)
                         finally:
+                            try:
+                                unregister_ui_event_notify(approval_session_key)
+                            except Exception:
+                                pass
                             if approval_token is not None:
                                 try:
                                     reset_current_session_key(approval_token)

@@ -1,4 +1,5 @@
 import { $voiceState } from './voice-presence'
+import { $islandCards } from './island-cards'
 
 /**
  * Main-renderer controller for the voice presence glow window. The glow window
@@ -9,6 +10,7 @@ import { $voiceState } from './voice-presence'
  */
 
 let unsub: (() => void) | null = null
+let unsubCards: (() => void) | null = null
 let open = false
 let closeTimer: ReturnType<typeof setTimeout> | null = null
 
@@ -74,9 +76,22 @@ export function initGlowOverlayBridge(): () => void {
     }
   })
 
+  unsubCards = $islandCards.subscribe(snap => {
+    if (snap.active) {
+      cancelClose()
+      ensureOpen()
+    }
+
+    if (open) {
+      window.hermesDesktop?.glowOverlay?.pushCard(snap.active)
+    }
+  })
+
   return () => {
     unsub?.()
     unsub = null
+    unsubCards?.()
+    unsubCards = null
     cancelClose()
     open = false
   }

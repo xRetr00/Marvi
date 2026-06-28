@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react'
 
-import { targetAmplitude } from './glow-model'
+import { glowSpeedMs, targetAmplitude } from './glow-model'
 import type { VoicePhase, VoiceState } from '@/store/voice-presence'
 
 const BLOBS = [
@@ -17,10 +17,10 @@ export function GlowOverlayApp() {
   const stateRef = useRef<VoiceState>({ phase: 'off', level: 0, muted: false })
 
   useEffect(() => {
-    const off = window.hermesDesktop?.glowOverlay?.onState(payload => {
+    const unsub = window.hermesDesktop?.glowOverlay?.onState(payload => {
       stateRef.current = payload
     })
-    return off
+    return unsub
   }, [])
 
   useEffect(() => {
@@ -37,6 +37,7 @@ export function GlowOverlayApp() {
     let raf = 0
     let amp = 0
     let t = 0
+    let prev = 0
 
     const resize = () => {
       canvas.width = window.innerWidth
@@ -45,9 +46,13 @@ export function GlowOverlayApp() {
     resize()
     window.addEventListener('resize', resize)
 
-    const draw = () => {
-      t += 0.016
+    const draw = (ts: number) => {
+      const dt = prev === 0 ? 0.016 : Math.min(0.05, (ts - prev) / 1000)
+      prev = ts
       const { phase, level } = stateRef.current
+      // Flow faster while listening/speaking, slower while idle/thinking.
+      const speedFactor = 3000 / glowSpeedMs(phase as VoicePhase)
+      t += dt * speedFactor
       const target = targetAmplitude(phase as VoicePhase, level)
       amp += (target - amp) * 0.12
 

@@ -5817,6 +5817,113 @@ function closePetOverlay() {
   petOverlayWindow = null
 }
 
+// ── Voice presence glow overlay ──────────────────────────────────────────────
+// A fullscreen, transparent, always-on-top, click-through window that paints the
+// Apple-Intelligence-style edge glow. The main renderer pushes $voiceState into
+// it; it never needs clicks (ignore-mouse stays on). Loaded via `?win=glow`.
+let glowOverlayWindow = null
+
+function glowOverlayUrl() {
+  if (DEV_SERVER) {
+    return `${DEV_SERVER.endsWith('/') ? DEV_SERVER.slice(0, -1) : DEV_SERVER}/?win=glow#/`
+  }
+
+  return `${pathToFileURL(resolveRendererIndex()).toString()}?win=glow#/`
+}
+
+function spawnGlowOverlayWindow() {
+  const display = screen.getDisplayNearestPoint(screen.getCursorScreenPoint())
+  const area = display.workArea
+
+  const win = new BrowserWindow({
+    x: area.x,
+    y: area.y,
+    width: area.width,
+    height: area.height,
+    frame: false,
+    transparent: true,
+    resizable: false,
+    movable: false,
+    minimizable: false,
+    maximizable: false,
+    fullscreenable: false,
+    skipTaskbar: true,
+    hasShadow: false,
+    alwaysOnTop: true,
+    focusable: false,
+    show: false,
+    type: IS_MAC ? 'panel' : undefined,
+    hiddenInMissionControl: IS_MAC,
+    backgroundColor: '#00000000',
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.cjs'),
+      contextIsolation: true,
+      sandbox: true,
+      nodeIntegration: false,
+      devTools: true,
+      backgroundThrottling: false
+    }
+  })
+
+  win.setAlwaysOnTop(true, IS_MAC ? 'floating' : 'screen-saver')
+  win.setIgnoreMouseEvents(true, { forward: true })
+  win.setHiddenInMissionControl?.(true)
+  try {
+    win.setVisibleOnAllWorkspaces(
+      true,
+      IS_MAC ? { visibleOnFullScreen: true, skipTransformProcessType: true } : undefined
+    )
+  } catch {
+    // Best effort.
+  }
+
+  wireCommonWindowHandlers(win)
+
+  win.once('ready-to-show', () => {
+    if (!win.isDestroyed()) win.showInactive()
+  })
+
+  win.on('closed', () => {
+    if (glowOverlayWindow === win) glowOverlayWindow = null
+  })
+
+  win.loadURL(glowOverlayUrl())
+
+  return win
+}
+
+function openGlowOverlay() {
+  if (glowOverlayWindow && !glowOverlayWindow.isDestroyed()) {
+    glowOverlayWindow.showInactive()
+    return glowOverlayWindow
+  }
+
+  glowOverlayWindow = spawnGlowOverlayWindow()
+  return glowOverlayWindow
+}
+
+function closeGlowOverlay() {
+  if (glowOverlayWindow && !glowOverlayWindow.isDestroyed()) {
+    glowOverlayWindow.close()
+  }
+  glowOverlayWindow = null
+}
+
+ipcMain.handle('hermes:glow:open', async () => {
+  openGlowOverlay()
+  return { ok: true }
+})
+ipcMain.handle('hermes:glow:close', async () => {
+  closeGlowOverlay()
+  return { ok: true }
+})
+// Main renderer → glow window: forward the latest voice state.
+ipcMain.on('hermes:glow:state', (_event, payload) => {
+  if (glowOverlayWindow && !glowOverlayWindow.isDestroyed()) {
+    glowOverlayWindow.webContents.send('hermes:glow:state', payload)
+  }
+})
+
 function createWindow() {
   const icon = getAppIconPath()
   const savedWindowState = readWindowState()

@@ -1189,17 +1189,17 @@ def _run_post_setup(post_setup_key: str):
             pass
         _print_info("    Installing faster-qwen3-tts...")
         try:
-            result = _pip_install(["-U", "faster-qwen3-tts", "--quiet"], timeout=600)
+            result = _pip_install(["-U", "faster-qwen3-tts", "packaging", "--quiet"], timeout=600)
             if result.returncode == 0:
                 _print_success("    faster-qwen3-tts installed")
                 _print_info("    Models download on first use; set tts.qwen3.device to cuda for GPU.")
             else:
                 _print_warning("    faster-qwen3-tts install failed:")
                 _print_info(f"      {(result.stderr or '').strip()[:300]}")
-                _print_info("    Run manually: uv pip install -U faster-qwen3-tts")
+                _print_info("    Run manually: uv pip install -U faster-qwen3-tts packaging")
         except subprocess.TimeoutExpired:
             _print_warning("    faster-qwen3-tts install timed out (>10min)")
-            _print_info("    Run manually: uv pip install -U faster-qwen3-tts")
+            _print_info("    Run manually: uv pip install -U faster-qwen3-tts packaging")
 
     elif post_setup_key == "whisperlive":
         from hermes_constants import get_hermes_home

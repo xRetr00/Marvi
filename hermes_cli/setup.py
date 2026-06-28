@@ -912,7 +912,7 @@ def _install_qwen3_deps() -> bool:
     print()
     try:
         subprocess.run(
-            [sys.executable, "-m", "pip", "install", "-U", "faster-qwen3-tts", "sounddevice", "--quiet"],
+            [sys.executable, "-m", "pip", "install", "-U", "faster-qwen3-tts", "packaging", "sounddevice", "--quiet"],
             check=True,
             timeout=900,
         )
@@ -920,7 +920,7 @@ def _install_qwen3_deps() -> bool:
         return True
     except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
         print_error(f"Failed to install faster-qwen3-tts: {e}")
-        print_info("Try manually: python -m pip install -U faster-qwen3-tts sounddevice")
+        print_info("Try manually: python -m pip install -U faster-qwen3-tts packaging sounddevice")
         return False
 
 

@@ -194,7 +194,7 @@ TOOLSETS = {
     
     "tts": {
         "description": "Text-to-speech: convert text to audio with Edge TTS (free), ElevenLabs, OpenAI, or xAI",
-        "tools": ["text_to_speech"],
+        "tools": ["text_to_speech", "show_card"],
         "includes": []
     },
     

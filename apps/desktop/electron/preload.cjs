@@ -33,6 +33,37 @@ contextBridge.exposeInMainWorld('hermesDesktop', {
       return () => ipcRenderer.removeListener('hermes:pet-overlay:control', listener)
     }
   },
+  glowOverlay: {
+    // Main renderer → main process: open/close the glow window.
+    open: () => ipcRenderer.invoke('hermes:glow:open'),
+    close: () => ipcRenderer.invoke('hermes:glow:close'),
+    // Main renderer → glow window (forwarded by main): push the latest voice state.
+    pushState: payload => ipcRenderer.send('hermes:glow:state', payload),
+    // Glow overlay window subscribes to state pushes.
+    onState: callback => {
+      const listener = (_event, payload) => callback(payload)
+      ipcRenderer.on('hermes:glow:state', listener)
+      return () => ipcRenderer.removeListener('hermes:glow:state', listener)
+    },
+    // Main renderer → glow window: push the active island card (or null).
+    pushCard: card => ipcRenderer.send('hermes:glow:card', card),
+    // Capsule interactivity toggle (glow window is otherwise click-through).
+    setIgnoreMouse: ignore => ipcRenderer.send('hermes:glow:set-ignore-mouse', ignore),
+    // Glow window → main renderer: a card action.
+    cardAction: payload => ipcRenderer.send('hermes:glow:card-action', payload),
+    // Glow overlay window subscribes to card pushes.
+    onCard: callback => {
+      const listener = (_event, payload) => callback(payload)
+      ipcRenderer.on('hermes:glow:card', listener)
+      return () => ipcRenderer.removeListener('hermes:glow:card', listener)
+    },
+    // Main renderer subscribes to card actions from the capsule.
+    onCardAction: callback => {
+      const listener = (_event, payload) => callback(payload)
+      ipcRenderer.on('hermes:glow:card-action', listener)
+      return () => ipcRenderer.removeListener('hermes:glow:card-action', listener)
+    }
+  },
   getBootProgress: () => ipcRenderer.invoke('hermes:boot-progress:get'),
   getConnectionConfig: profile => ipcRenderer.invoke('hermes:connection-config:get', profile),
   saveConnectionConfig: payload => ipcRenderer.invoke('hermes:connection-config:save', payload),

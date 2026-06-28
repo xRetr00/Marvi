@@ -5817,6 +5817,132 @@ function closePetOverlay() {
   petOverlayWindow = null
 }
 
+// ── Voice presence glow overlay ──────────────────────────────────────────────
+// A fullscreen, transparent, always-on-top, click-through window that paints the
+// Apple-Intelligence-style edge glow. The main renderer pushes $voiceState into
+// it; it never needs clicks (ignore-mouse stays on). Loaded via `?win=glow`.
+let glowOverlayWindow = null
+
+function glowOverlayUrl() {
+  if (DEV_SERVER) {
+    return `${DEV_SERVER.endsWith('/') ? DEV_SERVER.slice(0, -1) : DEV_SERVER}/?win=glow#/`
+  }
+
+  return `${pathToFileURL(resolveRendererIndex()).toString()}?win=glow#/`
+}
+
+function spawnGlowOverlayWindow() {
+  const display = screen.getDisplayNearestPoint(screen.getCursorScreenPoint())
+  const area = display.bounds
+
+  const win = new BrowserWindow({
+    x: area.x,
+    y: area.y,
+    width: area.width,
+    height: area.height,
+    frame: false,
+    transparent: true,
+    resizable: false,
+    movable: false,
+    minimizable: false,
+    maximizable: false,
+    fullscreenable: false,
+    skipTaskbar: !IS_MAC,
+    hasShadow: false,
+    alwaysOnTop: true,
+    focusable: false,
+    show: false,
+    type: IS_MAC ? 'panel' : undefined,
+    hiddenInMissionControl: IS_MAC,
+    backgroundColor: '#00000000',
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.cjs'),
+      contextIsolation: true,
+      sandbox: true,
+      nodeIntegration: false,
+      devTools: true,
+      backgroundThrottling: false
+    }
+  })
+
+  win.setAlwaysOnTop(true, IS_MAC ? 'floating' : 'screen-saver')
+  win.setIgnoreMouseEvents(true, { forward: true })
+  win.setHiddenInMissionControl?.(true)
+  try {
+    win.setVisibleOnAllWorkspaces(
+      true,
+      IS_MAC ? { visibleOnFullScreen: true, skipTransformProcessType: true } : undefined
+    )
+  } catch {
+    // Best effort.
+  }
+
+  wireCommonWindowHandlers(win)
+
+  win.once('ready-to-show', () => {
+    if (!win.isDestroyed()) win.showInactive()
+  })
+
+  win.on('closed', () => {
+    if (glowOverlayWindow === win) glowOverlayWindow = null
+  })
+
+  win.loadURL(glowOverlayUrl())
+
+  return win
+}
+
+function openGlowOverlay() {
+  if (glowOverlayWindow && !glowOverlayWindow.isDestroyed()) {
+    glowOverlayWindow.showInactive()
+    return glowOverlayWindow
+  }
+
+  glowOverlayWindow = spawnGlowOverlayWindow()
+  return glowOverlayWindow
+}
+
+function closeGlowOverlay() {
+  if (glowOverlayWindow && !glowOverlayWindow.isDestroyed()) {
+    glowOverlayWindow.close()
+  }
+  glowOverlayWindow = null
+}
+
+ipcMain.handle('hermes:glow:open', async () => {
+  openGlowOverlay()
+  return { ok: true }
+})
+ipcMain.handle('hermes:glow:close', async () => {
+  closeGlowOverlay()
+  return { ok: true }
+})
+// Main renderer → glow window: forward the latest voice state.
+ipcMain.on('hermes:glow:state', (_event, payload) => {
+  if (glowOverlayWindow && !glowOverlayWindow.isDestroyed()) {
+    glowOverlayWindow.webContents.send('hermes:glow:state', payload)
+  }
+})
+// Main renderer → glow window: the active island card (or null to clear).
+ipcMain.on('hermes:glow:card', (_event, payload) => {
+  if (glowOverlayWindow && !glowOverlayWindow.isDestroyed()) {
+    glowOverlayWindow.webContents.send('hermes:glow:card', payload)
+  }
+})
+// Glow window → main renderer: a card action (dismiss / submit text).
+ipcMain.on('hermes:glow:card-action', (_event, payload) => {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('hermes:glow:card-action', payload)
+  }
+})
+// The capsule needs clicks while a card with actions is shown; the glow window
+// is otherwise click-through. The renderer toggles this like the pet overlay.
+ipcMain.on('hermes:glow:set-ignore-mouse', (_event, ignore) => {
+  if (glowOverlayWindow && !glowOverlayWindow.isDestroyed()) {
+    glowOverlayWindow.setIgnoreMouseEvents(Boolean(ignore), { forward: true })
+  }
+})
+
 function createWindow() {
   const icon = getAppIconPath()
   const savedWindowState = readWindowState()
@@ -5893,7 +6019,10 @@ function createWindow() {
   // The overlay rides the main window — closing the app's primary window must
   // tear it down too (otherwise it strands as an orphan that blocks
   // window-all-closed from quitting on Windows/Linux).
-  mainWindow.on('closed', () => closePetOverlay())
+  mainWindow.on('closed', () => {
+    closePetOverlay()
+    closeGlowOverlay()
+  })
 
   wireCommonWindowHandlers(mainWindow)
 
@@ -7516,6 +7645,7 @@ app.on('before-quit', () => {
   // The always-on-top overlay isn't a "real" app window; close it so a stray
   // pet can't keep the process alive or float over a quit app.
   closePetOverlay()
+  closeGlowOverlay()
 
   // Quitting mid-install should stop the installer, not orphan it.
   if (bootstrapAbortController) {

@@ -4,6 +4,7 @@ import type {
   PetOverlayOpenRequest,
   PetOverlayStatePayload
 } from './store/pet-overlay'
+import type { VoiceState } from './store/voice-presence'
 
 export {}
 
@@ -46,6 +47,14 @@ declare global {
         control: (payload: PetOverlayControl) => void
         onState: (callback: (payload: PetOverlayStatePayload) => void) => () => void
         onControl: (callback: (payload: PetOverlayControl) => void) => () => void
+      }
+      // The voice presence glow: a fullscreen transparent click-through window
+      // painting the edge glow. The main renderer drives it with $voiceState.
+      glowOverlay: {
+        open: () => Promise<{ ok: boolean }>
+        close: () => Promise<{ ok: boolean }>
+        pushState: (payload: VoiceState) => void
+        onState: (callback: (payload: VoiceState) => void) => () => void
       }
       getBootProgress: () => Promise<DesktopBootProgress>
       getConnectionConfig: (profile?: null | string) => Promise<DesktopConnectionConfig>

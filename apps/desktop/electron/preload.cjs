@@ -33,6 +33,16 @@ contextBridge.exposeInMainWorld('hermesDesktop', {
       return () => ipcRenderer.removeListener('hermes:pet-overlay:control', listener)
     }
   },
+  glowOverlay: {
+    open: () => ipcRenderer.invoke('hermes:glow:open'),
+    close: () => ipcRenderer.invoke('hermes:glow:close'),
+    pushState: payload => ipcRenderer.send('hermes:glow:state', payload),
+    onState: callback => {
+      const listener = (_event, payload) => callback(payload)
+      ipcRenderer.on('hermes:glow:state', listener)
+      return () => ipcRenderer.removeListener('hermes:glow:state', listener)
+    }
+  },
   getBootProgress: () => ipcRenderer.invoke('hermes:boot-progress:get'),
   getConnectionConfig: profile => ipcRenderer.invoke('hermes:connection-config:get', profile),
   saveConnectionConfig: payload => ipcRenderer.invoke('hermes:connection-config:save', payload),

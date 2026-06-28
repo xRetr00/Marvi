@@ -34,9 +34,12 @@ contextBridge.exposeInMainWorld('hermesDesktop', {
     }
   },
   glowOverlay: {
+    // Main renderer → main process: open/close the glow window.
     open: () => ipcRenderer.invoke('hermes:glow:open'),
     close: () => ipcRenderer.invoke('hermes:glow:close'),
+    // Main renderer → glow window (forwarded by main): push the latest voice state.
     pushState: payload => ipcRenderer.send('hermes:glow:state', payload),
+    // Glow overlay window subscribes to state pushes.
     onState: callback => {
       const listener = (_event, payload) => callback(payload)
       ipcRenderer.on('hermes:glow:state', listener)

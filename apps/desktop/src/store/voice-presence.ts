@@ -1,4 +1,4 @@
-import { atom } from 'nanostores'
+import { atom, computed } from 'nanostores'
 
 export type VoicePhase = 'off' | 'wake' | 'listening' | 'transcribing' | 'thinking' | 'speaking'
 
@@ -10,11 +10,9 @@ export interface VoiceState {
 }
 
 /** Conversation status from use-voice-conversation.ts. */
-type VoiceStatus = 'idle' | 'listening' | 'transcribing' | 'thinking' | 'speaking'
+export type VoiceStatus = 'idle' | 'listening' | 'transcribing' | 'thinking' | 'speaking'
 /** Wake-word status from use-wake-word.ts. */
-type WakeStatus = 'idle' | 'arming' | 'armed' | 'woken' | 'listening' | 'transcribing'
-
-export const $voiceState = atom<VoiceState>({ phase: 'off', level: 0, muted: false })
+export type WakeStatus = 'idle' | 'arming' | 'armed' | 'woken' | 'listening' | 'transcribing'
 
 /**
  * Collapse the two engines' statuses into one glow phase. Background hotword
@@ -42,7 +40,30 @@ export function deriveVoicePhase(args: {
   return 'off'
 }
 
-/** Publish the latest derived state for the glow overlay to mirror. */
-export function publishVoiceState(next: VoiceState): void {
-  $voiceState.set(next)
+/** Conversation inputs, published by the composer (owns useVoiceConversation). */
+export const $conversation = atom<{ active: boolean; status: VoiceStatus; level: number; muted: boolean }>({
+  active: false,
+  status: 'idle',
+  level: 0,
+  muted: false
+})
+
+/** Wake-word status, published by chat/index.tsx (owns useWakeWord). */
+export const $wakeStatus = atom<WakeStatus>('idle')
+
+/** The single derived presence state the glow overlay mirrors. */
+export const $voiceState = computed([$conversation, $wakeStatus], (conv, wakeStatus): VoiceState => ({
+  phase: deriveVoicePhase({ active: conv.active, voiceStatus: conv.status, wakeStatus }),
+  level: conv.level,
+  muted: conv.muted
+}))
+
+/** Publish the conversation slice (called from the composer). */
+export function publishConversation(next: { active: boolean; status: VoiceStatus; level: number; muted: boolean }): void {
+  $conversation.set(next)
+}
+
+/** Publish the wake-word slice (called from chat/index.tsx). */
+export function publishWakeStatus(status: WakeStatus): void {
+  $wakeStatus.set(status)
 }

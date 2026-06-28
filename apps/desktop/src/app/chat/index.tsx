@@ -7,7 +7,7 @@ import {
 import { useStore } from '@nanostores/react'
 import { useQuery } from '@tanstack/react-query'
 import type * as React from 'react'
-import { Suspense, useCallback, useMemo, useRef } from 'react'
+import { Suspense, useCallback, useEffect, useMemo, useRef } from 'react'
 import { useLocation } from 'react-router-dom'
 
 import { Thread } from '@/components/assistant-ui/thread'
@@ -45,6 +45,7 @@ import {
   $sessions,
   sessionPinId
 } from '@/store/session'
+import { publishWakeStatus } from '@/store/voice-presence'
 import { isSecondaryWindow } from '@/store/windows'
 import type { ModelOptionsResponse } from '@/types/hermes'
 
@@ -425,7 +426,7 @@ export function ChatView({
 
   const { dragKind, dropHandlers } = useFileDropZone({ enabled: showChatBar, onDropFiles, onDropSession })
 
-  useWakeWord({
+  const wake = useWakeWord({
     busy,
     config: wakeWordConfig,
     enabled: gatewayOpen,
@@ -435,6 +436,11 @@ export function ChatView({
     onTranscribeAudio,
     streamingSttEnabled
   })
+
+  // Mirror wake-word status into $voiceState for the glow overlay (read-only).
+  useEffect(() => {
+    publishWakeStatus(wake.status)
+  }, [wake.status])
 
   return (
     <div

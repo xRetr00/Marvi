@@ -102,6 +102,7 @@ import {
 import { onSessionsChanged } from '../store/session-sync'
 import { clearSessionTodos, setSessionTodos, todoListActive } from '../store/todos'
 import { openUpdatesWindow, startUpdatePoller, stopUpdatePoller } from '../store/updates'
+import { initGlowOverlayBridge } from '../store/glow-overlay'
 import { isSecondaryWindow } from '../store/windows'
 
 import { ChatView } from './chat'
@@ -966,11 +967,13 @@ export function DesktopController() {
         void resumeSessionRef.current(recent.id)
       }
     })
+    const offGlow = initGlowOverlayBridge()
 
     return () => {
       setPetOverlaySubmitHandler(null)
       setPetOverlayOpenAppHandler(null)
       setPetOverlayScaleHandler(null)
+      offGlow()
     }
   }, [])
 

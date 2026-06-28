@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest'
 
-import { $voiceState, deriveVoicePhase, publishVoiceState } from './voice-presence'
+import { $conversation, $voiceState, $wakeStatus, deriveVoicePhase, publishConversation, publishWakeStatus } from './voice-presence'
 
 describe('deriveVoicePhase', () => {
   it('is off when nothing is active', () => {
@@ -31,12 +31,23 @@ describe('deriveVoicePhase', () => {
   })
 })
 
-describe('publishVoiceState', () => {
-  afterEach(() => $voiceState.set({ phase: 'off', level: 0, muted: false }))
+describe('$voiceState (computed)', () => {
+  afterEach(() => {
+    $conversation.set({ active: false, status: 'idle', level: 0, muted: false })
+    $wakeStatus.set('idle')
+  })
 
-  it('updates the atom', () => {
-    const next = { phase: 'listening', level: 0.5, muted: false } as const
-    publishVoiceState(next)
-    expect($voiceState.get()).toEqual(next)
+  it('reflects the conversation slice when active', () => {
+    publishConversation({ active: true, status: 'listening', level: 0.5, muted: false })
+    expect($voiceState.get()).toEqual({ phase: 'listening', level: 0.5, muted: false })
+  })
+
+  it('lights as wake from the wake-word slice', () => {
+    publishWakeStatus('woken')
+    expect($voiceState.get()).toEqual({ phase: 'wake', level: 0, muted: false })
+  })
+
+  it('is off when both slices are idle', () => {
+    expect($voiceState.get()).toEqual({ phase: 'off', level: 0, muted: false })
   })
 })

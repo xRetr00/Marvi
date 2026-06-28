@@ -5923,6 +5923,25 @@ ipcMain.on('hermes:glow:state', (_event, payload) => {
     glowOverlayWindow.webContents.send('hermes:glow:state', payload)
   }
 })
+// Main renderer → glow window: the active island card (or null to clear).
+ipcMain.on('hermes:glow:card', (_event, payload) => {
+  if (glowOverlayWindow && !glowOverlayWindow.isDestroyed()) {
+    glowOverlayWindow.webContents.send('hermes:glow:card', payload)
+  }
+})
+// Glow window → main renderer: a card action (dismiss / submit text).
+ipcMain.on('hermes:glow:card-action', (_event, payload) => {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('hermes:glow:card-action', payload)
+  }
+})
+// The capsule needs clicks while a card with actions is shown; the glow window
+// is otherwise click-through. The renderer toggles this like the pet overlay.
+ipcMain.on('hermes:glow:set-ignore-mouse', (_event, ignore) => {
+  if (glowOverlayWindow && !glowOverlayWindow.isDestroyed()) {
+    glowOverlayWindow.setIgnoreMouseEvents(Boolean(ignore), { forward: true })
+  }
+})
 
 function createWindow() {
   const icon = getAppIconPath()

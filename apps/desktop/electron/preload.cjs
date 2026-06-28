@@ -44,6 +44,24 @@ contextBridge.exposeInMainWorld('hermesDesktop', {
       const listener = (_event, payload) => callback(payload)
       ipcRenderer.on('hermes:glow:state', listener)
       return () => ipcRenderer.removeListener('hermes:glow:state', listener)
+    },
+    // Main renderer → glow window: push the active island card (or null).
+    pushCard: card => ipcRenderer.send('hermes:glow:card', card),
+    // Capsule interactivity toggle (glow window is otherwise click-through).
+    setIgnoreMouse: ignore => ipcRenderer.send('hermes:glow:set-ignore-mouse', ignore),
+    // Glow window → main renderer: a card action.
+    cardAction: payload => ipcRenderer.send('hermes:glow:card-action', payload),
+    // Glow overlay window subscribes to card pushes.
+    onCard: callback => {
+      const listener = (_event, payload) => callback(payload)
+      ipcRenderer.on('hermes:glow:card', listener)
+      return () => ipcRenderer.removeListener('hermes:glow:card', listener)
+    },
+    // Main renderer subscribes to card actions from the capsule.
+    onCardAction: callback => {
+      const listener = (_event, payload) => callback(payload)
+      ipcRenderer.on('hermes:glow:card-action', listener)
+      return () => ipcRenderer.removeListener('hermes:glow:card-action', listener)
     }
   },
   getBootProgress: () => ipcRenderer.invoke('hermes:boot-progress:get'),

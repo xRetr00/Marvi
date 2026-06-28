@@ -5,6 +5,7 @@ import type {
   PetOverlayStatePayload
 } from './store/pet-overlay'
 import type { VoiceState } from './store/voice-presence'
+import type { IslandCard } from './lib/island-queue'
 
 export {}
 
@@ -55,6 +56,13 @@ declare global {
         close: () => Promise<{ ok: boolean }>
         pushState: (payload: VoiceState) => void
         onState: (callback: (payload: VoiceState) => void) => () => void
+        pushCard: (card: IslandCard | null) => void
+        setIgnoreMouse: (ignore: boolean) => void
+        cardAction: (payload: { type: 'dismiss'; id?: string } | { type: 'submit'; text: string }) => void
+        onCard: (callback: (card: IslandCard | null) => void) => () => void
+        onCardAction: (
+          callback: (payload: { type: 'dismiss'; id?: string } | { type: 'submit'; text: string }) => void
+        ) => () => void
       }
       getBootProgress: () => Promise<DesktopBootProgress>
       getConnectionConfig: (profile?: null | string) => Promise<DesktopConnectionConfig>

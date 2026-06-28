@@ -5833,7 +5833,7 @@ function glowOverlayUrl() {
 
 function spawnGlowOverlayWindow() {
   const display = screen.getDisplayNearestPoint(screen.getCursorScreenPoint())
-  const area = display.workArea
+  const area = display.bounds
 
   const win = new BrowserWindow({
     x: area.x,
@@ -5847,7 +5847,7 @@ function spawnGlowOverlayWindow() {
     minimizable: false,
     maximizable: false,
     fullscreenable: false,
-    skipTaskbar: true,
+    skipTaskbar: !IS_MAC,
     hasShadow: false,
     alwaysOnTop: true,
     focusable: false,
@@ -6000,7 +6000,10 @@ function createWindow() {
   // The overlay rides the main window — closing the app's primary window must
   // tear it down too (otherwise it strands as an orphan that blocks
   // window-all-closed from quitting on Windows/Linux).
-  mainWindow.on('closed', () => closePetOverlay())
+  mainWindow.on('closed', () => {
+    closePetOverlay()
+    closeGlowOverlay()
+  })
 
   wireCommonWindowHandlers(mainWindow)
 
@@ -7623,6 +7626,7 @@ app.on('before-quit', () => {
   // The always-on-top overlay isn't a "real" app window; close it so a stray
   // pet can't keep the process alive or float over a quit app.
   closePetOverlay()
+  closeGlowOverlay()
 
   // Quitting mid-install should stop the installer, not orphan it.
   if (bootstrapAbortController) {

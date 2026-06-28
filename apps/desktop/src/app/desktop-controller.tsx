@@ -47,6 +47,7 @@ import { respondToApprovalAction } from '../store/native-notifications'
 import { $paneOpen } from '../store/panes'
 import { setPetActivity } from '../store/pet'
 import { setPetScale } from '../store/pet-gallery'
+import { dismissIslandCard, setIslandCardSubmitHandler } from '../store/island-cards'
 import {
   setPetOverlayOpenAppHandler,
   setPetOverlayScaleHandler,
@@ -954,6 +955,14 @@ export function DesktopController() {
     }
 
     setPetOverlaySubmitHandler(text => void submitTextRef.current(text))
+    setIslandCardSubmitHandler(text => void submitTextRef.current(text))
+    const offCardAction = window.hermesDesktop?.glowOverlay?.onCardAction(payload => {
+      if (payload.type === 'dismiss') {
+        dismissIslandCard(payload.id)
+      } else if (payload.type === 'submit') {
+        void submitTextRef.current(payload.text)
+      }
+    })
     // Alt+wheel resize from the popped-out pet — persist it through this
     // window's gateway (the overlay has none) so it survives restart.
     setPetOverlayScaleHandler(scale => setPetScale(requestGatewayRef.current, scale))
@@ -971,6 +980,8 @@ export function DesktopController() {
 
     return () => {
       setPetOverlaySubmitHandler(null)
+      setIslandCardSubmitHandler(null)
+      offCardAction?.()
       setPetOverlayOpenAppHandler(null)
       setPetOverlayScaleHandler(null)
       offGlow()

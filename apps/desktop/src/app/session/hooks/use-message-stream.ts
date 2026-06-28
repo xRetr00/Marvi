@@ -36,6 +36,7 @@ import { notify } from '@/store/notifications'
 import { requestDesktopOnboarding } from '@/store/onboarding'
 import { flashPetActivity, markPetUnread, setPetActivity } from '@/store/pet'
 import { followActiveSessionCwd } from '@/store/projects'
+import { showIslandCard } from '@/store/island-cards'
 import { clearAllPrompts, setApprovalRequest, setSecretRequest, setSudoRequest } from '@/store/prompts'
 import {
   $currentCwd,
@@ -1049,6 +1050,24 @@ export function useMessageStream({
             title: translateNow('notifications.native.inputTitle')
           })
         }
+      } else if (event.type === 'card.show') {
+        const p = (payload ?? {}) as {
+          id?: string
+          kind?: 'info' | 'result' | 'approval'
+          title?: string
+          body?: string
+          duration?: number
+          actions?: { id: string; label: string; value?: string }[]
+        }
+        showIslandCard({
+          id: p.id ?? `card-${Date.now()}`,
+          kind: p.kind ?? 'info',
+          title: p.title,
+          body: p.body,
+          duration: p.duration,
+          autoDismiss: typeof p.duration === 'number' && p.duration > 0,
+          actions: p.actions
+        })
       } else if (event.type === 'approval.request') {
         // Dangerous-command / execute_code approval. The Python side is blocked
         // in _await_gateway_decision() until approval.respond lands; without

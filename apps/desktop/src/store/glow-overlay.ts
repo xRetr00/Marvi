@@ -30,6 +30,7 @@ function ensureOpen(): void {
       // The window may mount after the synchronous push in the subscriber, so
       // hand it a first frame once it actually exists.
       window.hermesDesktop?.glowOverlay?.pushState($voiceState.get())
+      window.hermesDesktop?.glowOverlay?.pushCard($islandCards.get().active)
     })
     .catch(() => {
       // Open failed (IPC hiccup / window destroyed) — clear the flag so the

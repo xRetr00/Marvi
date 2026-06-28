@@ -22,7 +22,18 @@ function ensureOpen(): void {
   }
 
   open = true
-  void window.hermesDesktop?.glowOverlay?.open()
+  void window.hermesDesktop?.glowOverlay
+    ?.open()
+    .then(() => {
+      // The window may mount after the synchronous push in the subscriber, so
+      // hand it a first frame once it actually exists.
+      window.hermesDesktop?.glowOverlay?.pushState($voiceState.get())
+    })
+    .catch(() => {
+      // Open failed (IPC hiccup / window destroyed) — clear the flag so the
+      // next non-off tick retries instead of pushing to a dead window.
+      open = false
+    })
 }
 
 function scheduleClose(): void {
@@ -67,5 +78,6 @@ export function initGlowOverlayBridge(): () => void {
     unsub?.()
     unsub = null
     cancelClose()
+    open = false
   }
 }

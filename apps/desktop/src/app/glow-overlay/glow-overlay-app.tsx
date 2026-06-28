@@ -40,8 +40,10 @@ export function GlowOverlayApp() {
     let prev = 0
 
     const resize = () => {
-      canvas.width = window.innerWidth
-      canvas.height = window.innerHeight
+      const dpr = window.devicePixelRatio || 1
+      canvas.width = Math.round(window.innerWidth * dpr)
+      canvas.height = Math.round(window.innerHeight * dpr)
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
     }
     resize()
     window.addEventListener('resize', resize)
@@ -56,8 +58,8 @@ export function GlowOverlayApp() {
       const target = targetAmplitude(phase as VoicePhase, level)
       amp += (target - amp) * 0.12
 
-      const W = canvas.width
-      const H = canvas.height
+      const W = window.innerWidth
+      const H = window.innerHeight
       ctx.clearRect(0, 0, W, H)
 
       if (amp > 0.01) {

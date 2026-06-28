@@ -17,10 +17,12 @@ type WakeStatus = 'idle' | 'arming' | 'armed' | 'woken' | 'listening' | 'transcr
 export const $voiceState = atom<VoiceState>({ phase: 'off', level: 0, muted: false })
 
 /**
- * Collapse the two engines' statuses into one glow phase. The wake-word loop is
- * always listening in the background for the hotword — that must NOT light the
- * glow, so only `woken` (hotword just fired) counts. An active conversation's
- * status maps straight through; anything else is `off` (glow dark).
+ * Collapse the two engines' statuses into one glow phase. Background hotword
+ * listening is `'armed'` (glow dark) — the wake-word loop sits there waiting for
+ * the phrase and must NOT light the glow. Once the hotword fires the engine
+ * walks `'woken'` → `'listening'` → `'transcribing'`; those are the post-hotword
+ * command-capture states and keep the glow lit as `'wake'`. An active
+ * conversation's status maps straight through; anything else is `off`.
  */
 export function deriveVoicePhase(args: {
   active: boolean
@@ -33,7 +35,7 @@ export function deriveVoicePhase(args: {
     return voiceStatus
   }
 
-  if (wakeStatus === 'woken') {
+  if (wakeStatus === 'woken' || wakeStatus === 'listening' || wakeStatus === 'transcribing') {
     return 'wake'
   }
 

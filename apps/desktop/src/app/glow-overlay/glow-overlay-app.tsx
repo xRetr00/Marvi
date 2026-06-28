@@ -40,7 +40,9 @@ export function GlowOverlayApp() {
     let prev = 0
 
     const resize = () => {
-      const dpr = window.devicePixelRatio || 1
+      // Clamp DPR: a fullscreen blur(80px) glow gains nothing from >2x backing
+      // store, and unclamped 4K@200% would be wasteful. Matches the repo's other canvases.
+      const dpr = Math.min(window.devicePixelRatio || 1, 2)
       canvas.width = Math.round(window.innerWidth * dpr)
       canvas.height = Math.round(window.innerHeight * dpr)
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0)

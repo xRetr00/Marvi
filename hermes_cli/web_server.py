@@ -2990,6 +2990,19 @@ async def transcribe_audio_upload(payload: AudioTranscriptionRequest):
     }
 
 
+def _whisperlive_model(config: Optional[dict] = None) -> str:
+    config = config or load_config()
+    stt = config.get("stt", {}) if isinstance(config, dict) else {}
+    local = stt.get("local", {}) if isinstance(stt, dict) else {}
+    streaming = stt.get("streaming", {}) if isinstance(stt, dict) else {}
+    model = str(streaming.get("model") or local.get("model") or "small")
+    return "Systran/faster-whisper-small.en" if model.startswith("en-") else model
+
+
+def _whisperlive_custom_model_arg(model: str) -> str:
+    return model if "/" in model or Path(model).exists() else ""
+
+
 def _whisperlive_start_payload(config: Optional[dict] = None) -> dict:
     config = config or load_config()
     stt = config.get("stt", {}) if isinstance(config, dict) else {}
@@ -2999,7 +3012,7 @@ def _whisperlive_start_payload(config: Optional[dict] = None) -> dict:
         "uid": str(uuid.uuid4()),
         "language": local.get("language") or None,
         "task": "transcribe",
-        "model": streaming.get("model") or local.get("model") or "small",
+        "model": _whisperlive_model(config),
         "use_vad": streaming.get("use_vad", True),
         "send_last_n_segments": int(streaming.get("send_last_n_segments") or 10),
         "no_speech_thresh": float(streaming.get("no_speech_thresh", 0.45)),
@@ -3052,7 +3065,7 @@ def _whisperlive_server_command(config: Optional[dict] = None, home: Optional[Pa
     streaming = stt.get("streaming", {}) if isinstance(stt, dict) else {}
     host, port = _whisperlive_host_port(config)
     backend = str(streaming.get("backend") or "faster_whisper")
-    model = str(streaming.get("model") or local.get("model") or "small")
+    custom_model = _whisperlive_custom_model_arg(_whisperlive_model(config))
     single_model = bool(streaming.get("single_model", True))
     max_clients = int(streaming.get("max_clients") or 1)
     max_connection_time = int(streaming.get("max_connection_time") or 900)
@@ -3060,7 +3073,7 @@ def _whisperlive_server_command(config: Optional[dict] = None, home: Optional[Pa
         "from whisper_live.server import TranscriptionServer; "
         "TranscriptionServer().run("
         f"host={host!r}, port={port!r}, backend={backend!r}, "
-        f"faster_whisper_custom_model_path={model!r}, single_model={single_model!r}, "
+        f"faster_whisper_custom_model_path={custom_model or None!r}, single_model={single_model!r}, "
         f"max_clients={max_clients!r}, max_connection_time={max_connection_time!r})"
     )
     return [str(_whisperlive_venv_python(home)), "-c", server]

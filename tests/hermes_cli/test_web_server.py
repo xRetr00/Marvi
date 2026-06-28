@@ -2838,7 +2838,27 @@ class TestBuildSchemaFromConfig:
         assert argv[1] == "-c"
         assert "TranscriptionServer().run" in argv[2]
         assert "port=9191" in argv[2]
-        assert "faster_whisper_custom_model_path='small'" in argv[2]
+        assert "faster_whisper_custom_model_path=None" in argv[2]
+
+    def test_whisperlive_sherpa_model_falls_back_to_faster_whisper_repo(self):
+        from hermes_cli.web_server import _whisperlive_server_command, _whisperlive_start_payload
+
+        config = {
+            "stt": {
+                "streaming": {
+                    "model": "en-20m-int8",
+                    "host": "127.0.0.1",
+                    "port": 9191,
+                    "backend": "faster_whisper",
+                },
+            }
+        }
+
+        payload = _whisperlive_start_payload(config)
+        argv = _whisperlive_server_command(config)
+
+        assert payload["model"] == "Systran/faster-whisper-small.en"
+        assert "faster_whisper_custom_model_path='Systran/faster-whisper-small.en'" in argv[2]
 
     def test_desktop_whisperlive_autostart_spawns_hidden_subprocess(self, monkeypatch, tmp_path):
         import hermes_cli.web_server as web_server

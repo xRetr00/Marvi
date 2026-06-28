@@ -21,6 +21,7 @@ export function targetAmplitude(phase: VoicePhase, level: number): number {
 }
 
 /** Blob-drift animation duration per phase (ms). Lower = faster flow. */
+// 'wake' is the fastest (a quick flare the instant the hotword fires); steady states flow slower.
 export function glowSpeedMs(phase: VoicePhase): number {
   switch (phase) {
     case 'listening':

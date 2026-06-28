@@ -44,4 +44,30 @@ describe('createIslandQueue', () => {
     q.show({ id: 'c', kind: 'info' })
     expect(q.snapshot().queued.map(c => c.id)).toEqual(['c'])
   })
+
+  it('force replace drops the displaced card (does not queue it)', () => {
+    const q = createIslandQueue()
+    q.show({ id: 'a', kind: 'info' })
+    q.show({ id: 'urgent', kind: 'approval' }, { force: true })
+    expect(q.snapshot().queued.find(c => c.id === 'a')).toBeUndefined()
+  })
+
+  it('dismiss of a queued card removes it without changing active', () => {
+    const q = createIslandQueue()
+    q.show({ id: 'a', kind: 'info' })
+    q.show({ id: 'b', kind: 'info' })
+    q.dismiss('b')
+    expect(q.snapshot().active?.id).toBe('a')
+    expect(q.snapshot().queued).toHaveLength(0)
+  })
+
+  it('dismissAll clears active and queued', () => {
+    const q = createIslandQueue()
+    q.show({ id: 'a', kind: 'info' })
+    q.show({ id: 'b', kind: 'info' })
+    q.dismissAll()
+    const snap = q.snapshot()
+    expect(snap.active).toBeNull()
+    expect(snap.queued).toHaveLength(0)
+  })
 })

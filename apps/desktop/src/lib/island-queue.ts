@@ -51,7 +51,9 @@ export function createIslandQueue(options: IslandQueueOptions = {}) {
     const autoDismiss = active.autoDismiss ?? false
     const duration = active.duration ?? 0
     if (!autoDismiss || duration <= 0) return
-    timer = setTimeout(() => dismiss(active?.id), duration)
+    timer = setTimeout(() => {
+      if (active) dismiss(active.id)
+    }, duration)
   }
 
   const promote = () => {

@@ -1,5 +1,6 @@
 import { $voiceState } from './voice-presence'
 import { $islandCards } from './island-cards'
+import { $glowEnabled } from './voice-presence-settings'
 
 /**
  * Main-renderer controller for the voice presence glow window. The glow window
@@ -11,6 +12,7 @@ import { $islandCards } from './island-cards'
 
 let unsub: (() => void) | null = null
 let unsubCards: (() => void) | null = null
+let unsubGlow: (() => void) | null = null
 let open = false
 let closeTimer: ReturnType<typeof setTimeout> | null = null
 
@@ -58,41 +60,49 @@ function cancelClose(): void {
   }
 }
 
-/** Start mirroring $voiceState into the glow window. Idempotent. */
+// The window should be visible when the glow is enabled AND there's something to
+// show — an active voice phase or a card. The glow toggle gates the whole window
+// (the capsule lives in it too), so turning the glow off hides the presence.
+function shouldBeOpen(): boolean {
+  if (!$glowEnabled.get()) {
+    return false
+  }
+
+  return $voiceState.get().phase !== 'off' || $islandCards.get().active !== null
+}
+
+// Re-evaluate open/closed from the three inputs and push the latest frame.
+function evaluate(): void {
+  if (shouldBeOpen()) {
+    cancelClose()
+    ensureOpen()
+  } else {
+    scheduleClose()
+  }
+
+  if (open) {
+    window.hermesDesktop?.glowOverlay?.pushState($voiceState.get())
+    window.hermesDesktop?.glowOverlay?.pushCard($islandCards.get().active)
+  }
+}
+
+/** Start mirroring $voiceState + cards into the glow window. Idempotent. */
 export function initGlowOverlayBridge(): () => void {
   if (unsub || !window.hermesDesktop?.glowOverlay) {
     return () => {}
   }
 
-  unsub = $voiceState.subscribe(state => {
-    if (state.phase === 'off') {
-      scheduleClose()
-    } else {
-      cancelClose()
-      ensureOpen()
-    }
-
-    if (open) {
-      window.hermesDesktop?.glowOverlay?.pushState(state)
-    }
-  })
-
-  unsubCards = $islandCards.subscribe(snap => {
-    if (snap.active) {
-      cancelClose()
-      ensureOpen()
-    }
-
-    if (open) {
-      window.hermesDesktop?.glowOverlay?.pushCard(snap.active)
-    }
-  })
+  unsub = $voiceState.subscribe(() => evaluate())
+  unsubCards = $islandCards.subscribe(() => evaluate())
+  unsubGlow = $glowEnabled.subscribe(() => evaluate())
 
   return () => {
     unsub?.()
     unsub = null
     unsubCards?.()
     unsubCards = null
+    unsubGlow?.()
+    unsubGlow = null
     cancelClose()
     open = false
   }

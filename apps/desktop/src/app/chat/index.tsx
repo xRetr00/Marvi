@@ -45,7 +45,6 @@ import {
   $sessions,
   sessionPinId
 } from '@/store/session'
-import { publishWakeStatus } from '@/store/voice-presence'
 import { isSecondaryWindow } from '@/store/windows'
 import type { ModelOptionsResponse } from '@/types/hermes'
 
@@ -56,7 +55,6 @@ import { ChatDropOverlay } from './chat-drop-overlay'
 import { ChatSwapOverlay } from './chat-swap-overlay'
 import { ChatBar, ChatBarFallback } from './composer'
 import { requestComposerInsert, requestComposerInsertRefs } from './composer/focus'
-import { useWakeWord } from './composer/hooks/use-wake-word'
 import { droppedFileInlineRefs, type SessionDragPayload, sessionInlineRef } from './composer/inline-refs'
 import type { ChatBarState } from './composer/types'
 import { type DroppedFile, partitionDroppedFiles } from './hooks/use-composer-actions'
@@ -95,7 +93,6 @@ interface ChatViewProps extends Omit<React.ComponentProps<'div'>, 'onSubmit'> {
   onTranscribeAudio?: (audio: Blob) => Promise<string>
   streamingSttEnabled?: boolean
   onDismissError?: (messageId: string) => void
-  wakeWordConfig?: import('@/lib/wake-word').WakeWordConfig
 }
 
 interface ChatHeaderProps {
@@ -284,8 +281,7 @@ export function ChatView({
   onRetryResume,
   onTranscribeAudio,
   streamingSttEnabled,
-  onDismissError,
-  wakeWordConfig
+  onDismissError
 }: ChatViewProps) {
   const location = useLocation()
   const { t } = useI18n()
@@ -425,22 +421,6 @@ export function ChatView({
   }, [])
 
   const { dragKind, dropHandlers } = useFileDropZone({ enabled: showChatBar, onDropFiles, onDropSession })
-
-  const wake = useWakeWord({
-    busy,
-    config: wakeWordConfig,
-    enabled: gatewayOpen,
-    onSubmit: async text => {
-      await onSubmit(text)
-    },
-    onTranscribeAudio,
-    streamingSttEnabled
-  })
-
-  // Mirror wake-word status into $voiceState for the glow overlay (read-only).
-  useEffect(() => {
-    publishWakeStatus(wake.status)
-  }, [wake.status])
 
   return (
     <div

@@ -94,7 +94,7 @@ export function useVoiceRecorder({
     let streaming: StreamingTranscriptionSession | null = null
 
     try {
-      streaming = streamingSttEnabled ? await openStreamingTranscription().catch(() => null) : null
+      streaming = streamingSttEnabled ? await openStreamingTranscription() : null
       streamingRef.current = streaming
       const activeStreaming = streaming
       await handle.start({

@@ -48,6 +48,8 @@ import { $paneOpen } from '../store/panes'
 import { setPetActivity } from '../store/pet'
 import { setPetScale } from '../store/pet-gallery'
 import { dismissIslandCard, setIslandCardSubmitHandler } from '../store/island-cards'
+import { publishWakeStatus } from '../store/voice-presence'
+import { $presenceEnabled, setPresenceEnabled } from '../store/voice-presence-settings'
 import {
   setPetOverlayOpenAppHandler,
   setPetOverlayScaleHandler,
@@ -67,6 +69,7 @@ import { $reviewOpen, REVIEW_PANE_ID } from '../store/review'
 import {
   $activeSessionId,
   $attentionSessionIds,
+  $busy,
   $currentCwd,
   $freshDraftReady,
   $gatewayState,
@@ -105,9 +108,11 @@ import { clearSessionTodos, setSessionTodos, todoListActive } from '../store/tod
 import { openUpdatesWindow, startUpdatePoller, stopUpdatePoller } from '../store/updates'
 import { initGlowOverlayBridge } from '../store/glow-overlay'
 import { isSecondaryWindow } from '../store/windows'
+import { Mic } from '@/lib/icons'
 
 import { ChatView } from './chat'
 import { requestComposerFocus, requestComposerInsert } from './chat/composer/focus'
+import { useWakeWord } from './chat/composer/hooks/use-wake-word'
 import { useComposerActions } from './chat/hooks/use-composer-actions'
 import {
   ChatPreviewRail,
@@ -949,6 +954,29 @@ export function DesktopController() {
   const requestGatewayRef = useRef(requestGateway)
   requestGatewayRef.current = requestGateway
 
+  // App-wide wake word: lives here (not inside the chat view) so it listens
+  // whenever the app is running — even minimized to tray or on a non-chat view —
+  // which is what makes the voice presence truly always-on. Spoken commands route
+  // to the active session via submitTextRef. Primary window only (it owns the
+  // submit handler) and gated by the desktop presence preference. This only READS
+  // the wake-word engine's status; it does not change the engine.
+  const presenceEnabled = useStore($presenceEnabled)
+  const voiceBusy = useStore($busy)
+  const wake = useWakeWord({
+    busy: voiceBusy,
+    config: wakeWordConfig,
+    enabled: !isSecondaryWindow() && presenceEnabled && gatewayState === 'open',
+    onSubmit: async text => {
+      await submitTextRef.current(text)
+    },
+    onTranscribeAudio: transcribeVoiceAudio,
+    streamingSttEnabled
+  })
+
+  useEffect(() => {
+    publishWakeStatus(wake.status)
+  }, [wake.status])
+
   useEffect(() => {
     if (isSecondaryWindow()) {
       return
@@ -1084,6 +1112,38 @@ export function DesktopController() {
     statusSnapshot,
     toggleCommandCenter
   })
+
+  // Always-on wake-word indicator + toggle in the status bar. Reflects the live
+  // wake state and flips the desktop presence preference on click.
+  const wakeStatusItem = useMemo<StatusbarItem>(() => {
+    const listening = wake.status === 'woken' || wake.status === 'listening'
+    const label = !presenceEnabled
+      ? 'Presence off'
+      : listening
+        ? 'Listening'
+        : wake.status === 'transcribing'
+          ? 'Transcribing'
+          : undefined
+
+    return {
+      id: 'voice-presence',
+      variant: 'action',
+      icon: <Mic className="size-3" />,
+      label,
+      title: presenceEnabled ? 'Voice presence is on — click to turn off' : 'Voice presence is off — click to turn on',
+      onSelect: () => setPresenceEnabled(!presenceEnabled),
+      className: !presenceEnabled
+        ? 'opacity-45'
+        : listening || wake.status === 'transcribing'
+          ? 'text-(--ui-text-accent)'
+          : undefined
+    }
+  }, [presenceEnabled, wake.status])
+
+  const leftStatusbarItemsWithWake = useMemo(
+    () => [wakeStatusItem, ...leftStatusbarItems],
+    [leftStatusbarItems, wakeStatusItem]
+  )
 
   const sidebar = (
     <ChatSidebar
@@ -1230,7 +1290,6 @@ export function DesktopController() {
       onToggleSelectedPin={toggleSelectedPin}
       onTranscribeAudio={transcribeVoiceAudio}
       streamingSttEnabled={streamingSttEnabled}
-      wakeWordConfig={wakeWordConfig}
     />
   )
 
@@ -1352,7 +1411,7 @@ export function DesktopController() {
 
   return (
     <AppShell
-      leftStatusbarItems={leftStatusbarItems}
+      leftStatusbarItems={leftStatusbarItemsWithWake}
       leftTitlebarTools={titlebarToolGroups.flat.left}
       mainOverlays={mainOverlays}
       onOpenSettings={openSettings}

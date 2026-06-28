@@ -97,6 +97,7 @@ export function useWakeWord({
   const wakeSessionRef = useRef<WakeWordSession | null>(null)
   const streamingSessionRef = useRef<StreamingTranscriptionSession | null>(null)
   const streamingOpenRef = useRef<Promise<StreamingTranscriptionSession | null> | null>(null)
+  const streamingErrorRef = useRef<unknown>(null)
   const streamedCommandFramesRef = useRef(0)
   const detectedRef = useRef(false)
   const stoppingRef = useRef(false)
@@ -228,6 +229,9 @@ export function useWakeWord({
             streamingSession.sendFrame(frame)
           }
           transcript = (await streamingSession.finish()).trim()
+        } else if (streamingSttEnabled) {
+          const error = streamingErrorRef.current
+          throw error instanceof Error ? error : new Error(voiceCopy.streamingUnavailable)
         } else {
           const transcribeAudio = onTranscribeAudioRef.current
           if (transcribeAudio && commandAudio) {
@@ -258,6 +262,7 @@ export function useWakeWord({
     } finally {
       streamingSessionRef.current = null
       streamingOpenRef.current = null
+      streamingErrorRef.current = null
       streamedCommandFramesRef.current = 0
       stoppingRef.current = false
       scheduleRestart()
@@ -265,9 +270,11 @@ export function useWakeWord({
   }, [
     scheduleRestart,
     voiceCopy.noSpeechDetected,
+    voiceCopy.streamingUnavailable,
     voiceCopy.transcriptionFailed,
     voiceCopy.tryRecordingAgain,
     debugLog,
+    streamingSttEnabled,
     wakeConfig.phrases,
     wakeConfig.sampleRate
   ])
@@ -303,6 +310,7 @@ export function useWakeWord({
             stopWakeSession()
             stopStreamingSession()
             commandFramesRef.current = []
+            streamingErrorRef.current = null
             if (streamingSttEnabled) {
               streamingOpenRef.current = openStreamingTranscription()
                 .then(session => {
@@ -313,7 +321,10 @@ export function useWakeWord({
                   streamedCommandFramesRef.current = commandFramesRef.current.length
                   return session
                 })
-                .catch(() => null)
+                .catch(error => {
+                  streamingErrorRef.current = error
+                  return null
+                })
             }
             setStatus('woken')
             commandTimerRef.current = window.setTimeout(() => void finishCaptureRef.current?.(), wakeConfig.commandTimeoutMs)

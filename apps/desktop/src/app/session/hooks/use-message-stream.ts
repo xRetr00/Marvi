@@ -1051,6 +1051,8 @@ export function useMessageStream({
           })
         }
       } else if (event.type === 'card.show') {
+        // Intentionally NOT session-scoped: the island card is a global voice
+        // presence surface, shown regardless of which session is focused.
         const p = (payload ?? {}) as {
           id?: string
           kind?: 'info' | 'result' | 'approval'

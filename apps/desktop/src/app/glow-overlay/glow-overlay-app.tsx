@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react'
 
 import { glowSpeedMs, targetAmplitude } from './glow-model'
+import { IslandCapsule } from './island-capsule'
 import type { VoicePhase, VoiceState } from '@/store/voice-presence'
 
 const BLOBS = [
@@ -95,7 +96,12 @@ export function GlowOverlayApp() {
     }
   }, [])
 
-  return <canvas ref={canvasRef} style={{ display: 'block', width: '100vw', height: '100vh' }} />
+  return (
+    <>
+      <canvas ref={canvasRef} style={{ display: 'block', width: '100vw', height: '100vh' }} />
+      <IslandCapsule />
+    </>
+  )
 }
 
 function hexAlpha(hex: string, a: number): string {

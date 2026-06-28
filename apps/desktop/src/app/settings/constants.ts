@@ -226,11 +226,12 @@ export const ENUM_OPTIONS: Record<string, string[]> = {
   // modal/daytona/ssh). Remote backends need extra env (image, tokens, host).
   'terminal.backend': ['local', 'docker', 'singularity', 'modal', 'daytona', 'ssh'],
   'stt.elevenlabs.model_id': ['scribe_v2', 'scribe_v1'],
-  'stt.local.model': ['tiny', 'base', 'small', 'medium', 'large-v3'],
+  'stt.local.model': ['tiny', 'base', 'small', 'medium', 'large-v3', 'large-v3-turbo'],
   'stt.local.device': ['auto', 'cuda', 'cpu'],
   'stt.local.compute_type': ['auto', 'float16', 'int8_float16', 'int8'],
   'stt.streaming.provider': ['', 'whisperlive'],
   'stt.streaming.backend': ['faster_whisper', 'tensorrt', 'openvino'],
+  'stt.streaming.model': ['tiny', 'base', 'small', 'medium', 'large-v3', 'large-v3-turbo'],
   'voice.wake_word.provider': ['sherpa_onnx', 'livekit'],
   'voice.wake_word.model': ['kws-en-3.3m', 'livekit-marvi'],
   // Speech-to-text backends — kept in sync with the stt block in

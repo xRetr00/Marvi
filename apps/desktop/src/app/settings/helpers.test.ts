@@ -162,6 +162,7 @@ describe('settings helpers', () => {
 
     it('renders dropdowns for per-backend model/device sub-fields', () => {
       expect(enumOptionsFor('stt.openai.model', 'whisper-1', config)).toContain('gpt-4o-transcribe')
+      expect(enumOptionsFor('stt.local.model', 'large-v3-turbo', config)).toContain('large-v3-turbo')
       expect(enumOptionsFor('stt.local.device', 'cuda', config)).toEqual(['auto', 'cuda', 'cpu'])
       expect(enumOptionsFor('stt.local.compute_type', 'float16', config)).toContain('int8_float16')
       expect(enumOptionsFor('stt.streaming.provider', 'whisperlive', config)).toEqual(['', 'whisperlive'])
@@ -170,6 +171,7 @@ describe('settings helpers', () => {
         'tensorrt',
         'openvino'
       ])
+      expect(enumOptionsFor('stt.streaming.model', 'large-v3-turbo', config)).toContain('large-v3-turbo')
       expect(enumOptionsFor('tts.openai.model', 'gpt-4o-mini-tts', config)).toContain('tts-1-hd')
       expect(enumOptionsFor('tts.neutts.device', 'cpu', config)).toEqual(['cpu', 'cuda', 'mps'])
       expect(enumOptionsFor('tts.qwen3.mode', 'clone', config)).toEqual(['clone', 'custom', 'design'])

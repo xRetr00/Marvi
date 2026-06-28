@@ -1301,7 +1301,7 @@ def _setup_tts_provider(config: dict):
                 streaming["host"] = "127.0.0.1"
                 streaming["port"] = 9090
                 streaming["backend"] = "faster_whisper"
-                streaming["model"] = "small"
+                streaming["model"] = "large-v3-turbo"
                 streaming["max_clients"] = 1
                 streaming["max_connection_time"] = 900
                 streaming["single_model"] = True

@@ -2795,6 +2795,15 @@ class TestBuildSchemaFromConfig:
         assert CONFIG_SCHEMA["stt.streaming.port"]["type"] == "number"
         assert CONFIG_SCHEMA["stt.streaming.backend"]["type"] == "select"
         assert "faster_whisper" in CONFIG_SCHEMA["stt.streaming.backend"]["options"]
+        assert CONFIG_SCHEMA["stt.streaming.model"]["type"] == "string"
+
+    def test_wake_word_fields_are_in_schema(self):
+        from hermes_cli.web_server import CONFIG_SCHEMA
+
+        assert CONFIG_SCHEMA["voice.wake_word.enabled"]["type"] == "boolean"
+        assert CONFIG_SCHEMA["voice.wake_word.provider"]["type"] == "string"
+        assert CONFIG_SCHEMA["voice.wake_word.model"]["type"] == "string"
+        assert CONFIG_SCHEMA["voice.wake_word.phrases"]["type"] == "list"
 
     def test_whisperlive_start_payload_uses_streaming_config(self):
         from hermes_cli.web_server import _whisperlive_start_payload

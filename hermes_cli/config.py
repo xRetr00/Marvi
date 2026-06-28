@@ -1967,7 +1967,7 @@ DEFAULT_CONFIG = {
         "enabled": True,
         "provider": "local",  # "local" (free, faster-whisper) | "groq" | "openai" (Whisper API) | "mistral" (Voxtral Transcribe) | "elevenlabs" (Scribe)
         "local": {
-            "model": "base",  # tiny, base, small, medium, large-v3
+            "model": "base",  # tiny, base, small, medium, large-v3, large-v3-turbo
             "language": "",  # auto-detect by default; set to "en", "es", "fr", etc. to force
             "device": "auto",  # auto, cuda, or cpu for faster-whisper
             "compute_type": "auto",  # auto, float16, int8_float16, int8
@@ -1979,7 +1979,7 @@ DEFAULT_CONFIG = {
             "host": "127.0.0.1",
             "port": 9090,
             "backend": "faster_whisper",  # faster_whisper, tensorrt, openvino
-            "model": "small",
+            "model": "small",  # tiny, base, small, medium, large-v3, large-v3-turbo
             "max_clients": 1,
             "max_connection_time": 900,
             "single_model": True,
@@ -2005,6 +2005,17 @@ DEFAULT_CONFIG = {
         "beep_enabled": True,         # Play record start/stop beeps in CLI voice mode
         "silence_threshold": 200,     # RMS below this = silence (0-32767)
         "silence_duration": 3.0,      # Seconds of silence before auto-stop
+        "wake_word": {
+            "enabled": False,
+            "provider": "livekit",
+            "model": "livekit-marvi",
+            "phrases": ["hey marvi", "marvi", "marve", "marvy", "marvie", "marfi", "marfe", "marvey"],
+            "threshold": 0.5,
+            "boost": 4,
+            "debug": False,
+            "command_timeout_ms": 8000,
+            "cooldown_ms": 1200,
+        },
     },
     
     "human_delay": {

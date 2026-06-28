@@ -508,6 +508,7 @@ def test_tts_setup_configures_qwen3_clone_mode(tmp_path, monkeypatch):
     assert config["stt"]["local"]["compute_type"] == "float16"
     assert config["stt"]["streaming"]["provider"] == "whisperlive"
     assert config["stt"]["streaming"]["backend"] == "faster_whisper"
+    assert config["stt"]["streaming"]["model"] == "large-v3-turbo"
     assert config["stt"]["streaming"]["port"] == 9090
 
 

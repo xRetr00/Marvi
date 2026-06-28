@@ -442,7 +442,7 @@ class TestLocalWhisperGpuConfig:
 
         assert call_args == [("base", {"device": "cuda", "compute_type": "int8_float16"})]
 
-    def test_transcribe_local_passes_configured_batch_size(self, sample_wav):
+    def test_transcribe_local_ignores_configured_batch_size(self, sample_wav):
         segment = types.SimpleNamespace(text=" hello ")
         info = types.SimpleNamespace(language="en", duration=1.0)
         mock_model = MagicMock()
@@ -459,7 +459,7 @@ class TestLocalWhisperGpuConfig:
 
         assert result["success"] is True
         kwargs = mock_model.transcribe.call_args.kwargs
-        assert kwargs["batch_size"] == 8
+        assert "batch_size" not in kwargs
         assert kwargs["vad_filter"] is True
 
 

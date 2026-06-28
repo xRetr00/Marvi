@@ -184,6 +184,10 @@ DEFAULT_KITTENTTS_VOICE = "Jasper"
 DEFAULT_PIPER_VOICE = "en_US-lessac-medium"  # balanced size/quality
 DEFAULT_POCKETTTS_VOICE = "alba"
 DEFAULT_QWEN3_MODEL = "Qwen/Qwen3-TTS-12Hz-0.6B-Base"
+QWEN3_VOICE_DESIGN_MODEL = "Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign"
+QWEN3_REMOVED_MODEL_ALIASES = {
+    "Qwen/Qwen3-TTS-12Hz-0.6B-VoiceDesign": QWEN3_VOICE_DESIGN_MODEL,
+}
 DEFAULT_QWEN3_LANGUAGE = "English"
 DEFAULT_QWEN3_DEVICE = "cuda"
 DEFAULT_QWEN3_DTYPE = "bfloat16"
@@ -1958,8 +1962,9 @@ def _qwen3_config(tts_config: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def _qwen3_model_key(cfg: Dict[str, Any]) -> tuple:
+    model = str(cfg.get("model") or DEFAULT_QWEN3_MODEL).strip() or DEFAULT_QWEN3_MODEL
     return (
-        str(cfg.get("model") or DEFAULT_QWEN3_MODEL).strip() or DEFAULT_QWEN3_MODEL,
+        QWEN3_REMOVED_MODEL_ALIASES.get(model, model),
         str(cfg.get("device") or DEFAULT_QWEN3_DEVICE).strip() or DEFAULT_QWEN3_DEVICE,
         str(cfg.get("dtype") or DEFAULT_QWEN3_DTYPE).strip() or DEFAULT_QWEN3_DTYPE,
         str(cfg.get("attn_implementation") or "sdpa").strip() or "sdpa",

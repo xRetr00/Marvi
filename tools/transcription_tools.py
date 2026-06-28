@@ -1185,9 +1185,6 @@ def _transcribe_local(file_path: str, model_name: str) -> Dict[str, Any]:
             "without_timestamps": True,
         }
         local_cfg = stt_config.get("local", {})
-        batch_size = local_cfg.get("batch_size")
-        if isinstance(batch_size, int) and not isinstance(batch_size, bool) and batch_size > 0:
-            transcribe_kwargs["batch_size"] = batch_size
         if "vad_filter" in local_cfg:
             transcribe_kwargs["vad_filter"] = is_truthy_value(local_cfg.get("vad_filter"), default=False)
         if _forced_lang:

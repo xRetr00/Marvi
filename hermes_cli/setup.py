@@ -1251,7 +1251,7 @@ def _setup_tts_provider(config: dict):
             model_defaults = {
                 "clone": "Qwen/Qwen3-TTS-12Hz-0.6B-Base",
                 "custom": "Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice",
-                "design": "Qwen/Qwen3-TTS-12Hz-0.6B-VoiceDesign",
+                "design": "Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign",
             }
             qwen_cfg = config.setdefault("tts", {}).setdefault("qwen3", {})
             qwen_cfg["mode"] = mode

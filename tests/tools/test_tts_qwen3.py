@@ -106,4 +106,5 @@ def test_qwen3_design_mode_passes_instruction(tmp_path, monkeypatch):
     data = json.loads(tts_tool.text_to_speech_tool("hello", str(tmp_path / "out.wav")))
 
     assert data["success"] is True
+    assert _FakeQwenModel.loaded[0][0] == "Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign"
     assert _FakeQwenModel.design_calls[0]["instruct"] == "warm narrator"

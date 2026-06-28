@@ -174,7 +174,7 @@ describe('settings helpers', () => {
       expect(enumOptionsFor('tts.neutts.device', 'cpu', config)).toEqual(['cpu', 'cuda', 'mps'])
       expect(enumOptionsFor('tts.qwen3.mode', 'clone', config)).toEqual(['clone', 'custom', 'design'])
       expect(enumOptionsFor('tts.qwen3.model', 'Qwen/Qwen3-TTS-12Hz-0.6B-Base', config)).toContain(
-        'Qwen/Qwen3-TTS-12Hz-0.6B-VoiceDesign'
+        'Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign'
       )
     })
 

@@ -258,7 +258,6 @@ export const ENUM_OPTIONS: Record<string, string[]> = {
   'tts.qwen3.model': [
     'Qwen/Qwen3-TTS-12Hz-0.6B-Base',
     'Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice',
-    'Qwen/Qwen3-TTS-12Hz-0.6B-VoiceDesign',
     'Qwen/Qwen3-TTS-12Hz-1.7B-Base',
     'Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice',
     'Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign'

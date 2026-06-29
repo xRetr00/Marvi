@@ -37,6 +37,9 @@ export function IslandCapsule() {
         bottom: 48,
         left: '50%',
         transform: 'translateX(-50%)',
+        // The glow root is click-through; the capsule opts back in so its
+        // buttons are clickable when the window is made interactive.
+        pointerEvents: 'auto',
         width: 320,
         background: 'rgba(18,18,22,0.72)',
         backdropFilter: 'blur(16px)',

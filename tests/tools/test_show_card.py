@@ -23,13 +23,15 @@ def test_show_card_emits_event_and_returns_ok():
     assert captured["event"]["payload"]["kind"] == "result"
 
 
-def test_show_card_reports_when_no_client():
+def test_show_card_succeeds_even_without_a_client():
+    # show_card is advisory: the desktop renders from the tool call itself, so a
+    # missing structured-stream listener is a no-op success, not a failure.
     with patch("tools.show_card.get_current_session_key", return_value="s1"), patch(
         "tools.show_card.emit_ui_event", return_value=False
     ):
         result = show_card.handle_show_card({"body": "hi"})
 
-    assert result["success"] is False
+    assert result["success"] is True
 
 
 def test_show_card_requires_body():

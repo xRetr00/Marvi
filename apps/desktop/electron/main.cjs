@@ -5911,7 +5911,11 @@ function glowOverlayUrl() {
 
 function spawnGlowOverlayWindow() {
   const display = screen.getDisplayNearestPoint(screen.getCursorScreenPoint())
-  const area = display.bounds
+  // Use the work area, not full bounds, so the glow sits inside the usable
+  // screen and never fights the Windows taskbar / macOS Dock + menu bar (which
+  // render above even screen-saver-level windows and would otherwise clip the
+  // bottom of the glow).
+  const area = display.workArea
 
   const win = new BrowserWindow({
     x: area.x,

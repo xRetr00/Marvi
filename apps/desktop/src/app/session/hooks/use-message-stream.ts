@@ -993,6 +993,31 @@ export function useMessageStream({
           setPetActivity({ reasoning: false, toolRunning: true })
         }
       } else if (event.type === 'tool.complete') {
+        // Render the voice-presence capsule straight from the show_card tool
+        // call. The tool invocation always streams to the client, so this works
+        // on every run path without depending on a separate gateway event.
+        if (payload?.name === 'show_card') {
+          const cardArgs = (payload.args ?? payload.input ?? {}) as {
+            actions?: { id: string; label: string; value?: string }[]
+            body?: string
+            duration_ms?: number
+            kind?: 'approval' | 'info' | 'result'
+            title?: string
+          }
+
+          if (cardArgs.body) {
+            showIslandCard({
+              actions: cardArgs.actions,
+              autoDismiss: typeof cardArgs.duration_ms === 'number' && cardArgs.duration_ms > 0,
+              body: cardArgs.body,
+              duration: cardArgs.duration_ms,
+              id: `card-${payload.tool_id ?? Date.now()}`,
+              kind: cardArgs.kind ?? 'info',
+              title: cardArgs.title
+            })
+          }
+        }
+
         if (sessionId) {
           flushQueuedDeltas(sessionId)
           upsertToolCall(sessionId, toTodoPayload(payload) ?? payload, 'complete', event.type)

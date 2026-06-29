@@ -14,10 +14,14 @@ from tools.ui_events import emit_ui_event
 SHOW_CARD_SCHEMA = {
     "name": "show_card",
     "description": (
-        "Show a compact card on the user's voice presence overlay (a small "
-        "glass capsule). Use during voice interactions to SHOW something "
-        "(a short result, a list, a link, or a confirm prompt) instead of "
-        "speaking it aloud. Not for long text -- keep body under ~200 chars."
+        "Show a compact card on the user's desktop voice presence (a small glass "
+        "capsule on the screen-edge glow). Best for VOICE interactions: when the "
+        "user is talking to you hands-free, SHOW a short result, a key fact, a "
+        "link, a list, or a quick confirm prompt instead of only speaking it. "
+        "The card appears whenever the Marvi desktop app is open; if no desktop "
+        "client is watching it is simply a no-op, so it is always safe to call. "
+        "Keep body under ~200 chars. Use actions for yes/no or quick replies — an "
+        "action's value is sent back as the user's next message when tapped."
     ),
     "parameters": {
         "type": "object",
@@ -53,7 +57,14 @@ SHOW_CARD_SCHEMA = {
 
 
 def handle_show_card(args: dict, **_kwargs) -> dict:
-    """Emit a card.show UI event to the connected client."""
+    """Surface a card on the desktop voice presence.
+
+    The desktop renders the capsule directly from this tool call (the invocation
+    always streams to the client), so this handler just validates input and
+    fires a best-effort UI event for any client that listens on the structured
+    event stream. It never reports failure for a missing client — show_card is an
+    advisory UI hint, so a no-op when no desktop is watching is success.
+    """
     args = args or {}
     body = args.get("body", "")
     if not body:
@@ -68,15 +79,13 @@ def handle_show_card(args: dict, **_kwargs) -> dict:
         "actions": args.get("actions"),
     }
 
+    # Best-effort secondary delivery for the structured (/v1/runs) event stream.
+    # The desktop chat path renders from the tool call itself, so this is not
+    # required for the card to appear there.
     session_key = get_current_session_key(default="")
-    delivered = emit_ui_event(session_key, {"event": "card.show", "payload": payload})
+    emit_ui_event(session_key, {"event": "card.show", "payload": payload})
 
-    if not delivered:
-        return {
-            "success": False,
-            "error": "No connected client to show the card (cards work in the desktop app voice presence).",
-        }
-    return {"success": True, "message": "Card shown."}
+    return {"success": True, "message": "Card shown on the voice presence."}
 
 
 registry.register(

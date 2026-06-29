@@ -78,6 +78,8 @@ async function playStreamingSpeechText(text: string, options: VoicePlaybackOptio
   let buffer = ''
   let sampleRate = 24000
   let nextTime = audioContext.currentTime
+  let playedChunks = 0
+  let failed = false
   let stopped = false
 
   currentStop = () => {
@@ -112,11 +114,16 @@ async function playStreamingSpeechText(text: string, options: VoicePlaybackOptio
         continue
       }
 
-      const event = JSON.parse(line) as { audio?: string; sample_rate?: number; type?: string }
+      const event = JSON.parse(line) as { audio?: string; error?: string; sample_rate?: number; type?: string }
       if (event.type === 'start' && event.sample_rate) {
         sampleRate = event.sample_rate
       } else if (event.type === 'chunk' && event.audio) {
         playChunk(event.audio)
+        playedChunks += 1
+      } else if (event.type === 'error') {
+        failed = true
+        stopped = true
+        break
       }
     }
   }
@@ -127,7 +134,7 @@ async function playStreamingSpeechText(text: string, options: VoicePlaybackOptio
 
   currentStop = null
   await audioContext.close?.()
-  return !stopped
+  return !stopped && !failed && playedChunks > 0
 }
 
 export function stopVoicePlayback() {

@@ -1136,7 +1136,7 @@ export function DesktopController() {
       : listening
         ? 'Listening'
         : wake.status === 'transcribing'
-          ? 'Transcribing'
+          ? 'Finalizing speech'
           : undefined
 
     return {

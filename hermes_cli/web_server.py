@@ -92,7 +92,7 @@ try:
         WebSocket, WebSocketDisconnect,
     )
     from fastapi.middleware.cors import CORSMiddleware
-    from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
+    from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response, StreamingResponse
     from fastapi.staticfiles import StaticFiles
     from pydantic import BaseModel
 except ImportError:
@@ -107,7 +107,7 @@ except ImportError:
             WebSocket, WebSocketDisconnect,
         )
         from fastapi.middleware.cors import CORSMiddleware
-        from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
+        from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response, StreamingResponse
         from fastapi.staticfiles import StaticFiles
         from pydantic import BaseModel
     except Exception:
@@ -3328,6 +3328,30 @@ async def speak_text(payload: TTSSpeakRequest):
         "mime_type": mime_type,
         "provider": result.get("provider"),
     }
+
+
+@app.post("/api/audio/speak/stream")
+async def speak_text_stream(payload: TTSSpeakRequest):
+    """Stream Qwen3-TTS PCM chunks as newline-delimited JSON."""
+    text = (payload.text or "").strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="Text is required")
+
+    def event_stream():
+        try:
+            from tools.tts_tool import stream_text_to_speech_chunks
+
+            for event in stream_text_to_speech_chunks(text):
+                yield json.dumps(event, separators=(",", ":")) + "\n"
+        except Exception as exc:
+            _log.warning("Desktop streaming TTS unavailable: %s", exc)
+            yield json.dumps({"type": "error", "error": str(exc)}, separators=(",", ":")) + "\n"
+
+    return StreamingResponse(
+        event_stream(),
+        headers={"Cache-Control": "no-store"},
+        media_type="application/x-ndjson",
+    )
 
 
 @app.get("/api/actions/{name}/status")

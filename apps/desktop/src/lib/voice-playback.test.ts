@@ -113,4 +113,33 @@ describe('playSpeechText', () => {
     )
     expect(speakText).not.toHaveBeenCalled()
   })
+
+  it('falls back to normal speech synthesis when the stream endpoint reports unavailable', async () => {
+    const encoder = new TextEncoder()
+    const fetch = vi.fn().mockResolvedValue({
+      body: new ReadableStream({
+        start(controller) {
+          controller.enqueue(encoder.encode(`${JSON.stringify({ type: 'error', error: 'not qwen3' })}\n`))
+          controller.close()
+        }
+      }),
+      ok: true
+    })
+    vi.stubGlobal('fetch', fetch)
+    Object.defineProperty(window, 'hermesDesktop', {
+      configurable: true,
+      value: {
+        getConnection: vi.fn().mockResolvedValue({
+          authMode: 'token',
+          baseUrl: 'http://127.0.0.1:9119',
+          token: 'secret'
+        })
+      }
+    })
+
+    await playSpeechText('Hello', { source: 'read-aloud' })
+
+    expect(fetch).toHaveBeenCalled()
+    expect(speakText).toHaveBeenCalledWith('Hello.')
+  })
 })

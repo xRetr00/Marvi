@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { useI18n } from '@/i18n'
-import { openStreamingTranscription, type StreamingTranscriptionSession } from '@/lib/streaming-transcription'
 import { playSpeechText, stopVoicePlayback } from '@/lib/voice-playback'
 import { notify, notifyError } from '@/store/notifications'
 
@@ -21,7 +20,6 @@ interface VoiceConversationOptions {
   onFatalError?: () => void
   onSubmit: (text: string) => Promise<void> | void
   onTranscribeAudio?: (audio: Blob) => Promise<string>
-  streamingSttEnabled?: boolean
   pendingResponse: () => PendingVoiceResponse | null
   consumePendingResponse: () => void
 }
@@ -32,7 +30,6 @@ export function useVoiceConversation({
   onFatalError,
   onSubmit,
   onTranscribeAudio,
-  streamingSttEnabled,
   pendingResponse,
   consumePendingResponse
 }: VoiceConversationOptions) {
@@ -53,7 +50,6 @@ export function useVoiceConversation({
   const busyRef = useRef(busy)
   const statusRef = useRef<ConversationStatus>('idle')
   const wasEnabledRef = useRef(enabled)
-  const streamingRef = useRef<StreamingTranscriptionSession | null>(null)
 
   useEffect(() => {
     enabledRef.current = enabled
@@ -146,11 +142,8 @@ export function useVoiceConversation({
 
       try {
         const result = await handle.stop()
-        const streaming = streamingRef.current
-        streamingRef.current = null
 
         if (!result || (!result.heardSpeech && !forceTranscribe) || !onTranscribeAudio) {
-          void streaming?.finish().catch(() => '')
           if (enabledRef.current && !mutedRef.current && !busyRef.current && statusRef.current !== 'speaking') {
             pendingStartRef.current = true
           }
@@ -161,7 +154,7 @@ export function useVoiceConversation({
         }
 
         try {
-          const transcript = (await (streaming ? streaming.finish() : onTranscribeAudio(result.audio))).trim()
+          const transcript = (await onTranscribeAudio(result.audio)).trim()
 
           if (!transcript) {
             if (enabledRef.current) {
@@ -204,18 +197,12 @@ export function useVoiceConversation({
       return
     }
 
-    let streaming: StreamingTranscriptionSession | null = null
-
     try {
-      streaming = streamingSttEnabled ? await openStreamingTranscription() : null
-      streamingRef.current = streaming
-      const activeStreaming = streaming
       // VAD tuning mirrors `tools.voice_mode` defaults so the browser loop matches the CLI.
       await handle.start({
         silenceLevel: 0.075,
         silenceMs: 1_250,
         idleSilenceMs: 12_000,
-        onAudioFrame: activeStreaming ? samples => activeStreaming.sendFrame(samples) : undefined,
         onError: error => {
           notifyError(error, voiceCopy.microphoneFailed)
           pendingStartRef.current = false
@@ -226,14 +213,12 @@ export function useVoiceConversation({
       setStatus('listening')
       turnTimeoutRef.current = window.setTimeout(() => void handleTurn(), 60_000)
     } catch (error) {
-      void streaming?.finish().catch(() => '')
-      streamingRef.current = null
       notifyError(error, voiceCopy.couldNotStartSession)
       pendingStartRef.current = false
       setStatus('idle')
       onFatalError?.()
     }
-  }, [handle, handleTurn, onFatalError, streamingSttEnabled, voiceCopy.couldNotStartSession, voiceCopy.microphoneFailed])
+  }, [handle, handleTurn, onFatalError, voiceCopy.couldNotStartSession, voiceCopy.microphoneFailed])
 
   const speak = useCallback(
     async (text: string) => {
@@ -286,8 +271,6 @@ export function useVoiceConversation({
     pendingStartRef.current = false
     clearTurnTimeout()
     stopVoicePlayback()
-    void streamingRef.current?.finish().catch(() => '')
-    streamingRef.current = null
     handle.cancel()
     turnClosingRef.current = false
     awaitingSpokenResponseRef.current = false
@@ -309,8 +292,6 @@ export function useVoiceConversation({
 
       if (next) {
         clearTurnTimeout()
-        void streamingRef.current?.finish().catch(() => '')
-        streamingRef.current = null
         handle.cancel()
         setStatus('idle')
       } else if (enabledRef.current && !busyRef.current && statusRef.current === 'idle') {

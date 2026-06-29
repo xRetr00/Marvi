@@ -1,6 +1,8 @@
 import type { QueryClient } from '@tanstack/react-query'
 import { type MutableRefObject, useCallback, useEffect, useRef } from 'react'
 
+import { writeAgentTerminalChunk } from '@/app/right-sidebar/terminal/agent-terminal-stream'
+import { closeAgentTerminalByProc } from '@/app/right-sidebar/terminal/terminals'
 import { readActiveTerminal } from '@/app/right-sidebar/terminal/buffer'
 import { translateNow } from '@/i18n'
 import {
@@ -36,7 +38,6 @@ import { notify } from '@/store/notifications'
 import { requestDesktopOnboarding } from '@/store/onboarding'
 import { flashPetActivity, markPetUnread, setPetActivity } from '@/store/pet'
 import { followActiveSessionCwd } from '@/store/projects'
-import { dismissIslandCard, showIslandCard } from '@/store/island-cards'
 import { clearAllPrompts, setApprovalRequest, setSecretRequest, setSudoRequest } from '@/store/prompts'
 import {
   $currentCwd,
@@ -680,7 +681,7 @@ export function useMessageStream({
         const streamId = state.streamId ?? `assistant-error-${Date.now()}`
         const groupId = state.pendingBranchGroup ?? undefined
         const prev = state.messages
-        const error = errorMessage.trim() || 'Marvi reported an error'
+        const error = errorMessage.trim() || 'Hermes reported an error'
 
         const nextMessages = prev.some(m => m.id === streamId)
           ? prev.map(message =>
@@ -904,6 +905,29 @@ export function useMessageStream({
         if (isActiveEvent) {
           setPetActivity({ reasoning: true })
         }
+      } else if (event.type === 'moa.reference') {
+        // MoA reference-model output — surface as a labelled thinking chunk
+        // (tagged with the source model) before the aggregator's response, so
+        // the mixture-of-agents process is visible. Reuses the reasoning
+        // disclosure rather than introducing a parallel surface.
+        if (sessionId) {
+          const label = coerceGatewayText(payload?.label) || 'reference'
+          const idx = typeof payload?.index === 'number' ? payload.index : undefined
+          const cnt = typeof payload?.count === 'number' ? payload.count : undefined
+          const header = idx && cnt ? `◇ Reference ${idx}/${cnt} — ${label}` : `◇ Reference — ${label}`
+          const body = coerceThinkingText(payload?.text)
+          appendReasoningDelta(sessionId, `${header}\n${body}\n\n`, true)
+        }
+
+        if (isActiveEvent) {
+          setPetActivity({ reasoning: true })
+        }
+      } else if (event.type === 'moa.aggregating') {
+        // Status transition only; the aggregator's reply arrives via the normal
+        // message stream. No reasoning/transcript mutation here.
+        if (isActiveEvent) {
+          setPetActivity({ reasoning: true })
+        }
       } else if (event.type === 'message.complete') {
         if (!sessionId) {
           return
@@ -916,7 +940,6 @@ export function useMessageStream({
         clearAllPrompts(sessionId)
         clearClarifyRequest(undefined, sessionId)
         setSessionCompacting(sessionId, false)
-        dismissIslandCard('approval')
 
         flushQueuedDeltas(sessionId)
 
@@ -1051,26 +1074,6 @@ export function useMessageStream({
             title: translateNow('notifications.native.inputTitle')
           })
         }
-      } else if (event.type === 'card.show') {
-        // Intentionally NOT session-scoped: the island card is a global voice
-        // presence surface, shown regardless of which session is focused.
-        const p = (payload ?? {}) as {
-          id?: string
-          kind?: 'info' | 'result' | 'approval'
-          title?: string
-          body?: string
-          duration?: number
-          actions?: { id: string; label: string; value?: string }[]
-        }
-        showIslandCard({
-          id: p.id ?? `card-${Date.now()}`,
-          kind: p.kind ?? 'info',
-          title: p.title,
-          body: p.body,
-          duration: p.duration,
-          autoDismiss: typeof p.duration === 'number' && p.duration > 0,
-          actions: p.actions
-        })
       } else if (event.type === 'approval.request') {
         // Dangerous-command / execute_code approval. The Python side is blocked
         // in _await_gateway_decision() until approval.respond lands; without
@@ -1102,16 +1105,6 @@ export function useMessageStream({
           kind: 'approval',
           sessionId,
           title: translateNow('notifications.native.approvalTitle')
-        })
-
-        // Mirror onto the voice presence capsule so the glow overlay surfaces
-        // the prompt even when the app is minimised. No actions — resolution
-        // still happens through the existing in-app approval flow.
-        showIslandCard({
-          id: 'approval',
-          kind: 'approval',
-          title: translateNow('notifications.native.approvalTitle'),
-          body: command || description
         })
       } else if (event.type === 'sudo.request') {
         // Sudo password capture (tools/terminal_tool.py). Blocked on
@@ -1174,6 +1167,13 @@ export function useMessageStream({
             text: result ? JSON.stringify(result) : ''
           })
         }
+      } else if (event.type === 'agent.terminal.output') {
+        // Live chunk from a background process → its read-only agent terminal tab.
+        writeAgentTerminalChunk(payload?.process_id ?? '', payload?.chunk ?? '')
+      } else if (event.type === 'terminal.close') {
+        // Agent closed its own read-only tab via the desktop-gated close_terminal tool.
+        // The process is untouched — this only drops the view.
+        closeAgentTerminalByProc(payload?.process_id ?? '')
       } else if (event.type === 'status.update') {
         if (sessionId && payload?.kind === 'compacting') {
           setSessionCompacting(sessionId, true)
@@ -1210,7 +1210,7 @@ export function useMessageStream({
           }))
         }
       } else if (event.type === 'error') {
-        const errorMessage = payload?.message || 'Marvi reported an error'
+        const errorMessage = payload?.message || 'Hermes reported an error'
         const looksLikeProviderSetup = isProviderSetupErrorMessage(errorMessage)
 
         // A turn that errors out has also ended — drop any open blocking prompt
@@ -1222,7 +1222,6 @@ export function useMessageStream({
           setSessionCompacting(sessionId, false)
           compactedTurnRef.current.delete(sessionId)
         }
-        dismissIslandCard('approval')
 
         if (isActiveEvent) {
           setPetActivity({ reasoning: false, toolRunning: false })
@@ -1246,7 +1245,7 @@ export function useMessageStream({
           notify({
             id: `gateway-error:${errorMessage}`,
             kind: 'error',
-            title: 'Marvi error',
+            title: 'Hermes error',
             message: errorMessage
           })
         }

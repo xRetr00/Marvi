@@ -10,6 +10,7 @@ import { GatewayConnectingOverlay } from '@/components/gateway-connecting-overla
 import { Pane, PaneMain } from '@/components/pane-shell'
 import { RemoteDisplayBanner } from '@/components/remote-display-banner'
 import { useMediaQuery } from '@/hooks/use-media-query'
+import { isFocusWithin } from '@/lib/keybinds/combo'
 import { cn } from '@/lib/utils'
 import { useSkinCommand } from '@/themes/use-skin-command'
 
@@ -47,9 +48,6 @@ import { respondToApprovalAction } from '../store/native-notifications'
 import { $paneOpen } from '../store/panes'
 import { setPetActivity } from '../store/pet'
 import { setPetScale } from '../store/pet-gallery'
-import { dismissIslandCard, setIslandCardSubmitHandler } from '../store/island-cards'
-import { publishWakeStatus } from '../store/voice-presence'
-import { $presenceEnabled, setPresenceEnabled } from '../store/voice-presence-settings'
 import {
   setPetOverlayOpenAppHandler,
   setPetOverlayScaleHandler,
@@ -69,7 +67,6 @@ import { $reviewOpen, REVIEW_PANE_ID } from '../store/review'
 import {
   $activeSessionId,
   $attentionSessionIds,
-  $busy,
   $currentCwd,
   $freshDraftReady,
   $gatewayState,
@@ -106,13 +103,10 @@ import {
 import { onSessionsChanged } from '../store/session-sync'
 import { clearSessionTodos, setSessionTodos, todoListActive } from '../store/todos'
 import { openUpdatesWindow, startUpdatePoller, stopUpdatePoller } from '../store/updates'
-import { initGlowOverlayBridge } from '../store/glow-overlay'
 import { isSecondaryWindow } from '../store/windows'
-import { Mic } from '@/lib/icons'
 
 import { ChatView } from './chat'
 import { requestComposerFocus, requestComposerInsert } from './chat/composer/focus'
-import { useWakeWord } from './chat/composer/hooks/use-wake-word'
 import { useComposerActions } from './chat/hooks/use-composer-actions'
 import {
   ChatPreviewRail,
@@ -131,9 +125,12 @@ import { ModelVisibilityOverlay } from './model-visibility-overlay'
 import { PetGenerateOverlay } from './pet-generate/pet-generate-overlay'
 import { RightSidebarPane } from './right-sidebar'
 import { FileActionDialogs } from './right-sidebar/file-actions'
+import { RemoteFolderPicker } from './right-sidebar/files/remote-picker'
 import { ReviewPane } from './right-sidebar/review'
 import { $terminalTakeover } from './right-sidebar/store'
-import { PersistentTerminal, TerminalSlot } from './right-sidebar/terminal/persistent'
+import { TerminalPaneChrome } from './right-sidebar/terminal/chrome'
+import { PersistentTerminal } from './right-sidebar/terminal/persistent'
+import { closeActiveTerminal } from './right-sidebar/terminal/terminals'
 import { CRON_ROUTE, NEW_CHAT_ROUTE, routeSessionId, sessionRoute, SETTINGS_ROUTE } from './routes'
 import { SessionPickerOverlay } from './session-picker-overlay'
 import { SessionSwitcher } from './session-switcher'
@@ -394,11 +391,25 @@ export function DesktopController() {
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      if (!$filePreviewTarget.get() && !$previewTarget.get()) {
+      if (event.altKey || event.shiftKey || event.key.toLowerCase() !== 'w' || (!event.metaKey && !event.ctrlKey)) {
         return
       }
 
-      if ((event.metaKey || event.ctrlKey) && !event.altKey && !event.shiftKey && event.key.toLowerCase() === 'w') {
+      // Terminal focused: ⌘W closes the active terminal. Ctrl+W is left untouched
+      // for the shell's werase, and nothing else may steal ⌘/Ctrl+W from a
+      // focused terminal (so it never closes a preview tab out from under it).
+      if (isFocusWithin('[data-terminal]')) {
+        if (event.metaKey && !event.ctrlKey) {
+          event.preventDefault()
+          event.stopPropagation()
+          closeActiveTerminal()
+        }
+
+        return
+      }
+
+      // Otherwise ⌘/Ctrl+W closes the active preview tab when one is open.
+      if ($filePreviewTarget.get() || $previewTarget.get()) {
         event.preventDefault()
         event.stopPropagation()
         closeActiveRightRailTab()
@@ -587,7 +598,7 @@ export function DesktopController() {
     }
   }, [])
 
-  const { gatewayLogLines, inferenceStatus, statusSnapshot } = useStatusSnapshot(gatewayState, requestGateway)
+  const { inferenceStatus, statusSnapshot } = useStatusSnapshot(gatewayState, requestGateway)
 
   const updateActiveSessionRuntimeInfo = useCallback(
     (info: { branch?: string; cwd?: string }) => {
@@ -613,7 +624,7 @@ export function DesktopController() {
     requestGateway
   })
 
-  const { refreshHermesConfig, streamingSttEnabled, sttEnabled, voiceMaxRecordingSeconds, wakeWordConfig } = useHermesConfig({
+  const { refreshHermesConfig, sttEnabled, voiceMaxRecordingSeconds } = useHermesConfig({
     activeSessionIdRef,
     refreshProjectBranch
   })
@@ -954,43 +965,12 @@ export function DesktopController() {
   const requestGatewayRef = useRef(requestGateway)
   requestGatewayRef.current = requestGateway
 
-  // App-wide wake word: lives here (not inside the chat view) so it listens
-  // whenever the app is running — even minimized to tray or on a non-chat view —
-  // which is what makes the voice presence truly always-on. Spoken commands route
-  // to the active session via submitTextRef. Primary window only (it owns the
-  // submit handler) and gated by the desktop presence preference. This only READS
-  // the wake-word engine's status; it does not change the engine.
-  const presenceEnabled = useStore($presenceEnabled)
-  const voiceBusy = useStore($busy)
-  const wake = useWakeWord({
-    busy: voiceBusy,
-    config: wakeWordConfig,
-    enabled: !isSecondaryWindow() && presenceEnabled && gatewayState === 'open',
-    onSubmit: async text => {
-      await submitTextRef.current(text)
-    },
-    onTranscribeAudio: transcribeVoiceAudio,
-    streamingSttEnabled
-  })
-
-  useEffect(() => {
-    publishWakeStatus(wake.status)
-  }, [wake.status])
-
   useEffect(() => {
     if (isSecondaryWindow()) {
       return
     }
 
     setPetOverlaySubmitHandler(text => void submitTextRef.current(text))
-    setIslandCardSubmitHandler(text => void submitTextRef.current(text))
-    const offCardAction = window.hermesDesktop?.glowOverlay?.onCardAction(payload => {
-      if (payload.type === 'dismiss') {
-        dismissIslandCard(payload.id)
-      } else if (payload.type === 'submit') {
-        void submitTextRef.current(payload.text)
-      }
-    })
     // Alt+wheel resize from the popped-out pet — persist it through this
     // window's gateway (the overlay has none) so it survives restart.
     setPetOverlayScaleHandler(scale => setPetScale(requestGatewayRef.current, scale))
@@ -1004,15 +984,11 @@ export function DesktopController() {
         void resumeSessionRef.current(recent.id)
       }
     })
-    const offGlow = initGlowOverlayBridge()
 
     return () => {
       setPetOverlaySubmitHandler(null)
-      setIslandCardSubmitHandler(null)
-      offCardAction?.()
       setPetOverlayOpenAppHandler(null)
       setPetOverlayScaleHandler(null)
-      offGlow()
     }
   }, [])
 
@@ -1102,7 +1078,6 @@ export function DesktopController() {
     commandCenterOpen,
     extraLeftItems: statusbarItemGroups.flat.left,
     extraRightItems: statusbarItemGroups.flat.right,
-    gatewayLogLines,
     gatewayState,
     inferenceStatus,
     openAgents,
@@ -1112,38 +1087,6 @@ export function DesktopController() {
     statusSnapshot,
     toggleCommandCenter
   })
-
-  // Always-on wake-word indicator + toggle in the status bar. Reflects the live
-  // wake state and flips the desktop presence preference on click.
-  const wakeStatusItem = useMemo<StatusbarItem>(() => {
-    const listening = wake.status === 'woken' || wake.status === 'listening'
-    const label = !presenceEnabled
-      ? 'Presence off'
-      : listening
-        ? 'Listening'
-        : wake.status === 'transcribing'
-          ? 'Transcribing'
-          : undefined
-
-    return {
-      id: 'voice-presence',
-      variant: 'action',
-      icon: <Mic className="size-3" />,
-      label,
-      title: presenceEnabled ? 'Voice presence is on — click to turn off' : 'Voice presence is off — click to turn on',
-      onSelect: () => setPresenceEnabled(!presenceEnabled),
-      className: !presenceEnabled
-        ? 'opacity-45'
-        : listening || wake.status === 'transcribing'
-          ? 'text-(--ui-text-accent)'
-          : undefined
-    }
-  }, [presenceEnabled, wake.status])
-
-  const leftStatusbarItemsWithWake = useMemo(
-    () => [wakeStatusItem, ...leftStatusbarItems],
-    [leftStatusbarItems, wakeStatusItem]
-  )
 
   const sidebar = (
     <ChatSidebar
@@ -1169,11 +1112,13 @@ export function DesktopController() {
     />
   )
 
-  // One PTY-backed terminal mounted forever; <TerminalSlot /> placeholders decide
-  // where it shows. Lives in main's stacking context (not the root overlay layer)
-  // so pane resize handles still paint above it. Toggling never rebuilds the shell.
+  // The persistent xterm layer (one host per terminal tab), CSS-overlaid onto the
+  // pane's <TerminalSlot />. Lives in main's stacking context (not the root overlay
+  // layer) so pane resize handles still paint above it. Terminals own their state
+  // (incl. a snapshotted cwd) independent of the session, so switching sessions
+  // never rebuilds or closes them; toggling the pane never rebuilds the shells.
   const mainOverlays = (
-    <PersistentTerminal cwd={currentCwd} onAddSelectionToChat={composer.addTerminalSelectionAttachment} />
+    <PersistentTerminal onAddSelectionToChat={composer.addTerminalSelectionAttachment} />
   )
 
   const overlays = (
@@ -1201,6 +1146,7 @@ export function DesktopController() {
       <PetGenerateOverlay />
       <SessionSwitcher />
       <FileActionDialogs />
+      <RemoteFolderPicker />
 
       {settingsOpen && (
         <Suspense fallback={null}>
@@ -1289,7 +1235,6 @@ export function DesktopController() {
       onThreadMessagesChange={handleThreadMessagesChange}
       onToggleSelectedPin={toggleSelectedPin}
       onTranscribeAudio={transcribeVoiceAudio}
-      streamingSttEnabled={streamingSttEnabled}
     />
   )
 
@@ -1404,14 +1349,14 @@ export function DesktopController() {
           terminalAsRow ? 'border-l border-(--ui-stroke-secondary) pt-0' : 'pt-(--titlebar-height)'
         )}
       >
-        <TerminalSlot />
+        <TerminalPaneChrome />
       </div>
     </Pane>
   )
 
   return (
     <AppShell
-      leftStatusbarItems={leftStatusbarItemsWithWake}
+      leftStatusbarItems={leftStatusbarItems}
       leftTitlebarTools={titlebarToolGroups.flat.left}
       mainOverlays={mainOverlays}
       onOpenSettings={openSettings}

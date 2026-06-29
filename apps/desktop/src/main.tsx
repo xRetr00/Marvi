@@ -29,12 +29,8 @@ if (import.meta.env.MODE !== 'production') {
 // The pet overlay rides this same bundle (`?win=overlay`) but mounts a tiny,
 // transparent, gateway-less surface instead of the full app. Branch before any
 // app-shell work so the overlay window stays cheap.
-const win = new URLSearchParams(window.location.search).get('win')
-
-if (win === 'overlay') {
+if (new URLSearchParams(window.location.search).get('win') === 'overlay') {
   void import('./app/pet-overlay/overlay-root').then(({ mountPetOverlay }) => mountPetOverlay())
-} else if (win === 'glow') {
-  void import('./app/glow-overlay/glow-root').then(({ mountGlowOverlay }) => mountGlowOverlay())
 } else {
   createRoot(document.getElementById('root')!).render(
     <StrictMode>

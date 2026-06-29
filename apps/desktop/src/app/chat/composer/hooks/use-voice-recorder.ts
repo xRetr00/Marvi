@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 
 import { useI18n } from '@/i18n'
-import { openStreamingTranscription, type StreamingTranscriptionSession } from '@/lib/streaming-transcription'
 import { notify, notifyError } from '@/store/notifications'
 
 import type { VoiceActivityState, VoiceStatus } from '../types'
@@ -11,7 +10,6 @@ import { useMicRecorder } from './use-mic-recorder'
 interface VoiceRecorderOptions {
   maxRecordingSeconds: number
   onTranscribeAudio?: (audio: Blob) => Promise<string>
-  streamingSttEnabled?: boolean
   focusInput: () => void
   onTranscript: (text: string) => void
 }
@@ -19,7 +17,6 @@ interface VoiceRecorderOptions {
 export function useVoiceRecorder({
   maxRecordingSeconds,
   onTranscribeAudio,
-  streamingSttEnabled,
   focusInput,
   onTranscript
 }: VoiceRecorderOptions) {
@@ -29,7 +26,6 @@ export function useVoiceRecorder({
   const [voiceStatus, setVoiceStatus] = useState<VoiceStatus>('idle')
   const [elapsedSeconds, setElapsedSeconds] = useState(0)
   const startedAtRef = useRef(0)
-  const streamingRef = useRef<StreamingTranscriptionSession | null>(null)
   const intervalRef = useRef<number | null>(null)
   const timeoutRef = useRef<number | null>(null)
 
@@ -50,11 +46,8 @@ export function useVoiceRecorder({
   const stop = async () => {
     clearTimers()
     const result = await handle.stop()
-    const streaming = streamingRef.current
-    streamingRef.current = null
 
     if (!result) {
-      void streaming?.finish().catch(() => '')
       setVoiceStatus('idle')
 
       return
@@ -69,7 +62,7 @@ export function useVoiceRecorder({
     setVoiceStatus('transcribing')
 
     try {
-      const transcript = (await (streaming ? streaming.finish() : onTranscribeAudio(result.audio))).trim()
+      const transcript = (await onTranscribeAudio(result.audio)).trim()
 
       if (!transcript) {
         notify({ kind: 'warning', title: voiceCopy.noSpeechDetected, message: voiceCopy.tryRecordingAgain })
@@ -91,16 +84,8 @@ export function useVoiceRecorder({
       return
     }
 
-    let streaming: StreamingTranscriptionSession | null = null
-
     try {
-      streaming = streamingSttEnabled ? await openStreamingTranscription() : null
-      streamingRef.current = streaming
-      const activeStreaming = streaming
-      await handle.start({
-        onAudioFrame: activeStreaming ? samples => activeStreaming.sendFrame(samples) : undefined,
-        onError: error => notifyError(error, voiceCopy.recordingFailed)
-      })
+      await handle.start({ onError: error => notifyError(error, voiceCopy.recordingFailed) })
       startedAtRef.current = Date.now()
       setElapsedSeconds(0)
       setVoiceStatus('recording')
@@ -108,8 +93,6 @@ export function useVoiceRecorder({
       const cap = Math.max(1, Math.min(Math.trunc(maxRecordingSeconds), 600))
       timeoutRef.current = window.setTimeout(() => void stop(), cap * 1000)
     } catch (error) {
-      void streaming?.finish().catch(() => '')
-      streamingRef.current = null
       setVoiceStatus('idle')
       notifyError(error, voiceCopy.recordingFailed)
     }

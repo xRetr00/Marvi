@@ -67,6 +67,7 @@ import { $activeSessionAwaitingInput } from '@/store/prompts'
 import { toggleReview } from '@/store/review'
 import { $gatewayState, $messages, setSessionPickerOpen } from '@/store/session'
 import { $threadScrolledUp } from '@/store/thread-scroll'
+import { publishConversation } from '@/store/voice-presence'
 import { isSecondaryWindow } from '@/store/windows'
 import { useTheme } from '@/themes'
 
@@ -195,6 +196,7 @@ export function ChatBar({
   onRemoveAttachment,
   onSteer,
   onSubmit,
+  streamingSttEnabled,
   onTranscribeAudio
 }: ChatBarProps) {
   const aui = useAui()
@@ -1949,7 +1951,8 @@ export function ChatBar({
     focusInput,
     maxRecordingSeconds,
     onTranscript: insertText,
-    onTranscribeAudio
+    onTranscribeAudio,
+    streamingSttEnabled
   })
 
   const pendingResponse = () => {
@@ -2000,8 +2003,20 @@ export function ChatBar({
     onFatalError: () => setVoiceConversationActive(false),
     onSubmit: submitVoiceTurn,
     onTranscribeAudio,
+    streamingSttEnabled,
     pendingResponse
   })
+
+  // Mirror the live conversation status into $voiceState so the always-on glow
+  // overlay can react. Read-only — does not change the voice engine.
+  useEffect(() => {
+    publishConversation({
+      active: voiceConversationActive,
+      status: conversation.status,
+      level: conversation.level,
+      muted: conversation.muted
+    })
+  }, [voiceConversationActive, conversation.status, conversation.level, conversation.muted])
 
   // The `composer.voice` hotkey (Ctrl+B) toggles the conversation. Starting
   // with STT unconfigured lets the conversation surface its own "configure

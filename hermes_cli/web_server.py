@@ -12,6 +12,7 @@ Usage:
 from contextlib import asynccontextmanager, contextmanager
 
 import asyncio
+from array import array
 import base64
 import binascii
 from dataclasses import dataclass
@@ -33,6 +34,7 @@ import threading
 import time
 import urllib.error
 import urllib.parse
+import wave
 import zipfile
 
 from hermes_cli._subprocess_compat import windows_detach_flags, windows_hide_flags
@@ -835,6 +837,32 @@ _MAX_TRANSCRIPTION_UPLOAD_BYTES = 25 * 1024 * 1024
 def _audio_extension_for_mime(mime_type: str) -> str:
     normalized = (mime_type or "").split(";", 1)[0].strip().lower()
     return _AUDIO_MIME_EXTENSIONS.get(normalized, ".webm")
+
+
+def _float32_samples_from_bytes(chunk: bytes) -> list[float]:
+    if len(chunk) % 4:
+        raise ValueError("Audio frame byte length must be divisible by 4")
+
+    samples = array("f")
+    samples.frombytes(chunk)
+    if sys.byteorder != "little":
+        samples.byteswap()
+
+    return [max(-1.0, min(1.0, float(sample))) for sample in samples]
+
+
+def _write_float32_chunks_as_wav(chunks: list[bytes], path: Path, sample_rate: int = 16000) -> None:
+    with wave.open(str(path), "wb") as wav:
+        wav.setnchannels(1)
+        wav.setsampwidth(2)
+        wav.setframerate(sample_rate)
+
+        for chunk in chunks:
+            pcm = array("h")
+            pcm.extend(int(sample * (32767 if sample >= 0 else 32768)) for sample in _float32_samples_from_bytes(chunk))
+            if sys.byteorder != "little":
+                pcm.byteswap()
+            wav.writeframes(pcm.tobytes())
 
 
 class ModelAssignment(BaseModel):
@@ -12433,6 +12461,147 @@ def _ws_close_reason(text: str) -> str:
     if len(encoded) <= 123:
         return text
     return encoded[:120].decode("utf-8", "ignore") + "..."
+
+
+async def _accept_audio_ws(ws: WebSocket, label: str) -> bool:
+    peer = ws.client.host if ws.client else "?"
+    request_reason = _ws_request_reason(ws)
+    if request_reason is not None:
+        _log.warning("%s refused: %s peer=%s", label, request_reason, peer)
+        await ws.close(code=4403, reason=_ws_close_reason(request_reason))
+        return False
+
+    auth_reason, credential = _ws_auth_reason(ws)
+    if auth_reason is not None:
+        _log.warning("%s refused: %s credential=%s peer=%s", label, auth_reason, credential, peer)
+        await ws.close(code=4401, reason=_ws_close_reason(auth_reason))
+        return False
+
+    await ws.accept()
+    return True
+
+
+@app.websocket("/api/audio/transcribe/stream")
+async def transcribe_audio_stream_ws(ws: WebSocket) -> None:
+    if not await _accept_audio_ws(ws, "audio-transcribe-stream"):
+        return
+
+    chunks: list[bytes] = []
+    sample_rate = 16000
+    total_bytes = 0
+
+    try:
+        while True:
+            msg = await ws.receive()
+            msg_type = msg.get("type")
+            if msg_type == "websocket.disconnect":
+                return
+
+            if "bytes" in msg and msg["bytes"] is not None:
+                chunk = msg["bytes"]
+                total_bytes += len(chunk)
+                if total_bytes > _MAX_TRANSCRIPTION_UPLOAD_BYTES:
+                    await ws.send_json({"type": "error", "error": "Audio recording is too large"})
+                    await ws.close(code=1009)
+                    return
+                chunks.append(chunk)
+                continue
+
+            text = msg.get("text")
+            if not text:
+                continue
+            payload = json.loads(text)
+            event_type = payload.get("type")
+            if event_type == "start":
+                sample_rate = int(payload.get("sample_rate") or 16000)
+                await ws.send_json({"type": "ready"})
+            elif event_type == "stop":
+                break
+
+        if not chunks:
+            await ws.send_json({"type": "final", "text": ""})
+            return
+
+        temp_path = ""
+        try:
+            with tempfile.NamedTemporaryFile(prefix="hermes-desktop-stream-", suffix=".wav", delete=False) as tmp:
+                temp_path = tmp.name
+            await asyncio.to_thread(_write_float32_chunks_as_wav, chunks, Path(temp_path), sample_rate)
+
+            from tools.transcription_tools import transcribe_audio
+
+            result = await asyncio.to_thread(transcribe_audio, temp_path)
+            if not result.get("success"):
+                await ws.send_json({"type": "error", "error": result.get("error") or "Transcription failed"})
+                return
+            await ws.send_json({"type": "final", "text": str(result.get("transcript") or "").strip()})
+        finally:
+            if temp_path:
+                try:
+                    os.unlink(temp_path)
+                except OSError:
+                    pass
+    except WebSocketDisconnect:
+        return
+    except Exception as exc:
+        _log.exception("Desktop streaming transcription failed")
+        try:
+            await ws.send_json({"type": "error", "error": f"Streaming transcription failed: {exc}"})
+        except Exception:
+            pass
+
+
+@app.websocket("/api/audio/wake-word/stream")
+async def wake_word_stream_ws(ws: WebSocket) -> None:
+    if not await _accept_audio_ws(ws, "wake-word-stream"):
+        return
+
+    spotter = None
+    sample_rate = 16000
+
+    try:
+        while True:
+            msg = await ws.receive()
+            msg_type = msg.get("type")
+            if msg_type == "websocket.disconnect":
+                break
+
+            text = msg.get("text")
+            if text:
+                payload = json.loads(text)
+                event_type = payload.get("type")
+                if event_type == "start":
+                    sample_rate = int(payload.get("sample_rate") or 16000)
+                    from tools.streaming_stt import WakeWordFactory
+
+                    spotter = await asyncio.to_thread(WakeWordFactory().create, load_config())
+                    await asyncio.to_thread(spotter.start, sample_rate)
+                    await ws.send_json({"type": "ready"})
+                elif event_type == "stop":
+                    break
+                continue
+
+            chunk = msg.get("bytes")
+            if chunk is None or spotter is None:
+                continue
+
+            phrase = await asyncio.to_thread(spotter.accept_waveform, _float32_samples_from_bytes(chunk))
+            if phrase:
+                await ws.send_json({"type": "detected", "phrase": phrase})
+    except WebSocketDisconnect:
+        return
+    except Exception as exc:
+        _log.exception("Desktop wake-word stream failed")
+        try:
+            await ws.send_json({"type": "error", "error": f"Wake-word detection failed: {exc}"})
+        except Exception:
+            pass
+    finally:
+        if spotter is not None:
+            try:
+                await asyncio.to_thread(spotter.stop)
+            except Exception:
+                pass
 
 
 @app.websocket("/api/pty")

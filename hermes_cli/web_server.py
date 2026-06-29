@@ -27,14 +27,13 @@ import secrets
 import shutil
 import stat
 import subprocess
-import struct
 import sys
 import tempfile
 import threading
 import time
 import urllib.error
 import urllib.parse
-import uuid
+import zipfile
 
 from hermes_cli._subprocess_compat import windows_detach_flags, windows_hide_flags
 import urllib.request
@@ -58,6 +57,7 @@ from hermes_cli.config import (
     get_hermes_home,
     load_config,
     load_env,
+    read_raw_config,
     save_config,
     save_env_value,
     remove_env_value,
@@ -67,6 +67,7 @@ from hermes_cli.config import (
     recommended_update_command_for_method,
     redact_key,
     write_platform_config_field,
+    _deep_merge,
 )
 from hermes_cli.memory_providers import (
     MemoryProvider,
@@ -82,7 +83,6 @@ from gateway.status import (
     read_runtime_status,
 )
 from utils import env_var_enabled
-from tools.streaming_stt import WakeWordUnavailable, WakeWordFactory, wake_word_config
 
 try:
     from fastapi import (
@@ -90,7 +90,7 @@ try:
         WebSocket, WebSocketDisconnect,
     )
     from fastapi.middleware.cors import CORSMiddleware
-    from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response, StreamingResponse
+    from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
     from fastapi.staticfiles import StaticFiles
     from pydantic import BaseModel
 except ImportError:
@@ -105,7 +105,7 @@ except ImportError:
             WebSocket, WebSocketDisconnect,
         )
         from fastapi.middleware.cors import CORSMiddleware
-        from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response, StreamingResponse
+        from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
         from fastapi.staticfiles import StaticFiles
         from pydantic import BaseModel
     except Exception:
@@ -116,7 +116,6 @@ except ImportError:
 
 WEB_DIST = Path(os.environ["HERMES_WEB_DIST"]) if "HERMES_WEB_DIST" in os.environ else Path(__file__).parent / "web_dist"
 _log = logging.getLogger(__name__)
-_WAKE_WORD_FACTORY = WakeWordFactory()
 
 # ---------------------------------------------------------------------------
 # Per-channel subscriber registry used by /api/pub (PTY-side gateway → dashboard)
@@ -191,7 +190,6 @@ async def _lifespan(app: "FastAPI"):
     # dashboard` is unaffected — it relies on its own gateway.
     cron_stop: "threading.Event | None" = None
     cron_thread: "threading.Thread | None" = None
-    whisperlive_proc: "subprocess.Popen | None" = None
     if os.getenv("HERMES_DESKTOP") == "1":
         cron_stop = threading.Event()
         cron_thread = threading.Thread(
@@ -201,16 +199,12 @@ async def _lifespan(app: "FastAPI"):
             name="desktop-cron-ticker",
         )
         cron_thread.start()
-        whisperlive_proc = _start_desktop_whisperlive(load_config())
-        app.state.whisperlive_proc = whisperlive_proc
 
     try:
         yield
     finally:
         if cron_stop is not None:
             cron_stop.set()
-        if whisperlive_proc is not None and whisperlive_proc.poll() is None:
-            whisperlive_proc.terminate()
 
 
 def _get_event_state(app: "FastAPI"):
@@ -564,7 +558,7 @@ _SCHEMA_OVERRIDES: Dict[str, Dict[str, Any]] = {
     "tts.provider": {
         "type": "select",
         "description": "Text-to-speech provider",
-        "options": ["edge", "elevenlabs", "openai", "xai", "minimax", "mistral", "gemini", "qwen3", "neutts", "kittentts", "piper", "pockettts"],
+        "options": ["edge", "elevenlabs", "openai", "neutts"],
     },
     "stt.provider": {
         "type": "select",
@@ -572,16 +566,6 @@ _SCHEMA_OVERRIDES: Dict[str, Dict[str, Any]] = {
         # "mistral" temporarily removed — mistralai PyPI package quarantined
         # (malicious 2.4.6 release on 2026-05-12). Restore once available.
         "options": ["local", "groq", "openai", "xai", "elevenlabs"],
-    },
-    "stt.streaming.provider": {
-        "type": "select",
-        "description": "Streaming speech-to-text provider",
-        "options": ["", "whisperlive"],
-    },
-    "stt.streaming.backend": {
-        "type": "select",
-        "description": "WhisperLive inference backend",
-        "options": ["faster_whisper", "tensorrt", "openvino"],
     },
     "stt.elevenlabs.model_id": {
         "type": "select",
@@ -1405,7 +1389,7 @@ def _default_hermes_root_is_opt_data() -> bool:
         root = get_default_hermes_root().expanduser().resolve(strict=False)
     except (OSError, RuntimeError):
         root = Path(raw).expanduser().resolve(strict=False)
-    return root == _HOSTED_MANAGED_FILES_ROOT.resolve(strict=False)
+    return root == _HOSTED_MANAGED_FILES_ROOT
 
 
 def _dashboard_local_update_managed_externally() -> bool:
@@ -1925,6 +1909,169 @@ async def fs_git_root(path: str):
 async def fs_default_cwd():
     cwd = _fs_default_cwd()
     return {"cwd": cwd, "branch": _fs_git_branch(cwd)}
+
+
+# ---------------------------------------------------------------------------
+# Git ops — the remote half of the desktop coding rail + review pane.
+#
+# The desktop runs these as Electron-local git on the user's machine; over a
+# remote gateway that's the wrong filesystem, so we mirror them here (same auth
+# gate + path hardening as /api/fs). Logic lives in ``hermes_cli.web_git``;
+# these are thin, executor-offloaded wrappers (git/gh can block).
+# ---------------------------------------------------------------------------
+
+from hermes_cli import web_git as _web_git  # noqa: E402
+
+
+async def _git_op(fn, *args):
+    """Run a (blocking) git op off the event loop; map a failed mutation to 400."""
+    loop = asyncio.get_running_loop()
+    try:
+        return await loop.run_in_executor(None, fn, *args)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc) or "git operation failed")
+
+
+def _git_path(path: str) -> str:
+    return str(_fs_path(path))
+
+
+class GitPathBody(BaseModel):
+    path: str
+
+
+class GitFileBody(BaseModel):
+    path: str
+    file: Optional[str] = None
+
+
+class GitCommitBody(BaseModel):
+    path: str
+    message: str
+    push: bool = False
+
+
+class GitWorktreeAddBody(BaseModel):
+    path: str
+    name: Optional[str] = None
+    branch: Optional[str] = None
+    base: Optional[str] = None
+    existingBranch: Optional[str] = None
+
+
+class GitWorktreeRemoveBody(BaseModel):
+    path: str
+    worktreePath: str
+    force: bool = False
+
+
+class GitBranchSwitchBody(BaseModel):
+    path: str
+    branch: str
+
+
+@app.get("/api/git/status")
+async def git_status_route(path: str):
+    return await _git_op(_web_git.repo_status, _git_path(path))
+
+
+@app.get("/api/git/worktrees")
+async def git_worktrees_route(path: str):
+    return {"worktrees": await _git_op(_web_git.worktree_list, _git_path(path))}
+
+
+@app.get("/api/git/branches")
+async def git_branches_route(path: str):
+    return {"branches": await _git_op(_web_git.branch_list, _git_path(path))}
+
+
+@app.get("/api/git/review/list")
+async def git_review_list_route(path: str, scope: str = "uncommitted", base: Optional[str] = None):
+    return await _git_op(_web_git.review_list, _git_path(path), scope, base)
+
+
+@app.get("/api/git/review/diff")
+async def git_review_diff_route(
+    path: str, file: str, scope: str = "uncommitted", base: Optional[str] = None, staged: bool = False
+):
+    return {"diff": await _git_op(_web_git.review_diff, _git_path(path), file, scope, base, staged)}
+
+
+@app.get("/api/git/file-diff")
+async def git_file_diff_route(path: str, file: str):
+    return {"diff": await _git_op(_web_git.file_diff_vs_head, _git_path(path), file)}
+
+
+@app.get("/api/git/review/commit-context")
+async def git_commit_context_route(path: str):
+    return await _git_op(_web_git.review_commit_context, _git_path(path))
+
+
+@app.get("/api/git/review/rev-parse")
+async def git_rev_parse_route(path: str, ref: Optional[str] = None):
+    return {"sha": await _git_op(_web_git.review_rev_parse, _git_path(path), ref)}
+
+
+@app.get("/api/git/review/ship-info")
+async def git_ship_info_route(path: str):
+    return await _git_op(_web_git.review_ship_info, _git_path(path))
+
+
+@app.post("/api/git/review/stage")
+async def git_stage_route(body: GitFileBody):
+    return await _git_op(_web_git.review_stage, _git_path(body.path), body.file)
+
+
+@app.post("/api/git/review/unstage")
+async def git_unstage_route(body: GitFileBody):
+    return await _git_op(_web_git.review_unstage, _git_path(body.path), body.file)
+
+
+@app.post("/api/git/review/revert")
+async def git_revert_route(body: GitFileBody):
+    return await _git_op(_web_git.review_revert, _git_path(body.path), body.file)
+
+
+@app.post("/api/git/review/commit")
+async def git_commit_route(body: GitCommitBody):
+    return await _git_op(_web_git.review_commit, _git_path(body.path), body.message, body.push)
+
+
+@app.post("/api/git/review/push")
+async def git_push_route(body: GitPathBody):
+    return await _git_op(_web_git.review_push, _git_path(body.path))
+
+
+@app.post("/api/git/review/create-pr")
+async def git_create_pr_route(body: GitPathBody):
+    return await _git_op(_web_git.review_create_pr, _git_path(body.path))
+
+
+@app.post("/api/git/worktree/add")
+async def git_worktree_add_route(body: GitWorktreeAddBody):
+    options = {
+        key: value
+        for key, value in {
+            "name": body.name,
+            "branch": body.branch,
+            "base": body.base,
+            "existingBranch": body.existingBranch,
+        }.items()
+        if value
+    }
+    return await _git_op(_web_git.worktree_add, _git_path(body.path), options)
+
+
+@app.post("/api/git/worktree/remove")
+async def git_worktree_remove_route(body: GitWorktreeRemoveBody):
+    return await _git_op(
+        _web_git.worktree_remove, _git_path(body.path), _git_path(body.worktreePath), body.force
+    )
+
+
+@app.post("/api/git/branch/switch")
+async def git_branch_switch_route(body: GitBranchSwitchBody):
+    return await _git_op(_web_git.branch_switch, _git_path(body.path), body.branch)
 
 
 @app.get("/api/status")
@@ -2989,422 +3136,8 @@ async def transcribe_audio_upload(payload: AudioTranscriptionRequest):
     }
 
 
-def _whisperlive_model(config: Optional[dict] = None) -> str:
-    config = config or load_config()
-    stt = config.get("stt", {}) if isinstance(config, dict) else {}
-    local = stt.get("local", {}) if isinstance(stt, dict) else {}
-    streaming = stt.get("streaming", {}) if isinstance(stt, dict) else {}
-    model = str(streaming.get("model") or local.get("model") or "small")
-    return "Systran/faster-whisper-small.en" if model.startswith("en-") else model
-
-
-def _whisperlive_custom_model_arg(model: str) -> str:
-    return model if "/" in model or Path(model).exists() else ""
-
-
-def _whisperlive_start_payload(config: Optional[dict] = None) -> dict:
-    config = config or load_config()
-    stt = config.get("stt", {}) if isinstance(config, dict) else {}
-    local = stt.get("local", {}) if isinstance(stt, dict) else {}
-    streaming = stt.get("streaming", {}) if isinstance(stt, dict) else {}
-    return {
-        "uid": str(uuid.uuid4()),
-        "language": local.get("language") or None,
-        "task": "transcribe",
-        "model": _whisperlive_model(config),
-        "use_vad": streaming.get("use_vad", True),
-        "send_last_n_segments": int(streaming.get("send_last_n_segments") or 10),
-        "no_speech_thresh": float(streaming.get("no_speech_thresh", 0.45)),
-        "clip_audio": False,
-        "same_output_threshold": 10,
-        "enable_translation": False,
-        "target_language": "en",
-        "hotwords": None,
-        "enable_diarization": False,
-        "max_speakers": 10,
-        "word_timestamps": False,
-    }
-
-
-def _whisperlive_url(config: Optional[dict] = None) -> str:
-    config = config or load_config()
-    streaming = config.get("stt", {}).get("streaming", {})
-    scheme = "wss" if streaming.get("use_wss") else "ws"
-    host = str(streaming.get("host") or "127.0.0.1")
-    port = int(streaming.get("port") or 9090)
-    return f"{scheme}://{host}:{port}"
-
-
-def _whisperlive_host_port(config: Optional[dict] = None) -> tuple[str, int]:
-    config = config or load_config()
-    streaming = config.get("stt", {}).get("streaming", {})
-    return str(streaming.get("host") or "127.0.0.1"), int(streaming.get("port") or 9090)
-
-
-def _whisperlive_venv_python(home: Optional[Path] = None) -> Path:
-    home = home or get_hermes_home()
-    scripts_dir = "Scripts" if os.name == "nt" else "bin"
-    exe_name = "python.exe" if os.name == "nt" else "python"
-    return home / "whisperlive-venv" / scripts_dir / exe_name
-
-
-def _whisperlive_port_open(config: Optional[dict] = None, timeout: float = 0.25) -> bool:
-    try:
-        from websockets.sync.client import connect
-
-        with connect(_whisperlive_url(config), open_timeout=timeout, close_timeout=timeout):
-            return True
-    except Exception:
-        return False
-
-
-def _whisperlive_server_command(config: Optional[dict] = None, home: Optional[Path] = None) -> list[str]:
-    config = config or load_config()
-    stt = config.get("stt", {}) if isinstance(config, dict) else {}
-    local = stt.get("local", {}) if isinstance(stt, dict) else {}
-    streaming = stt.get("streaming", {}) if isinstance(stt, dict) else {}
-    host, port = _whisperlive_host_port(config)
-    backend = str(streaming.get("backend") or "faster_whisper")
-    custom_model = _whisperlive_custom_model_arg(_whisperlive_model(config))
-    single_model = bool(streaming.get("single_model", True))
-    max_clients = int(streaming.get("max_clients") or 1)
-    max_connection_time = int(streaming.get("max_connection_time") or 900)
-    server = (
-        "from whisper_live.server import TranscriptionServer; "
-        "TranscriptionServer().run("
-        f"host={host!r}, port={port!r}, backend={backend!r}, "
-        f"faster_whisper_custom_model_path={custom_model or None!r}, single_model={single_model!r}, "
-        f"max_clients={max_clients!r}, max_connection_time={max_connection_time!r})"
-    )
-    return [str(_whisperlive_venv_python(home)), "-c", server]
-
-
-def _start_desktop_whisperlive(config: Optional[dict] = None) -> "subprocess.Popen | None":
-    config = config or load_config()
-    streaming = config.get("stt", {}).get("streaming", {}) if isinstance(config, dict) else {}
-    if streaming.get("provider") != "whisperlive":
-        return None
-    if _whisperlive_port_open(config):
-        _log.info("WhisperLive already running at %s", _whisperlive_url(config))
-        return None
-
-    python_exe = _whisperlive_venv_python()
-    if not python_exe.exists():
-        _log.warning(
-            "WhisperLive is enabled but %s is missing. Run `hermes setup tts` or "
-            "`hermes tools post-setup whisperlive` first.",
-            python_exe,
-        )
-        return None
-
-    logs_dir = get_hermes_home() / "logs"
-    logs_dir.mkdir(parents=True, exist_ok=True)
-    log_handle = (logs_dir / "whisperlive.log").open("a", encoding="utf-8")
-    argv = _whisperlive_server_command(config)
-    popen_kwargs: dict[str, Any] = (
-        {"creationflags": windows_hide_flags()} if os.name == "nt" else {"start_new_session": True}
-    )
-    try:
-        proc = subprocess.Popen(
-            argv,
-            cwd=str(PROJECT_ROOT),
-            stdin=subprocess.DEVNULL,
-            stdout=log_handle,
-            stderr=subprocess.STDOUT,
-            close_fds=True,
-            **popen_kwargs,
-        )
-    except OSError as exc:
-        log_handle.close()
-        _log.warning("Failed to start WhisperLive: %s", exc)
-        return None
-    finally:
-        try:
-            log_handle.close()
-        except OSError:
-            pass
-
-    _log.info("Started WhisperLive at %s (pid %s)", _whisperlive_url(config), proc.pid)
-    return proc
-
-
-async def _wait_for_whisperlive(config: Optional[dict] = None, timeout: float = 12.0) -> bool:
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        if _whisperlive_port_open(config):
-            return True
-        await asyncio.sleep(0.25)
-    return False
-
-
-@app.websocket("/api/audio/transcribe/stream")
-async def transcribe_audio_stream(ws: WebSocket) -> None:
-    """Proxy desktop PCM frames to a configured WhisperLive server."""
-    if not _ws_request_is_allowed(ws):
-        await _close_ws_with_reason(ws, 1008, _ws_request_reason(ws) or "forbidden")
-        return
-
-    auth_reason, _credential = _ws_auth_reason(ws)
-    if auth_reason is not None:
-        await _close_ws_with_reason(ws, 1008, auth_reason)
-        return
-
-    config = load_config()
-    streaming = config.get("stt", {}).get("streaming", {})
-    if streaming.get("provider") != "whisperlive":
-        await _close_ws_with_reason(ws, 1008, "WhisperLive streaming STT is not enabled")
-        return
-
-    await ws.accept()
-    upstream = None
-    last_text = ""
-
-    try:
-        import websockets
-
-        await _wait_for_whisperlive(config)
-        upstream = await websockets.connect(_whisperlive_url(config))
-        start = await ws.receive_json()
-        if start.get("type") != "start":
-            await ws.send_json({"type": "error", "error": "Send a start message before audio frames"})
-            return
-
-        payload = _whisperlive_start_payload(config)
-        uid = payload["uid"]
-        await upstream.send(json.dumps(payload))
-
-        async def recv_upstream() -> None:
-            nonlocal last_text
-            async for raw in upstream:
-                message = json.loads(raw)
-                if message.get("uid") != uid:
-                    continue
-                if message.get("message") == "SERVER_READY":
-                    await ws.send_json({"type": "ready"})
-                elif "segments" in message:
-                    texts = [str(seg.get("text") or "").strip() for seg in message["segments"]]
-                    text = " ".join(t for t in texts if t).strip()
-                    if text:
-                        last_text = text
-                        await ws.send_json({"type": "partial", "text": last_text})
-                elif message.get("status") == "ERROR":
-                    await ws.send_json({"type": "error", "error": message.get("message") or "WhisperLive failed"})
-
-        recv_task = asyncio.create_task(recv_upstream())
-        while True:
-            msg = await ws.receive()
-            if msg.get("type") == "websocket.disconnect":
-                break
-            if msg.get("bytes") is not None:
-                await upstream.send(msg["bytes"] or b"")
-                continue
-            if msg.get("text"):
-                data = json.loads(msg["text"])
-                if data.get("type") == "stop":
-                    await upstream.send(b"END_OF_AUDIO")
-                    await asyncio.sleep(0.5)
-                    await ws.send_json({"type": "final", "text": last_text})
-                    break
-        recv_task.cancel()
-    except WebSocketDisconnect:
-        pass
-    except Exception as exc:
-        _log.exception("Streaming transcription failed")
-        try:
-            await ws.send_json({"type": "error", "error": f"Streaming transcription failed: {exc}"})
-        except Exception:
-            pass
-    finally:
-        if upstream is not None:
-            await upstream.close()
-
-
-async def _close_ws_with_reason(ws: WebSocket, code: int, reason: str) -> None:
-    try:
-        await ws.close(code=code, reason=reason)
-    except Exception:
-        pass
-
-
-def _float32le_samples(data: bytes) -> list[float]:
-    if len(data) % 4 != 0:
-        raise ValueError("Audio frame bytes must be Float32 little-endian")
-    if not data:
-        return []
-    return list(struct.unpack("<" + "f" * (len(data) // 4), data))
-
-
-def _audio_frame_stats(samples: list[float]) -> tuple[float, float]:
-    if not samples:
-        return 0.0, 0.0
-    peak = max(abs(sample) for sample in samples)
-    rms = (sum(sample * sample for sample in samples) / len(samples)) ** 0.5
-    return rms, peak
-
-
-@app.websocket("/api/audio/wake-word/stream")
-async def wake_word_stream(ws: WebSocket) -> None:
-    """Desktop-only wake-word WebSocket.
-
-    Protocol:
-      - JSON start: {"type": "start", "sample_rate": 16000}
-      - Binary frames: Float32LE mono PCM
-      - Server sends ready/detected/error JSON frames.
-      - JSON stop closes the detector.
-    """
-    if not _ws_request_is_allowed(ws):
-        reason = _ws_request_reason(ws) or "forbidden"
-        await _close_ws_with_reason(ws, 1008, reason)
-        return
-
-    auth_reason, credential = _ws_auth_reason(ws)
-    if auth_reason is not None:
-        _log.warning(
-            "Rejecting wake-word WebSocket from %s (%s via %s)",
-            ws.client.host if ws.client else "?",
-            auth_reason,
-            credential,
-        )
-        await _close_ws_with_reason(ws, 1008, auth_reason)
-        return
-
-    await ws.accept()
-    spotter = None
-    debug_enabled = False
-    frame_count = 0
-    sample_count = 0
-
-    try:
-        while True:
-            msg = await ws.receive()
-
-            if msg.get("type") == "websocket.disconnect":
-                break
-
-            if msg.get("bytes") is not None:
-                if spotter is None:
-                    await ws.send_json({"type": "error", "error": "Send a start message before audio frames"})
-                    continue
-
-                try:
-                    samples = _float32le_samples(msg["bytes"] or b"")
-                except ValueError as exc:
-                    await ws.send_json({"type": "error", "error": str(exc)})
-                    continue
-
-                try:
-                    phrase = str(spotter.accept_waveform(samples) or "").strip()
-                except Exception as exc:
-                    _log.exception("Wake-word frame processing failed")
-                    await ws.send_json({"type": "error", "error": f"Wake-word frame processing failed: {exc}"})
-                    break
-                if phrase:
-                    _log.info("Wake-word detected phrase=%s", phrase)
-                    if debug_enabled:
-                        rms, peak = _audio_frame_stats(samples)
-                        _log.info(
-                            "Wake-word debug detection phrase=%s frames=%s samples=%s frame_rms=%.5f frame_peak=%.5f",
-                            phrase,
-                            frame_count,
-                            sample_count,
-                            rms,
-                            peak,
-                        )
-                    await ws.send_json({"type": "detected", "phrase": phrase})
-                elif debug_enabled:
-                    frame_count += 1
-                    sample_count += len(samples)
-                    if frame_count == 1 or frame_count % 50 == 0:
-                        rms, peak = _audio_frame_stats(samples)
-                        _log.info(
-                            "Wake-word debug no detection frames=%s samples=%s frame_rms=%.5f frame_peak=%.5f",
-                            frame_count,
-                            sample_count,
-                            rms,
-                            peak,
-                        )
-                continue
-
-            raw_text = msg.get("text")
-            if raw_text is None:
-                await ws.send_json({"type": "error", "error": "Expected JSON control message or binary audio frame"})
-                continue
-
-            try:
-                payload = json.loads(raw_text)
-            except json.JSONDecodeError:
-                await ws.send_json({"type": "error", "error": "Control messages must be JSON"})
-                continue
-
-            kind = str(payload.get("type") or "").strip().lower()
-            if kind == "start":
-                if spotter is not None:
-                    await ws.send_json({"type": "error", "error": "Wake-word detection already started"})
-                    continue
-
-                try:
-                    config = load_config()
-                    cfg = wake_word_config(config)
-                    sample_rate = int(payload.get("sample_rate") or cfg.sample_rate)
-                    debug_enabled = payload.get("debug") is True or cfg.debug
-                    frame_count = 0
-                    sample_count = 0
-                    _log.info(
-                        "Starting wake-word WebSocket provider=%s phrases=%s sample_rate=%s debug=%s",
-                        cfg.provider,
-                        ",".join(cfg.phrases),
-                        sample_rate,
-                        debug_enabled,
-                    )
-                    spotter = _WAKE_WORD_FACTORY.create(config)
-                    spotter.start(sample_rate=sample_rate)
-                    _log.info("Wake-word WebSocket ready provider=%s", cfg.provider)
-                    if debug_enabled:
-                        _log.info(
-                            "Wake-word debug armed model=%s threshold=%.3f boost=%.3f phrases=%s",
-                            cfg.model,
-                            cfg.threshold,
-                            cfg.boost,
-                            "|".join(cfg.phrases),
-                        )
-                    await ws.send_json({"type": "ready", "sample_rate": sample_rate, "provider": cfg.provider})
-                except WakeWordUnavailable as exc:
-                    _log.warning("Wake-word unavailable: %s", exc)
-                    await ws.send_json({"type": "error", "error": str(exc)})
-                except Exception as exc:
-                    _log.exception("Wake-word detection failed to start")
-                    await ws.send_json({"type": "error", "error": f"Wake-word detection failed to start: {exc}"})
-                continue
-
-            if kind == "stop":
-                if spotter is not None:
-                    try:
-                        spotter.stop()
-                    except Exception:
-                        pass
-                break
-
-            await ws.send_json({"type": "error", "error": f"Unknown control message type: {kind or 'missing'}"})
-    except WebSocketDisconnect:
-        pass
-
-
 class TTSSpeakRequest(BaseModel):
     text: str
-
-
-@app.post("/api/audio/tts/warm")
-async def warm_text_to_speech_provider():
-    try:
-        tts_config = (load_config() or {}).get("tts", {})
-        from tools import tts_tool
-
-        warmed = await asyncio.to_thread(tts_tool.warm_tts_provider, tts_config)
-        provider = str(tts_config.get("provider") or "").strip().lower()
-        return {"ok": True, "warmed": bool(warmed), "provider": provider}
-    except Exception as exc:
-        _log.exception("Desktop TTS warm-up failed")
-        raise HTTPException(status_code=500, detail=f"TTS warm-up failed: {exc}")
 
 
 def _elevenlabs_voice_label(voice: Dict[str, Any]) -> str:
@@ -3412,6 +3145,28 @@ def _elevenlabs_voice_label(voice: Dict[str, Any]) -> str:
     category = str(voice.get("category") or "").strip()
 
     return f"{name} ({category})" if category else name
+
+
+# Collapses repeated identical ElevenLabs voice-list failures (the desktop
+# re-polls on every settings open/focus) to a single log line. Re-arms on
+# success or when the error signature changes, so a real new failure is seen.
+_voice_list_last_error: Optional[str] = None
+
+
+def _voice_list_error_logged_once(signature: Optional[str]) -> bool:
+    """Return True if ``signature`` is new and should be logged now.
+
+    Passing ``None`` clears the latch (call on success). Idempotent per
+    signature: the same error logs once until it changes.
+    """
+    global _voice_list_last_error
+    if signature is None:
+        _voice_list_last_error = None
+        return False
+    if signature == _voice_list_last_error:
+        return False
+    _voice_list_last_error = signature
+    return True
 
 
 @app.get("/api/audio/elevenlabs/voices")
@@ -3441,9 +3196,27 @@ async def get_elevenlabs_voices():
                 return json.loads(response.read().decode("utf-8"))
 
         payload = await loop.run_in_executor(None, _fetch)
-    except Exception as exc:
-        _log.warning("ElevenLabs voice list failed: %s", exc)
+    except urllib.error.HTTPError as exc:
+        # An auth failure (bad/expired/scoped key) is a persistent,
+        # user-fixable state, not a transient blip — the desktop polls this on
+        # every settings open/focus, so a per-poll WARNING floods the log
+        # (#voice-list-401-spam). Treat 401/403 as "integration unavailable":
+        # report it to the UI with a 200 and log at most once until the error
+        # signature changes (see _voice_list_error_logged_once).
+        if exc.code in (401, 403):
+            if _voice_list_error_logged_once(f"http-{exc.code}"):
+                _log.info(
+                    "ElevenLabs voices unavailable: %s — check ELEVENLABS_API_KEY", exc
+                )
+            return {"available": False, "voices": [], "error": "unauthorized"}
+        if _voice_list_error_logged_once(f"http-{exc.code}"):
+            _log.warning("ElevenLabs voice list failed: %s", exc)
         raise HTTPException(status_code=502, detail="Could not load ElevenLabs voices")
+    except Exception as exc:
+        if _voice_list_error_logged_once(str(exc)):
+            _log.warning("ElevenLabs voice list failed: %s", exc)
+        raise HTTPException(status_code=502, detail="Could not load ElevenLabs voices")
+    _voice_list_error_logged_once(None)  # success — re-arm logging for next failure
 
     voices = []
     for voice in payload.get("voices") or []:
@@ -3478,11 +3251,8 @@ async def speak_text(payload: TTSSpeakRequest):
         raise HTTPException(status_code=400, detail="Text is required")
 
     try:
-        from tools.tts_tool import _strip_markdown_for_tts, text_to_speech_tool
+        from tools.tts_tool import text_to_speech_tool
         loop = asyncio.get_running_loop()
-        text = _strip_markdown_for_tts(text)
-        if not text:
-            raise HTTPException(status_code=400, detail="Text is required")
         result_json = await loop.run_in_executor(None, text_to_speech_tool, text)
     except Exception as exc:
         _log.exception("Desktop voice TTS failed")
@@ -3530,25 +3300,6 @@ async def speak_text(payload: TTSSpeakRequest):
         "mime_type": mime_type,
         "provider": result.get("provider"),
     }
-
-
-@app.post("/api/audio/speak/stream")
-async def speak_text_stream(payload: TTSSpeakRequest):
-    """Stream TTS as NDJSON PCM chunks for browser-side playback."""
-    text = (payload.text or "").strip()
-    if not text:
-        raise HTTPException(status_code=400, detail="Text is required")
-
-    def _iter_lines():
-        from tools.tts_tool import _strip_markdown_for_tts, stream_text_to_speech_chunks
-
-        cleaned = _strip_markdown_for_tts(text)
-        if not cleaned:
-            raise ValueError("Text is required")
-        for event in stream_text_to_speech_chunks(cleaned):
-            yield json.dumps(event, ensure_ascii=False) + "\n"
-
-    return StreamingResponse(_iter_lines(), media_type="application/x-ndjson")
 
 
 @app.get("/api/actions/{name}/status")
@@ -4332,13 +4083,6 @@ def get_recommended_default_model(provider: str = ""):
     """
     slug = (provider or "").strip().lower()
 
-    if slug == "openrouter":
-        return {
-            "provider": "openrouter",
-            "model": "deepseek/deepseek-v4-flash",
-            "free_tier": None,
-        }
-
     if slug == "nous":
         try:
             from hermes_cli.models import (
@@ -4730,6 +4474,56 @@ def _apply_model_assignment_sync(
 
 
 
+def _infer_provider_on_model_change(model_val: str, prev_provider: str) -> tuple[str, str]:
+    """Infer which provider serves ``model_val`` when the flat Config-page Model
+    field changes, given the previously-saved ``prev_provider``.
+
+    Returns ``(provider, model)``; ``provider`` is empty when no switch is
+    warranted (leave the existing provider untouched). Two signals, in order:
+
+    1. Curated-catalog detection (``detect_provider_for_model``) — handles the
+       ~28 OpenRouter-curated models and direct provider-static catalogs.
+    2. Vendor-slug heuristic — a ``vendor/model`` slug cannot belong to a
+       single-model / non-aggregator provider (e.g. ``ollama-local``). When the
+       current provider is not an aggregator that serves vendor-prefixed slugs,
+       route to an aggregator. ``_normalize_main_model_assignment`` (called by
+       the caller) keeps the user's current aggregator when they're already on
+       one, else falls back to openrouter — the same chokepoint logic as
+       ``POST /api/model/set``.
+    """
+    name = (model_val or "").strip()
+    if not name:
+        return "", name
+    try:
+        from hermes_cli.models import (
+            _AGGREGATOR_PROVIDERS,
+            detect_provider_for_model,
+            normalize_provider,
+        )
+    except Exception:
+        return "", name
+
+    try:
+        detected = detect_provider_for_model(name, prev_provider)
+    except Exception:
+        detected = None
+    if detected:
+        return detected[0], detected[1]
+
+    # Vendor-prefixed slug under a non-aggregator provider → reassign. Use a
+    # sentinel "openrouter" here; _normalize_main_model_assignment resolves the
+    # real aggregator (keeps a current aggregator, else openrouter).
+    if "/" in name:
+        try:
+            cur_is_aggregator = normalize_provider(prev_provider) in _AGGREGATOR_PROVIDERS
+        except Exception:
+            cur_is_aggregator = False
+        if not cur_is_aggregator:
+            return "openrouter", name
+
+    return "", name
+
+
 def _denormalize_config_from_web(config: Dict[str, Any]) -> Dict[str, Any]:
     """Reverse _normalize_config_for_web before saving.
 
@@ -4762,6 +4556,31 @@ def _denormalize_config_from_web(config: Dict[str, Any]) -> Dict[str, Any]:
             disk_config = load_config()
             disk_model = disk_config.get("model")
             if isinstance(disk_model, dict):
+                prev_default = str(disk_model.get("default") or "").strip()
+                prev_provider = str(disk_model.get("provider") or "").strip()
+                # When the model name actually changed, re-detect which
+                # provider serves it. The Config-page Model field is a flat
+                # string with no provider info, so without this a user who
+                # picks an OpenRouter model while their default provider is
+                # ollama-local keeps the stale provider and 404s. Only fires
+                # on a real model change so saving unrelated config fields
+                # never overwrites an explicit provider.
+                if model_val != prev_default and prev_provider:
+                    new_provider, resolved_model = _infer_provider_on_model_change(
+                        model_val, prev_provider
+                    )
+                    if new_provider and new_provider.strip().lower() != prev_provider.lower():
+                        # Route through the canonical assignment chokepoints so
+                        # the model is normalized for the new provider and stale
+                        # base_url/api_mode/api_key are cleared on the switch
+                        # (and preserved on a same-provider re-pick).
+                        norm_provider, norm_model = _normalize_main_model_assignment(
+                            new_provider, resolved_model
+                        )
+                        disk_model = _apply_main_model_assignment(
+                            disk_model, norm_provider, norm_model
+                        )
+                        model_val = norm_model
                 # Preserve all subkeys, update default with the new value
                 disk_model["default"] = model_val
                 # Write context_length into the model dict (0 = remove/auto)
@@ -4786,7 +4605,15 @@ def _denormalize_config_from_web(config: Dict[str, Any]) -> Dict[str, Any]:
 async def update_config(body: ConfigUpdate, profile: Optional[str] = None):
     try:
         with _profile_scope(body.profile or profile):
-            save_config(_denormalize_config_from_web(body.config))
+            # The dashboard form is schema-driven (see CONFIG_SCHEMA). Any root
+            # key absent from the schema — most visibly ``custom_providers``, but
+            # also ``agent.personalities``, ``terminal.lifetime_seconds``, etc. —
+            # is not sent in the PUT body. A full-replace save would silently
+            # drop those keys. Deep-merge incoming over what's on disk so the
+            # frontend can only overwrite what it explicitly sends.
+            existing = read_raw_config()
+            incoming = _denormalize_config_from_web(body.config)
+            save_config(_deep_merge(existing, incoming))
         return {"ok": True}
     except HTTPException:
         raise
@@ -4890,7 +4717,7 @@ async def get_env_vars(profile: Optional[str] = None):
     channel_keys = _channel_managed_env_keys()
     catalog_meta = _catalog_provider_env_metadata()
 
-    def _row(var_name: str, info: dict) -> dict:
+    def _row(var_name: str, info: dict, *, custom: bool = False) -> dict:
         value = env_on_disk.get(var_name)
         cat_meta = catalog_meta.get(var_name) or {}
         # Hand OPTIONAL_ENV_VARS prose wins where present; the catalog fills any
@@ -4913,6 +4740,12 @@ async def get_env_vars(profile: Optional[str] = None):
             # CLI `hermes model` picker uses (not desktop-only prefix guesses).
             "provider": cat_meta.get("provider", ""),
             "provider_label": cat_meta.get("provider_label", ""),
+            # True when this key exists in the user's .env but is NOT in any
+            # catalog (OPTIONAL_ENV_VARS or the provider catalog) — an
+            # arbitrary/custom env var the user added directly. Surfaced so the
+            # Keys page can list (and let the user manage) them instead of
+            # hiding everything it doesn't recognise.
+            "custom": custom,
         }
 
     result = {}
@@ -4924,6 +4757,19 @@ async def get_env_vars(profile: Optional[str] = None):
     for var_name in catalog_meta:
         if var_name not in result:
             result[var_name] = _row(var_name, {})
+    # Surface arbitrary/custom keys the user set in .env that aren't in any
+    # catalog. These are always "set" (they're on disk). Treated as secrets by
+    # default (is_password=True → redacted, reveal-gated) since an unrecognised
+    # key could hold anything. Channel-managed credentials are excluded — those
+    # belong to the Channels page. This makes the "add a custom key" surface
+    # round-trip: a key added there reappears here under its own section.
+    for var_name in env_on_disk:
+        if var_name in result or var_name in channel_keys:
+            continue
+        row = _row(var_name, {}, custom=True)
+        row["category"] = "custom"
+        row["is_password"] = True
+        result[var_name] = row
     return result
 
 
@@ -5105,14 +4951,14 @@ async def reveal_env_var(
 _PLATFORM_OVERRIDES: dict[str, dict[str, Any]] = {
     "telegram": {
         "name": "Telegram",
-        "description": "Run Marvi from Telegram DMs, groups, and topics.",
+        "description": "Run Hermes from Telegram DMs, groups, and topics.",
         "docs_url": "https://core.telegram.org/bots/features#botfather",
         "env_vars": ("TELEGRAM_BOT_TOKEN", "TELEGRAM_ALLOWED_USERS", "TELEGRAM_PROXY"),
         "required_env": ("TELEGRAM_BOT_TOKEN",),
     },
     "discord": {
         "name": "Discord",
-        "description": "Connect Marvi to Discord DMs, channels, and threads.",
+        "description": "Connect Hermes to Discord DMs, channels, and threads.",
         "docs_url": "https://discord.com/developers/applications",
         "env_vars": (
             "DISCORD_BOT_TOKEN",
@@ -5123,21 +4969,21 @@ _PLATFORM_OVERRIDES: dict[str, dict[str, Any]] = {
     },
     "slack": {
         "name": "Slack",
-        "description": "Use Marvi from Slack via Socket Mode. Add allowed Slack member IDs so connected bots can respond.",
+        "description": "Use Hermes from Slack via Socket Mode. Add allowed Slack member IDs so connected bots can respond.",
         "docs_url": "https://api.slack.com/apps",
         "env_vars": ("SLACK_BOT_TOKEN", "SLACK_APP_TOKEN", "SLACK_ALLOWED_USERS"),
         "required_env": ("SLACK_BOT_TOKEN", "SLACK_APP_TOKEN"),
     },
     "mattermost": {
         "name": "Mattermost",
-        "description": "Connect Marvi to Mattermost channels and direct messages.",
+        "description": "Connect Hermes to Mattermost channels and direct messages.",
         "docs_url": "https://mattermost.com/deploy/",
         "env_vars": ("MATTERMOST_URL", "MATTERMOST_TOKEN", "MATTERMOST_ALLOWED_USERS"),
         "required_env": ("MATTERMOST_URL", "MATTERMOST_TOKEN"),
     },
     "matrix": {
         "name": "Matrix",
-        "description": "Use Marvi in Matrix rooms and direct messages.",
+        "description": "Use Hermes in Matrix rooms and direct messages.",
         "docs_url": "https://matrix.org/ecosystem/servers/",
         "env_vars": (
             "MATRIX_HOMESERVER",
@@ -5156,22 +5002,22 @@ _PLATFORM_OVERRIDES: dict[str, dict[str, Any]] = {
     },
     "whatsapp": {
         "name": "WhatsApp",
-        "description": "Use Marvi through the bundled WhatsApp bridge with QR-based auth.",
+        "description": "Use Hermes through the bundled WhatsApp bridge with QR-based auth.",
         "docs_url": "https://github.com/tulir/whatsmeow",
         "env_vars": ("WHATSAPP_ENABLED", "WHATSAPP_MODE", "WHATSAPP_ALLOWED_USERS"),
         "required_env": (),
     },
     "homeassistant": {
         "name": "Home Assistant",
-        "description": "Control your smart home from Marvi via Home Assistant.",
+        "description": "Control your smart home from Hermes via Home Assistant.",
         "docs_url": "https://www.home-assistant.io/docs/authentication/",
         "env_vars": ("HASS_URL", "HASS_TOKEN"),
         "required_env": ("HASS_URL", "HASS_TOKEN"),
     },
     "email": {
         "name": "Email",
-        "description": "Talk to Marvi through an IMAP/SMTP mailbox.",
-        "docs_url": "https://github.com/xRetr00/Marvi",
+        "description": "Talk to Hermes through an IMAP/SMTP mailbox.",
+        "docs_url": "https://github.com/xRetr00/Marvi/docs/user-guide/messaging/",
         "env_vars": (
             "EMAIL_ADDRESS",
             "EMAIL_PASSWORD",
@@ -5194,14 +5040,14 @@ _PLATFORM_OVERRIDES: dict[str, dict[str, Any]] = {
     },
     "dingtalk": {
         "name": "DingTalk",
-        "description": "Connect Marvi to DingTalk groups (钉钉).",
+        "description": "Connect Hermes to DingTalk groups (钉钉).",
         "docs_url": "https://open.dingtalk.com/document/orgapp/the-robot-development-process",
         "env_vars": ("DINGTALK_CLIENT_ID", "DINGTALK_CLIENT_SECRET"),
         "required_env": ("DINGTALK_CLIENT_ID", "DINGTALK_CLIENT_SECRET"),
     },
     "feishu": {
         "name": "Feishu / Lark",
-        "description": "Use Marvi inside Feishu / Lark.",
+        "description": "Use Hermes inside Feishu / Lark.",
         "docs_url": "https://open.feishu.cn/document/uAjLw4CM/ukTMukTMukTM/reference/im-v1/intro",
         "env_vars": (
             "FEISHU_APP_ID",
@@ -5210,6 +5056,11 @@ _PLATFORM_OVERRIDES: dict[str, dict[str, Any]] = {
             "FEISHU_VERIFICATION_TOKEN",
         ),
         "required_env": ("FEISHU_APP_ID", "FEISHU_APP_SECRET"),
+    },
+    "google_chat": {
+        "name": "Google Chat",
+        "description": "Connect Hermes to Google Chat via Cloud Pub/Sub.",
+        "docs_url": "https://github.com/xRetr00/Marvi/docs/user-guide/messaging/google_chat",
     },
     "wecom": {
         "name": "WeCom (group bot)",
@@ -5238,13 +5089,13 @@ _PLATFORM_OVERRIDES: dict[str, dict[str, Any]] = {
     "weixin": {
         "name": "Weixin / WeChat (Personal)",
         "description": "Connect a personal WeChat account through Tencent's iLink Bot API.",
-        "docs_url": "https://github.com/xRetr00/Marvi",
+        "docs_url": "https://github.com/xRetr00/Marvi/docs/user-guide/messaging/weixin/",
         "env_vars": ("WEIXIN_ACCOUNT_ID", "WEIXIN_TOKEN", "WEIXIN_BASE_URL"),
         "required_env": ("WEIXIN_ACCOUNT_ID", "WEIXIN_TOKEN"),
     },
     "bluebubbles": {
         "name": "BlueBubbles (iMessage)",
-        "description": "Use Marvi through iMessage via a BlueBubbles server.",
+        "description": "Use Hermes through iMessage via a BlueBubbles server.",
         "docs_url": "https://bluebubbles.app/",
         "env_vars": (
             "BLUEBUBBLES_SERVER_URL",
@@ -5255,21 +5106,27 @@ _PLATFORM_OVERRIDES: dict[str, dict[str, Any]] = {
     },
     "qqbot": {
         "name": "QQ Bot",
-        "description": "Connect Marvi to a QQ Bot from the QQ Open Platform.",
+        "description": "Connect Hermes to a QQ Bot from the QQ Open Platform.",
         "docs_url": "https://q.qq.com",
         "env_vars": ("QQ_APP_ID", "QQ_CLIENT_SECRET", "QQ_ALLOWED_USERS"),
         "required_env": ("QQ_APP_ID", "QQ_CLIENT_SECRET"),
     },
+    # Teams ships as a platform plugin, so its name/env vars come from the
+    # plugin registry. Only the docs link needs an override here so the
+    # Channels page can point at the Microsoft Teams setup guide.
+    "teams": {
+        "docs_url": "https://github.com/xRetr00/Marvi/docs/user-guide/messaging/teams",
+    },
     "yuanbao": {
         "name": "Yuanbao (元宝)",
-        "description": "Connect Marvi to Tencent Yuanbao.",
+        "description": "Connect Hermes to Tencent Yuanbao.",
         "docs_url": "",
         "required_env": (),
     },
     "api_server": {
         "name": "API server",
-        "description": "Expose Marvi as an OpenAI-compatible HTTP API for tools like Open WebUI.",
-        "docs_url": "https://github.com/xRetr00/Marvi",
+        "description": "Expose Hermes as an OpenAI-compatible HTTP API for tools like Open WebUI.",
+        "docs_url": "https://github.com/xRetr00/Marvi/docs/user-guide/messaging/",
         "env_vars": (
             "API_SERVER_ENABLED",
             "API_SERVER_KEY",
@@ -5282,7 +5139,7 @@ _PLATFORM_OVERRIDES: dict[str, dict[str, Any]] = {
     "webhook": {
         "name": "Webhooks",
         "description": "Receive events from GitHub, GitLab, and other webhook sources.",
-        "docs_url": "https://github.com/xRetr00/Marvi",
+        "docs_url": "https://github.com/xRetr00/Marvi/docs/user-guide/messaging/webhooks/",
         "env_vars": ("WEBHOOK_ENABLED", "WEBHOOK_PORT", "WEBHOOK_SECRET"),
         "required_env": (),
     },
@@ -5304,6 +5161,7 @@ _PLATFORM_ORDER: tuple[str, ...] = (
     "sms",
     "dingtalk",
     "feishu",
+    "google_chat",
     "wecom",
     "wecom_callback",
     "weixin",
@@ -5761,7 +5619,7 @@ def _write_platform_enabled(platform_id: str, enabled: bool) -> None:
     write_platform_config_field(platform_id, "enabled", enabled)
 
 
-_TELEGRAM_ONBOARDING_DEFAULT_URL = "https://github.com/xRetr00/Marvi"
+_TELEGRAM_ONBOARDING_DEFAULT_URL = "https://setup.hermes-agent.nousresearch.com"
 _TELEGRAM_ONBOARDING_USER_AGENT = f"HermesDashboard/{__version__}"
 _TELEGRAM_USER_ID_RE = re.compile(r"^\d+$")
 
@@ -6414,6 +6272,14 @@ def _copilot_acp_status() -> Dict[str, Any]:
 # CLI like Claude Code or Qwen), ``loopback`` = 127.0.0.1 callback listener.
 _OAUTH_PROVIDER_CATALOG: tuple[Dict[str, Any], ...] = (
     {
+        "id": "nous",
+        "name": "Nous Portal",
+        "flow": "device_code",
+        "cli_command": "hermes auth add nous",
+        "docs_url": "https://portal.nousresearch.com",
+        "status_fn": None,  # dispatched via auth.get_nous_auth_status
+    },
+    {
         "id": "openai-codex",
         "name": "OpenAI OAuth (ChatGPT)",
         "flow": "device_code",
@@ -6450,7 +6316,7 @@ _OAUTH_PROVIDER_CATALOG: tuple[Dict[str, Any], ...] = (
         # lands back on the loopback listener — no code to copy/paste.
         "flow": "loopback",
         "cli_command": "hermes auth add xai-oauth",
-        "docs_url": "https://github.com/xRetr00/Marvi",
+        "docs_url": "https://hermes-agent.nousresearch.com/docs/guides/xai-grok-oauth",
         "status_fn": None,  # dispatched via auth.get_xai_oauth_auth_status
     },
     {
@@ -6793,7 +6659,7 @@ async def disconnect_oauth_provider(
 #          → returns { ok: true, status: "approved" }
 #
 #   Device code (Nous, OpenAI Codex):
-#     1. POST /api/providers/oauth/openai-codex/start
+#     1. POST /api/providers/oauth/{nous|openai-codex}/start
 #          → server hits provider's device-auth endpoint
 #          → gets { user_code, verification_url, device_code, interval, expires_in }
 #          → spawns background poller thread that polls the token endpoint
@@ -8316,15 +8182,139 @@ async def get_logs(
 
 
 class CronJobCreate(BaseModel):
-    prompt: str
+    prompt: str = ""
     schedule: str
     name: str = ""
     deliver: str = "local"
     skills: Optional[List[str]] = None
+    model: Optional[str] = None
+    provider: Optional[str] = None
+    base_url: Optional[str] = None
+    script: Optional[str] = None
+    context_from: Optional[Any] = None
+    enabled_toolsets: Optional[List[str]] = None
+    workdir: Optional[str] = None
+    no_agent: bool = False
 
 
 class CronJobUpdate(BaseModel):
     updates: dict
+
+
+def _cron_optional_text(value: Any, *, strip_trailing_slash: bool = False) -> Optional[str]:
+    if value is None:
+        return None
+    text = str(value).strip()
+    if strip_trailing_slash:
+        text = text.rstrip("/")
+    return text or None
+
+
+def _cron_string_list(value: Any) -> Optional[List[str]]:
+    if value is None:
+        return None
+    if isinstance(value, str):
+        raw_items = re.split(r"[\n,]", value)
+    elif isinstance(value, (list, tuple)):
+        raw_items = value
+    else:
+        return None
+    items = [str(item).strip() for item in raw_items if str(item).strip()]
+    return items or None
+
+
+def _normalize_dashboard_cron_script(value: Any, profile_home: Path) -> Optional[str]:
+    """Validate a dashboard-selected cron script against the profile sandbox."""
+    text = _cron_optional_text(value)
+    if not text:
+        return None
+
+    scripts_root = (profile_home / "scripts").resolve()
+    raw_path = Path(text).expanduser()
+    candidate = raw_path.resolve() if raw_path.is_absolute() else (scripts_root / raw_path).resolve()
+    try:
+        relative = candidate.relative_to(scripts_root)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail=f"script must be inside {scripts_root}",
+        ) from exc
+    if not candidate.exists():
+        raise HTTPException(status_code=400, detail=f"script does not exist: {candidate}")
+    if not candidate.is_file():
+        raise HTTPException(status_code=400, detail=f"script is not a file: {candidate}")
+    return str(relative)
+
+
+def _validate_dashboard_cron_effective_job(job: Dict[str, Any]) -> None:
+    prompt = _cron_optional_text(job.get("prompt"))
+    script = _cron_optional_text(job.get("script"))
+    skills = _cron_string_list(job.get("skills")) or _cron_string_list(job.get("skill"))
+    no_agent = bool(job.get("no_agent"))
+
+    if no_agent:
+        if not script:
+            raise HTTPException(
+                status_code=400,
+                detail="no_agent=True requires a script",
+            )
+        return
+
+    if not (prompt or skills or script):
+        raise HTTPException(
+            status_code=400,
+            detail="agent cron jobs require a prompt, skill, or script",
+        )
+
+
+def _normalize_dashboard_cron_updates(
+    updates: Dict[str, Any],
+    profile_home: Path,
+) -> Dict[str, Any]:
+    """Normalize dashboard JSON into cron.jobs.update_job's storage shape.
+
+    This intentionally stays in the dashboard adapter layer: cron/jobs.py is the
+    source of truth for scheduling behaviour; the dashboard only translates form
+    payloads into the shapes that existing core functions already accept.
+    """
+    normalized = dict(updates or {})
+
+    for key in ("model", "provider", "workdir"):
+        if key in normalized:
+            normalized[key] = _cron_optional_text(normalized[key])
+    if "script" in normalized:
+        normalized["script"] = _normalize_dashboard_cron_script(
+            normalized["script"],
+            profile_home,
+        )
+    if "base_url" in normalized:
+        normalized["base_url"] = _cron_optional_text(
+            normalized["base_url"], strip_trailing_slash=True
+        )
+    if "deliver" in normalized:
+        normalized["deliver"] = _cron_optional_text(normalized["deliver"]) or "local"
+    if "context_from" in normalized:
+        normalized["context_from"] = _cron_string_list(normalized["context_from"])
+    if "enabled_toolsets" in normalized:
+        normalized["enabled_toolsets"] = _cron_string_list(normalized["enabled_toolsets"])
+    return normalized
+
+
+def _validate_dashboard_cron_context_from(
+    refs: Optional[List[str]],
+    profile_name: str,
+) -> None:
+    if not refs:
+        return
+    for ref in refs:
+        if not _call_cron_for_profile(profile_name, "get_job", ref):
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"context_from job '{ref}' not found in profile "
+                    f"'{profile_name}'"
+                ),
+            )
 
 
 _CRON_PROFILE_LOCK = threading.RLock()
@@ -8364,7 +8354,7 @@ def _annotate_cron_job(job: Dict[str, Any], profile: str, home: Path) -> Dict[st
     return annotated
 
 
-def _call_cron_for_profile(profile: Optional[str], func_name: str, *args, **kwargs):
+def _call_cron_for_profile(target_profile: Optional[str], func_name: str, *args, **kwargs):
     """Run cron.jobs helpers against the selected profile's cron directory.
 
     cron.jobs keeps CRON_DIR/JOBS_FILE/OUTPUT_DIR as module globals resolved
@@ -8372,13 +8362,18 @@ def _call_cron_for_profile(profile: Optional[str], func_name: str, *args, **kwar
     process that can inspect many profiles, so temporarily retarget those
     globals while holding a lock and restore them immediately after the call.
     """
-    profile_name, home = _cron_profile_home(profile)
+    profile_name, home = _cron_profile_home(target_profile)
     with _CRON_PROFILE_LOCK:
         from cron import jobs as cron_jobs
+        from hermes_constants import (
+            reset_hermes_home_override,
+            set_hermes_home_override,
+        )
 
         old_cron_dir = cron_jobs.CRON_DIR
         old_jobs_file = cron_jobs.JOBS_FILE
         old_output_dir = cron_jobs.OUTPUT_DIR
+        token = set_hermes_home_override(str(home))
         cron_jobs.CRON_DIR = home / "cron"
         cron_jobs.JOBS_FILE = cron_jobs.CRON_DIR / "jobs.json"
         cron_jobs.OUTPUT_DIR = cron_jobs.CRON_DIR / "output"
@@ -8388,6 +8383,7 @@ def _call_cron_for_profile(profile: Optional[str], func_name: str, *args, **kwar
             cron_jobs.CRON_DIR = old_cron_dir
             cron_jobs.JOBS_FILE = old_jobs_file
             cron_jobs.OUTPUT_DIR = old_output_dir
+            reset_hermes_home_override(token)
 
     if isinstance(result, list):
         return [_annotate_cron_job(j, profile_name, home) for j in result]
@@ -8485,15 +8481,37 @@ async def list_cron_job_runs(job_id: str, profile: Optional[str] = None, limit: 
 @app.post("/api/cron/jobs")
 async def create_cron_job(body: CronJobCreate, profile: str = "default"):
     try:
+        profile_name, profile_home = _cron_profile_home(profile)
+        script = _normalize_dashboard_cron_script(body.script, profile_home)
+        skills = _cron_string_list(body.skills)
+        context_from = _cron_string_list(body.context_from)
+        _validate_dashboard_cron_context_from(context_from, profile_name)
+        no_agent = bool(body.no_agent)
+        _validate_dashboard_cron_effective_job({
+            "prompt": body.prompt,
+            "skills": skills,
+            "script": script,
+            "no_agent": no_agent,
+        })
         return _call_cron_for_profile(
-            profile,
+            profile_name,
             "create_job",
-            prompt=body.prompt,
+            prompt=body.prompt or "",
             schedule=body.schedule,
             name=body.name,
-            deliver=body.deliver,
-            skills=body.skills,
+            deliver=_cron_optional_text(body.deliver) or "local",
+            skills=skills,
+            model=_cron_optional_text(body.model),
+            provider=_cron_optional_text(body.provider),
+            base_url=_cron_optional_text(body.base_url, strip_trailing_slash=True),
+            script=script,
+            context_from=context_from,
+            enabled_toolsets=_cron_string_list(body.enabled_toolsets),
+            workdir=_cron_optional_text(body.workdir),
+            no_agent=no_agent,
         )
+    except HTTPException:
+        raise
     except Exception as e:
         _log.exception("POST /api/cron/jobs failed")
         raise HTTPException(status_code=400, detail=str(e))
@@ -8533,7 +8551,28 @@ async def update_cron_job(job_id: str, body: CronJobUpdate, profile: Optional[st
     if not selected:
         raise HTTPException(status_code=404, detail="Job not found")
     try:
-        job = _call_cron_for_profile(selected, "update_job", job_id, body.updates)
+        profile_name, profile_home = _cron_profile_home(selected)
+        existing = _call_cron_for_profile(profile_name, "get_job", job_id)
+        if not existing:
+            raise HTTPException(status_code=404, detail="Job not found")
+        updates = _normalize_dashboard_cron_updates(
+            body.updates,
+            profile_home,
+        )
+        if "context_from" in updates:
+            _validate_dashboard_cron_context_from(
+                updates.get("context_from"),
+                profile_name,
+            )
+        execution_fields = {"prompt", "skill", "skills", "script", "no_agent"}
+        if execution_fields.intersection(updates):
+            effective = {**existing, **updates}
+            if "skills" in updates and "skill" not in updates:
+                effective["skill"] = None
+            _validate_dashboard_cron_effective_job(effective)
+        job = _call_cron_for_profile(profile_name, "update_job", job_id, updates)
+    except HTTPException:
+        raise
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     if not job:
@@ -9612,17 +9651,63 @@ class BackupRequest(BaseModel):
     output: Optional[str] = None
 
 
+def _dashboard_backup_dir() -> Path:
+    return get_hermes_home() / "backups"
+
+
+def _new_dashboard_backup_path() -> Path:
+    stamp = datetime.now().strftime("%Y-%m-%d-%H%M%S")
+    return _dashboard_backup_dir() / f"hermes-backup-{stamp}-{secrets.token_hex(4)}.zip"
+
+
 @app.post("/api/ops/backup")
 async def run_backup(body: BackupRequest):
     args = ["backup"]
+    archive: Optional[Path] = None
     if body.output:
         args.append(body.output.strip())
+    else:
+        archive = _new_dashboard_backup_path()
+        try:
+            archive.parent.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Could not create backup directory: {exc}",
+            )
+        args.append(str(archive))
     try:
         proc = _spawn_hermes_action(args, "backup")
     except Exception as exc:
         _log.exception("Failed to spawn backup")
         raise HTTPException(status_code=500, detail=f"Failed to run backup: {exc}")
-    return {"ok": True, "pid": proc.pid, "name": "backup"}
+    response = {"ok": True, "pid": proc.pid, "name": "backup"}
+    if archive is not None:
+        response["archive"] = str(archive)
+    return response
+
+
+@app.get("/api/ops/backup/download")
+async def download_dashboard_backup(archive: str):
+    try:
+        backup_dir = _dashboard_backup_dir().expanduser().resolve(strict=False)
+        target = Path(archive).expanduser().resolve(strict=True)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="Backup not found")
+    except (OSError, RuntimeError):
+        raise HTTPException(status_code=400, detail="Invalid backup path")
+
+    if not _path_is_under(backup_dir, target):
+        raise HTTPException(status_code=403, detail="Backup is outside the dashboard backup directory")
+    if not target.is_file():
+        raise HTTPException(status_code=404, detail="Backup not found")
+
+    return FileResponse(
+        path=str(target),
+        media_type="application/zip",
+        filename=target.name,
+        content_disposition_type="attachment",
+    )
 
 
 class ImportRequest(BaseModel):
@@ -9653,6 +9738,94 @@ async def run_import(body: ImportRequest):
         _log.exception("Failed to spawn import")
         raise HTTPException(status_code=500, detail=f"Failed to run import: {exc}")
     return {"ok": True, "pid": proc.pid, "name": "import"}
+
+
+def _safe_backup_upload_name(filename: str | None) -> str:
+    name = Path(filename or "backup.zip").name.strip()
+    name = re.sub(r"[^A-Za-z0-9._-]+", "-", name).strip(".-")
+    if not name:
+        name = "backup.zip"
+    if not name.lower().endswith(".zip"):
+        name = f"{name}.zip"
+    return name
+
+
+@app.post("/api/ops/import-upload")
+async def run_import_upload(
+    file: UploadFile = File(...),
+    force: bool = Form(False),
+):
+    staging_dir = _dashboard_backup_dir()
+    try:
+        staging_dir.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Could not create import staging directory: {exc}",
+        )
+
+    safe_name = _safe_backup_upload_name(file.filename)
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+    target = staging_dir / f"dashboard-import-{stamp}-{secrets.token_hex(4)}-{safe_name}"
+    tmp_fd, tmp_name = tempfile.mkstemp(
+        prefix=f".{target.name}.",
+        suffix=".upload",
+        dir=str(staging_dir),
+    )
+    tmp_path = Path(tmp_name)
+    total = 0
+    renamed = False
+    try:
+        with os.fdopen(tmp_fd, "wb") as out:
+            while True:
+                chunk = await file.read(_UPLOAD_CHUNK_BYTES)
+                if not chunk:
+                    break
+                total += len(chunk)
+                if total > _MANAGED_FILE_MAX_BYTES:
+                    raise HTTPException(status_code=413, detail="Archive is too large")
+                out.write(chunk)
+        os.replace(tmp_path, target)
+        renamed = True
+    except HTTPException:
+        raise
+    except PermissionError:
+        raise HTTPException(
+            status_code=403,
+            detail="Import staging directory is not writable",
+        )
+    except OSError as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Could not write uploaded archive: {exc}",
+        )
+    finally:
+        if not renamed:
+            tmp_path.unlink(missing_ok=True)
+        await file.close()
+
+    if not zipfile.is_zipfile(target):
+        target.unlink(missing_ok=True)
+        raise HTTPException(
+            status_code=400,
+            detail="Uploaded archive is not a valid zip file",
+        )
+
+    args = ["import", str(target)]
+    if force:
+        args.append("--force")
+    try:
+        proc = _spawn_hermes_action(args, "import")
+    except Exception as exc:
+        _log.exception("Failed to spawn import")
+        raise HTTPException(status_code=500, detail=f"Failed to run import: {exc}")
+    return {
+        "ok": True,
+        "pid": proc.pid,
+        "name": "import",
+        "archive": str(target),
+        "uploaded_bytes": total,
+    }
 
 
 @app.get("/api/ops/hooks")
@@ -12372,26 +12545,54 @@ async def pty_ws(ws: WebSocket) -> None:
 
     # --- reader task: PTY master → WebSocket ----------------------------
     async def pump_pty_to_ws() -> None:
-        while True:
-            chunk = await loop.run_in_executor(
-                None, bridge.read, _PTY_READ_CHUNK_TIMEOUT
-            )
-            if chunk is None:  # EOF
-                return
-            if not chunk:  # no data this tick; yield control and retry
-                await asyncio.sleep(0)
-                continue
+        try:
+            while True:
+                chunk = await loop.run_in_executor(
+                    None, bridge.read, _PTY_READ_CHUNK_TIMEOUT
+                )
+                if chunk is None:  # EOF
+                    return
+                if not chunk:  # no data this tick; yield control and retry
+                    await asyncio.sleep(0)
+                    continue
+                try:
+                    await ws.send_bytes(chunk)
+                except Exception:
+                    return
+        finally:
+            # The child has exited (EOF) or the send side broke.  Close the
+            # WebSocket so the writer loop's ``ws.receive()`` returns instead
+            # of blocking forever — otherwise, when the browser's socket is
+            # half-open (no FIN delivered, common on macOS/launchd) the
+            # handler never reaches its ``finally`` and the PTY's fds leak.
+            # With dashboard auto-reconnect (#52962) every dropped socket then
+            # stacks a fresh PTY on top of the orphaned one, exhausting fds.
+            #
+            # Reap the bridge here too (close() is idempotent): on child EOF the
+            # writer loop's ``finally`` is the usual closer, but if the handler
+            # task is cancelled the instant we close the WS, that ``finally``
+            # can be skipped, leaking the PTY. Closing from the EOF path makes
+            # the reap independent of that cancellation race (#54028).
             try:
-                await ws.send_bytes(chunk)
+                await asyncio.to_thread(bridge.close)
             except Exception:
-                return
+                pass
+            try:
+                await ws.close()
+            except Exception:
+                pass
 
     reader_task = asyncio.create_task(pump_pty_to_ws())
 
     # --- writer loop: WebSocket → PTY master ----------------------------
     try:
         while True:
-            msg = await ws.receive()
+            try:
+                msg = await ws.receive()
+            except RuntimeError:
+                # Raised when ws.receive() is called after the socket is
+                # already disconnected (e.g. closed by the reader task above).
+                break
             msg_type = msg.get("type")
             if msg_type == "websocket.disconnect":
                 break
@@ -13869,6 +14070,19 @@ def start_server(
             print(f"HERMES_DASHBOARD_READY port={actual_port}", flush=True)
             print(f"  Hermes Web UI → http://{host}:{actual_port}")
             _maybe_open_browser(host, actual_port, open_browser, initial_profile)
+
+            # Collapse the peer-hangup teardown flood (#50005). When the Desktop
+            # forcibly closes its WebSocket mid-write, asyncio logs a full
+            # traceback per pending connection-lost callback — 50+ identical
+            # WinError 10054 (ConnectionResetError) lines per disconnect on
+            # Windows. This filter downgrades exactly that class to one debug
+            # line and passes every other loop error through unchanged.
+            try:
+                from tui_gateway.loop_noise import install_loop_noise_filter
+
+                install_loop_noise_filter(asyncio.get_running_loop())
+            except Exception as exc:  # pragma: no cover - best-effort
+                _log.debug("loop noise filter install skipped: %s", exc)
 
             await server.main_loop()
             if server.started:

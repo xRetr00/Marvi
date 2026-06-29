@@ -77,6 +77,36 @@ describe('buildToolView terminal exit-code status', () => {
   })
 })
 
+describe('buildToolView browser_navigate title', () => {
+  it('shows failed title when navigate returns success=false', () => {
+    const view = buildToolView(
+      part({
+        toolName: 'browser_navigate',
+        args: { url: 'https://github.com/xRetr00/Marvi/docs' },
+        result: { success: false, error: 'Command timed out after 60 seconds' }
+      }),
+      ''
+    )
+
+    expect(view.status).toBe('error')
+    expect(view.title).toBe('Failed to open github.com/xRetr00/Marvi')
+  })
+
+  it('shows opened title on success', () => {
+    const view = buildToolView(
+      part({
+        toolName: 'browser_navigate',
+        args: { url: 'https://github.com/xRetr00/Marvi/docs' },
+        result: { success: true, url: 'https://github.com/xRetr00/Marvi/docs', title: 'Docs' }
+      }),
+      ''
+    )
+
+    expect(view.status).toBe('success')
+    expect(view.title).toBe('Opened github.com/xRetr00/Marvi')
+  })
+})
+
 describe('buildToolView file edit diffs', () => {
   const patchDiff = '--- a/src/demo.ts\n+++ b/src/demo.ts\n@@ -1 +1 @@\n-old\n+new'
 

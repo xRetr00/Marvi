@@ -10,6 +10,7 @@ import { GatewayConnectingOverlay } from '@/components/gateway-connecting-overla
 import { Pane, PaneMain } from '@/components/pane-shell'
 import { RemoteDisplayBanner } from '@/components/remote-display-banner'
 import { useMediaQuery } from '@/hooks/use-media-query'
+import { Mic } from '@/lib/icons'
 import { isFocusWithin } from '@/lib/keybinds/combo'
 import { cn } from '@/lib/utils'
 import { useSkinCommand } from '@/themes/use-skin-command'
@@ -26,6 +27,8 @@ import {
 } from '../lib/session-source'
 import { latestSessionTodos } from '../lib/todos'
 import { setCronFocusJobId, setCronJobs } from '../store/cron'
+import { initGlowOverlayBridge } from '../store/glow-overlay'
+import { dismissIslandCard, setIslandCardSubmitHandler } from '../store/island-cards'
 import {
   $fileBrowserOpen,
   $panesFlipped,
@@ -67,6 +70,7 @@ import { $reviewOpen, REVIEW_PANE_ID } from '../store/review'
 import {
   $activeSessionId,
   $attentionSessionIds,
+  $busy,
   $currentCwd,
   $freshDraftReady,
   $gatewayState,
@@ -103,10 +107,13 @@ import {
 import { onSessionsChanged } from '../store/session-sync'
 import { clearSessionTodos, setSessionTodos, todoListActive } from '../store/todos'
 import { openUpdatesWindow, startUpdatePoller, stopUpdatePoller } from '../store/updates'
+import { publishWakeStatus } from '../store/voice-presence'
+import { $presenceEnabled, setPresenceEnabled } from '../store/voice-presence-settings'
 import { isSecondaryWindow } from '../store/windows'
 
 import { ChatView } from './chat'
 import { requestComposerFocus, requestComposerInsert } from './chat/composer/focus'
+import { useWakeWord } from './chat/composer/hooks/use-wake-word'
 import { useComposerActions } from './chat/hooks/use-composer-actions'
 import {
   ChatPreviewRail,
@@ -624,7 +631,8 @@ export function DesktopController() {
     requestGateway
   })
 
-  const { refreshHermesConfig, sttEnabled, voiceMaxRecordingSeconds } = useHermesConfig({
+  const { refreshHermesConfig, streamingSttEnabled, sttEnabled, voiceMaxRecordingSeconds, wakeWordConfig } =
+    useHermesConfig({
     activeSessionIdRef,
     refreshProjectBranch
   })
@@ -965,12 +973,40 @@ export function DesktopController() {
   const requestGatewayRef = useRef(requestGateway)
   requestGatewayRef.current = requestGateway
 
+  const presenceEnabled = useStore($presenceEnabled)
+  const voiceBusy = useStore($busy)
+
+  const wake = useWakeWord({
+    busy: voiceBusy,
+    config: wakeWordConfig,
+    enabled: !isSecondaryWindow() && presenceEnabled && gatewayState === 'open',
+    onSubmit: async text => {
+      await submitTextRef.current(text)
+    },
+    onTranscribeAudio: transcribeVoiceAudio,
+    streamingSttEnabled
+  })
+
+  useEffect(() => {
+    publishWakeStatus(wake.status)
+  }, [wake.status])
+
   useEffect(() => {
     if (isSecondaryWindow()) {
       return
     }
 
     setPetOverlaySubmitHandler(text => void submitTextRef.current(text))
+    setIslandCardSubmitHandler(text => void submitTextRef.current(text))
+
+    const offCardAction = window.hermesDesktop?.glowOverlay?.onCardAction(payload => {
+      if (payload.type === 'dismiss') {
+        dismissIslandCard(payload.id)
+      } else if (payload.type === 'submit') {
+        void submitTextRef.current(payload.text)
+      }
+    })
+
     // Alt+wheel resize from the popped-out pet — persist it through this
     // window's gateway (the overlay has none) so it survives restart.
     setPetOverlayScaleHandler(scale => setPetScale(requestGatewayRef.current, scale))
@@ -984,11 +1020,15 @@ export function DesktopController() {
         void resumeSessionRef.current(recent.id)
       }
     })
+    const offGlow = initGlowOverlayBridge()
 
     return () => {
       setPetOverlaySubmitHandler(null)
+      setIslandCardSubmitHandler(null)
+      offCardAction?.()
       setPetOverlayOpenAppHandler(null)
       setPetOverlayScaleHandler(null)
+      offGlow()
     }
   }, [])
 
@@ -1087,6 +1127,37 @@ export function DesktopController() {
     statusSnapshot,
     toggleCommandCenter
   })
+
+  const wakeStatusItem = useMemo<StatusbarItem>(() => {
+    const listening = wake.status === 'woken' || wake.status === 'listening'
+
+    const label = !presenceEnabled
+      ? 'Presence off'
+      : listening
+        ? 'Listening'
+        : wake.status === 'transcribing'
+          ? 'Transcribing'
+          : undefined
+
+    return {
+      id: 'voice-presence',
+      variant: 'action',
+      icon: <Mic className="size-3" />,
+      label,
+      title: presenceEnabled ? 'Voice presence is on; click to turn off' : 'Voice presence is off; click to turn on',
+      onSelect: () => setPresenceEnabled(!presenceEnabled),
+      className: !presenceEnabled
+        ? 'opacity-45'
+        : listening || wake.status === 'transcribing'
+          ? 'text-(--ui-text-accent)'
+          : undefined
+    }
+  }, [presenceEnabled, wake.status])
+
+  const leftStatusbarItemsWithWake = useMemo(
+    () => [wakeStatusItem, ...leftStatusbarItems],
+    [leftStatusbarItems, wakeStatusItem]
+  )
 
   const sidebar = (
     <ChatSidebar
@@ -1235,6 +1306,7 @@ export function DesktopController() {
       onThreadMessagesChange={handleThreadMessagesChange}
       onToggleSelectedPin={toggleSelectedPin}
       onTranscribeAudio={transcribeVoiceAudio}
+      streamingSttEnabled={streamingSttEnabled}
     />
   )
 
@@ -1356,7 +1428,7 @@ export function DesktopController() {
 
   return (
     <AppShell
-      leftStatusbarItems={leftStatusbarItems}
+      leftStatusbarItems={leftStatusbarItemsWithWake}
       leftTitlebarTools={titlebarToolGroups.flat.left}
       mainOverlays={mainOverlays}
       onOpenSettings={openSettings}

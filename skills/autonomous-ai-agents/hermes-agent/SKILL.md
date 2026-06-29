@@ -557,6 +557,15 @@ stt:
 
 Voice commands: `/voice on` (voice-to-voice), `/voice tts` (always voice), `/voice off`.
 
+### Marvi Desktop Voice Stack
+
+Marvi keeps desktop voice features that may not exist in upstream Hermes:
+streaming STT, wake word, voice presence, glow overlay, Qwen3-TTS, and
+PocketTTS. During upstream syncs, preserve these features, their config keys,
+settings UI, Electron IPC/window wiring, and desktop composer/status-bar hooks.
+If upstream rewrites nearby files, reapply Marvi's voice stack on top of the
+new upstream code instead of deleting it as conflict cleanup.
+
 ---
 
 ## Spawning Additional Marvi Instances

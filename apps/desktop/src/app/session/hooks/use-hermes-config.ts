@@ -2,6 +2,7 @@ import { type MutableRefObject, useCallback, useState } from 'react'
 
 import { getHermesConfig, getHermesConfigDefaults } from '@/hermes'
 import { BUILTIN_PERSONALITIES, normalizePersonalityValue, personalityNamesFromConfig } from '@/lib/chat-runtime'
+import { normalizeWakeWordConfig, type WakeWordConfig } from '@/lib/wake-word'
 import {
   $currentCwd,
   setAvailablePersonalities,
@@ -27,7 +28,9 @@ interface HermesConfigOptions {
 
 export function useHermesConfig({ activeSessionIdRef, refreshProjectBranch }: HermesConfigOptions) {
   const [voiceMaxRecordingSeconds, setVoiceMaxRecordingSeconds] = useState(DEFAULT_VOICE_SECONDS)
+  const [wakeWordConfig, setWakeWordConfig] = useState<WakeWordConfig>(() => normalizeWakeWordConfig(undefined))
   const [sttEnabled, setSttEnabled] = useState(true)
+  const [streamingSttEnabled, setStreamingSttEnabled] = useState(false)
 
   const refreshHermesConfig = useCallback(async () => {
     try {
@@ -64,11 +67,13 @@ export function useHermesConfig({ activeSessionIdRef, refreshProjectBranch }: He
       setCurrentFastMode(prev => (activeSessionIdRef.current ? prev : FAST_TIERS.has(tier.toLowerCase())))
 
       setVoiceMaxRecordingSeconds(recordingLimit(config.voice?.max_recording_seconds))
+      setWakeWordConfig(normalizeWakeWordConfig(config.voice?.wake_word))
       setSttEnabled(config.stt?.enabled !== false)
+      setStreamingSttEnabled(config.stt?.streaming?.provider === 'whisperlive')
     } catch {
       // Config is nice-to-have; chat still works without it.
     }
   }, [activeSessionIdRef, refreshProjectBranch])
 
-  return { refreshHermesConfig, sttEnabled, voiceMaxRecordingSeconds }
+  return { refreshHermesConfig, streamingSttEnabled, sttEnabled, voiceMaxRecordingSeconds, wakeWordConfig }
 }

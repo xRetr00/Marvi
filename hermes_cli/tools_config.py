@@ -1207,7 +1207,7 @@ def _run_post_setup(post_setup_key: str):
             pass
         _print_info("    Installing livekit-wakeword...")
         try:
-            result = _pip_install(["-U", "livekit-wakeword", "--quiet"], timeout=300)
+            result = _pip_install(["-U", "livekit-wakeword", "matplotlib", "--quiet"], timeout=300)
             if result.returncode == 0:
                 _print_success("    livekit-wakeword installed")
                 _print_info("    Set voice.wake_word.model to a .onnx file or a directory of Marvi variant models.")

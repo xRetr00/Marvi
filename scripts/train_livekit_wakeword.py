@@ -80,6 +80,13 @@ def _run(argv: list[str], env: dict[str, str]) -> None:
         raise SystemExit(result.returncode)
 
 
+def _ensure_eval_deps(env: dict[str, str]) -> None:
+    try:
+        __import__("matplotlib")
+    except ImportError:
+        _run([sys.executable, "-m", "pip", "install", "matplotlib"], env)
+
+
 def _save_runtime_config() -> None:
     config = load_config()
     voice = config.setdefault("voice", {})
@@ -136,6 +143,7 @@ def main() -> None:
             setup_cmd.append("--skip-acav")
         _run(setup_cmd, env)
 
+    _ensure_eval_deps(env)
     _run([sys.executable, "-m", "livekit.wakeword", "run", str(config_path)], env)
 
     trained_model = base_dir / "output" / "marvi" / "marvi.onnx"

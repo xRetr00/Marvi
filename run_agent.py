@@ -4900,6 +4900,44 @@ class AIAgent:
         """Return True when the base URL targets Qwen Portal."""
         return base_url_host_matches(self._base_url_lower, "portal.qwen.ai")
 
+    @staticmethod
+    def _qwen_normalize_message_content(msg: dict) -> None:
+        """Normalize one message's content for Qwen/DashScope (mutates in place).
+
+        DashScope rejects a content array that contains an empty-text part, or
+        an empty array, with ``messages.N.content: Invalid input`` — which is
+        exactly what the old prep produced from an empty/whitespace string (it
+        wrapped ``""`` into ``[{"type":"text","text":""}]``). This fires when the
+        model calls a tool with little/no visible text (e.g. ``show_card`` in
+        voice mode). So: wrap string content as a text part, drop empty/
+        whitespace-only text parts, and when a tool-call-only assistant turn has
+        no real text, omit content (a valid OpenAI/DashScope shape) instead of
+        sending an empty part.
+        """
+        content = msg.get("content")
+        parts: list = []
+        if isinstance(content, str):
+            if content.strip():
+                parts = [{"type": "text", "text": content}]
+        elif isinstance(content, list):
+            for part in content:
+                if isinstance(part, str):
+                    if part.strip():
+                        parts.append({"type": "text", "text": part})
+                elif isinstance(part, dict):
+                    if part.get("type") == "text" and not str(part.get("text") or "").strip():
+                        continue
+                    parts.append(part)
+
+        if parts:
+            msg["content"] = parts
+        elif msg.get("tool_calls"):
+            msg["content"] = None
+        else:
+            # Degenerate empty content with no tool calls — a single space keeps
+            # the provider from rejecting an empty content field.
+            msg["content"] = [{"type": "text", "text": " "}]
+
     def _qwen_prepare_chat_messages(self, api_messages: list) -> list:
         prepared = copy.deepcopy(api_messages)
         if not prepared:
@@ -4908,20 +4946,7 @@ class AIAgent:
         for msg in prepared:
             if not isinstance(msg, dict):
                 continue
-            content = msg.get("content")
-            if isinstance(content, str):
-                msg["content"] = [{"type": "text", "text": content}]
-            elif isinstance(content, list):
-                # Normalize: convert bare strings to text dicts, keep dicts as-is.
-                # deepcopy already created independent copies, no need for dict().
-                normalized_parts = []
-                for part in content:
-                    if isinstance(part, str):
-                        normalized_parts.append({"type": "text", "text": part})
-                    elif isinstance(part, dict):
-                        normalized_parts.append(part)
-                if normalized_parts:
-                    msg["content"] = normalized_parts
+            self._qwen_normalize_message_content(msg)
 
         # Inject cache_control on the last part of the system message.
         for msg in prepared:
@@ -4941,18 +4966,7 @@ class AIAgent:
         for msg in messages:
             if not isinstance(msg, dict):
                 continue
-            content = msg.get("content")
-            if isinstance(content, str):
-                msg["content"] = [{"type": "text", "text": content}]
-            elif isinstance(content, list):
-                normalized_parts = []
-                for part in content:
-                    if isinstance(part, str):
-                        normalized_parts.append({"type": "text", "text": part})
-                    elif isinstance(part, dict):
-                        normalized_parts.append(part)
-                if normalized_parts:
-                    msg["content"] = normalized_parts
+            self._qwen_normalize_message_content(msg)
 
         for msg in messages:
             if isinstance(msg, dict) and msg.get("role") == "system":

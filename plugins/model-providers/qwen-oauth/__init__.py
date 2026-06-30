@@ -25,17 +25,30 @@ class QwenProfile(ProviderProfile):
             if not isinstance(msg, dict):
                 continue
             content = msg.get("content")
+            # DashScope rejects content arrays with an empty-text part / empty
+            # array ("messages.N.content: Invalid input"), which the old wrap of
+            # "" produced. Drop empty text and omit content for tool-call-only
+            # turns. Mirrors run_agent.py:_qwen_normalize_message_content.
+            parts: list = []
             if isinstance(content, str):
-                msg["content"] = [{"type": "text", "text": content}]
+                if content.strip():
+                    parts = [{"type": "text", "text": content}]
             elif isinstance(content, list):
-                normalized_parts = []
                 for part in content:
                     if isinstance(part, str):
-                        normalized_parts.append({"type": "text", "text": part})
+                        if part.strip():
+                            parts.append({"type": "text", "text": part})
                     elif isinstance(part, dict):
-                        normalized_parts.append(part)
-                if normalized_parts:
-                    msg["content"] = normalized_parts
+                        if part.get("type") == "text" and not str(part.get("text") or "").strip():
+                            continue
+                        parts.append(part)
+
+            if parts:
+                msg["content"] = parts
+            elif msg.get("tool_calls"):
+                msg["content"] = None
+            else:
+                msg["content"] = [{"type": "text", "text": " "}]
 
         # Inject cache_control on the last part of the system message.
         for msg in prepared:

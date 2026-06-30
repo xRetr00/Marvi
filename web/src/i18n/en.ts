@@ -54,11 +54,11 @@ export const en: Translations = {
 
   app: {
     brand: "Marvi Agent",
-    brandShort: "MA",
+    brandShort: "HA",
     closeNavigation: "Close navigation",
     closeModelTools: "Close model and tools",
     footer: {
-      org: "xRetro Labs Research",
+      org: "Nous Research",
     },
     activeSessionsLabel: "Active Sessions:",
     gatewayStatusLabel: "Gateway Status:",
@@ -121,6 +121,9 @@ export const en: Translations = {
     platformError: "error",
     recentSessions: "Recent Sessions",
     restartGateway: "Restart Gateway",
+    restartGatewayConfirmMessage:
+      "This restarts the Marvi gateway process. Connected channels and active sessions will reconnect afterward.",
+    restartGatewayConfirmTitle: "Restart gateway?",
     restartingGateway: "Restarting gateway…",
     running: "Running",
     runningRemote: "Running (remote)",
@@ -128,8 +131,12 @@ export const en: Translations = {
     starting: "Starting",
     startedInBackground: "Started in background — check logs for progress",
     stopped: "Stopped",
-    updateMarvi: "Update Marvi",
-    updatingMarvi: "Updating Marvi…",
+    updateHermes: "Update Marvi",
+    updateHermesConfirmMessage:
+      "This runs hermes update and restarts the gateway when it finishes. Active sessions keep their prompt cache until then.",
+    updateHermesConfirmNow: "Update now",
+    updateHermesConfirmTitle: "Update Marvi?",
+    updatingHermes: "Updating Marvi…",
     waitingForOutput: "Waiting for output…",
   },
 
@@ -364,7 +371,7 @@ export const en: Translations = {
     enableRuntime: "Enable",
     forceReinstall: "Force reinstall (delete existing folder first)",
     headline:
-      "Discover, install, enable, and update Marvi plugins (`marvi plugins` parity; legacy `hermes plugins` still works).",
+      "Discover, install, enable, and update Hermes plugins (`hermes plugins` parity).",
     identifierLabel: "Git URL or owner/repo",
     inactive: "inactive",
     installBtn: "Install",
@@ -548,11 +555,11 @@ export const en: Translations = {
   achievements: {
     hero: {
       kicker: "Agentic Gamerscore",
-      title: "Marvi Achievements",
+      title: "Hermes Achievements",
       subtitle:
-        "Collectible Marvi badges earned from real session history. Known unfinished achievements are shown as Discovered; Secret achievements stay hidden until the first matching behavior appears.",
+        "Collectible Hermes badges earned from real session history. Known unfinished achievements are shown as Discovered; Secret achievements stay hidden until the first matching behavior appears.",
       scan_subtitle:
-        "Scanning Marvi session history. First scan can take 5–10 seconds on large histories.",
+        "Scanning Hermes session history. First scan can take 5–10 seconds on large histories.",
     },
     actions: {
       rescan: "Rescan",
@@ -567,7 +574,7 @@ export const en: Translations = {
       highest_tier: "Highest tier",
       highest_tier_hint: "Copper → Silver → Gold → Diamond → Olympian",
       latest: "Latest",
-      latest_hint_empty: "run Marvi more",
+      latest_hint_empty: "run Hermes more",
       none_yet: "None yet",
     },
     state: {
@@ -598,7 +605,7 @@ export const en: Translations = {
       tiers_header: "Tiers",
       secret_header: "Secret achievements",
       secret_body:
-        "Secrets hide their exact trigger. Once Marvi sees a related signal, the card becomes Discovered and shows its requirement.",
+        "Secrets hide their exact trigger. Once Hermes sees a related signal, the card becomes Discovered and shows its requirement.",
       scan_status_header: "Scan status",
       scan_status_body:
         "Marvi is scanning local history once, then cards will appear automatically. Nothing is stuck if this takes a few seconds.",

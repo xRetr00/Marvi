@@ -1,10 +1,10 @@
 //! Update orchestration.
 //!
-//! Driven when the installer is launched as `Marvi-Setup.exe --update` (see
+//! Driven when the installer is launched as `Hermes-Setup.exe --update` (see
 //! `AppMode` in lib.rs). The desktop app hands off to us — it exits, then we:
 //!
-//!   1. wait for the old Marvi desktop process to fully exit (so the venv
-//!      shim and packaged app.asar are free; otherwise `hermes update`
+//!   1. wait for the old Hermes desktop process to fully exit (so both the
+//!      venv shim and packaged app.asar are free; otherwise `hermes update`
 //!      or repair bootstrap can race locked files),
 //!   2. run `hermes update --yes --gateway` (Python/repo update; this does NOT
 //!      rebuild apps/desktop by design — see cmd_update in hermes_cli/main.py),
@@ -12,8 +12,10 @@
 //!   4. launch the freshly-built desktop (reuses bootstrap::launch logic).
 //!
 //! We reuse the `BootstrapEvent` channel + the existing progress UI by
-//! emitting a synthetic two-stage manifest ("update", "rebuild"). To the
-//! frontend an update looks like a short bootstrap.
+//! emitting a synthetic multi-stage manifest (handoff → update → rebuild, plus
+//! an install stage on macOS). To the frontend an update looks like a short
+//! bootstrap, broken into the real operations run_update performs so the user
+//! sees discrete steps (with the live log underneath) instead of one bar.
 //!
 //! Cross-platform note: `hermes update` already handles macOS/Linux (git/pip).
 //! The only OS-specific bits here are the venv shim path (resolve_hermes) and
@@ -50,7 +52,7 @@ const DESKTOP_EXIT_POLL: Duration = Duration::from_millis(500);
 /// in prod). Two `run_update` tasks racing on `git stash` corrupt the working
 /// tree — one stashes the changes the other then can't find. Exactly one task
 /// may hold this flag at a time.
-pub static UPDATE_RUNNING: AtomicBool = AtomicBool::new(false);
+static UPDATE_RUNNING: AtomicBool = AtomicBool::new(false);
 
 /// Frontend → Rust: kick off the update flow. Mirrors `start_bootstrap`'s
 /// fire-and-forget shape; progress arrives on the `bootstrap` event channel.
@@ -70,17 +72,10 @@ pub async fn start_update(app: AppHandle) -> Result<(), String> {
         } else {
             None
         };
-        let mut stages = vec![
-            stage_info("update", "Updating Marvi"),
-            stage_info("rebuild", "Rebuilding the desktop app"),
-        ];
-        if cfg!(target_os = "macos") && target_app.is_some() {
-            stages.push(stage_info("install", "Installing the updated app"));
-        }
         emit(
             &app,
             BootstrapEvent::Manifest {
-                stages,
+                stages: update_stages(target_app.is_some()),
                 protocol_version: None,
             },
         );
@@ -169,7 +164,7 @@ async fn run_update(app: AppHandle) -> Result<()> {
 
     let hermes = resolve_hermes(&install_root).ok_or_else(|| {
         let msg = format!(
-            "Could not find the hermes CLI under {}. Is Marvi installed? \
+            "Could not find the hermes CLI under {}. Is Hermes installed? \
              Re-run the installer to repair the install.",
             install_root.display()
         );
@@ -183,32 +178,35 @@ async fn run_update(app: AppHandle) -> Result<()> {
         anyhow!(msg)
     })?;
 
-    // Synthetic manifest so the existing progress UI renders our two stages.
-    let mut stages = vec![
-        stage_info("update", "Updating Marvi"),
-        stage_info("rebuild", "Rebuilding the desktop app"),
-    ];
-    if cfg!(target_os = "macos") && target_app.is_some() {
-        stages.push(stage_info("install", "Installing the updated app"));
-    }
-
+    // Synthetic manifest so the existing progress UI renders our stages.
     emit(
         &app,
         BootstrapEvent::Manifest {
-            stages,
+            stages: update_stages(target_app.is_some()),
             protocol_version: None,
         },
     );
 
-    // ---- pre-step: wait for the old desktop to die -----------------------
+    // ---- stage 1: wait for the old desktop to die ------------------------
     // The desktop exec'd us then called app.exit(), but process teardown is
     // async on Windows. If it still holds the venv shim, `hermes update`
     // aborts with exit 2. If it still holds the packaged app.asar,
     // install.ps1's repair/re-clone path cannot move/remove the install tree.
-    // Give both handles a bounded window to clear.
-    wait_for_install_locks_free(&install_root, &app, "update").await;
+    // Give both handles a bounded window to clear. Surfaced as its own stage
+    // (rather than a silent pre-step) so a slow close / force-kill reads as
+    // real progress instead of a frozen first bar.
+    let started = Instant::now();
+    emit_stage(&app, "handoff", StageState::Running, None, None);
+    wait_for_install_locks_free(&install_root, &app, "handoff").await;
+    emit_stage(
+        &app,
+        "handoff",
+        StageState::Succeeded,
+        Some(started.elapsed().as_millis() as u64),
+        None,
+    );
 
-    // ---- stage 1: hermes update -----------------------------------------
+    // ---- stage 2: hermes update -----------------------------------------
     // Pass --branch so `hermes update` targets the branch this installer was
     // built/pinned against (BUILD_PIN_BRANCH), NOT its built-in default of
     // `main`. The install was a detached-HEAD checkout of a specific commit;
@@ -230,7 +228,7 @@ async fn run_update(app: AppHandle) -> Result<()> {
     // `sys.exit(2)` and dead-end the handoff). By contract the desktop has
     // already exited and waited for the install locks to clear before launching
     // us, and wait_for_install_locks_free below force-kills any straggler — so by the
-    // time `hermes update` runs there is no legitimate marvi.exe to protect,
+    // time `hermes update` runs there is no legitimate hermes.exe to protect,
     // and the guard would only produce a false "Marvi is still running" stop.
     update_args.push("--force".into());
     update_args.push("--branch".into());
@@ -259,7 +257,7 @@ async fn run_update(app: AppHandle) -> Result<()> {
     // second `hermes update` runs clean because the now-current module is loaded
     // from the start. Rather than make the parked user click Update twice (and
     // stare at a scary crash first), retry once automatically. Skip the retry
-    // for the concurrent-instance guard (exit 2) — that's a "close Marvi" state
+    // for the concurrent-instance guard (exit 2) — that's a "close Hermes" state
     // a retry can't fix.
     if !matches!(update.exit_code, Some(0) | Some(UPDATE_EXIT_CONCURRENT)) {
         emit_log(
@@ -286,7 +284,7 @@ async fn run_update(app: AppHandle) -> Result<()> {
             emit_stage(&app, "update", StageState::Succeeded, Some(update_ms), None);
         }
         Some(code) if code == UPDATE_EXIT_CONCURRENT => {
-            let msg = "Marvi is still running. Close all Marvi windows and try \
+            let msg = "Marvi is still running. Close all Hermes windows and try \
                        the update again."
                 .to_string();
             emit_stage(
@@ -332,7 +330,7 @@ async fn run_update(app: AppHandle) -> Result<()> {
         }
     }
 
-    // ---- stage 2: hermes desktop --build-only ----------------------------
+    // ---- stage 3: hermes desktop --build-only ----------------------------
     // `hermes update` deliberately does NOT build apps/desktop (it installs
     // repo-root deps with --workspaces=false). This is the rebuild it skips.
     emit_stage(&app, "rebuild", StageState::Running, None, None);
@@ -480,7 +478,7 @@ pub(crate) async fn wait_for_install_locks_free(install_root: &Path, app: &AppHa
     let lock_targets = install_lock_probe_paths(install_root);
     let deadline = Instant::now() + DESKTOP_EXIT_WAIT;
 
-    emit_log(app, Some(stage), LogStream::Stdout, "[handoff] waiting for Marvi to exit…");
+    emit_log(app, Some(stage), LogStream::Stdout, "[handoff] waiting for Hermes to exit…");
 
     loop {
         let locked = locked_paths(&lock_targets);
@@ -488,20 +486,20 @@ pub(crate) async fn wait_for_install_locks_free(install_root: &Path, app: &AppHa
             return;
         }
         if Instant::now() >= deadline {
-            // Last resort: a backend marvi.exe (or the desktop Marvi.exe
+            // Last resort: a backend hermes.exe (or the desktop Hermes.exe
             // itself) is still holding one of the update-sensitive files. The
             // desktop should have reaped its tree before handing off, but
             // SIGTERM races / detached grandchildren / AV handles can leave a
             // straggler. Rather than "proceed anyway" straight into uv's
             // "Access is denied" or install.ps1's locked app.asar failure,
-            // force-kill every Marvi.exe except ourselves, then give the OS a
+            // force-kill every Hermes.exe except ourselves, then give the OS a
             // beat to unload the image.
             emit_log(
                 app,
                 Some(stage),
                 LogStream::Stdout,
                 &format!(
-                    "[handoff] Marvi still holding install files ({}); force-killing stragglers…",
+                    "[handoff] Hermes still holding install files ({}); force-killing stragglers…",
                     format_locked_paths(&locked)
                 ),
             );
@@ -533,7 +531,7 @@ pub(crate) async fn wait_for_install_locks_free(install_root: &Path, app: &AppHa
 }
 
 fn install_lock_probe_paths(install_root: &Path) -> Vec<PathBuf> {
-    let mut paths = venv_hermes_candidates(install_root);
+    let mut paths = vec![venv_hermes(install_root)];
     paths.extend(desktop_app_payload_paths(install_root));
     paths
 }
@@ -563,20 +561,20 @@ fn format_locked_paths(paths: &[PathBuf]) -> String {
     paths.iter().map(|p| p.display().to_string()).collect::<Vec<_>>().join(", ")
 }
 
-/// Force-kill any `marvi.exe` other than this process. Windows-only; a no-op
+/// Force-kill any `hermes.exe` other than this process. Windows-only; a no-op
 /// elsewhere (POSIX has no mandatory-lock contention). We can't selectively
 /// target "the backend" by PID here — the desktop already exited and we never
-/// knew its children — so we kill the whole `marvi.exe` image tree via
+/// knew its children — so we kill the whole `hermes.exe` image tree via
 /// taskkill, excluding our own PID.
 ///
 /// Safe w.r.t. our own update child: this runs inside the install-lock wait,
-/// which completes BEFORE we spawn `venv\Scripts\marvi.exe update`. And a
+/// which completes BEFORE we spawn `venv\Scripts\hermes.exe update`. And a
 /// desktop the user relaunches mid-update will NOT have spawned a backend —
 /// `startHermes()` in the desktop gates local-backend startup on our
 /// update-in-progress marker and parks until we finish (#50238). So the only
-/// marvi.exe images here are stragglers from the old desktop — exactly what we
-/// want gone. (`/FI PID ne <self>` also spares this Tauri process, though it
-/// isn't named marvi.exe.)
+/// hermes.exe images here are stragglers from the old desktop — exactly what
+/// we want gone. (`/FI PID ne <self>` also spares this Tauri process, though it
+/// isn't named hermes.exe.)
 fn force_kill_other_hermes() {
     if !cfg!(target_os = "windows") {
         return;
@@ -590,7 +588,7 @@ fn force_kill_other_hermes() {
                 "/F",
                 "/T",
                 "/IM",
-                "marvi.exe",
+                "hermes.exe",
                 "/FI",
                 &format!("PID ne {my_pid}"),
             ])
@@ -691,45 +689,30 @@ struct CmdResult {
     exit_code: Option<i32>,
 }
 
-/// Primary path to the venv Hermes shim under an install root, regardless of existence.
+/// Path to the venv hermes shim under an install root, regardless of existence.
 fn venv_hermes(install_root: &Path) -> PathBuf {
-    venv_hermes_candidates(install_root)
-        .into_iter()
-        .next()
-        .expect("venv_hermes_candidates is never empty")
-}
-
-fn venv_hermes_candidates(install_root: &Path) -> Vec<PathBuf> {
     if cfg!(target_os = "windows") {
-        let scripts = install_root.join("venv").join("Scripts");
-        vec![scripts.join("hermes.exe"), scripts.join("marvi.exe")]
+        install_root.join("venv").join("Scripts").join("hermes.exe")
     } else {
-        vec![install_root.join("venv").join("bin").join("hermes")]
+        install_root.join("venv").join("bin").join("hermes")
     }
 }
 
 /// Resolve the hermes CLI to drive. Prefer the venv shim in the install we
 /// just updated; fall back to `hermes` on PATH.
 fn resolve_hermes(install_root: &Path) -> Option<PathBuf> {
-    for shim in venv_hermes_candidates(install_root) {
-        if shim.exists() {
-            return Some(shim);
-        }
+    let shim = venv_hermes(install_root);
+    if shim.exists() {
+        return Some(shim);
     }
     // PATH fallback. which-style probe via env, kept dependency-free.
-    let exes = if cfg!(target_os = "windows") {
-        &["hermes.exe", "marvi.exe"][..]
-    } else {
-        &["hermes"][..]
-    };
+    let exe = if cfg!(target_os = "windows") { "hermes.exe" } else { "hermes" };
     if let Ok(path) = std::env::var("PATH") {
         let sep = if cfg!(target_os = "windows") { ';' } else { ':' };
         for dir in path.split(sep) {
-            for exe in exes {
-                let cand = Path::new(dir).join(exe);
-                if cand.exists() {
-                    return Some(cand);
-                }
+            let cand = Path::new(dir).join(exe);
+            if cand.exists() {
+                return Some(cand);
             }
         }
     }
@@ -819,7 +802,7 @@ async fn install_macos_app_update(
 
     let rebuilt_app = crate::bootstrap::resolve_hermes_desktop_app(install_root).ok_or_else(|| {
         anyhow!(
-            "desktop rebuild succeeded but no Marvi.app was found under {}",
+            "desktop rebuild succeeded but no Hermes.app was found under {}",
             install_root.join("apps").join("desktop").join("release").display()
         )
     })?;
@@ -968,6 +951,23 @@ fn stage_info(name: &str, title: &str) -> StageInfo {
     }
 }
 
+/// The synthetic update manifest. Mirrors the real operations `run_update`
+/// performs so the progress UI shows them as discrete steps (with the live log
+/// underneath) instead of one monolithic bar. `include_install` adds the macOS
+/// app-swap stage. Both the happy path and the re-entrancy guard build the
+/// manifest here so the two can never drift apart.
+fn update_stages(include_install: bool) -> Vec<StageInfo> {
+    let mut stages = vec![
+        stage_info("handoff", "Preparing to update"),
+        stage_info("update", "Downloading the latest version"),
+        stage_info("rebuild", "Rebuilding the desktop app"),
+    ];
+    if include_install {
+        stages.push(stage_info("install", "Installing the update"));
+    }
+    stages
+}
+
 // option_env! only accepts string literals, so the build-time pins are read
 // by their literal names here. Mirrors bootstrap.rs's helper of the same name
 // (kept local rather than shared because option_env! can't be parameterized).
@@ -1031,21 +1031,6 @@ mod tests {
         let shim = venv_hermes(root);
         assert!(shim.starts_with(root));
         assert!(shim.to_string_lossy().contains("venv"));
-    }
-
-    #[test]
-    fn resolve_hermes_accepts_legacy_hermes_exe_on_windows() {
-        let root = unique_tmp_dir("resolve-hermes");
-        let scripts = root.join("venv").join("Scripts");
-        std::fs::create_dir_all(&scripts).unwrap();
-        let shim = scripts.join("hermes.exe");
-        std::fs::write(&shim, "").unwrap();
-
-        if cfg!(target_os = "windows") {
-            assert_eq!(resolve_hermes(&root), Some(shim));
-        }
-
-        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]
@@ -1132,6 +1117,36 @@ mod tests {
     }
 
     #[test]
+    fn update_manifest_leads_with_handoff_and_gates_install() {
+        let base = update_stages(false);
+        assert_eq!(
+            base.first().map(|s| s.name.as_str()),
+            Some("handoff"),
+            "the lock-wait must surface as the first visible step"
+        );
+        assert!(
+            base.iter().any(|s| s.name == "update") && base.iter().any(|s| s.name == "rebuild"),
+            "update + rebuild remain distinct stages"
+        );
+        assert!(
+            base.iter().all(|s| s.name != "install"),
+            "no app-swap stage unless an install target was passed"
+        );
+
+        let with_install = update_stages(true);
+        assert_eq!(
+            with_install.last().map(|s| s.name.as_str()),
+            Some("install"),
+            "the macOS app-swap is the final stage when present"
+        );
+        assert_eq!(
+            with_install.len(),
+            base.len() + 1,
+            "include_install adds exactly one stage"
+        );
+    }
+
+    #[test]
     fn rebuild_retries_only_on_failure() {
         assert!(!rebuild_needs_retry(Some(0)), "a clean rebuild must not retry");
         assert!(rebuild_needs_retry(Some(1)), "a failed rebuild retries once");
@@ -1144,8 +1159,8 @@ mod tests {
     #[test]
     fn parses_only_app_targets() {
         assert_eq!(
-            target_app_from_args(["--update", "--target-app", "/Applications/Marvi.app"]),
-            Some(PathBuf::from("/Applications/Marvi.app"))
+            target_app_from_args(["--update", "--target-app", "/Applications/Hermes.app"]),
+            Some(PathBuf::from("/Applications/Hermes.app"))
         );
         assert_eq!(target_app_from_args(["--target-app", "/tmp/not-an-app"]), None);
     }
@@ -1172,9 +1187,9 @@ mod tests {
     #[tokio::test]
     async fn swap_installs_new_bundle_and_cleans_up() {
         let base = unique_tmp_dir("ok");
-        let target = base.join("Marvi.app");
-        let tmp = base.join("Marvi.app.hermes-update-new");
-        let old = base.join("Marvi.app.hermes-update-old");
+        let target = base.join("Hermes.app");
+        let tmp = base.join("Hermes.app.hermes-update-new");
+        let old = base.join("Hermes.app.hermes-update-old");
         write_marker(&target, "OLD");
         write_marker(&tmp, "NEW");
 
@@ -1202,9 +1217,9 @@ mod tests {
         //  - `old` is a NON-EMPTY dir  -> rename(target, old) fails
         //  - `tmp` does not exist       -> rename(tmp, target) fails
         let base = unique_tmp_dir("fail");
-        let target = base.join("Marvi.app");
-        let tmp = base.join("Marvi.app.hermes-update-new"); // intentionally absent
-        let old = base.join("Marvi.app.hermes-update-old");
+        let target = base.join("Hermes.app");
+        let tmp = base.join("Hermes.app.hermes-update-new"); // intentionally absent
+        let old = base.join("Hermes.app.hermes-update-old");
         write_marker(&target, "OLD");
         write_marker(&old, "OCCUPIED"); // non-empty => rename(target,old) fails
 
@@ -1225,9 +1240,9 @@ mod tests {
         // Move-aside succeeds but installing the staged bundle fails (tmp
         // absent). The original must be rolled back from `old` to `target`.
         let base = unique_tmp_dir("rollback");
-        let target = base.join("Marvi.app");
-        let tmp = base.join("Marvi.app.hermes-update-new"); // absent
-        let old = base.join("Marvi.app.hermes-update-old");
+        let target = base.join("Hermes.app");
+        let tmp = base.join("Hermes.app.hermes-update-new"); // absent
+        let old = base.join("Hermes.app.hermes-update-old");
         write_marker(&target, "OLD");
 
         let result = swap_in_new_bundle(&tmp, &target, &old).await;

@@ -26,6 +26,7 @@ from tools.environments.local import (
     LocalEnvironment,
     _msys_to_windows_path,
     _resolve_safe_cwd,
+    _windows_to_msys_path,
 )
 
 
@@ -68,6 +69,35 @@ class TestMsysToWindowsPath:
     def test_empty_string(self, monkeypatch):
         monkeypatch.setattr(local_mod, "_IS_WINDOWS", True)
         assert _msys_to_windows_path("") == ""
+
+
+# ---------------------------------------------------------------------------
+# _windows_to_msys_path — reverse translation for bash builtin cd
+# ---------------------------------------------------------------------------
+
+class TestWindowsToMsysPath:
+    def test_noop_on_non_windows(self, monkeypatch):
+        monkeypatch.setattr(local_mod, "_IS_WINDOWS", False)
+        assert _windows_to_msys_path(r"C:\Users\NVIDIA") == r"C:\Users\NVIDIA"
+
+    def test_translates_backslash_path(self, monkeypatch):
+        monkeypatch.setattr(local_mod, "_IS_WINDOWS", True)
+        assert _windows_to_msys_path(r"C:\Users\NVIDIA") == "/c/Users/NVIDIA"
+        assert _windows_to_msys_path(r"D:\Projects\foo bar") == "/d/Projects/foo bar"
+
+    def test_translates_forward_slash_native_path(self, monkeypatch):
+        monkeypatch.setattr(local_mod, "_IS_WINDOWS", True)
+        assert _windows_to_msys_path("C:/Users/NVIDIA") == "/c/Users/NVIDIA"
+
+    def test_translates_drive_root(self, monkeypatch):
+        monkeypatch.setattr(local_mod, "_IS_WINDOWS", True)
+        assert _windows_to_msys_path(r"C:\\") == "/c/"
+        assert _windows_to_msys_path("D:/") == "/d/"
+
+    def test_does_not_translate_non_drive_path(self, monkeypatch):
+        monkeypatch.setattr(local_mod, "_IS_WINDOWS", True)
+        assert _windows_to_msys_path("/tmp/foo") == "/tmp/foo"
+        assert _windows_to_msys_path(r"\\server\share") == r"\\server\share"
 
 
 # ---------------------------------------------------------------------------
@@ -197,68 +227,43 @@ class TestExtractCwdFromOutputWindowsMsys:
 
         assert env.cwd == str(new_dir)
 
+
 # ---------------------------------------------------------------------------
-# _quote_cwd_for_cd — backslash-to-forward-slash normalisation
+# Command wrapping — native Windows cwd must be Git Bash-friendly for cd
 # ---------------------------------------------------------------------------
 
-from tools.environments.base import BaseEnvironment
+class TestWrapCommandWindowsNativeCwd:
+    def test_wrap_command_converts_native_cwd_for_builtin_cd(self, monkeypatch):
+        monkeypatch.setattr(local_mod, "_IS_WINDOWS", True)
 
+        with patch.object(
+            LocalEnvironment, "init_session", autospec=True, return_value=None
+        ):
+            env = LocalEnvironment(cwd=r"C:\Users\liush", timeout=10)
 
-class TestQuoteCwdForCdBackslashFix:
-    """On Windows, Git Bash cannot ``cd`` to backslash paths like
-    ``C:\\Users\\xRetro`` — bash interprets backslashes as escape
-    characters and the path is not found.  ``_quote_cwd_for_cd`` must
-    normalise backslashes to forward slashes before quoting so the
-    resulting ``cd`` command works in Git Bash / MSYS bash.
-    """
-
-    def test_windows_backslash_path_converted_to_forward_slash(self):
-        result = BaseEnvironment._quote_cwd_for_cd(r"C:\Users\xRetro")
-        # The quoted result must contain forward slashes, not backslashes
-        assert "\\" not in result, f"Backslash found in result: {result!r}"
-        assert "C:/Users/xRetro" in result, f"Expected forward-slash path in: {result!r}"
-
-    def test_windows_nested_backslash_path_converted(self):
-        result = BaseEnvironment._quote_cwd_for_cd(
-            r"C:\Users\xRetro\AppData\Local"
-        )
-        assert "\\" not in result, f"Backslash found in result: {result!r}"
-        assert "C:/Users/xRetro/AppData/Local" in result
-
-    def test_posix_path_unchanged(self):
-        result = BaseEnvironment._quote_cwd_for_cd("/home/user")
-        assert result == "/home/user"
-
-    def test_msys_path_unchanged(self):
-        result = BaseEnvironment._quote_cwd_for_cd("/c/Users/xRetro")
-        assert result == "/c/Users/xRetro"
-
-    def test_tilde_preserved(self):
-        assert BaseEnvironment._quote_cwd_for_cd("~") == "~"
-
-    def test_tilde_with_suffix_preserved(self):
-        result = BaseEnvironment._quote_cwd_for_cd("~/projects")
-        assert "$HOME" in result
-        assert "projects" in result
-
-    def test_empty_string(self):
-        assert BaseEnvironment._quote_cwd_for_cd("") == "''"
-
-    def test_wrap_command_cd_uses_forward_slash_on_windows(self):
-        """End-to-end: ``_wrap_command`` must emit a ``cd`` with
-        forward-slash paths when the cwd contains backslashes."""
-        from unittest.mock import MagicMock
-        env = MagicMock(spec=BaseEnvironment)
         env._snapshot_ready = True
-        env._snapshot_path = "/tmp/snap.sh"
-        env._cwd_file = "/tmp/cwd.txt"
-        env._cwd_marker = "%%CWD%%"
-        env._quote_cwd_for_cd = BaseEnvironment._quote_cwd_for_cd
+        wrapped = env._wrap_command("pwd", r"C:\Users\liush")
 
-        wrapped = BaseEnvironment._wrap_command(
-            env, "echo hello", r"C:\Users\xRetro"
-        )
-        # The cd line must not contain backslash paths
-        cd_line = [l for l in wrapped.split("\n") if "builtin cd" in l][0]
-        assert "\\" not in cd_line, f"Backslash in cd line: {cd_line!r}"
-        assert "C:/Users/xRetro" in cd_line, f"Forward slash missing: {cd_line!r}"
+        assert "builtin cd -- /c/Users/liush || exit 126" in wrapped
+        assert r"builtin cd -- C:\Users\liush || exit 126" not in wrapped
+
+    def test_init_session_bootstrap_converts_native_cwd_for_cd(self, monkeypatch):
+        """The snapshot bootstrap ``cd`` must also use the Git-Bash path form,
+        not just ``_wrap_command`` — otherwise ``pwd -P`` captures the login
+        shell's directory instead of ``terminal.cwd`` on Windows."""
+        monkeypatch.setattr(local_mod, "_IS_WINDOWS", True)
+
+        captured = {}
+
+        def fake_run_bash(self, cmd_string, *, login=False, timeout=120, stdin_data=None):
+            captured["script"] = cmd_string
+            raise RuntimeError("stop after capturing bootstrap")
+
+        monkeypatch.setattr(LocalEnvironment, "_run_bash", fake_run_bash)
+
+        # init_session swallows the exception and falls back; we only need the
+        # captured bootstrap script to assert the cd target was converted.
+        LocalEnvironment(cwd=r"C:\Users\liush", timeout=10)
+
+        assert "builtin cd -- /c/Users/liush 2>/dev/null || true" in captured["script"]
+        assert r"C:\Users\liush" not in captured["script"]

@@ -2257,6 +2257,16 @@ def sanitize_api_messages(messages: List[Dict[str, Any]]) -> List[Dict[str, Any]
         filtered.append(msg)
     messages = filtered
 
+    for msg in messages:
+        content = msg.get("content")
+        if isinstance(content, str):
+            if "\x00" in content:
+                msg["content"] = content.replace("\x00", "")
+        elif isinstance(content, dict):
+            msg["content"] = json.dumps(content, ensure_ascii=False)
+        elif content is not None and not isinstance(content, list):
+            msg["content"] = str(content)
+
     surviving_call_ids: set = set()
     for msg in messages:
         if msg.get("role") == "assistant":

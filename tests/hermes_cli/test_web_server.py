@@ -6520,3 +6520,62 @@ class TestDesktopCronTicker:
 
         with self._client():
             assert not called.wait(0.5), "ticker must not run outside the desktop app"
+
+
+class TestDesktopWhisperLiveStartup:
+    def _client(self):
+        try:
+            from starlette.testclient import TestClient
+        except ImportError:
+            pytest.skip("fastapi/starlette not installed")
+        from hermes_cli.web_server import app
+
+        return TestClient(app)
+
+    def test_starts_whisperlive_when_desktop_streaming_stt_enabled(self, monkeypatch, _isolate_hermes_home):
+        import cron.scheduler as sched
+        import hermes_cli.web_server as web_server
+
+        started = {}
+
+        class Proc:
+            pid = 123
+
+            def poll(self):
+                return None
+
+            def terminate(self):
+                started["terminated"] = True
+
+        monkeypatch.setattr(sched, "tick", lambda *a, **k: None)
+        monkeypatch.setenv("HERMES_DESKTOP", "1")
+        monkeypatch.setattr(web_server, "_port_open", lambda *_a: False)
+        monkeypatch.setattr(
+            web_server,
+            "load_config",
+            lambda: {
+                "stt": {
+                    "streaming": {
+                        "enabled": True,
+                        "provider": "whisperlive",
+                        "host": "127.0.0.1",
+                        "port": 9090,
+                    }
+                }
+            },
+        )
+        monkeypatch.setattr(
+            "tools.transcription_tools.whisperlive_server_command",
+            lambda _cfg: ["python", "-c", "pass"],
+        )
+        def fake_popen(cmd, **kwargs):
+            started["cmd"] = cmd
+            started["kwargs"] = kwargs
+            return Proc()
+
+        monkeypatch.setattr(web_server.subprocess, "Popen", fake_popen)
+
+        with self._client():
+            assert started["cmd"] == ["python", "-c", "pass"]
+
+        assert started["terminated"] is True

@@ -1119,7 +1119,14 @@ def whisperlive_server_command(stt_config: Optional[dict] = None) -> list[str]:
         args.append("single_model=True")
 
     code = f"from whisper_live.server import TranscriptionServer; TranscriptionServer().run({', '.join(args)})"
-    return [sys.executable, "-c", code]
+    try:
+        from hermes_constants import get_hermes_home
+
+        py = get_hermes_home() / "whisperlive-venv" / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+        executable = str(py) if py.exists() else sys.executable
+    except Exception:
+        executable = sys.executable
+    return [executable, "-c", code]
 
 
 def _load_local_whisper_model(model_name: str):

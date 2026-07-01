@@ -26,6 +26,7 @@ import os
 import re
 import secrets
 import shutil
+import socket
 import stat
 import subprocess
 import sys
@@ -159,6 +160,49 @@ def _warm_gateway_module() -> None:
         pass
 
 
+def _port_open(host: str, port: int) -> bool:
+    try:
+        with socket.create_connection((host, port), timeout=0.25):
+            return True
+    except OSError:
+        return False
+
+
+def _start_desktop_whisperlive() -> tuple["subprocess.Popen | None", Any]:
+    cfg = load_config()
+    streaming = (((cfg.get("stt") or {}).get("streaming") or {}) if isinstance(cfg, dict) else {})
+    if not (
+        streaming.get("enabled") is True
+        and str(streaming.get("provider") or "").strip().lower() == "whisperlive"
+    ):
+        return None, None
+
+    host = str(streaming.get("host") or "127.0.0.1")
+    port = int(streaming.get("port") or 9090)
+    if _port_open(host, port):
+        _log.info("WhisperLive already listening on %s:%s", host, port)
+        return None, None
+
+    from tools.transcription_tools import whisperlive_server_command
+
+    log_path = get_hermes_home() / "logs" / "whisperlive.log"
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    log_file = log_path.open("ab")
+    try:
+        proc = subprocess.Popen(
+            whisperlive_server_command(cfg.get("stt") or {}),
+            stdout=log_file,
+            stderr=subprocess.STDOUT,
+            stdin=subprocess.DEVNULL,
+            creationflags=windows_hide_flags(),
+        )
+    except Exception:
+        log_file.close()
+        raise
+    _log.info("Started WhisperLive for desktop STT (pid=%s, %s:%s)", proc.pid, host, port)
+    return proc, log_file
+
+
 def _resolve_restart_drain_timeout() -> float:
     try:
         from hermes_cli.gateway import _get_restart_drain_timeout
@@ -192,6 +236,8 @@ async def _lifespan(app: "FastAPI"):
     # dashboard` is unaffected — it relies on its own gateway.
     cron_stop: "threading.Event | None" = None
     cron_thread: "threading.Thread | None" = None
+    whisperlive_proc: "subprocess.Popen | None" = None
+    whisperlive_log = None
     if os.getenv("HERMES_DESKTOP") == "1":
         cron_stop = threading.Event()
         cron_thread = threading.Thread(
@@ -201,12 +247,20 @@ async def _lifespan(app: "FastAPI"):
             name="desktop-cron-ticker",
         )
         cron_thread.start()
+        try:
+            whisperlive_proc, whisperlive_log = _start_desktop_whisperlive()
+        except Exception as exc:
+            _log.warning("Could not start WhisperLive for desktop STT: %s", exc)
 
     try:
         yield
     finally:
         if cron_stop is not None:
             cron_stop.set()
+        if whisperlive_proc is not None and whisperlive_proc.poll() is None:
+            whisperlive_proc.terminate()
+        if whisperlive_log is not None:
+            whisperlive_log.close()
 
 
 def _get_event_state(app: "FastAPI"):

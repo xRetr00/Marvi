@@ -1287,6 +1287,33 @@ def _run_post_setup(post_setup_key: str):
         except Exception as e:
             _print_warning(f"    WhisperLive install failed: {e}")
 
+    elif post_setup_key == "nemotron_stt":
+        _print_info("    Installing Nemotron streaming STT dependencies...")
+        try:
+            result = _pip_install(
+                [
+                    "-U",
+                    "git+https://github.com/huggingface/transformers",
+                    "accelerate",
+                    "soundfile",
+                    "packaging",
+                    "--quiet",
+                ],
+                timeout=900,
+            )
+            if result.returncode == 0:
+                _print_success("    Nemotron streaming STT dependencies installed")
+                _print_info("    Model downloads on first use; set stt.streaming.provider to nemotron.")
+                return
+            _print_warning("    Nemotron streaming STT install failed:")
+            _print_info(f"      {(result.stderr or '').strip()[:300]}")
+            _print_info("    Run manually: uv pip install -U git+https://github.com/huggingface/transformers accelerate soundfile packaging")
+        except subprocess.TimeoutExpired:
+            _print_warning("    Nemotron streaming STT install timed out (>15min)")
+            _print_info("    Run manually: uv pip install -U git+https://github.com/huggingface/transformers accelerate soundfile packaging")
+        except Exception as e:
+            _print_warning(f"    Nemotron streaming STT install failed: {e}")
+
     elif post_setup_key == "ddgs":
         try:
             __import__("ddgs")
@@ -1445,7 +1472,7 @@ def valid_post_setup_keys() -> Set[str]:
     command and the dashboard post-setup endpoint validate against, so a
     caller can't drive ``_run_post_setup`` with an arbitrary key.
     """
-    keys: Set[str] = {"livekit_wakeword", "whisperlive"}
+    keys: Set[str] = {"livekit_wakeword", "whisperlive", "nemotron_stt"}
     for cat in TOOL_CATEGORIES.values():
         for prov in cat.get("providers", []):
             ps = prov.get("post_setup")

@@ -1982,7 +1982,7 @@ DEFAULT_CONFIG = {
             "ref_text": "",   # Transcript for the reference audio
             "speaker": "aiden",  # CustomVoice speaker name
             "instruct": "Warm, clear, natural voice",  # VoiceDesign prompt
-            "chunk_size": 2,  # Lower = faster TTFA, higher = more stable streaming
+            "chunk_size": 1,  # Lower = faster TTFA, higher = more stable streaming
             "device": "cuda",
             "dtype": "bfloat16",
         },
@@ -2019,11 +2019,12 @@ DEFAULT_CONFIG = {
             "vad_filter": True,
         },
         "streaming": {
-            "provider": "",  # "" = off, "whisperlive" = live WebSocket STT
+            "provider": "",  # "" = off, "whisperlive" = live WebSocket STT, "nemotron" = local RNNT streaming STT
             "host": "127.0.0.1",
             "port": 9090,
             "backend": "faster_whisper",  # faster_whisper, tensorrt, openvino
             "model": "small",  # tiny, base, small, medium, large-v3, large-v3-turbo
+            "lookahead_tokens": 1,  # Nemotron: 0=80ms, 1=160ms, 6=560ms, 13=1120ms
             "max_clients": 1,
             "max_connection_time": 900,
             "single_model": True,

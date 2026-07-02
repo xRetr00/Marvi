@@ -192,7 +192,7 @@ QWEN3_REMOVED_MODEL_ALIASES = {
 DEFAULT_QWEN3_LANGUAGE = "English"
 DEFAULT_QWEN3_DEVICE = "cuda"
 DEFAULT_QWEN3_DTYPE = "bfloat16"
-DEFAULT_QWEN3_CHUNK_SIZE = 2
+DEFAULT_QWEN3_CHUNK_SIZE = 1
 POCKETTTS_PRESET_VOICES = frozenset({
     "alba",
     "anna",
@@ -2161,17 +2161,14 @@ def stream_text_to_speech_chunks(text: str):
     if provider != "qwen3":
         raise ValueError("Streaming TTS is only available for qwen3")
 
-    started = False
+    yield {"type": "start", "sample_rate": 24000, "provider": provider}
     for audio_chunk, sample_rate, _timing in _stream_qwen3_audio(text, tts_config):
-        if not started:
-            yield {"type": "start", "sample_rate": int(sample_rate or 24000), "provider": provider}
-            started = True
         encoded = _qwen3_audio_to_pcm16_base64(audio_chunk)
         if encoded:
+            if sample_rate and int(sample_rate) != 24000:
+                yield {"type": "sample_rate", "sample_rate": int(sample_rate)}
             yield {"type": "chunk", "audio": encoded}
 
-    if not started:
-        yield {"type": "start", "sample_rate": 24000, "provider": provider}
     yield {"type": "end", "provider": provider}
 
 

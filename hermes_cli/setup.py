@@ -957,6 +957,32 @@ def _install_whisperlive_deps() -> bool:
         return False
 
 
+def _install_nemotron_stt_deps() -> bool:
+    """Install Nemotron streaming STT dependencies. Returns True on success."""
+    import subprocess
+
+    print()
+    print_info("Installing Nemotron streaming STT...")
+    print()
+    try:
+        from hermes_cli.tools_config import _run_post_setup
+
+        _run_post_setup("nemotron_stt")
+        subprocess.run(
+            [sys.executable, "-c", "from transformers import AutoModelForRNNT, AutoProcessor"],
+            check=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=30,
+        )
+        print_success("Nemotron streaming STT dependencies installed successfully")
+        return True
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError) as e:
+        print_error(f"Failed to install Nemotron streaming STT: {e}")
+        print_info("Try manually: hermes tools post-setup nemotron_stt")
+        return False
+
+
 def _xai_oauth_logged_in_for_setup() -> bool:
     """True iff xAI Grok OAuth credentials are already stored locally.
 
@@ -1230,7 +1256,7 @@ def _setup_tts_provider(config: dict):
         else:
             print()
             print_info("Qwen3 TTS requires a CUDA-capable PyTorch install and a Hugging Face model download on first use.")
-            print_info("Recommended for your RTX 3060 12GB: 0.6B model, device=cuda, dtype=bfloat16, chunk_size=2.")
+            print_info("Recommended for your RTX 3060 12GB: 0.6B model, device=cuda, dtype=bfloat16, chunk_size=1.")
             print()
             if prompt_yes_no("Install Qwen3 TTS dependencies now?", True):
                 if not _install_qwen3_deps():
@@ -1279,11 +1305,11 @@ def _setup_tts_provider(config: dict):
                 instruct = prompt("Qwen3 voice design prompt")
                 qwen_cfg["instruct"] = instruct.strip() if instruct and instruct.strip() else "Warm, clear, natural voice"
 
-            chunk_size = prompt("Qwen3 streaming chunk size (Enter for 2)")
+            chunk_size = prompt("Qwen3 streaming chunk size (Enter for 1)")
             try:
-                qwen_cfg["chunk_size"] = max(1, int(chunk_size.strip())) if chunk_size and chunk_size.strip() else 2
+                qwen_cfg["chunk_size"] = max(1, int(chunk_size.strip())) if chunk_size and chunk_size.strip() else 1
             except ValueError:
-                qwen_cfg["chunk_size"] = 2
+                qwen_cfg["chunk_size"] = 1
 
             stt_local = config.setdefault("stt", {}).setdefault("local", {})
             config["stt"].setdefault("provider", "local")
@@ -1292,24 +1318,48 @@ def _setup_tts_provider(config: dict):
             stt_local["compute_type"] = "float16"
             stt_local.setdefault("batch_size", 8)
             stt_local.setdefault("vad_filter", True)
-            try:
-                whisperlive_installed = importlib.util.find_spec("whisper_live") is not None
-            except Exception:
-                whisperlive_installed = False
-            if not whisperlive_installed:
-                print()
-                if prompt_yes_no("Install WhisperLive for streaming STT now?", True):
-                    whisperlive_installed = _install_whisperlive_deps()
-            if whisperlive_installed:
-                streaming = config["stt"].setdefault("streaming", {})
-                streaming["provider"] = "whisperlive"
+            streaming_idx = prompt_choice(
+                "Streaming STT backend:",
+                [
+                    "Nemotron streaming ASR (local CUDA RNNT, lowest latency)",
+                    "WhisperLive (faster-whisper server, compatible fallback)",
+                    "Skip streaming STT setup",
+                ],
+                0,
+            )
+            streaming = config["stt"].setdefault("streaming", {})
+            if streaming_idx == 0:
+                if prompt_yes_no("Install Nemotron streaming STT dependencies now?", True):
+                    _install_nemotron_stt_deps()
+                streaming["enabled"] = True
+                streaming["provider"] = "nemotron"
+                streaming["model"] = "nvidia/nemotron-speech-streaming-en-0.6b"
+                streaming["lookahead_tokens"] = 1
                 streaming["host"] = "127.0.0.1"
                 streaming["port"] = 9090
                 streaming["backend"] = "faster_whisper"
-                streaming["model"] = "large-v3-turbo"
                 streaming["max_clients"] = 1
                 streaming["max_connection_time"] = 900
                 streaming["single_model"] = True
+            elif streaming_idx == 1:
+                try:
+                    whisperlive_installed = importlib.util.find_spec("whisper_live") is not None
+                except Exception:
+                    whisperlive_installed = False
+                if not whisperlive_installed:
+                    print()
+                    if prompt_yes_no("Install WhisperLive for streaming STT now?", True):
+                        whisperlive_installed = _install_whisperlive_deps()
+                if whisperlive_installed:
+                    streaming["enabled"] = True
+                    streaming["provider"] = "whisperlive"
+                    streaming["host"] = "127.0.0.1"
+                    streaming["port"] = 9090
+                    streaming["backend"] = "faster_whisper"
+                    streaming["model"] = "large-v3-turbo"
+                    streaming["max_clients"] = 1
+                    streaming["max_connection_time"] = 900
+                    streaming["single_model"] = True
 
     elif selected == "kittentts":
         # Check if already installed

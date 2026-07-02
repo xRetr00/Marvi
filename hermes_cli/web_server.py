@@ -203,6 +203,37 @@ def _start_desktop_whisperlive() -> tuple["subprocess.Popen | None", Any]:
     return proc, log_file
 
 
+def _warm_desktop_voice_models() -> None:
+    cfg = load_config()
+    if not isinstance(cfg, dict):
+        return
+
+    tts_cfg = cfg.get("tts") or {}
+    if isinstance(tts_cfg, dict) and str(tts_cfg.get("provider") or "").strip().lower() == "qwen3":
+        try:
+            from tools.tts_tool import warm_tts_provider
+
+            warm_tts_provider(tts_cfg)
+            _log.info("Warmed Qwen3 TTS for desktop streaming")
+        except Exception as exc:
+            _log.warning("Could not warm Qwen3 TTS: %s", exc)
+
+    stt_cfg = cfg.get("stt") or {}
+    streaming = (stt_cfg.get("streaming") or {}) if isinstance(stt_cfg, dict) else {}
+    if (
+        isinstance(streaming, dict)
+        and streaming.get("enabled") is True
+        and str(streaming.get("provider") or "").strip().lower() == "nemotron"
+    ):
+        try:
+            from tools.nemotron_streaming_stt import warm_nemotron_stt
+
+            warm_nemotron_stt(stt_cfg)
+            _log.info("Warmed Nemotron streaming STT for desktop")
+        except Exception as exc:
+            _log.warning("Could not warm Nemotron streaming STT: %s", exc)
+
+
 def _resolve_restart_drain_timeout() -> float:
     try:
         from hermes_cli.gateway import _get_restart_drain_timeout
@@ -251,6 +282,7 @@ async def _lifespan(app: "FastAPI"):
             whisperlive_proc, whisperlive_log = _start_desktop_whisperlive()
         except Exception as exc:
             _log.warning("Could not start WhisperLive for desktop STT: %s", exc)
+        threading.Thread(target=_warm_desktop_voice_models, daemon=True, name="desktop-voice-warmup").start()
 
     try:
         yield
@@ -12724,6 +12756,11 @@ async def transcribe_audio_stream_ws(ws: WebSocket) -> None:
     if not await _accept_audio_ws(ws, "audio-transcribe-stream"):
         return
 
+    cfg = load_config()
+    stt_cfg = (cfg.get("stt") or {}) if isinstance(cfg, dict) else {}
+    streaming_cfg = (stt_cfg.get("streaming") or {}) if isinstance(stt_cfg, dict) else {}
+    streaming_provider = str(streaming_cfg.get("provider") or "").strip().lower() if isinstance(streaming_cfg, dict) else ""
+    nemotron_session = None
     chunks: list[bytes] = []
     sample_rate = 16000
     total_bytes = 0
@@ -12742,6 +12779,12 @@ async def transcribe_audio_stream_ws(ws: WebSocket) -> None:
                     await ws.send_json({"type": "error", "error": "Audio recording is too large"})
                     await ws.close(code=1009)
                     return
+                if nemotron_session is not None:
+                    nemotron_session.accept_samples(_float32_samples_from_bytes(chunk))
+                    partial = nemotron_session.drain_text()
+                    if partial:
+                        await ws.send_json({"type": "partial", "text": partial})
+                    continue
                 chunks.append(chunk)
                 continue
 
@@ -12752,9 +12795,25 @@ async def transcribe_audio_stream_ws(ws: WebSocket) -> None:
             event_type = payload.get("type")
             if event_type == "start":
                 sample_rate = int(payload.get("sample_rate") or 16000)
+                if streaming_provider == "nemotron":
+                    if sample_rate != 16000:
+                        await ws.send_json({"type": "error", "error": "Nemotron streaming STT requires 16 kHz mic audio"})
+                        return
+                    from tools.nemotron_streaming_stt import NemotronStreamingSession
+
+                    nemotron_session = NemotronStreamingSession(stt_cfg)
+                    await asyncio.to_thread(nemotron_session.start)
                 await ws.send_json({"type": "ready"})
             elif event_type == "stop":
                 break
+
+        if nemotron_session is not None:
+            partial = nemotron_session.drain_text()
+            if partial:
+                await ws.send_json({"type": "partial", "text": partial})
+            text = await asyncio.to_thread(nemotron_session.finish)
+            await ws.send_json({"type": "final", "text": text})
+            return
 
         if not chunks:
             await ws.send_json({"type": "final", "text": ""})

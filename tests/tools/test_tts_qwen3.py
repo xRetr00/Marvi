@@ -11,6 +11,7 @@ class _FakeQwenModel:
     clone_calls = []
     custom_calls = []
     design_calls = []
+    clone_stream_calls = []
 
     @classmethod
     def from_pretrained(cls, model, **kwargs):
@@ -20,6 +21,10 @@ class _FakeQwenModel:
     def generate_voice_clone(self, **kwargs):
         self.clone_calls.append(kwargs)
         return [[0.0, 0.1, -0.1]], 24000
+
+    def generate_voice_clone_streaming(self, **kwargs):
+        self.clone_stream_calls.append(kwargs)
+        yield [[0.0, 0.1, -0.1]], 24000, {"ttfa": 0.1}
 
     def generate_custom_voice(self, **kwargs):
         self.custom_calls.append(kwargs)
@@ -35,6 +40,7 @@ def _install_fake_qwen(monkeypatch):
     _FakeQwenModel.clone_calls = []
     _FakeQwenModel.custom_calls = []
     _FakeQwenModel.design_calls = []
+    _FakeQwenModel.clone_stream_calls = []
     monkeypatch.setitem(
         sys.modules,
         "faster_qwen3_tts",
@@ -108,3 +114,25 @@ def test_qwen3_design_mode_passes_instruction(tmp_path, monkeypatch):
     assert data["success"] is True
     assert _FakeQwenModel.loaded[0][0] == "Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign"
     assert _FakeQwenModel.design_calls[0]["instruct"] == "warm narrator"
+
+
+def test_qwen3_streaming_chunks_start_audio_and_end(monkeypatch):
+    _install_fake_qwen(monkeypatch)
+    cfg = {
+        "provider": "qwen3",
+        "qwen3": {
+            "model": "Qwen/Qwen3-TTS-12Hz-0.6B-Base",
+            "mode": "clone",
+            "ref_audio": "ref.wav",
+            "ref_text": "reference words",
+            "chunk_size": 1,
+        },
+    }
+    monkeypatch.setattr(tts_tool, "_load_tts_config", lambda: cfg)
+
+    events = list(tts_tool.stream_text_to_speech_chunks("**hello**"))
+
+    assert events[0] == {"type": "start", "sample_rate": 24000, "provider": "qwen3"}
+    assert events[1]["type"] == "chunk"
+    assert events[-1] == {"type": "end", "provider": "qwen3"}
+    assert _FakeQwenModel.clone_stream_calls[0]["chunk_size"] == 1

@@ -6579,3 +6579,28 @@ class TestDesktopWhisperLiveStartup:
             assert started["cmd"] == ["python", "-c", "pass"]
 
         assert started["terminated"] is True
+
+    def test_warms_qwen_and_nemotron_when_desktop_voice_pipeline_selected(self, monkeypatch):
+        import hermes_cli.web_server as web_server
+
+        warmed = []
+        monkeypatch.setattr(
+            web_server,
+            "load_config",
+            lambda: {
+                "tts": {"provider": "qwen3", "qwen3": {}},
+                "stt": {
+                    "streaming": {
+                        "enabled": True,
+                        "provider": "nemotron",
+                        "model": "nvidia/nemotron-speech-streaming-en-0.6b",
+                    }
+                },
+            },
+        )
+        monkeypatch.setattr("tools.tts_tool.warm_tts_provider", lambda cfg: warmed.append(("tts", cfg)) or True)
+        monkeypatch.setattr("tools.nemotron_streaming_stt.warm_nemotron_stt", lambda cfg: warmed.append(("stt", cfg)) or True)
+
+        web_server._warm_desktop_voice_models()
+
+        assert [kind for kind, _cfg in warmed] == ["tts", "stt"]

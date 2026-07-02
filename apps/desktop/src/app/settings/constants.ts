@@ -229,9 +229,18 @@ export const ENUM_OPTIONS: Record<string, string[]> = {
   'stt.local.model': ['tiny', 'base', 'small', 'medium', 'large-v3', 'large-v3-turbo'],
   'stt.local.device': ['auto', 'cuda', 'cpu'],
   'stt.local.compute_type': ['auto', 'float16', 'int8_float16', 'int8'],
-  'stt.streaming.provider': ['', 'whisperlive'],
+  'stt.streaming.provider': ['', 'whisperlive', 'nemotron'],
   'stt.streaming.backend': ['faster_whisper', 'tensorrt', 'openvino'],
-  'stt.streaming.model': ['tiny', 'base', 'small', 'medium', 'large-v3', 'large-v3-turbo'],
+  'stt.streaming.model': [
+    'tiny',
+    'base',
+    'small',
+    'medium',
+    'large-v3',
+    'large-v3-turbo',
+    'nvidia/nemotron-speech-streaming-en-0.6b',
+    'nvidia/nemotron-3.5-asr-streaming-0.6b'
+  ],
   'voice.wake_word.provider': ['sherpa_onnx', 'livekit'],
   'voice.wake_word.model': ['kws-en-3.3m', 'livekit-marvi'],
   // Speech-to-text backends — kept in sync with the stt block in
@@ -380,10 +389,11 @@ export const FIELD_LABELS: Record<string, string> = defineFieldCopy({
     },
     streaming: {
       provider: 'Streaming STT Provider',
-      host: 'WhisperLive Host',
-      port: 'WhisperLive Port',
+      host: 'Streaming STT Host',
+      port: 'Streaming STT Port',
       backend: 'WhisperLive Backend',
-      model: 'WhisperLive Model',
+      model: 'Streaming STT Model',
+      lookaheadTokens: 'Nemotron Lookahead Tokens',
       maxClients: 'WhisperLive Max Clients',
       maxConnectionTime: 'WhisperLive Max Seconds',
       singleModel: 'WhisperLive Single Model'
@@ -556,7 +566,7 @@ export const FIELD_DESCRIPTIONS: Record<string, string> = defineFieldCopy({
       refAudio: 'Reference audio file used when mode is clone.',
       refText: 'Transcript of the reference audio used for voice cloning.',
       instruct: 'Style prompt used when mode is design.',
-      chunkSize: 'Lower values reduce time to first audio; 2 is tuned for fast streaming.'
+      chunkSize: 'Lower values reduce time to first audio; 1 is the aggressive streaming setting.'
     },
     xai: {
       voiceId: 'xAI voice ID (e.g. eve) or a custom voice ID.',
@@ -575,9 +585,10 @@ export const FIELD_DESCRIPTIONS: Record<string, string> = defineFieldCopy({
       vadFilter: 'Skip non-speech sections before transcription.'
     },
     streaming: {
-      provider: 'Optional live STT backend. WhisperLive gives lower latency than batch file transcription.',
+      provider: 'Optional live STT backend. Nemotron runs locally in-process; WhisperLive runs as the managed Whisper server.',
       backend: 'Use faster_whisper for the built-in GPU path. TensorRT needs prebuilt engines.',
-      model: 'WhisperLive model or faster-whisper model path.'
+      model: 'WhisperLive model, faster-whisper model path, or Nemotron Hugging Face model id.',
+      lookaheadTokens: 'Nemotron latency/accuracy setting: 0=80ms, 1=160ms, 6=560ms, 13=1120ms.'
     },
     elevenlabs: {
       languageCode: 'Optional ISO-639-3 language code. Blank lets ElevenLabs auto-detect.'
@@ -703,6 +714,7 @@ export const SECTIONS: DesktopConfigSection[] = [
       'stt.streaming.port',
       'stt.streaming.backend',
       'stt.streaming.model',
+      'stt.streaming.lookahead_tokens',
       'stt.streaming.max_clients',
       'stt.streaming.max_connection_time',
       'stt.streaming.single_model',

@@ -165,13 +165,16 @@ describe('settings helpers', () => {
       expect(enumOptionsFor('stt.local.model', 'large-v3-turbo', config)).toContain('large-v3-turbo')
       expect(enumOptionsFor('stt.local.device', 'cuda', config)).toEqual(['auto', 'cuda', 'cpu'])
       expect(enumOptionsFor('stt.local.compute_type', 'float16', config)).toContain('int8_float16')
-      expect(enumOptionsFor('stt.streaming.provider', 'whisperlive', config)).toEqual(['', 'whisperlive'])
+      expect(enumOptionsFor('stt.streaming.provider', 'whisperlive', config)).toEqual(['', 'whisperlive', 'nemotron'])
       expect(enumOptionsFor('stt.streaming.backend', 'faster_whisper', config)).toEqual([
         'faster_whisper',
         'tensorrt',
         'openvino'
       ])
       expect(enumOptionsFor('stt.streaming.model', 'large-v3-turbo', config)).toContain('large-v3-turbo')
+      expect(enumOptionsFor('stt.streaming.model', 'nvidia/nemotron-speech-streaming-en-0.6b', config)).toContain(
+        'nvidia/nemotron-speech-streaming-en-0.6b'
+      )
       expect(enumOptionsFor('tts.openai.model', 'gpt-4o-mini-tts', config)).toContain('tts-1-hd')
       expect(enumOptionsFor('tts.neutts.device', 'cpu', config)).toEqual(['cpu', 'cuda', 'mps'])
       expect(enumOptionsFor('tts.qwen3.mode', 'clone', config)).toEqual(['clone', 'custom', 'design'])

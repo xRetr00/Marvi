@@ -192,17 +192,19 @@ export function useWakeWord({
 
   const scheduleRestart = useCallback(() => {
     if (!enabledRef.current || busyRef.current) {
+      debugLog('restart skipped (disabled or busy)')
       setStatus('idle')
 
       return
     }
 
+    debugLog('restart scheduled', { cooldownMs: wakeConfig.cooldownMs })
     restartTimerRef.current = window.setTimeout(() => {
       restartTimerRef.current = null
       setStatus('idle')
       setStartTick(tick => tick + 1)
     }, wakeConfig.cooldownMs)
-  }, [wakeConfig.cooldownMs])
+  }, [debugLog, wakeConfig.cooldownMs])
 
   const finishCapture = useCallback(async () => {
     if (stoppingRef.current) {
@@ -309,6 +311,7 @@ export function useWakeWord({
     const start = async () => {
       try {
         setStatus('arming')
+        debugLog('arming')
 
         const session = await openWakeWordSession({
           debug: wakeConfig.debug,
@@ -395,9 +398,11 @@ export function useWakeWord({
           silenceMs: 1_250
         })
         setStatus('armed')
+        debugLog('armed')
       } catch (error) {
         if (!cancelled) {
           startupFailedRef.current = true
+          debugLog('startup failed', { error: String(error) })
           notifyError(error, voiceCopy.streamingUnavailable)
           clearTimers()
           stopWakeSession()

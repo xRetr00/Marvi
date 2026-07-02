@@ -5910,17 +5910,21 @@ function glowOverlayUrl() {
 
 function spawnGlowOverlayWindow() {
   const display = screen.getDisplayNearestPoint(screen.getCursorScreenPoint())
-  // Use the work area, not full bounds, so the glow sits inside the usable
-  // screen and never fights the Windows taskbar / macOS Dock + menu bar (which
-  // render above even screen-saver-level windows and would otherwise clip the
-  // bottom of the glow).
+  // Small transparent "stage" centered at the top of the work area. The Dynamic
+  // Island pill paints inside it and animates (grows downward from the top); the
+  // window itself stays a fixed, mostly-transparent, click-through stage so we
+  // never resize the OS window mid-animation (which is janky on Windows).
   const area = display.workArea
+  const STAGE_W = 460
+  const STAGE_H = 240
+  const stageX = Math.round(area.x + (area.width - STAGE_W) / 2)
+  const stageY = Math.round(area.y + 8)
 
   const win = new BrowserWindow({
-    x: area.x,
-    y: area.y,
-    width: area.width,
-    height: area.height,
+    x: stageX,
+    y: stageY,
+    width: STAGE_W,
+    height: STAGE_H,
     frame: false,
     transparent: true,
     resizable: false,

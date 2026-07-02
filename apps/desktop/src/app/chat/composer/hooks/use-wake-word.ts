@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { useI18n } from '@/i18n'
 import { openStreamingTranscription, type StreamingTranscriptionSession } from '@/lib/streaming-transcription'
+import { vpLog } from '@/lib/voice-presence-log'
 import {
   normalizeWakeWordConfig,
   openWakeWordSession,
@@ -124,6 +125,7 @@ export function useWakeWord({
       }
 
       console.info(`[wake-word] ${message}`, detail ?? {})
+      vpLog('wake', message, detail)
     },
     [wakeConfig.debug]
   )

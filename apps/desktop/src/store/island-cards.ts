@@ -1,6 +1,7 @@
 import { atom } from 'nanostores'
 
 import { createIslandQueue, type IslandCard, type IslandQueueSnapshot } from '@/lib/island-queue'
+import { vpLog } from '@/lib/voice-presence-log'
 
 import { $presenceCardsEnabled, $presenceEnabled } from './voice-presence-settings'
 
@@ -16,10 +17,12 @@ export function showIslandCard(card: IslandCard): void {
     return
   }
 
+  vpLog('card', 'show', { kind: card.kind, id: card.id })
   queue.show(card, { force: card.kind === 'approval' })
 }
 
 export function dismissIslandCard(id?: string): void {
+  vpLog('card', 'dismiss', { id })
   queue.dismiss(id)
 }
 

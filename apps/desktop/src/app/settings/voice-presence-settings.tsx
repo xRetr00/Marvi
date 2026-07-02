@@ -10,9 +10,11 @@ import {
   $glowEnabled,
   $presenceCardsEnabled,
   $presenceEnabled,
+  $voicePresenceDebug,
   setGlowEnabled,
   setPresenceCardsEnabled,
-  setPresenceEnabled
+  setPresenceEnabled,
+  setVoicePresenceDebug
 } from '@/store/voice-presence-settings'
 
 import { ListRow, SectionHeading, SettingsContent } from './primitives'
@@ -53,6 +55,7 @@ export function VoicePresenceSettings({ onOpenVoiceConfig }: { onOpenVoiceConfig
   const presenceEnabled = useStore($presenceEnabled)
   const glowEnabled = useStore($glowEnabled)
   const cardsEnabled = useStore($presenceCardsEnabled)
+  const debugEnabled = useStore($voicePresenceDebug)
 
   return (
     <SettingsContent>
@@ -85,6 +88,13 @@ export function VoicePresenceSettings({ onOpenVoiceConfig }: { onOpenVoiceConfig
         disabled={!presenceEnabled}
         label="Show cards on the presence"
         onChange={setPresenceCardsEnabled}
+      />
+
+      <ToggleRow
+        checked={debugEnabled}
+        description="Print detailed [voice-presence] logs to the developer console for troubleshooting the wake word, island, and cards."
+        label="Debug logs"
+        onChange={setVoicePresenceDebug}
       />
 
       <div className="my-1 h-px bg-border/30" />

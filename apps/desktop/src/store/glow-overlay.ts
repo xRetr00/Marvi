@@ -1,3 +1,5 @@
+import { vpLog } from '@/lib/voice-presence-log'
+
 import { $islandCards } from './island-cards'
 import { $voiceState } from './voice-presence'
 import { $glowEnabled, $presenceEnabled } from './voice-presence-settings'
@@ -27,6 +29,7 @@ function ensureOpen(): void {
   }
 
   open = true
+  vpLog('window', 'open')
   void window.hermesDesktop?.glowOverlay
     ?.open()
     .then(() => {
@@ -50,6 +53,7 @@ function scheduleClose(): void {
   closeTimer = setTimeout(() => {
     closeTimer = null
     open = false
+    vpLog('window', 'close')
     void window.hermesDesktop?.glowOverlay?.close()
   }, CLOSE_LINGER_MS)
 }

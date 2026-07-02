@@ -19,6 +19,7 @@ import { getSessionMessages, triggerCronJob } from '../hermes'
 import { type ChatMessage, chatMessageText, preserveLocalAssistantErrors, toChatMessages } from '../lib/chat-messages'
 import { storedSessionIdForNotification } from '../lib/session-ids'
 import { latestSessionTodos } from '../lib/todos'
+import { vpLog } from '../lib/voice-presence-log'
 import { setCronFocusJobId } from '../store/cron'
 import { initGlowOverlayBridge } from '../store/glow-overlay'
 import { dismissIslandCard, setIslandCardSubmitHandler } from '../store/island-cards'
@@ -782,6 +783,7 @@ export function DesktopController() {
   })
 
   useEffect(() => {
+    vpLog('wake', 'status', { status: wake.status })
     publishWakeStatus(wake.status)
   }, [wake.status])
 

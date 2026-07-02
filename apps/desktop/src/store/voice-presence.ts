@@ -1,5 +1,7 @@
 import { atom, computed } from 'nanostores'
 
+import { vpLog } from '@/lib/voice-presence-log'
+
 export type VoicePhase = 'off' | 'wake' | 'listening' | 'transcribing' | 'thinking' | 'speaking'
 
 export interface VoiceState {
@@ -67,3 +69,13 @@ export function publishConversation(next: { active: boolean; status: VoiceStatus
 export function publishWakeStatus(status: WakeStatus): void {
   $wakeStatus.set(status)
 }
+
+// Log phase transitions only (not every level/tick) so the debug log stays
+// readable. Subscribed once at module load.
+let _lastPhase: VoicePhase | null = null
+$voiceState.subscribe(s => {
+  if (s.phase !== _lastPhase) {
+    _lastPhase = s.phase
+    vpLog('phase', s.phase)
+  }
+})

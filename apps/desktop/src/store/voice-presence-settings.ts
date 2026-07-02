@@ -12,19 +12,24 @@ import { persistBoolean, storedBoolean } from '@/lib/storage'
  *  - glowEnabled: the Apple-Intelligence edge glow visual. Off keeps wake word
  *    working but never opens the glow window.
  *  - cardsEnabled: whether show_card / approval cards surface on the presence.
+ *  - debug: print detailed [voice-presence] logs to the console for
+ *    troubleshooting the wake word, island window, and cards.
  */
 
 const PRESENCE_KEY = 'hermes.desktop.voice-presence.enabled.v1'
 const GLOW_KEY = 'hermes.desktop.voice-presence.glow.v1'
 const CARDS_KEY = 'hermes.desktop.voice-presence.cards.v1'
+const DEBUG_KEY = 'hermes.desktop.voice-presence.debug.v1'
 
 export const $presenceEnabled = atom(storedBoolean(PRESENCE_KEY, true))
 export const $glowEnabled = atom(storedBoolean(GLOW_KEY, true))
 export const $presenceCardsEnabled = atom(storedBoolean(CARDS_KEY, true))
+export const $voicePresenceDebug = atom(storedBoolean(DEBUG_KEY, false))
 
 $presenceEnabled.subscribe(value => persistBoolean(PRESENCE_KEY, value))
 $glowEnabled.subscribe(value => persistBoolean(GLOW_KEY, value))
 $presenceCardsEnabled.subscribe(value => persistBoolean(CARDS_KEY, value))
+$voicePresenceDebug.subscribe(value => persistBoolean(DEBUG_KEY, value))
 
 export function setPresenceEnabled(value: boolean): void {
   $presenceEnabled.set(value)
@@ -36,4 +41,8 @@ export function setGlowEnabled(value: boolean): void {
 
 export function setPresenceCardsEnabled(value: boolean): void {
   $presenceCardsEnabled.set(value)
+}
+
+export function setVoicePresenceDebug(value: boolean): void {
+  $voicePresenceDebug.set(value)
 }

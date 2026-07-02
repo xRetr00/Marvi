@@ -70,6 +70,14 @@ contextBridge.exposeInMainWorld('hermesDesktop', {
       const listener = (_event, payload) => callback(payload)
       ipcRenderer.on('hermes:island:card-action', listener)
       return () => ipcRenderer.removeListener('hermes:island:card-action', listener)
+    },
+    // Make the island window focusable so the command bar can capture keys.
+    setFocusable: focusable => ipcRenderer.send('hermes:island:set-focusable', focusable),
+    // Global-hotkey summon: main tells the island renderer to open its command bar.
+    onSummon: callback => {
+      const listener = () => callback()
+      ipcRenderer.on('hermes:island:summon', listener)
+      return () => ipcRenderer.removeListener('hermes:island:summon', listener)
     }
   },
   getBootProgress: () => ipcRenderer.invoke('hermes:boot-progress:get'),

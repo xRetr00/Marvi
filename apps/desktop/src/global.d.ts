@@ -65,6 +65,8 @@ declare global {
         onCardAction: (
           callback: (payload: { type: 'dismiss'; id?: string } | { type: 'submit'; text: string }) => void
         ) => () => void
+        setFocusable: (focusable: boolean) => void
+        onSummon: (callback: () => void) => () => void
       }
       getBootProgress: () => Promise<DesktopBootProgress>
       getConnectionConfig: (profile?: null | string) => Promise<DesktopConnectionConfig>

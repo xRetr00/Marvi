@@ -6,6 +6,7 @@ const {
   Tray,
   clipboard,
   dialog,
+  globalShortcut,
   ipcMain,
   nativeImage,
   nativeTheme,
@@ -5900,6 +5901,10 @@ function closePetOverlay() {
 // it; it never needs clicks (ignore-mouse stays on). Loaded via `?win=island`.
 let islandWindow = null
 
+// Global "summon Marvi from anywhere" hotkey. Alt+Space collides with the
+// Windows system menu, so we use a chord that's free on both platforms.
+const SUMMON_ACCELERATOR = 'Control+Shift+Space'
+
 function islandWindowUrl() {
   if (DEV_SERVER) {
     return `${DEV_SERVER.endsWith('/') ? DEV_SERVER.slice(0, -1) : DEV_SERVER}/?win=island#/`
@@ -5994,6 +5999,21 @@ function closeIslandWindow() {
   islandWindow = null
 }
 
+// Global-hotkey entry point: summon the island from any app, make it
+// focusable/clickable, and let the renderer know to open its command bar.
+function summonIsland() {
+  const win = openIslandWindow()
+  if (!win || win.isDestroyed()) {
+    return
+  }
+  win.setFocusable(true)
+  win.setIgnoreMouseEvents(false)
+  win.showInactive()
+  win.setAlwaysOnTop(true, IS_MAC ? 'floating' : 'screen-saver')
+  win.focus()
+  win.webContents.send('hermes:island:summon')
+}
+
 ipcMain.handle('hermes:island:open', async () => {
   openIslandWindow()
   return { ok: true }
@@ -6031,6 +6051,17 @@ ipcMain.on('hermes:island:card-action', (_event, payload) => {
 ipcMain.on('hermes:island:set-ignore-mouse', (_event, ignore) => {
   if (islandWindow && !islandWindow.isDestroyed()) {
     islandWindow.setIgnoreMouseEvents(Boolean(ignore), { forward: true })
+  }
+})
+// The island is focusable:false by default (see spawnIslandWindow) so it never
+// steals focus outside the command bar. The renderer flips this on while the
+// bar is open (mirrors hermes:pet-overlay:set-focusable) and off when it closes.
+ipcMain.on('hermes:island:set-focusable', (_event, focusable) => {
+  if (islandWindow && !islandWindow.isDestroyed()) {
+    islandWindow.setFocusable(Boolean(focusable))
+    if (focusable) {
+      islandWindow.focus()
+    }
   }
 })
 
@@ -7693,6 +7724,15 @@ app.whenReady().then(() => {
   createWindow()
   createTray()
 
+  // Global "summon Marvi" hotkey — reaches the agent from any app. Guard
+  // against double-registration in case whenReady's callback ever re-runs.
+  if (!globalShortcut.isRegistered(SUMMON_ACCELERATOR)) {
+    const registered = globalShortcut.register(SUMMON_ACCELERATOR, summonIsland)
+    if (!registered) {
+      rememberLog(`[summon] failed to register global shortcut ${SUMMON_ACCELERATOR} (in use by another app)`)
+    }
+  }
+
   // Win/Linux cold start: the launching hermes:// URL is in our own argv.
   const _coldStartLink = _extractDeepLink(process.argv)
   if (_coldStartLink) handleDeepLink(_coldStartLink)
@@ -7734,6 +7774,8 @@ function configureSpellChecker() {
 
 app.on('before-quit', () => {
   isQuitting = true
+  // Release the global summon hotkey so it doesn't linger after quit.
+  globalShortcut.unregisterAll()
   // The always-on-top overlay isn't a "real" app window; close it so a stray
   // pet can't keep the process alive or float over a quit app.
   closePetOverlay()

@@ -16,6 +16,7 @@ const INITIAL_STATE: VoiceState = { phase: 'off', level: 0, muted: false }
 export function VoiceIslandApp() {
   const [state, setState] = useState<VoiceState>(INITIAL_STATE)
   const [card, setCard] = useState<IslandCard | null>(null)
+  const [activity, setActivity] = useState<string | null>(null)
 
   useEffect(() => {
     const unsub = window.hermesDesktop?.islandOverlay?.onState(payload => setState(payload))
@@ -24,6 +25,11 @@ export function VoiceIslandApp() {
 
   useEffect(() => {
     const unsub = window.hermesDesktop?.islandOverlay?.onCard(next => setCard(next))
+    return () => unsub?.()
+  }, [])
+
+  useEffect(() => {
+    const unsub = window.hermesDesktop?.islandOverlay?.onActivity(next => setActivity(next))
     return () => unsub?.()
   }, [])
 
@@ -59,7 +65,7 @@ export function VoiceIslandApp() {
       }}
     >
       <div style={{ pointerEvents: interactive ? 'auto' : 'none' }}>
-        <DynamicIsland state={state} card={card} onCardAction={handleCardAction} />
+        <DynamicIsland state={state} card={card} activity={activity} onCardAction={handleCardAction} />
       </div>
     </div>
   )

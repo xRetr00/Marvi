@@ -1,5 +1,6 @@
 import { vpLog } from '@/lib/voice-presence-log'
 
+import { $islandActivity } from './island-activity'
 import { $islandCards } from './island-cards'
 import { $voiceState } from './voice-presence'
 import { $islandEnabled, $presenceEnabled } from './voice-presence-settings'
@@ -15,6 +16,7 @@ import { $islandEnabled, $presenceEnabled } from './voice-presence-settings'
 
 let unsub: (() => void) | null = null
 let unsubCards: (() => void) | null = null
+let unsubActivity: (() => void) | null = null
 let unsubIsland: (() => void) | null = null
 let unsubPresence: (() => void) | null = null
 let open = false
@@ -38,6 +40,7 @@ function ensureOpen(): void {
       // hand it a first frame once it actually exists.
       window.hermesDesktop?.islandOverlay?.pushState($voiceState.get())
       window.hermesDesktop?.islandOverlay?.pushCard($islandCards.get().active)
+      window.hermesDesktop?.islandOverlay?.pushActivity($islandActivity.get())
     })
     .catch(() => {
       // Open failed (IPC hiccup / window destroyed) — clear the flag so the
@@ -84,10 +87,11 @@ function evaluate(): void {
   if (open) {
     window.hermesDesktop?.islandOverlay?.pushState($voiceState.get())
     window.hermesDesktop?.islandOverlay?.pushCard($islandCards.get().active)
+    window.hermesDesktop?.islandOverlay?.pushActivity($islandActivity.get())
   }
 }
 
-/** Start mirroring $voiceState + cards into the island window. Idempotent. */
+/** Start mirroring $voiceState + cards + activity into the island window. Idempotent. */
 export function initVoiceIslandBridge(): () => void {
   if (unsub || !window.hermesDesktop?.islandOverlay) {
     return () => {}
@@ -95,6 +99,7 @@ export function initVoiceIslandBridge(): () => void {
 
   unsub = $voiceState.subscribe(() => evaluate())
   unsubCards = $islandCards.subscribe(() => evaluate())
+  unsubActivity = $islandActivity.subscribe(() => evaluate())
   unsubIsland = $islandEnabled.subscribe(() => evaluate())
   unsubPresence = $presenceEnabled.subscribe(() => evaluate())
 
@@ -103,6 +108,8 @@ export function initVoiceIslandBridge(): () => void {
     unsub = null
     unsubCards?.()
     unsubCards = null
+    unsubActivity?.()
+    unsubActivity = null
     unsubIsland?.()
     unsubIsland = null
     unsubPresence?.()

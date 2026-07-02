@@ -15,6 +15,7 @@ import { clearClarifyRequest, setClarifyRequest } from '@/store/clarify'
 import { setSessionCompacting } from '@/store/compaction'
 import { refreshBackgroundProcesses } from '@/store/composer-status'
 import { $gateway } from '@/store/gateway'
+import { activityLabelForTool, setIslandActivity } from '@/store/island-activity'
 import { dismissIslandCard, showIslandCard } from '@/store/island-cards'
 import { dispatchNativeNotification } from '@/store/native-notifications'
 import { notify } from '@/store/notifications'
@@ -322,6 +323,7 @@ export function useGatewayEventHandler(deps: GatewayEventDeps) {
 
         if (isActiveEvent) {
           setTurnStartedAt(null)
+          setIslandActivity(null)
 
           // Pet beat: a finished turn always celebrates — go straight to the
           // jump, never linger on the run/reason pose. One atom update (clears
@@ -361,6 +363,7 @@ export function useGatewayEventHandler(deps: GatewayEventDeps) {
 
         if (isActiveEvent) {
           setPetActivity({ reasoning: false, toolRunning: true })
+          setIslandActivity(activityLabelForTool(payload?.name))
         }
       } else if (event.type === 'tool.complete') {
         if (payload?.name === 'show_card') {
@@ -391,6 +394,7 @@ export function useGatewayEventHandler(deps: GatewayEventDeps) {
 
           if (isActiveEvent) {
             setPetActivity({ toolRunning: false })
+            setIslandActivity(null)
           }
 
           // A pending clarify blocks the turn, so the first tool.complete after
@@ -649,6 +653,7 @@ export function useGatewayEventHandler(deps: GatewayEventDeps) {
         if (isActiveEvent) {
           setPetActivity({ reasoning: false, toolRunning: false })
           flashPetActivity({ error: true })
+          setIslandActivity(null)
         }
 
         dispatchNativeNotification({

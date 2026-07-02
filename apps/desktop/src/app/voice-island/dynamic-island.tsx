@@ -12,6 +12,9 @@ type CardAction = { type: 'dismiss'; id?: string } | { type: 'submit'; text: str
 interface DynamicIslandProps {
   state: VoiceState
   card: IslandCard | null
+  // Short label for the agent's current tool action (e.g. "Searching the
+  // web"), shown in place of the static phase label while thinking.
+  activity?: string | null
   onCardAction: (payload: CardAction) => void
 }
 
@@ -89,17 +92,21 @@ function resolveView(state: VoiceState, card: IslandCard | null): IslandView {
   return 'idle'
 }
 
-export function DynamicIsland({ state, card, onCardAction }: DynamicIslandProps) {
+export function DynamicIsland({ state, card, activity, onCardAction }: DynamicIslandProps) {
   const reducedMotion = useReducedMotion()
   const view = resolveView(state, card)
   const active = state.phase === 'listening' || state.phase === 'speaking'
   const color = phaseColor(state.phase)
-  const label = phaseLabel(state.phase)
+  // While thinking, narrate the agent's current tool action instead of the
+  // static "Thinking" label — falls back to it once activity clears (between
+  // tools) or for phases that don't carry an activity.
+  const narrating = (state.phase === 'thinking' || state.phase === 'transcribing') && Boolean(activity)
+  const label = narrating ? activity! : phaseLabel(state.phase)
 
   const contentTransition = reducedMotion ? CONTENT_TRANSITION_INSTANT : CONTENT_TRANSITION_MOTION
   const springTransition = reducedMotion ? CONTENT_TRANSITION_INSTANT : SPRING
 
-  const contentKey = card ? `card:${card.id}` : `state:${view}:${state.phase}`
+  const contentKey = card ? `card:${card.id}` : `state:${view}:${state.phase}:${narrating ? label : ''}`
 
   const minWidth = view === 'seed' ? SEED_MIN_WIDTH : view === 'idle' ? IDLE_MIN_WIDTH : undefined
   const minHeight = view === 'seed' ? SEED_HEIGHT : IDLE_HEIGHT

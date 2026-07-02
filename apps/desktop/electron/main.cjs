@@ -6014,6 +6014,12 @@ ipcMain.on('hermes:island:card', (_event, payload) => {
     islandWindow.webContents.send('hermes:island:card', payload)
   }
 })
+// Main renderer → island window: the current activity label (or null to clear).
+ipcMain.on('hermes:island:activity', (_event, payload) => {
+  if (islandWindow && !islandWindow.isDestroyed()) {
+    islandWindow.webContents.send('hermes:island:activity', payload)
+  }
+})
 // Island window → main renderer: a card action (dismiss / submit text).
 ipcMain.on('hermes:island:card-action', (_event, payload) => {
   if (mainWindow && !mainWindow.isDestroyed()) {

@@ -57,6 +57,8 @@ declare global {
         pushState: (payload: VoiceState) => void
         onState: (callback: (payload: VoiceState) => void) => () => void
         pushCard: (card: IslandCard | null) => void
+        pushActivity: (label: string | null) => void
+        onActivity: (callback: (label: string | null) => void) => () => void
         setIgnoreMouse: (ignore: boolean) => void
         cardAction: (payload: { type: 'dismiss'; id?: string } | { type: 'submit'; text: string }) => void
         onCard: (callback: (card: IslandCard | null) => void) => () => void

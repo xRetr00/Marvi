@@ -116,9 +116,10 @@ export function useComposerVoice({
       active: voiceConversationActive,
       status: conversation.status,
       level: conversation.level,
-      muted: conversation.muted
+      muted: conversation.muted,
+      caption: conversation.caption
     })
-  }, [conversation.level, conversation.muted, conversation.status, voiceConversationActive])
+  }, [conversation.caption, conversation.level, conversation.muted, conversation.status, voiceConversationActive])
 
   // The `composer.voice` hotkey (Ctrl+B) toggles the conversation. Starting
   // with STT unconfigured lets the conversation surface its own "configure

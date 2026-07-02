@@ -33,21 +33,21 @@ describe('deriveVoicePhase', () => {
 
 describe('$voiceState (computed)', () => {
   afterEach(() => {
-    $conversation.set({ active: false, status: 'idle', level: 0, muted: false })
+    $conversation.set({ active: false, status: 'idle', level: 0, muted: false, caption: null })
     $wakeStatus.set('idle')
   })
 
   it('reflects the conversation slice when active', () => {
-    publishConversation({ active: true, status: 'listening', level: 0.5, muted: false })
-    expect($voiceState.get()).toEqual({ phase: 'listening', level: 0.5, muted: false })
+    publishConversation({ active: true, status: 'listening', level: 0.5, muted: false, caption: 'hi' })
+    expect($voiceState.get()).toEqual({ phase: 'listening', level: 0.5, muted: false, caption: 'hi' })
   })
 
   it('lights as wake from the wake-word slice', () => {
     publishWakeStatus('woken')
-    expect($voiceState.get()).toEqual({ phase: 'wake', level: 0, muted: false })
+    expect($voiceState.get()).toEqual({ phase: 'wake', level: 0, muted: false, caption: null })
   })
 
   it('is off when both slices are idle', () => {
-    expect($voiceState.get()).toEqual({ phase: 'off', level: 0, muted: false })
+    expect($voiceState.get()).toEqual({ phase: 'off', level: 0, muted: false, caption: null })
   })
 })

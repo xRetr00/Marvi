@@ -41,6 +41,7 @@ export function useVoiceConversation({
   const { handle, level } = useMicRecorder(voiceCopy)
   const [status, setStatus] = useState<ConversationStatus>('idle')
   const [muted, setMuted] = useState(false)
+  const [caption, setCaption] = useState<string | null>(null)
   const turnTimeoutRef = useRef<number | null>(null)
   const pendingStartRef = useRef(false)
   const turnClosingRef = useRef(false)
@@ -239,6 +240,7 @@ export function useVoiceConversation({
   const speak = useCallback(
     async (text: string) => {
       setStatus('speaking')
+      setCaption(text)
 
       try {
         await playSpeechText(text, { source: 'voice-conversation' })
@@ -251,6 +253,7 @@ export function useVoiceConversation({
         } else {
           setStatus('idle')
         }
+        setCaption(null)
       }
     },
     [voiceCopy.playbackFailed]
@@ -296,6 +299,7 @@ export function useVoiceConversation({
     consumePendingResponse()
     setMuted(false)
     setStatus('idle')
+    setCaption(null)
   }, [consumePendingResponse, handle])
 
   const stopTurn = useCallback(() => {
@@ -416,5 +420,5 @@ export function useVoiceConversation({
     wasEnabledRef.current = enabled
   }, [enabled, end, start])
 
-  return { end, level, muted, start, status, stopTurn, toggleMute }
+  return { caption, end, level, muted, start, status, stopTurn, toggleMute }
 }

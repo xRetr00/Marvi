@@ -217,6 +217,9 @@ export function DynamicIsland({
                   <StateDot color={color} active={active} reducedMotion={Boolean(reducedMotion)} />
                   <span style={{ fontSize: 13, fontWeight: 500, color: 'rgba(255,255,255,0.78)' }}>{label}</span>
                 </div>
+                {state.phase === 'speaking' && state.caption ? (
+                  <SpeakingCaption caption={state.caption} reducedMotion={Boolean(reducedMotion)} />
+                ) : null}
               </div>
             )}
           </motion.div>
@@ -264,6 +267,37 @@ function StateDot({ color, active, reducedMotion }: { color: string; active: boo
         flexShrink: 0
       }}
     />
+  )
+}
+
+// Live caption of the words Marvi is currently speaking (TTS), shown under
+// the waveform while `state.phase === 'speaking'`. Clamped to two lines so a
+// long sentence doesn't blow out the pill; fades gently on each chunk change.
+function SpeakingCaption({ caption, reducedMotion }: { caption: string; reducedMotion: boolean }) {
+  return (
+    <AnimatePresence mode="wait">
+      <motion.p
+        key={caption}
+        initial={reducedMotion ? false : { opacity: 0 }}
+        animate={{ opacity: 1 }}
+        exit={reducedMotion ? undefined : { opacity: 0 }}
+        transition={reducedMotion ? CONTENT_TRANSITION_INSTANT : CONTENT_TRANSITION_MOTION}
+        style={{
+          margin: 0,
+          maxWidth: 280,
+          fontSize: 13,
+          lineHeight: 1.4,
+          color: '#e6e6f0',
+          textAlign: 'center',
+          display: '-webkit-box',
+          WebkitLineClamp: 2,
+          WebkitBoxOrient: 'vertical',
+          overflow: 'hidden'
+        }}
+      >
+        {caption}
+      </motion.p>
+    </AnimatePresence>
   )
 }
 

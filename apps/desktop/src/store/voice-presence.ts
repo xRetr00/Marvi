@@ -9,6 +9,8 @@ export interface VoiceState {
   /** Live mic amplitude 0..1 from the recorder; drives island reactivity. */
   level: number
   muted: boolean
+  /** The TTS text currently being spoken, for the island's live caption. Null when not speaking. */
+  caption: string | null
 }
 
 /** Conversation status from use-voice-conversation.ts. */
@@ -43,11 +45,12 @@ export function deriveVoicePhase(args: {
 }
 
 /** Conversation inputs, published by the composer (owns useVoiceConversation). */
-export const $conversation = atom<{ active: boolean; status: VoiceStatus; level: number; muted: boolean }>({
+export const $conversation = atom<{ active: boolean; status: VoiceStatus; level: number; muted: boolean; caption: string | null }>({
   active: false,
   status: 'idle',
   level: 0,
-  muted: false
+  muted: false,
+  caption: null
 })
 
 /** Wake-word status, published by chat/index.tsx (owns useWakeWord). */
@@ -57,11 +60,12 @@ export const $wakeStatus = atom<WakeStatus>('idle')
 export const $voiceState = computed([$conversation, $wakeStatus], (conv, wakeStatus): VoiceState => ({
   phase: deriveVoicePhase({ active: conv.active, voiceStatus: conv.status, wakeStatus }),
   level: conv.level,
-  muted: conv.muted
+  muted: conv.muted,
+  caption: conv.caption
 }))
 
 /** Publish the conversation slice (called from the composer). */
-export function publishConversation(next: { active: boolean; status: VoiceStatus; level: number; muted: boolean }): void {
+export function publishConversation(next: { active: boolean; status: VoiceStatus; level: number; muted: boolean; caption: string | null }): void {
   $conversation.set(next)
 }
 

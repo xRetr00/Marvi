@@ -1,5 +1,7 @@
 """Tests for local wake-word helpers."""
 
+import json
+
 import pytest
 
 
@@ -122,6 +124,39 @@ def test_livekit_spotter_loads_onnx_models_from_directory(monkeypatch, tmp_path)
     assert [path.name for path in captured["models"]] == ["hey_marvi.onnx", "marvy.onnx"]
     assert spotter.accept_waveform([0.1, 0.2]) == ""
     assert spotter.accept_waveform([0.1] * 32000) == "marvy"
+
+
+def test_livekit_spotter_writes_debug_score_telemetry(monkeypatch, tmp_path):
+    from tools import streaming_stt
+    from tools.streaming_stt import LiveKitWakeWordSpotter, WakeWordConfig
+
+    model_dir = tmp_path / "models"
+    model_dir.mkdir()
+    (model_dir / "marvi.onnx").write_text("x", encoding="utf-8")
+    scores = [{"marvi": 0.4, "marvy": 0.3}, {"marvi": 0.9, "marvy": 0.2}]
+
+    class FakeWakeWordModel:
+        def __init__(self, models):
+            self.models = models
+
+        def predict(self, _samples):
+            return scores.pop(0)
+
+    monkeypatch.setattr(streaming_stt, "_import_livekit_wakeword_model", lambda: FakeWakeWordModel)
+    monkeypatch.setattr(streaming_stt, "get_hermes_home", lambda: tmp_path)
+    spotter = LiveKitWakeWordSpotter(
+        WakeWordConfig(enabled=True, provider="livekit", model=str(model_dir), threshold=0.5, debug=True)
+    )
+
+    assert spotter.accept_waveform([0.1] * 32000) == ""
+    assert spotter.accept_waveform([0.1] * 32000) == "marvi"
+
+    log_path = tmp_path / "logs" / "wakeword-livekit.jsonl"
+    events = [json.loads(line) for line in log_path.read_text(encoding="utf-8").splitlines()]
+    assert [event["decision"] for event in events] == ["ignored", "passed"]
+    assert events[0]["scores"]["marvi"] == 0.4
+    assert events[1]["label"] == "marvi"
+    assert events[1]["threshold"] == 0.5
 
 
 def test_wake_word_factory_rejects_disabled_config():

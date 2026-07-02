@@ -8,6 +8,7 @@ sherpa-onnx is imported only when wake-word detection starts.
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
+from datetime import datetime, timezone
 import hashlib
 import json
 import logging
@@ -22,7 +23,7 @@ import urllib.request
 from pathlib import Path
 from typing import Any, Callable, Optional
 
-from hermes_constants import get_hermes_dir
+from hermes_constants import get_hermes_dir, get_hermes_home
 
 logger = logging.getLogger(__name__)
 
@@ -54,6 +55,7 @@ _SHERPA_KWS_EN_REPO_ARCHIVE = (
     "sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01.tar.bz2"
 )
 _SHERPA_NATIVE_PROBE_TIMEOUT_SECONDS = 10
+_WAKEWORD_TELEMETRY_LOG = "wakeword-livekit.jsonl"
 
 
 @dataclass(frozen=True)
@@ -445,8 +447,10 @@ class LiveKitWakeWordSpotter:
     def __init__(self, cfg: WakeWordConfig):
         self.cfg = cfg
         WakeWordModel = _import_livekit_wakeword_model()
-        self.model = WakeWordModel(models=resolve_livekit_wakeword_models(cfg))
+        self._model_paths = resolve_livekit_wakeword_models(cfg)
+        self.model = WakeWordModel(models=self._model_paths)
         self._samples: list[float] = []
+        self._frames_seen = 0
 
     def start(self, sample_rate: int = 16000) -> None:
         if sample_rate and sample_rate != 16000:
@@ -455,16 +459,92 @@ class LiveKitWakeWordSpotter:
     def accept_waveform(self, samples: list[float]) -> str:
         import numpy as np
 
+        self._frames_seen += 1
         self._samples.extend(float(sample) for sample in samples)
         self._samples = self._samples[-32000:]
         if len(self._samples) < 32000:
+            self._log_decision("waiting", samples=samples, window_samples=len(self._samples))
             return ""
 
-        scores = self.model.predict(np.asarray(self._samples, dtype=np.float32))
+        window = np.asarray(self._samples, dtype=np.float32)
+        scores = self.model.predict(window)
         if not isinstance(scores, dict) or not scores:
+            self._log_decision("empty_scores", samples=samples, window=window)
             return ""
         label, score = max(scores.items(), key=lambda item: float(item[1] or 0))
-        return str(label).replace("_", " ") if float(score or 0) >= self.cfg.threshold else ""
+        passed = float(score or 0) >= self.cfg.threshold
+        phrase = str(label).replace("_", " ")
+        self._log_decision(
+            "passed" if passed else "ignored",
+            label=phrase,
+            score=float(score or 0),
+            scores=scores,
+            samples=samples,
+            window=window,
+        )
+        return phrase if passed else ""
+
+    def _log_decision(
+        self,
+        decision: str,
+        *,
+        samples: list[float],
+        window_samples: int | None = None,
+        window: Any = None,
+        label: str = "",
+        score: float = 0.0,
+        scores: dict[str, Any] | None = None,
+    ) -> None:
+        if not self.cfg.debug:
+            return
+        try:
+            import numpy as np
+
+            arr = np.asarray(window if window is not None else samples, dtype=np.float32).flatten()
+            rms = float(np.sqrt(np.mean(np.square(arr)))) if arr.size else 0.0
+            peak = float(np.max(np.abs(arr))) if arr.size else 0.0
+        except Exception:
+            rms = 0.0
+            peak = 0.0
+
+        clean_scores = {
+            str(key).replace("_", " "): round(float(value or 0), 6)
+            for key, value in (scores or {}).items()
+        }
+        top_scores = dict(sorted(clean_scores.items(), key=lambda item: item[1], reverse=True)[:8])
+        event = {
+            "ts": datetime.now(timezone.utc).isoformat(),
+            "provider": "livekit",
+            "decision": decision,
+            "label": label,
+            "score": round(score, 6),
+            "threshold": self.cfg.threshold,
+            "model": self.cfg.model,
+            "model_files": [path.name for path in self._model_paths],
+            "frames_seen": self._frames_seen,
+            "frame_samples": len(samples),
+            "window_samples": window_samples if window_samples is not None else len(self._samples),
+            "rms": round(rms, 6),
+            "peak": round(peak, 6),
+            "scores": top_scores,
+            "phrases": list(self.cfg.phrases),
+        }
+        logger.info(
+            "[WakeWord] LiveKit %s label=%s score=%.4f threshold=%.4f rms=%.5f peak=%.5f",
+            decision,
+            label or "-",
+            score,
+            self.cfg.threshold,
+            rms,
+            peak,
+        )
+        try:
+            log_path = get_hermes_home() / "logs" / _WAKEWORD_TELEMETRY_LOG
+            log_path.parent.mkdir(parents=True, exist_ok=True)
+            with log_path.open("a", encoding="utf-8") as fh:
+                fh.write(json.dumps(event, separators=(",", ":")) + "\n")
+        except OSError as exc:
+            logger.debug("[WakeWord] Could not write LiveKit telemetry: %s", exc)
 
     def stop(self) -> None:
         close = getattr(self.model, "close", None)

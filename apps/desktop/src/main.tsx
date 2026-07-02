@@ -33,8 +33,8 @@ const win = new URLSearchParams(window.location.search).get('win')
 
 if (win === 'overlay') {
   void import('./app/pet-overlay/overlay-root').then(({ mountPetOverlay }) => mountPetOverlay())
-} else if (win === 'glow') {
-  void import('./app/glow-overlay/glow-root').then(({ mountGlowOverlay }) => mountGlowOverlay())
+} else if (win === 'island') {
+  void import('./app/voice-island/island-root').then(({ mountVoiceIsland }) => mountVoiceIsland())
 } else {
   createRoot(document.getElementById('root')!).render(
     <StrictMode>

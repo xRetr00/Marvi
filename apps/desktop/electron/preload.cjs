@@ -33,35 +33,35 @@ contextBridge.exposeInMainWorld('hermesDesktop', {
       return () => ipcRenderer.removeListener('hermes:pet-overlay:control', listener)
     }
   },
-  glowOverlay: {
-    // Main renderer → main process: open/close the glow window.
-    open: () => ipcRenderer.invoke('hermes:glow:open'),
-    close: () => ipcRenderer.invoke('hermes:glow:close'),
-    // Main renderer → glow window (forwarded by main): push the latest voice state.
-    pushState: payload => ipcRenderer.send('hermes:glow:state', payload),
-    // Glow overlay window subscribes to state pushes.
+  islandOverlay: {
+    // Main renderer → main process: open/close the island window.
+    open: () => ipcRenderer.invoke('hermes:island:open'),
+    close: () => ipcRenderer.invoke('hermes:island:close'),
+    // Main renderer → island window (forwarded by main): push the latest voice state.
+    pushState: payload => ipcRenderer.send('hermes:island:state', payload),
+    // Island overlay window subscribes to state pushes.
     onState: callback => {
       const listener = (_event, payload) => callback(payload)
-      ipcRenderer.on('hermes:glow:state', listener)
-      return () => ipcRenderer.removeListener('hermes:glow:state', listener)
+      ipcRenderer.on('hermes:island:state', listener)
+      return () => ipcRenderer.removeListener('hermes:island:state', listener)
     },
-    // Main renderer → glow window: push the active island card (or null).
-    pushCard: card => ipcRenderer.send('hermes:glow:card', card),
-    // Capsule interactivity toggle (glow window is otherwise click-through).
-    setIgnoreMouse: ignore => ipcRenderer.send('hermes:glow:set-ignore-mouse', ignore),
-    // Glow window → main renderer: a card action.
-    cardAction: payload => ipcRenderer.send('hermes:glow:card-action', payload),
-    // Glow overlay window subscribes to card pushes.
+    // Main renderer → island window: push the active island card (or null).
+    pushCard: card => ipcRenderer.send('hermes:island:card', card),
+    // Capsule interactivity toggle (island window is otherwise click-through).
+    setIgnoreMouse: ignore => ipcRenderer.send('hermes:island:set-ignore-mouse', ignore),
+    // Island window → main renderer: a card action.
+    cardAction: payload => ipcRenderer.send('hermes:island:card-action', payload),
+    // Island overlay window subscribes to card pushes.
     onCard: callback => {
       const listener = (_event, payload) => callback(payload)
-      ipcRenderer.on('hermes:glow:card', listener)
-      return () => ipcRenderer.removeListener('hermes:glow:card', listener)
+      ipcRenderer.on('hermes:island:card', listener)
+      return () => ipcRenderer.removeListener('hermes:island:card', listener)
     },
     // Main renderer subscribes to card actions from the capsule.
     onCardAction: callback => {
       const listener = (_event, payload) => callback(payload)
-      ipcRenderer.on('hermes:glow:card-action', listener)
-      return () => ipcRenderer.removeListener('hermes:glow:card-action', listener)
+      ipcRenderer.on('hermes:island:card-action', listener)
+      return () => ipcRenderer.removeListener('hermes:island:card-action', listener)
     }
   },
   getBootProgress: () => ipcRenderer.invoke('hermes:boot-progress:get'),

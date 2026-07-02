@@ -3,9 +3,9 @@ import { createRoot } from 'react-dom/client'
 
 import { ErrorBoundary } from '@/components/error-boundary'
 
-import { GlowOverlayApp } from './glow-overlay-app'
+import { VoiceIslandApp } from './island-app'
 
-export function mountGlowOverlay(): void {
+export function mountVoiceIsland(): void {
   const style = document.createElement('style')
   style.textContent = 'html,body,#root{background:transparent !important;overflow:hidden;}'
   document.head.appendChild(style)
@@ -18,8 +18,8 @@ export function mountGlowOverlay(): void {
 
   createRoot(root).render(
     <StrictMode>
-      <ErrorBoundary label="glow-overlay">
-        <GlowOverlayApp />
+      <ErrorBoundary label="voice-island">
+        <VoiceIslandApp />
       </ErrorBoundary>
     </StrictMode>
   )

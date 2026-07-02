@@ -6,7 +6,7 @@ export type VoicePhase = 'off' | 'wake' | 'listening' | 'transcribing' | 'thinki
 
 export interface VoiceState {
   phase: VoicePhase
-  /** Live mic amplitude 0..1 from the recorder; drives glow reactivity. */
+  /** Live mic amplitude 0..1 from the recorder; drives island reactivity. */
   level: number
   muted: boolean
 }
@@ -17,11 +17,11 @@ export type VoiceStatus = 'idle' | 'listening' | 'transcribing' | 'thinking' | '
 export type WakeStatus = 'idle' | 'arming' | 'armed' | 'woken' | 'listening' | 'transcribing'
 
 /**
- * Collapse the two engines' statuses into one glow phase. Background hotword
- * listening is `'armed'` (glow dark) — the wake-word loop sits there waiting for
- * the phrase and must NOT light the glow. Once the hotword fires the engine
+ * Collapse the two engines' statuses into one island phase. Background hotword
+ * listening is `'armed'` (island dark) — the wake-word loop sits there waiting for
+ * the phrase and must NOT light the island. Once the hotword fires the engine
  * walks `'woken'` → `'listening'` → `'transcribing'`; those are the post-hotword
- * command-capture states and keep the glow lit as `'wake'`. An active
+ * command-capture states and keep the island lit as `'wake'`. An active
  * conversation's status maps straight through; anything else is `off`.
  */
 export function deriveVoicePhase(args: {
@@ -53,7 +53,7 @@ export const $conversation = atom<{ active: boolean; status: VoiceStatus; level:
 /** Wake-word status, published by chat/index.tsx (owns useWakeWord). */
 export const $wakeStatus = atom<WakeStatus>('idle')
 
-/** The single derived presence state the glow overlay mirrors. */
+/** The single derived presence state the island overlay mirrors. */
 export const $voiceState = computed([$conversation, $wakeStatus], (conv, wakeStatus): VoiceState => ({
   phase: deriveVoicePhase({ active: conv.active, voiceStatus: conv.status, wakeStatus }),
   level: conv.level,

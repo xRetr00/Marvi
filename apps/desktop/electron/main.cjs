@@ -5894,21 +5894,21 @@ function closePetOverlay() {
   petOverlayWindow = null
 }
 
-// ── Voice presence glow overlay ──────────────────────────────────────────────
+// ── Voice presence island overlay ──────────────────────────────────────────────
 // A fullscreen, transparent, always-on-top, click-through window that paints the
-// Apple-Intelligence-style edge glow. The main renderer pushes $voiceState into
-// it; it never needs clicks (ignore-mouse stays on). Loaded via `?win=glow`.
-let glowOverlayWindow = null
+// Apple-Intelligence-style edge island. The main renderer pushes $voiceState into
+// it; it never needs clicks (ignore-mouse stays on). Loaded via `?win=island`.
+let islandWindow = null
 
-function glowOverlayUrl() {
+function islandWindowUrl() {
   if (DEV_SERVER) {
-    return `${DEV_SERVER.endsWith('/') ? DEV_SERVER.slice(0, -1) : DEV_SERVER}/?win=glow#/`
+    return `${DEV_SERVER.endsWith('/') ? DEV_SERVER.slice(0, -1) : DEV_SERVER}/?win=island#/`
   }
 
-  return `${pathToFileURL(resolveRendererIndex()).toString()}?win=glow#/`
+  return `${pathToFileURL(resolveRendererIndex()).toString()}?win=island#/`
 }
 
-function spawnGlowOverlayWindow() {
+function spawnIslandWindow() {
   const display = screen.getDisplayNearestPoint(screen.getCursorScreenPoint())
   // Small transparent "stage" centered at the top of the work area. The Dynamic
   // Island pill paints inside it and animates (grows downward from the top); the
@@ -5969,62 +5969,62 @@ function spawnGlowOverlayWindow() {
   })
 
   win.on('closed', () => {
-    if (glowOverlayWindow === win) glowOverlayWindow = null
+    if (islandWindow === win) islandWindow = null
   })
 
-  win.loadURL(glowOverlayUrl())
+  win.loadURL(islandWindowUrl())
 
   return win
 }
 
-function openGlowOverlay() {
-  if (glowOverlayWindow && !glowOverlayWindow.isDestroyed()) {
-    glowOverlayWindow.showInactive()
-    return glowOverlayWindow
+function openIslandWindow() {
+  if (islandWindow && !islandWindow.isDestroyed()) {
+    islandWindow.showInactive()
+    return islandWindow
   }
 
-  glowOverlayWindow = spawnGlowOverlayWindow()
-  return glowOverlayWindow
+  islandWindow = spawnIslandWindow()
+  return islandWindow
 }
 
-function closeGlowOverlay() {
-  if (glowOverlayWindow && !glowOverlayWindow.isDestroyed()) {
-    glowOverlayWindow.close()
+function closeIslandWindow() {
+  if (islandWindow && !islandWindow.isDestroyed()) {
+    islandWindow.close()
   }
-  glowOverlayWindow = null
+  islandWindow = null
 }
 
-ipcMain.handle('hermes:glow:open', async () => {
-  openGlowOverlay()
+ipcMain.handle('hermes:island:open', async () => {
+  openIslandWindow()
   return { ok: true }
 })
-ipcMain.handle('hermes:glow:close', async () => {
-  closeGlowOverlay()
+ipcMain.handle('hermes:island:close', async () => {
+  closeIslandWindow()
   return { ok: true }
 })
-// Main renderer → glow window: forward the latest voice state.
-ipcMain.on('hermes:glow:state', (_event, payload) => {
-  if (glowOverlayWindow && !glowOverlayWindow.isDestroyed()) {
-    glowOverlayWindow.webContents.send('hermes:glow:state', payload)
+// Main renderer → island window: forward the latest voice state.
+ipcMain.on('hermes:island:state', (_event, payload) => {
+  if (islandWindow && !islandWindow.isDestroyed()) {
+    islandWindow.webContents.send('hermes:island:state', payload)
   }
 })
-// Main renderer → glow window: the active island card (or null to clear).
-ipcMain.on('hermes:glow:card', (_event, payload) => {
-  if (glowOverlayWindow && !glowOverlayWindow.isDestroyed()) {
-    glowOverlayWindow.webContents.send('hermes:glow:card', payload)
+// Main renderer → island window: the active island card (or null to clear).
+ipcMain.on('hermes:island:card', (_event, payload) => {
+  if (islandWindow && !islandWindow.isDestroyed()) {
+    islandWindow.webContents.send('hermes:island:card', payload)
   }
 })
-// Glow window → main renderer: a card action (dismiss / submit text).
-ipcMain.on('hermes:glow:card-action', (_event, payload) => {
+// Island window → main renderer: a card action (dismiss / submit text).
+ipcMain.on('hermes:island:card-action', (_event, payload) => {
   if (mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.webContents.send('hermes:glow:card-action', payload)
+    mainWindow.webContents.send('hermes:island:card-action', payload)
   }
 })
-// The capsule needs clicks while a card with actions is shown; the glow window
+// The capsule needs clicks while a card with actions is shown; the island window
 // is otherwise click-through. The renderer toggles this like the pet overlay.
-ipcMain.on('hermes:glow:set-ignore-mouse', (_event, ignore) => {
-  if (glowOverlayWindow && !glowOverlayWindow.isDestroyed()) {
-    glowOverlayWindow.setIgnoreMouseEvents(Boolean(ignore), { forward: true })
+ipcMain.on('hermes:island:set-ignore-mouse', (_event, ignore) => {
+  if (islandWindow && !islandWindow.isDestroyed()) {
+    islandWindow.setIgnoreMouseEvents(Boolean(ignore), { forward: true })
   }
 })
 
@@ -6106,7 +6106,7 @@ function createWindow() {
   // window-all-closed from quitting on Windows/Linux).
   mainWindow.on('closed', () => {
     closePetOverlay()
-    closeGlowOverlay()
+    closeIslandWindow()
   })
 
   wireCommonWindowHandlers(mainWindow)
@@ -7731,7 +7731,7 @@ app.on('before-quit', () => {
   // The always-on-top overlay isn't a "real" app window; close it so a stray
   // pet can't keep the process alive or float over a quit app.
   closePetOverlay()
-  closeGlowOverlay()
+  closeIslandWindow()
 
   // Quitting mid-install should stop the installer, not orphan it.
   if (bootstrapAbortController) {

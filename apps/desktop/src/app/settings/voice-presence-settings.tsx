@@ -7,11 +7,11 @@ import { triggerHaptic } from '@/lib/haptics'
 import { Mic, Settings2 } from '@/lib/icons'
 import { cn } from '@/lib/utils'
 import {
-  $glowEnabled,
+  $islandEnabled,
   $presenceCardsEnabled,
   $presenceEnabled,
   $voicePresenceDebug,
-  setGlowEnabled,
+  setIslandEnabled,
   setPresenceCardsEnabled,
   setPresenceEnabled,
   setVoicePresenceDebug
@@ -53,7 +53,7 @@ function ToggleRow(props: {
 
 export function VoicePresenceSettings({ onOpenVoiceConfig }: { onOpenVoiceConfig: () => void }) {
   const presenceEnabled = useStore($presenceEnabled)
-  const glowEnabled = useStore($glowEnabled)
+  const islandEnabled = useStore($islandEnabled)
   const cardsEnabled = useStore($presenceCardsEnabled)
   const debugEnabled = useStore($voicePresenceDebug)
 
@@ -61,8 +61,8 @@ export function VoicePresenceSettings({ onOpenVoiceConfig }: { onOpenVoiceConfig
     <SettingsContent>
       <SectionHeading icon={Mic} title="Voice presence" />
       <Caption className="mb-2 leading-(--conversation-caption-line-height)">
-        An always-on presence for Marvi: speak the wake word from anywhere and an Apple-Intelligence-style glow lights the
-        screen edge as it listens, thinks, and speaks. It keeps working while Marvi is minimized to the system tray.
+        An always-on presence for Marvi: speak the wake word from anywhere and a Dynamic Island appears at the top of the
+        screen as it listens, thinks, and speaks. It keeps working while Marvi is minimized to the system tray.
       </Caption>
 
       <ToggleRow
@@ -75,16 +75,16 @@ export function VoicePresenceSettings({ onOpenVoiceConfig }: { onOpenVoiceConfig
       <div className="my-1 h-px bg-border/30" />
 
       <ToggleRow
-        checked={glowEnabled}
-        description="Show the colored edge glow while listening, thinking, and speaking."
+        checked={islandEnabled}
+        description="Show the Dynamic Island while listening, thinking, and speaking."
         disabled={!presenceEnabled}
-        label="Edge glow"
-        onChange={setGlowEnabled}
+        label="Show island"
+        onChange={setIslandEnabled}
       />
 
       <ToggleRow
         checked={cardsEnabled}
-        description="Let Marvi surface short cards and approval prompts on the glow (from the show_card tool)."
+        description="Let Marvi surface short cards and approval prompts on the island (from the show_card tool)."
         disabled={!presenceEnabled}
         label="Show cards on the presence"
         onChange={setPresenceCardsEnabled}

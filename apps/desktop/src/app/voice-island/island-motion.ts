@@ -1,6 +1,6 @@
 import type { VoicePhase } from '@/store/voice-presence'
 
-/** Target glow amplitude (0..1) for a phase + current mic level. */
+/** Target island amplitude (0..1) for a phase + current mic level. */
 export function targetAmplitude(phase: VoicePhase, level: number): number {
   switch (phase) {
     case 'off':
@@ -22,7 +22,7 @@ export function targetAmplitude(phase: VoicePhase, level: number): number {
 
 /** Blob-drift animation duration per phase (ms). Lower = faster flow. */
 // 'wake' is the fastest (a quick flare the instant the hotword fires); steady states flow slower.
-export function glowSpeedMs(phase: VoicePhase): number {
+export function islandFlowMs(phase: VoicePhase): number {
   switch (phase) {
     case 'listening':
     case 'speaking':

@@ -21,7 +21,7 @@ import { storedSessionIdForNotification } from '../lib/session-ids'
 import { latestSessionTodos } from '../lib/todos'
 import { vpLog } from '../lib/voice-presence-log'
 import { setCronFocusJobId } from '../store/cron'
-import { initGlowOverlayBridge } from '../store/glow-overlay'
+import { initVoiceIslandBridge } from '../store/voice-island'
 import { dismissIslandCard, setIslandCardSubmitHandler } from '../store/island-cards'
 import {
   $fileBrowserOpen,
@@ -794,7 +794,7 @@ export function DesktopController() {
 
     setPetOverlaySubmitHandler(text => void submitTextRef.current(text))
     setIslandCardSubmitHandler(text => void submitTextRef.current(text))
-    const offCardAction = window.hermesDesktop?.glowOverlay?.onCardAction(payload => {
+    const offCardAction = window.hermesDesktop?.islandOverlay?.onCardAction(payload => {
       if (payload.type === 'dismiss') {
         dismissIslandCard(payload.id)
       } else if (payload.type === 'submit') {
@@ -814,7 +814,7 @@ export function DesktopController() {
         void resumeSessionRef.current(recent.id)
       }
     })
-    const offGlow = initGlowOverlayBridge()
+    const offGlow = initVoiceIslandBridge()
 
     return () => {
       setPetOverlaySubmitHandler(null)

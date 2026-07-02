@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { glowSpeedMs, targetAmplitude } from './glow-model'
+import { islandFlowMs, targetAmplitude } from './island-motion'
 
 describe('targetAmplitude', () => {
   it('is zero when off', () => {
@@ -30,17 +30,17 @@ describe('targetAmplitude', () => {
   })
 })
 
-describe('glowSpeedMs', () => {
+describe('islandFlowMs', () => {
   it('flows fast when listening or speaking and slow when idle/thinking', () => {
-    expect(glowSpeedMs('listening')).toBeLessThan(glowSpeedMs('thinking'))
-    expect(glowSpeedMs('thinking')).toBeLessThan(glowSpeedMs('off'))
+    expect(islandFlowMs('listening')).toBeLessThan(islandFlowMs('thinking'))
+    expect(islandFlowMs('thinking')).toBeLessThan(islandFlowMs('off'))
   })
 
   it('flares fastest on wake', () => {
-    expect(glowSpeedMs('wake')).toBeLessThan(glowSpeedMs('listening'))
+    expect(islandFlowMs('wake')).toBeLessThan(islandFlowMs('listening'))
   })
 
   it('drifts slowly while transcribing', () => {
-    expect(glowSpeedMs('transcribing')).toBe(14000)
+    expect(islandFlowMs('transcribing')).toBe(14000)
   })
 })

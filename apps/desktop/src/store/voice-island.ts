@@ -2,10 +2,10 @@ import { vpLog } from '@/lib/voice-presence-log'
 
 import { $islandCards } from './island-cards'
 import { $voiceState } from './voice-presence'
-import { $glowEnabled, $presenceEnabled } from './voice-presence-settings'
+import { $islandEnabled, $presenceEnabled } from './voice-presence-settings'
 
 /**
- * Main-renderer controller for the voice presence glow window. The glow window
+ * Main-renderer controller for the voice presence island window. The island window
  * carries no gateway — this renderer is the single source of truth and pushes
  * $voiceState into it over IPC (mirrors the pet-overlay pattern). The window is
  * opened lazily on the first non-`off` phase and closed shortly after returning
@@ -14,7 +14,7 @@ import { $glowEnabled, $presenceEnabled } from './voice-presence-settings'
 
 let unsub: (() => void) | null = null
 let unsubCards: (() => void) | null = null
-let unsubGlow: (() => void) | null = null
+let unsubIsland: (() => void) | null = null
 let unsubPresence: (() => void) | null = null
 let open = false
 let closeTimer: ReturnType<typeof setTimeout> | null = null
@@ -30,13 +30,13 @@ function ensureOpen(): void {
 
   open = true
   vpLog('window', 'open')
-  void window.hermesDesktop?.glowOverlay
+  void window.hermesDesktop?.islandOverlay
     ?.open()
     .then(() => {
       // The window may mount after the synchronous push in the subscriber, so
       // hand it a first frame once it actually exists.
-      window.hermesDesktop?.glowOverlay?.pushState($voiceState.get())
-      window.hermesDesktop?.glowOverlay?.pushCard($islandCards.get().active)
+      window.hermesDesktop?.islandOverlay?.pushState($voiceState.get())
+      window.hermesDesktop?.islandOverlay?.pushCard($islandCards.get().active)
     })
     .catch(() => {
       // Open failed (IPC hiccup / window destroyed) — clear the flag so the
@@ -54,7 +54,7 @@ function scheduleClose(): void {
     closeTimer = null
     open = false
     vpLog('window', 'close')
-    void window.hermesDesktop?.glowOverlay?.close()
+    void window.hermesDesktop?.islandOverlay?.close()
   }, CLOSE_LINGER_MS)
 }
 
@@ -65,13 +65,13 @@ function cancelClose(): void {
   }
 }
 
-// The window should be visible when the glow is enabled AND there's something to
-// show — an active voice phase or a card. The glow toggle gates the whole window
-// (the capsule lives in it too), so turning the glow off hides the presence.
+// The window should be visible when the island is enabled AND there's something to
+// show — an active voice phase or a card. The island toggle gates the whole window
+// (the capsule lives in it too), so turning the island off hides the presence.
 function shouldBeOpen(): boolean {
-  // Master presence switch gates the whole window; the glow toggle gates the
+  // Master presence switch gates the whole window; the island toggle gates the
   // visual specifically.
-  if (!$presenceEnabled.get() || !$glowEnabled.get()) {
+  if (!$presenceEnabled.get() || !$islandEnabled.get()) {
     return false
   }
 
@@ -88,20 +88,20 @@ function evaluate(): void {
   }
 
   if (open) {
-    window.hermesDesktop?.glowOverlay?.pushState($voiceState.get())
-    window.hermesDesktop?.glowOverlay?.pushCard($islandCards.get().active)
+    window.hermesDesktop?.islandOverlay?.pushState($voiceState.get())
+    window.hermesDesktop?.islandOverlay?.pushCard($islandCards.get().active)
   }
 }
 
-/** Start mirroring $voiceState + cards into the glow window. Idempotent. */
-export function initGlowOverlayBridge(): () => void {
-  if (unsub || !window.hermesDesktop?.glowOverlay) {
+/** Start mirroring $voiceState + cards into the island window. Idempotent. */
+export function initVoiceIslandBridge(): () => void {
+  if (unsub || !window.hermesDesktop?.islandOverlay) {
     return () => {}
   }
 
   unsub = $voiceState.subscribe(() => evaluate())
   unsubCards = $islandCards.subscribe(() => evaluate())
-  unsubGlow = $glowEnabled.subscribe(() => evaluate())
+  unsubIsland = $islandEnabled.subscribe(() => evaluate())
   unsubPresence = $presenceEnabled.subscribe(() => evaluate())
 
   return () => {
@@ -109,8 +109,8 @@ export function initGlowOverlayBridge(): () => void {
     unsub = null
     unsubCards?.()
     unsubCards = null
-    unsubGlow?.()
-    unsubGlow = null
+    unsubIsland?.()
+    unsubIsland = null
     unsubPresence?.()
     unsubPresence = null
     cancelClose()

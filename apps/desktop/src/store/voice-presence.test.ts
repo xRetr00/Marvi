@@ -15,7 +15,7 @@ describe('deriveVoicePhase', () => {
     expect(deriveVoicePhase({ active: false, voiceStatus: 'idle', wakeStatus: 'armed' })).toBe('off')
   })
 
-  it('keeps the glow lit through the post-hotword capture states', () => {
+  it('keeps the island lit through the post-hotword capture states', () => {
     expect(deriveVoicePhase({ active: false, voiceStatus: 'idle', wakeStatus: 'woken' })).toBe('wake')
     expect(deriveVoicePhase({ active: false, voiceStatus: 'idle', wakeStatus: 'listening' })).toBe('wake')
     expect(deriveVoicePhase({ active: false, voiceStatus: 'idle', wakeStatus: 'transcribing' })).toBe('wake')

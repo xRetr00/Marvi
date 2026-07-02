@@ -5,7 +5,7 @@ import type { VoicePhase, VoiceState } from '@/store/voice-presence'
 
 import { IslandWaveform } from './island-waveform'
 
-type IslandView = 'idle' | 'expanded'
+type IslandView = 'seed' | 'idle' | 'expanded'
 
 type CardAction = { type: 'dismiss'; id?: string } | { type: 'submit'; text: string }
 
@@ -14,6 +14,10 @@ interface DynamicIslandProps {
   card: IslandCard | null
   onCardAction: (payload: CardAction) => void
 }
+
+const SEED_HEIGHT = 26
+const SEED_RADIUS = 13
+const SEED_MIN_WIDTH = 56
 
 const IDLE_HEIGHT = 44
 const IDLE_RADIUS = 22
@@ -24,6 +28,9 @@ const EXPANDED_RADIUS = 28
 
 const PAD_Y = 10
 const PAD_X = 18
+
+const SEED_PAD_Y = 6
+const SEED_PAD_X = 10
 
 const PILL_SHADOW = [
   'inset 0 1px 0 rgba(255,255,255,0.08)',
@@ -74,6 +81,11 @@ function resolveView(state: VoiceState, card: IslandCard | null): IslandView {
   if (state.phase === 'listening' || state.phase === 'speaking') {
     return 'expanded'
   }
+  if (state.phase === 'off') {
+    // Nothing happening — rest as a tiny ambient seed rather than the fuller
+    // idle pill, so Marvi reads as present-but-quiet between turns.
+    return 'seed'
+  }
   return 'idle'
 }
 
@@ -89,6 +101,12 @@ export function DynamicIsland({ state, card, onCardAction }: DynamicIslandProps)
 
   const contentKey = card ? `card:${card.id}` : `state:${view}:${state.phase}`
 
+  const minWidth = view === 'seed' ? SEED_MIN_WIDTH : view === 'idle' ? IDLE_MIN_WIDTH : undefined
+  const minHeight = view === 'seed' ? SEED_HEIGHT : IDLE_HEIGHT
+  const radius = view === 'seed' ? SEED_RADIUS : view === 'idle' ? IDLE_RADIUS : EXPANDED_RADIUS
+  const padY = view === 'seed' ? SEED_PAD_Y : PAD_Y
+  const padX = view === 'seed' ? SEED_PAD_X : PAD_X
+
   return (
     <motion.div
       layout
@@ -100,20 +118,31 @@ export function DynamicIsland({ state, card, onCardAction }: DynamicIslandProps)
         flexDirection: 'column',
         alignItems: 'stretch',
         justifyContent: 'center',
-        minWidth: view === 'idle' ? IDLE_MIN_WIDTH : undefined,
+        minWidth,
         maxWidth: view === 'expanded' ? EXPANDED_MAX_WIDTH : undefined,
-        minHeight: IDLE_HEIGHT,
-        borderRadius: view === 'idle' ? IDLE_RADIUS : EXPANDED_RADIUS,
+        minHeight,
+        borderRadius: radius,
         background: '#060606',
         boxShadow: PILL_SHADOW,
-        padding: `${PAD_Y}px ${PAD_X}px`,
+        padding: `${padY}px ${padX}px`,
         overflow: 'hidden',
         color: '#f2f2f7',
         fontFamily: 'system-ui, -apple-system, sans-serif'
       }}
     >
       <AnimatePresence mode="wait">
-        {view === 'idle' ? (
+        {view === 'seed' ? (
+          <motion.div
+            key={contentKey}
+            initial={reducedMotion ? false : { scale: 0.9, opacity: 0, filter: 'blur(6px)' }}
+            animate={{ scale: 1, opacity: 1, filter: 'blur(0px)' }}
+            exit={reducedMotion ? undefined : { scale: 0.9, opacity: 0, filter: 'blur(6px)' }}
+            transition={contentTransition}
+            style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+          >
+            <SeedDot reducedMotion={Boolean(reducedMotion)} />
+          </motion.div>
+        ) : view === 'idle' ? (
           <motion.div
             key={contentKey}
             initial={reducedMotion ? false : { scale: 0.9, opacity: 0, filter: 'blur(6px)' }}
@@ -151,6 +180,26 @@ export function DynamicIsland({ state, card, onCardAction }: DynamicIslandProps)
         )}
       </AnimatePresence>
     </motion.div>
+  )
+}
+
+// Resting-seed indicator: a single dim dot with a slow, soft pulse — no
+// waveform, no rAF. This is the "Marvi is here, quietly present" mark shown
+// whenever there's nothing active to report.
+function SeedDot({ reducedMotion }: { reducedMotion: boolean }) {
+  return (
+    <motion.span
+      animate={reducedMotion ? { opacity: 1, scale: 1 } : { opacity: [0.35, 0.75, 0.35], scale: [0.9, 1, 0.9] }}
+      transition={reducedMotion ? undefined : { duration: 2.6, repeat: Infinity, ease: 'easeInOut' }}
+      style={{
+        display: 'inline-block',
+        width: 6,
+        height: 6,
+        borderRadius: '50%',
+        background: '#6b6b78',
+        flexShrink: 0
+      }}
+    />
   )
 }
 

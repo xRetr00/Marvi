@@ -7,9 +7,10 @@ import { $islandEnabled, $presenceEnabled } from './voice-presence-settings'
 /**
  * Main-renderer controller for the voice presence island window. The island window
  * carries no gateway — this renderer is the single source of truth and pushes
- * $voiceState into it over IPC (mirrors the pet-overlay pattern). The window is
- * opened lazily on the first non-`off` phase and closed shortly after returning
- * to `off`, so idle costs nothing.
+ * $voiceState into it over IPC (mirrors the pet-overlay pattern). The window is an
+ * always-present ambient layer while presence + island are enabled: it opens on
+ * enable and rests as a tiny seed, morphing to idle/expanded on activity. It only
+ * closes when a toggle turns off.
  */
 
 let unsub: (() => void) | null = null
@@ -65,17 +66,10 @@ function cancelClose(): void {
   }
 }
 
-// The window should be visible when the island is enabled AND there's something to
-// show — an active voice phase or a card. The island toggle gates the whole window
-// (the capsule lives in it too), so turning the island off hides the presence.
 function shouldBeOpen(): boolean {
-  // Master presence switch gates the whole window; the island toggle gates the
-  // visual specifically.
-  if (!$presenceEnabled.get() || !$islandEnabled.get()) {
-    return false
-  }
-
-  return $voiceState.get().phase !== 'off' || $islandCards.get().active !== null
+  // Ambient: the island is a persistent layer while enabled — it rests as a
+  // seed and morphs on activity, rather than opening/closing per turn.
+  return $presenceEnabled.get() && $islandEnabled.get()
 }
 
 // Re-evaluate open/closed from the three inputs and push the latest frame.

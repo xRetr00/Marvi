@@ -33,16 +33,32 @@ export function VoiceIslandApp() {
     return () => unsub?.()
   }, [])
 
+  const [summoned, setSummoned] = useState(false)
+
+  useEffect(() => {
+    const off = window.hermesDesktop?.islandOverlay?.onSummon(() => setSummoned(true))
+    return () => off?.()
+  }, [])
+
   useEffect(() => {
     // The stage window is click-through by default; only opt back in when a
-    // card with actions is on screen so its buttons are clickable.
-    const interactive = Boolean(card?.actions?.length)
+    // card with actions is on screen, or the command bar is open, so those
+    // controls are clickable/typeable.
+    const interactive = summoned || Boolean(card?.actions?.length)
     window.hermesDesktop?.islandOverlay?.setIgnoreMouse(!interactive)
     return () => {
       // Never leave the stage window mouse-capturing if this unmounts.
       window.hermesDesktop?.islandOverlay?.setIgnoreMouse(true)
     }
-  }, [card])
+  }, [card, summoned])
+
+  useEffect(() => {
+    // Drop focusability once the command bar closes so the overlay stops
+    // stealing focus from whatever app the user summoned it over.
+    if (!summoned) {
+      window.hermesDesktop?.islandOverlay?.setFocusable(false)
+    }
+  }, [summoned])
 
   const handleCardAction = (payload: CardAction) => {
     window.hermesDesktop?.islandOverlay?.cardAction(payload)
@@ -51,7 +67,17 @@ export function VoiceIslandApp() {
     }
   }
 
-  const interactive = Boolean(card?.actions?.length)
+  const closeSummon = () => setSummoned(false)
+
+  const submitSummon = (text: string) => {
+    const trimmed = text.trim()
+    if (trimmed) {
+      window.hermesDesktop?.islandOverlay?.cardAction({ type: 'submit', text: trimmed })
+    }
+    setSummoned(false)
+  }
+
+  const interactive = summoned || Boolean(card?.actions?.length)
 
   return (
     <div
@@ -65,7 +91,15 @@ export function VoiceIslandApp() {
       }}
     >
       <div style={{ pointerEvents: interactive ? 'auto' : 'none' }}>
-        <DynamicIsland state={state} card={card} activity={activity} onCardAction={handleCardAction} />
+        <DynamicIsland
+          state={state}
+          card={card}
+          activity={activity}
+          onCardAction={handleCardAction}
+          summoned={summoned}
+          onSummonSubmit={submitSummon}
+          onSummonCancel={closeSummon}
+        />
       </div>
     </div>
   )

@@ -1,3 +1,5 @@
+import { useEffect, useRef, useState } from 'react'
+
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
 
 import type { IslandCard } from '@/lib/island-queue'
@@ -5,7 +7,7 @@ import type { VoicePhase, VoiceState } from '@/store/voice-presence'
 
 import { IslandWaveform } from './island-waveform'
 
-type IslandView = 'seed' | 'idle' | 'expanded'
+type IslandView = 'seed' | 'idle' | 'expanded' | 'summon'
 
 type CardAction = { type: 'dismiss'; id?: string } | { type: 'submit'; text: string }
 
@@ -16,6 +18,11 @@ interface DynamicIslandProps {
   // web"), shown in place of the static phase label while thinking.
   activity?: string | null
   onCardAction: (payload: CardAction) => void
+  // Command bar: summoned via the global hotkey, lets the user type to Marvi
+  // from any app.
+  summoned?: boolean
+  onSummonSubmit?: (text: string) => void
+  onSummonCancel?: () => void
 }
 
 const SEED_HEIGHT = 26
@@ -28,6 +35,10 @@ const IDLE_MIN_WIDTH = 128
 
 const EXPANDED_MAX_WIDTH = 360
 const EXPANDED_RADIUS = 28
+
+const SUMMON_WIDTH = 340
+const SUMMON_RADIUS = 22
+const SUMMON_HEIGHT = 44
 
 const PAD_Y = 10
 const PAD_X = 18
@@ -77,7 +88,10 @@ function phaseColor(phase: VoicePhase): string {
   }
 }
 
-function resolveView(state: VoiceState, card: IslandCard | null): IslandView {
+function resolveView(state: VoiceState, card: IslandCard | null, summoned: boolean): IslandView {
+  if (summoned) {
+    return 'summon'
+  }
   if (card) {
     return 'expanded'
   }
@@ -92,9 +106,17 @@ function resolveView(state: VoiceState, card: IslandCard | null): IslandView {
   return 'idle'
 }
 
-export function DynamicIsland({ state, card, activity, onCardAction }: DynamicIslandProps) {
+export function DynamicIsland({
+  state,
+  card,
+  activity,
+  onCardAction,
+  summoned = false,
+  onSummonSubmit,
+  onSummonCancel
+}: DynamicIslandProps) {
   const reducedMotion = useReducedMotion()
-  const view = resolveView(state, card)
+  const view = resolveView(state, card, summoned)
   const active = state.phase === 'listening' || state.phase === 'speaking'
   const color = phaseColor(state.phase)
   // While thinking, narrate the agent's current tool action instead of the
@@ -106,11 +128,14 @@ export function DynamicIsland({ state, card, activity, onCardAction }: DynamicIs
   const contentTransition = reducedMotion ? CONTENT_TRANSITION_INSTANT : CONTENT_TRANSITION_MOTION
   const springTransition = reducedMotion ? CONTENT_TRANSITION_INSTANT : SPRING
 
-  const contentKey = card ? `card:${card.id}` : `state:${view}:${state.phase}:${narrating ? label : ''}`
+  const contentKey =
+    view === 'summon' ? 'summon' : card ? `card:${card.id}` : `state:${view}:${state.phase}:${narrating ? label : ''}`
 
-  const minWidth = view === 'seed' ? SEED_MIN_WIDTH : view === 'idle' ? IDLE_MIN_WIDTH : undefined
-  const minHeight = view === 'seed' ? SEED_HEIGHT : IDLE_HEIGHT
-  const radius = view === 'seed' ? SEED_RADIUS : view === 'idle' ? IDLE_RADIUS : EXPANDED_RADIUS
+  const minWidth =
+    view === 'seed' ? SEED_MIN_WIDTH : view === 'idle' ? IDLE_MIN_WIDTH : view === 'summon' ? SUMMON_WIDTH : undefined
+  const minHeight = view === 'seed' ? SEED_HEIGHT : view === 'summon' ? SUMMON_HEIGHT : IDLE_HEIGHT
+  const radius =
+    view === 'seed' ? SEED_RADIUS : view === 'idle' ? IDLE_RADIUS : view === 'summon' ? SUMMON_RADIUS : EXPANDED_RADIUS
   const padY = view === 'seed' ? SEED_PAD_Y : PAD_Y
   const padX = view === 'seed' ? SEED_PAD_X : PAD_X
 
@@ -126,7 +151,7 @@ export function DynamicIsland({ state, card, activity, onCardAction }: DynamicIs
         alignItems: 'stretch',
         justifyContent: 'center',
         minWidth,
-        maxWidth: view === 'expanded' ? EXPANDED_MAX_WIDTH : undefined,
+        maxWidth: view === 'expanded' ? EXPANDED_MAX_WIDTH : view === 'summon' ? SUMMON_WIDTH : undefined,
         minHeight,
         borderRadius: radius,
         background: '#060606',
@@ -138,7 +163,18 @@ export function DynamicIsland({ state, card, activity, onCardAction }: DynamicIs
       }}
     >
       <AnimatePresence mode="wait">
-        {view === 'seed' ? (
+        {view === 'summon' ? (
+          <motion.div
+            key={contentKey}
+            initial={reducedMotion ? false : { scale: 0.9, opacity: 0, filter: 'blur(6px)' }}
+            animate={{ scale: 1, opacity: 1, filter: 'blur(0px)' }}
+            exit={reducedMotion ? undefined : { scale: 0.9, opacity: 0, filter: 'blur(6px)' }}
+            transition={contentTransition}
+            style={{ display: 'flex', alignItems: 'center', width: '100%' }}
+          >
+            <SummonBar onSubmit={onSummonSubmit} onCancel={onSummonCancel} />
+          </motion.div>
+        ) : view === 'seed' ? (
           <motion.div
             key={contentKey}
             initial={reducedMotion ? false : { scale: 0.9, opacity: 0, filter: 'blur(6px)' }}
@@ -276,6 +312,65 @@ function CardContent({ card, onCardAction }: { card: IslandCard; onCardAction: (
           ))}
         </div>
       ) : null}
+    </div>
+  )
+}
+
+// Command bar: the summon hotkey morphs the pill into a single-line input
+// so the user can type to Marvi from any app. Enter submits via the shared
+// card-action channel (already routed to the active session); Escape closes
+// without sending.
+function SummonBar({ onSubmit, onCancel }: { onSubmit?: (text: string) => void; onCancel?: () => void }) {
+  const inputRef = useRef<HTMLInputElement>(null)
+  const [value, setValue] = useState('')
+
+  useEffect(() => {
+    // The OS window has to become key first (setFocusable + focus happen in
+    // the main process), so focus the input on the next frame.
+    const raf = requestAnimationFrame(() => inputRef.current?.focus())
+    return () => cancelAnimationFrame(raf)
+  }, [])
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault()
+      onSubmit?.(value)
+      setValue('')
+    } else if (e.key === 'Escape') {
+      e.preventDefault()
+      onCancel?.()
+    }
+  }
+
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 10, width: '100%' }}>
+      <span
+        style={{
+          display: 'inline-block',
+          width: 8,
+          height: 8,
+          borderRadius: '50%',
+          background: '#6ea8ff',
+          flexShrink: 0
+        }}
+      />
+      <input
+        ref={inputRef}
+        value={value}
+        onChange={e => setValue(e.target.value)}
+        onKeyDown={handleKeyDown}
+        placeholder="Ask Marvi…"
+        style={{
+          flex: 1,
+          minWidth: 0,
+          background: 'transparent',
+          border: 'none',
+          outline: 'none',
+          color: '#f2f2f7',
+          fontSize: 14,
+          fontFamily: 'inherit'
+        }}
+      />
     </div>
   )
 }

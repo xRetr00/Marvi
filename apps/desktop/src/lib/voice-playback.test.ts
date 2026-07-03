@@ -114,7 +114,7 @@ describe('playSpeechText', () => {
     expect(speakText).not.toHaveBeenCalled()
   })
 
-  it('schedules slow streaming chunks from current audio time instead of cutting them off', async () => {
+  it('prebuffers streaming chunks from current audio time instead of cutting them off', async () => {
     const starts: number[] = []
     const encoder = new TextEncoder()
     const fetch = vi.fn().mockResolvedValue({
@@ -170,7 +170,7 @@ describe('playSpeechText', () => {
 
     await playSpeechText('Hello', { source: 'read-aloud' })
 
-    expect(starts[0]).toBeGreaterThanOrEqual(5.02)
+    expect(starts[0]).toBeGreaterThanOrEqual(5.12)
     expect(speakText).not.toHaveBeenCalled()
   })
 

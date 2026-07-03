@@ -6580,7 +6580,7 @@ class TestDesktopWhisperLiveStartup:
 
         assert started["terminated"] is True
 
-    def test_warms_qwen_and_nemotron_when_desktop_voice_pipeline_selected(self, monkeypatch):
+    def test_warms_qwen_without_loading_nemotron_in_main_venv(self, monkeypatch):
         import hermes_cli.web_server as web_server
 
         warmed = []
@@ -6603,4 +6603,4 @@ class TestDesktopWhisperLiveStartup:
 
         web_server._warm_desktop_voice_models()
 
-        assert [kind for kind, _cfg in warmed] == ["tts", "stt"]
+        assert [kind for kind, _cfg in warmed] == ["tts"]

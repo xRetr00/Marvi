@@ -793,6 +793,43 @@ def _pip_install(
     )
 
 
+def _pip_install_with_python(
+    py: Path,
+    args: List[str],
+    *,
+    timeout: int = 300,
+    capture_output: bool = True,
+):
+    pip_cmd = [str(py), "-m", "pip"]
+    try:
+        probe = subprocess.run(pip_cmd + ["--version"], capture_output=True, text=True, timeout=15)
+        if probe.returncode != 0:
+            raise FileNotFoundError("pip not in venv")
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        try:
+            subprocess.run(
+                [str(py), "-m", "ensurepip", "--upgrade", "--default-pip"],
+                capture_output=True,
+                text=True,
+                timeout=120,
+                check=True,
+            )
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
+            return subprocess.CompletedProcess(
+                pip_cmd,
+                returncode=1,
+                stdout="",
+                stderr=f"pip not available and ensurepip failed: {e}",
+            )
+
+    return subprocess.run(
+        pip_cmd + ["install", *args],
+        capture_output=capture_output,
+        text=True,
+        timeout=timeout,
+    )
+
+
 
 # The asset-probe that lived here used to hit `/releases/latest` on
 # trycua/cua and inspect the release's asset list before piping the
@@ -1339,17 +1376,38 @@ def _run_post_setup(post_setup_key: str):
             _print_warning(f"    WhisperLive install failed: {e}")
 
     elif post_setup_key == "nemotron_stt":
-        _print_info("    Installing Nemotron streaming STT dependencies...")
+        _print_info("    Installing Nemotron streaming STT into the WhisperLive shared venv...")
         try:
-            if importlib.util.find_spec("qwen_tts") is not None:
-                _print_warning(
-                    "    Skipping shared-venv Nemotron install: it requires source Transformers, "
-                    "which conflicts with Qwen3-TTS."
+            from hermes_constants import get_hermes_home
+
+            venv_dir = get_hermes_home() / "whisperlive-venv"
+            py = venv_dir / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+            if not py.exists():
+                _print_info(f"    Creating shared voice venv: {venv_dir}")
+                subprocess.run([sys.executable, "-m", "venv", str(venv_dir)], check=True, timeout=120)
+            try:
+                whisperlive_check = subprocess.run(
+                    [str(py), "-c", "import whisper_live"],
+                    capture_output=True,
+                    text=True,
+                    timeout=30,
                 )
-                _print_info("    Use WhisperLive streaming STT with Qwen3-TTS until Nemotron moves to an isolated runtime.")
-                return
-            _ensure_whisperlive_cuda_torch(Path(sys.executable))
-            result = _pip_install(
+            except (OSError, subprocess.TimeoutExpired):
+                whisperlive_check = subprocess.CompletedProcess([], 1, "", "")
+            if whisperlive_check.returncode != 0:
+                _print_info("    Installing WhisperLive into the shared voice venv...")
+                whisperlive_result = _pip_install_with_python(
+                    py,
+                    ["-U", "pip", "setuptools", "wheel", "whisper-live"],
+                    timeout=900,
+                )
+                if whisperlive_result.returncode != 0:
+                    _print_warning("    WhisperLive shared venv install failed:")
+                    _print_info(f"      {(whisperlive_result.stderr or '').strip()[:300]}")
+                    return
+            _ensure_whisperlive_cuda_torch(py)
+            result = _pip_install_with_python(
+                py,
                 [
                     "-U",
                     "git+https://github.com/huggingface/transformers",
@@ -1361,15 +1419,25 @@ def _run_post_setup(post_setup_key: str):
                 timeout=900,
             )
             if result.returncode == 0:
-                _print_success("    Nemotron streaming STT dependencies installed")
+                verify = subprocess.run(
+                    [str(py), "-c", "from transformers import AutoModelForRNNT, AutoProcessor"],
+                    capture_output=True,
+                    text=True,
+                    timeout=60,
+                )
+                if verify.returncode != 0:
+                    _print_warning("    Nemotron install completed, but Transformers RNNT verification failed:")
+                    _print_info(f"      {(verify.stderr or '').strip()[:300]}")
+                    return
+                _print_success("    Nemotron streaming STT dependencies installed in whisperlive-venv")
                 _print_info("    Model downloads on first use; set stt.streaming.provider to nemotron.")
                 return
             _print_warning("    Nemotron streaming STT install failed:")
             _print_info(f"      {(result.stderr or '').strip()[:300]}")
-            _print_info("    Run manually: uv pip install -U git+https://github.com/huggingface/transformers accelerate soundfile packaging")
+            _print_info(f"    Run manually: \"{py}\" -m pip install -U git+https://github.com/huggingface/transformers accelerate soundfile packaging")
         except subprocess.TimeoutExpired:
             _print_warning("    Nemotron streaming STT install timed out (>15min)")
-            _print_info("    Run manually: uv pip install -U git+https://github.com/huggingface/transformers accelerate soundfile packaging")
+            _print_info("    Run manually from the whisperlive-venv Python shown above.")
         except Exception as e:
             _print_warning(f"    Nemotron streaming STT install failed: {e}")
 

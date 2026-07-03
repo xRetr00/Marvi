@@ -2,10 +2,15 @@
 
 from __future__ import annotations
 
+import argparse
+import base64
+import json
 import logging
+import sys
 import threading
 from collections import deque
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Callable, Deque, Iterable, Optional
 
 import numpy as np
@@ -94,6 +99,16 @@ def _load_nemotron_model(config: NemotronStreamingConfig) -> tuple[Any, Any, Any
 def warm_nemotron_stt(stt_config: dict[str, Any] | None = None) -> bool:
     _load_nemotron_model(resolve_nemotron_config(stt_config))
     return True
+
+
+def whisperlive_venv_python() -> Path:
+    from hermes_constants import get_hermes_home
+
+    return get_hermes_home() / "whisperlive-venv" / ("Scripts/python.exe" if sys.platform == "win32" else "bin/python")
+
+
+def nemotron_stdio_command() -> list[str]:
+    return [str(whisperlive_venv_python()), "-m", "tools.nemotron_streaming_stt", "--stdio"]
 
 
 def _model_device(model: Any) -> Any:
@@ -283,3 +298,62 @@ class NemotronStreamingSession:
         put = getattr(items, "put", None)
         if callable(put):
             put(None)
+
+
+def _emit_stdio(payload: dict[str, Any]) -> None:
+    sys.stdout.write(json.dumps(payload, separators=(",", ":")) + "\n")
+    sys.stdout.flush()
+
+
+def _run_stdio_server() -> int:
+    session: NemotronStreamingSession | None = None
+    try:
+        first_line = sys.stdin.readline()
+        if not first_line:
+            return 0
+        first = json.loads(first_line)
+        if first.get("type") != "start":
+            _emit_stdio({"type": "error", "error": "Nemotron helper expected a start message"})
+            return 2
+
+        session = NemotronStreamingSession(first.get("stt_config") if isinstance(first.get("stt_config"), dict) else {})
+        session.start()
+        _emit_stdio({"type": "ready"})
+
+        for line in sys.stdin:
+            if not line:
+                break
+            payload = json.loads(line)
+            event_type = payload.get("type")
+            if event_type == "audio":
+                raw = base64.b64decode(str(payload.get("data") or ""))
+                samples = np.frombuffer(raw, dtype=np.float32)
+                session.accept_samples(samples)
+                partial = session.drain_text()
+                _emit_stdio({"type": "partial", "text": partial} if partial else {"type": "ok"})
+            elif event_type == "stop":
+                final = session.finish()
+                _emit_stdio({"type": "final", "text": final})
+                return 0
+            else:
+                _emit_stdio({"type": "error", "error": f"Unknown Nemotron helper event: {event_type}"})
+                return 2
+        return 0
+    except BaseException as exc:  # noqa: BLE001
+        logger.exception("Nemotron stdio helper failed")
+        _emit_stdio({"type": "error", "error": str(exc)})
+        return 1
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description="Nemotron streaming STT helper")
+    parser.add_argument("--stdio", action="store_true", help="Run JSON-lines stdio streaming helper")
+    args = parser.parse_args(argv)
+    if args.stdio:
+        return _run_stdio_server()
+    parser.error("no mode selected")
+    return 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

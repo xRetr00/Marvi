@@ -203,6 +203,86 @@ def _start_desktop_whisperlive() -> tuple["subprocess.Popen | None", Any]:
     return proc, log_file
 
 
+class _NemotronSubprocessSession:
+    def __init__(self, stt_config: dict[str, Any]) -> None:
+        self._stt_config = stt_config
+        self._proc: subprocess.Popen | None = None
+        self._log_file = None
+
+    def start(self) -> None:
+        from tools.nemotron_streaming_stt import nemotron_stdio_command, whisperlive_venv_python
+
+        py = whisperlive_venv_python()
+        if not py.exists():
+            raise RuntimeError("WhisperLive shared venv is missing. Run: hermes tools post-setup nemotron_stt")
+
+        log_path = get_hermes_home() / "logs" / "nemotron-stt.log"
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        self._log_file = log_path.open("ab")
+        env = {**os.environ, "PYTHONPATH": str(PROJECT_ROOT)}
+        self._proc = subprocess.Popen(
+            nemotron_stdio_command(),
+            cwd=str(PROJECT_ROOT),
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=self._log_file,
+            text=True,
+            bufsize=1,
+            env=env,
+            creationflags=windows_hide_flags(),
+        )
+        self._send({"type": "start", "stt_config": self._stt_config})
+        payload = self._read()
+        if payload.get("type") == "ready":
+            return
+        raise RuntimeError(str(payload.get("error") or "Nemotron helper did not become ready"))
+
+    def accept_bytes(self, chunk: bytes) -> str:
+        self._send({"type": "audio", "data": base64.b64encode(chunk).decode("ascii")})
+        payload = self._read()
+        if payload.get("type") == "partial":
+            return str(payload.get("text") or "").strip()
+        if payload.get("type") == "ok":
+            return ""
+        raise RuntimeError(str(payload.get("error") or "Nemotron helper failed"))
+
+    def finish(self) -> str:
+        self._send({"type": "stop"})
+        while True:
+            payload = self._read()
+            if payload.get("type") == "final":
+                return str(payload.get("text") or "").strip()
+            if payload.get("type") == "error":
+                raise RuntimeError(str(payload.get("error") or "Nemotron helper failed"))
+
+    def close(self) -> None:
+        proc = self._proc
+        if proc is not None and proc.poll() is None:
+            proc.terminate()
+        if self._log_file is not None:
+            self._log_file.close()
+
+    def _send(self, payload: dict[str, Any]) -> None:
+        proc = self._proc
+        if proc is None or proc.stdin is None:
+            raise RuntimeError("Nemotron helper is not running")
+        proc.stdin.write(json.dumps(payload, separators=(",", ":")) + "\n")
+        proc.stdin.flush()
+
+    def _read(self) -> dict[str, Any]:
+        proc = self._proc
+        if proc is None or proc.stdout is None:
+            raise RuntimeError("Nemotron helper is not running")
+        line = proc.stdout.readline()
+        if not line:
+            code = proc.poll()
+            raise RuntimeError(f"Nemotron helper exited unexpectedly (code={code}); see logs/nemotron-stt.log")
+        payload = json.loads(line)
+        if payload.get("type") == "error":
+            raise RuntimeError(str(payload.get("error") or "Nemotron helper failed"))
+        return payload
+
+
 def _warm_desktop_voice_models() -> None:
     cfg = load_config()
     if not isinstance(cfg, dict):
@@ -225,13 +305,7 @@ def _warm_desktop_voice_models() -> None:
         and streaming.get("enabled") is True
         and str(streaming.get("provider") or "").strip().lower() == "nemotron"
     ):
-        try:
-            from tools.nemotron_streaming_stt import warm_nemotron_stt
-
-            warm_nemotron_stt(stt_cfg)
-            _log.info("Warmed Nemotron streaming STT for desktop")
-        except Exception as exc:
-            _log.warning("Could not warm Nemotron streaming STT: %s", exc)
+        _log.info("Nemotron streaming STT will run in the WhisperLive shared venv")
 
 
 def _resolve_restart_drain_timeout() -> float:
@@ -12778,10 +12852,11 @@ async def transcribe_audio_stream_ws(ws: WebSocket) -> None:
                 if total_bytes > _MAX_TRANSCRIPTION_UPLOAD_BYTES:
                     await ws.send_json({"type": "error", "error": "Audio recording is too large"})
                     await ws.close(code=1009)
+                    if nemotron_session is not None:
+                        await asyncio.to_thread(nemotron_session.close)
                     return
                 if nemotron_session is not None:
-                    nemotron_session.accept_samples(_float32_samples_from_bytes(chunk))
-                    partial = nemotron_session.drain_text()
+                    partial = await asyncio.to_thread(nemotron_session.accept_bytes, chunk)
                     if partial:
                         await ws.send_json({"type": "partial", "text": partial})
                     continue
@@ -12798,25 +12873,25 @@ async def transcribe_audio_stream_ws(ws: WebSocket) -> None:
                 if streaming_provider == "nemotron":
                     if sample_rate != 16000:
                         await ws.send_json({"type": "error", "error": "Nemotron streaming STT requires 16 kHz mic audio"})
+                        if nemotron_session is not None:
+                            await asyncio.to_thread(nemotron_session.close)
                         return
                     try:
-                        from tools.nemotron_streaming_stt import NemotronStreamingSession
-
-                        nemotron_session = NemotronStreamingSession(stt_cfg)
+                        nemotron_session = _NemotronSubprocessSession(stt_cfg)
                         await asyncio.to_thread(nemotron_session.start)
                     except Exception as exc:
                         _log.warning("Nemotron streaming STT unavailable; falling back to buffered STT: %s", exc)
+                        if nemotron_session is not None:
+                            await asyncio.to_thread(nemotron_session.close)
                         nemotron_session = None
                 await ws.send_json({"type": "ready"})
             elif event_type == "stop":
                 break
 
         if nemotron_session is not None:
-            partial = nemotron_session.drain_text()
-            if partial:
-                await ws.send_json({"type": "partial", "text": partial})
             text = await asyncio.to_thread(nemotron_session.finish)
             await ws.send_json({"type": "final", "text": text})
+            await asyncio.to_thread(nemotron_session.close)
             return
 
         if not chunks:
@@ -12843,8 +12918,12 @@ async def transcribe_audio_stream_ws(ws: WebSocket) -> None:
                 except OSError:
                     pass
     except WebSocketDisconnect:
+        if nemotron_session is not None:
+            await asyncio.to_thread(nemotron_session.close)
         return
     except Exception as exc:
+        if nemotron_session is not None:
+            await asyncio.to_thread(nemotron_session.close)
         _log.exception("Desktop streaming transcription failed")
         try:
             await ws.send_json({"type": "error", "error": f"Streaming transcription failed: {exc}"})

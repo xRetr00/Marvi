@@ -1,8 +1,10 @@
-"""show_card tool: surface a compact card on the user's voice presence overlay.
+"""show_card tool: surface a compact card on the user's voice presence.
 
 Voice-first "show, don't say": when the agent wants to display a short result,
 list, link, or a confirm prompt instead of speaking it, it calls show_card and
-the desktop renders a glass capsule on the edge-glow presence.
+the desktop renders it on the Dynamic Island (the always-present pill at the top
+of the screen). The desktop only shows the card when the user is NOT looking at
+the main Marvi window, so it never competes with the chat.
 """
 
 import uuid
@@ -14,14 +16,17 @@ from tools.ui_events import emit_ui_event
 SHOW_CARD_SCHEMA = {
     "name": "show_card",
     "description": (
-        "Show a compact card on the user's desktop voice presence (a small glass "
-        "capsule on the screen-edge glow). Best for VOICE interactions: when the "
-        "user is talking to you hands-free, SHOW a short result, a key fact, a "
-        "link, a list, or a quick confirm prompt instead of only speaking it. "
-        "The card appears whenever the Marvi desktop app is open; if no desktop "
-        "client is watching it is simply a no-op, so it is always safe to call. "
-        "Keep body under ~200 chars. Use actions for yes/no or quick replies — an "
-        "action's value is sent back as the user's next message when tapped."
+        "Show a compact card on the user's desktop voice presence (the Dynamic "
+        "Island pill at the top of the screen). Best for VOICE / hands-free "
+        "interactions: when the user is talking to you or working in ANOTHER app, "
+        "SHOW a short result, a key fact, a link, a list, or a quick confirm "
+        "prompt instead of only speaking it. Do NOT rely on it when the user is "
+        "actively looking at the main Marvi chat window — they'll read your reply "
+        "there, and the desktop deliberately suppresses the card while its window "
+        "is focused, so calling it then is wasted. It is always safe to call (a "
+        "no-op when suppressed or when no desktop is watching). Keep body under "
+        "~200 chars. Use actions for yes/no or quick replies — an action's value "
+        "is sent back as the user's next message when tapped."
     ),
     "parameters": {
         "type": "object",

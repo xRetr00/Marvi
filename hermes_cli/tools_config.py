@@ -9,6 +9,7 @@ Saves per-platform tool configuration to ~/.hermes/config.yaml under
 the `platform_toolsets` key.
 """
 
+import importlib.util
 import json as _json
 import logging
 import os
@@ -1290,6 +1291,14 @@ def _run_post_setup(post_setup_key: str):
     elif post_setup_key == "nemotron_stt":
         _print_info("    Installing Nemotron streaming STT dependencies...")
         try:
+            if importlib.util.find_spec("qwen_tts") is not None:
+                _print_warning(
+                    "    Skipping shared-venv Nemotron install: it requires source Transformers, "
+                    "which conflicts with Qwen3-TTS."
+                )
+                _print_info("    Use WhisperLive streaming STT with Qwen3-TTS until Nemotron moves to an isolated runtime.")
+                return
+            _ensure_whisperlive_cuda_torch(Path(sys.executable))
             result = _pip_install(
                 [
                     "-U",

@@ -239,14 +239,16 @@ export function useWakeWord({
           }
 
           transcript = (await streamingSession.finish()).trim()
-        } else if (streamingSttEnabled) {
-          const error = streamingErrorRef.current
-          throw error instanceof Error ? error : new Error(voiceCopy.streamingUnavailable)
-        } else {
+        }
+
+        if (!transcript) {
           const transcribeAudio = onTranscribeAudioRef.current
 
           if (transcribeAudio && commandAudio) {
             transcript = (await transcribeAudio(commandAudio)).trim()
+          } else if (streamingSttEnabled) {
+            const error = streamingErrorRef.current
+            throw error instanceof Error ? error : new Error(voiceCopy.streamingUnavailable)
           }
         }
 

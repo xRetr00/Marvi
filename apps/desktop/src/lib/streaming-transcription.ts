@@ -66,15 +66,20 @@ export async function openStreamingTranscription(): Promise<StreamingTranscripti
       ws.send(copy.buffer)
     },
     finish: () =>
-      new Promise(resolve => {
+      new Promise((resolve, reject) => {
         ws.addEventListener('message', event => {
-          const msg = JSON.parse(String(event.data)) as { text?: string; type?: string }
+          const msg = JSON.parse(String(event.data)) as { error?: string; text?: string; type?: string }
 
           if (msg.type === 'final') {
             ws.close()
             resolve((msg.text || '').trim())
+          } else if (msg.type === 'error') {
+            ws.close()
+            reject(new Error(msg.error || 'Streaming transcription failed'))
           }
         })
+        ws.addEventListener('error', () => reject(new Error('Streaming transcription connection failed')), { once: true })
+        ws.addEventListener('close', () => resolve(''), { once: true })
 
         if (ws.readyState === WebSocket.OPEN) {
           ws.send(JSON.stringify({ type: 'stop' }))

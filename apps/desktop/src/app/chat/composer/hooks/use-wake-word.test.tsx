@@ -265,11 +265,12 @@ describe('useWakeWord', () => {
     expect(streamSession.finish).toHaveBeenCalledTimes(1)
   })
 
-  it('does not fall back to batch STT when streaming STT is enabled but unavailable', async () => {
+  it('falls back to batch STT when streaming STT is enabled but unavailable', async () => {
     let wakeOptions: { debug?: boolean; onDetected: (phrase: string) => void } | null = null
     const recorderState: { options?: RecorderOptionsForTest } = {}
     const wakeSession = { sendFrame: vi.fn(), stop: vi.fn() }
     const onTranscribeAudio = vi.fn().mockResolvedValue('hey marvi fallback text')
+    const onSubmit = vi.fn()
     openWakeWordSession.mockImplementation(async options => {
       wakeOptions = options
       return wakeSession
@@ -294,7 +295,7 @@ describe('useWakeWord', () => {
           threshold: 0.35
         },
         enabled: true,
-        onSubmit: vi.fn(),
+        onSubmit,
         onTranscribeAudio,
         streamingSttEnabled: true
       })
@@ -311,10 +312,11 @@ describe('useWakeWord', () => {
 
     await act(async () => {
       recorderState.options?.onSilence?.()
-      await waitFor(() => expect(notifyError).toHaveBeenCalled())
+      await waitFor(() => expect(onSubmit).toHaveBeenCalledWith('fallback text'))
     })
 
-    expect(onTranscribeAudio).not.toHaveBeenCalled()
+    expect(notifyError).not.toHaveBeenCalled()
+    expect(onTranscribeAudio).toHaveBeenCalledTimes(1)
   })
 
   it('passes debug mode to the wake-word session', async () => {

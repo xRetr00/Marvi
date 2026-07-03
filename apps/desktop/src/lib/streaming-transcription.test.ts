@@ -86,4 +86,18 @@ describe('openStreamingTranscription', () => {
 
     await expect(finalPromise).resolves.toBe('hello')
   })
+
+  it('rejects when the backend sends an error after ready', async () => {
+    const sessionPromise = openStreamingTranscription()
+    await vi.waitFor(() => expect(FakeWebSocket.instances).toHaveLength(1))
+
+    const ws = FakeWebSocket.instances[0]
+    ws.emit('message', new MessageEvent('message', { data: JSON.stringify({ type: 'ready' }) }))
+    const session = await sessionPromise
+
+    const finalPromise = session.finish()
+    ws.emit('message', new MessageEvent('message', { data: JSON.stringify({ error: 'torch failed', type: 'error' }) }))
+
+    await expect(finalPromise).rejects.toThrow('torch failed')
+  })
 })

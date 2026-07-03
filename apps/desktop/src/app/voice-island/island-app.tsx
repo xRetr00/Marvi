@@ -7,7 +7,7 @@ import { DynamicIsland } from './dynamic-island'
 
 type CardAction = { type: 'dismiss'; id?: string } | { type: 'submit'; text: string }
 
-const INITIAL_STATE: VoiceState = { phase: 'off', level: 0, muted: false, caption: null }
+const INITIAL_STATE: VoiceState = { phase: 'off', level: 0, muted: false, caption: null, userCaption: null }
 
 // Apple-style Dynamic Island: a near-black pill anchored top-center in the
 // small transparent overlay stage, morphing between a compact idle state and

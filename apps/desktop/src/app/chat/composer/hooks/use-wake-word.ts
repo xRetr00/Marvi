@@ -11,6 +11,7 @@ import {
   type WakeWordSession
 } from '@/lib/wake-word'
 import { notify, notifyError } from '@/store/notifications'
+import { setUserCaption } from '@/store/voice-presence'
 
 import { useMicRecorder } from './use-mic-recorder'
 
@@ -188,12 +189,14 @@ export function useWakeWord({
     stoppingRef.current = false
     commandFramesRef.current = []
     setStatus('idle')
+    setUserCaption(null)
   }, [])
 
   const scheduleRestart = useCallback(() => {
     if (!enabledRef.current || busyRef.current) {
       debugLog('restart skipped (disabled or busy)')
       setStatus('idle')
+      setUserCaption(null)
 
       return
     }
@@ -202,6 +205,7 @@ export function useWakeWord({
     restartTimerRef.current = window.setTimeout(() => {
       restartTimerRef.current = null
       setStatus('idle')
+      setUserCaption(null)
       setStartTick(tick => tick + 1)
     }, wakeConfig.cooldownMs)
   }, [debugLog, wakeConfig.cooldownMs])
@@ -255,6 +259,10 @@ export function useWakeWord({
         streamingSessionRef.current = null
         streamingOpenRef.current = null
         streamedCommandFramesRef.current = 0
+
+        if (transcript) {
+          setUserCaption(transcript)
+        }
 
         const command = stripWakePhrase(transcript, wakeConfig.phrases)
         debugLog('transcribed command', {
@@ -330,7 +338,7 @@ export function useWakeWord({
             streamingErrorRef.current = null
 
             if (streamingSttEnabled) {
-              streamingOpenRef.current = openStreamingTranscription()
+              streamingOpenRef.current = openStreamingTranscription({ onPartial: text => setUserCaption(text) })
                 .then(session => {
                   streamingSessionRef.current = session
 

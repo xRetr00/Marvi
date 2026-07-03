@@ -4,6 +4,7 @@ import { useI18n } from '@/i18n'
 import { openStreamingTranscription, type StreamingTranscriptionSession } from '@/lib/streaming-transcription'
 import { playSpeechText, stopVoicePlayback } from '@/lib/voice-playback'
 import { notify, notifyError } from '@/store/notifications'
+import { setUserCaption } from '@/store/voice-presence'
 
 import { useMicRecorder } from './use-mic-recorder'
 
@@ -175,6 +176,7 @@ export function useVoiceConversation({
             return
           }
 
+          setUserCaption(transcript)
           awaitingSpokenResponseRef.current = true
           resetSpeechBuffer()
           await onSubmit(transcript)
@@ -206,10 +208,14 @@ export function useVoiceConversation({
       return
     }
 
+    setUserCaption(null)
+
     let streaming: StreamingTranscriptionSession | null = null
 
     try {
-      streaming = streamingSttEnabled ? await openStreamingTranscription() : null
+      streaming = streamingSttEnabled
+        ? await openStreamingTranscription({ onPartial: text => setUserCaption(text) })
+        : null
       streamingRef.current = streaming
       const activeStreaming = streaming
       // VAD tuning mirrors `tools.voice_mode` defaults so the browser loop matches the CLI.
@@ -300,6 +306,7 @@ export function useVoiceConversation({
     setMuted(false)
     setStatus('idle')
     setCaption(null)
+    setUserCaption(null)
   }, [consumePendingResponse, handle])
 
   const stopTurn = useCallback(() => {

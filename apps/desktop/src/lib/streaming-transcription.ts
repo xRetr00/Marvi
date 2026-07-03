@@ -7,6 +7,11 @@ export interface StreamingTranscriptionSession {
   sendFrame: (samples: Float32Array) => void
 }
 
+export interface StreamingTranscriptionOptions {
+  /** Called with each partial transcript as the user speaks (trimmed). */
+  onPartial?: (text: string) => void
+}
+
 function streamingTranscriptionUrl(wsUrl: string): string {
   const url = new URL(wsUrl)
   url.pathname = '/api/audio/transcribe/stream'
@@ -15,7 +20,9 @@ function streamingTranscriptionUrl(wsUrl: string): string {
   return url.toString()
 }
 
-export async function openStreamingTranscription(): Promise<StreamingTranscriptionSession> {
+export async function openStreamingTranscription(
+  options?: StreamingTranscriptionOptions
+): Promise<StreamingTranscriptionSession> {
   const conn = $connection.get()
 
   if (!conn) {
@@ -26,8 +33,88 @@ export async function openStreamingTranscription(): Promise<StreamingTranscripti
   const ws = new WebSocket(streamingTranscriptionUrl(baseWsUrl))
   ws.binaryType = 'arraybuffer'
 
+  // A single persistent message router for the whole session lifetime. Two
+  // separate `addEventListener('message', ...)` blocks (one for open/ready,
+  // one added later inside `finish`) would race: any `partial` (or even
+  // `final`) arriving between them is silently dropped. Routing by
+  // `msg.type` through one listener guarantees nothing in-flight is lost.
+  let resolveReady: (() => void) | null = null
+  let rejectReady: ((error: Error) => void) | null = null
+  let resolveFinish: ((text: string) => void) | null = null
+  let rejectFinish: ((error: Error) => void) | null = null
+  let settledFinish = false
+
+  const settleFinish = (fn: (() => void) | null) => {
+    if (settledFinish) {
+      return
+    }
+
+    settledFinish = true
+    fn?.()
+  }
+
+  ws.addEventListener('message', event => {
+    let msg: { error?: string; text?: string; type?: string }
+
+    try {
+      msg = JSON.parse(String(event.data)) as { error?: string; text?: string; type?: string }
+    } catch {
+      return
+    }
+
+    if (msg.type === 'ready') {
+      resolveReady?.()
+      resolveReady = null
+      rejectReady = null
+
+      return
+    }
+
+    if (msg.type === 'partial') {
+      options?.onPartial?.((msg.text || '').trim())
+
+      return
+    }
+
+    if (msg.type === 'final') {
+      const text = (msg.text || '').trim()
+      ws.close()
+      settleFinish(() => resolveFinish?.(text))
+
+      return
+    }
+
+    if (msg.type === 'error') {
+      const error = new Error(msg.error || 'Streaming transcription failed')
+
+      if (rejectReady) {
+        rejectReady(error)
+        resolveReady = null
+        rejectReady = null
+      }
+
+      ws.close()
+      settleFinish(() => rejectFinish?.(error))
+    }
+  })
+
+  ws.addEventListener('close', () => {
+    // If the socket closes before a final arrived, resolve finish with ''
+    // rather than leaving the caller hanging.
+    settleFinish(() => resolveFinish?.(''))
+  })
+
   await new Promise<void>((resolve, reject) => {
     const timeout = window.setTimeout(() => reject(new Error('Streaming transcription timed out')), 120_000)
+
+    resolveReady = () => {
+      window.clearTimeout(timeout)
+      resolve()
+    }
+    rejectReady = error => {
+      window.clearTimeout(timeout)
+      reject(error)
+    }
 
     ws.addEventListener(
       'open',
@@ -38,21 +125,12 @@ export async function openStreamingTranscription(): Promise<StreamingTranscripti
       'error',
       () => {
         window.clearTimeout(timeout)
-        reject(new Error('Streaming transcription connection failed'))
+        rejectReady?.(new Error('Streaming transcription connection failed'))
+        resolveReady = null
+        rejectReady = null
       },
       { once: true }
     )
-    ws.addEventListener('message', event => {
-      const msg = JSON.parse(String(event.data)) as { error?: string; type?: string }
-
-      if (msg.type === 'ready') {
-        window.clearTimeout(timeout)
-        resolve()
-      } else if (msg.type === 'error') {
-        window.clearTimeout(timeout)
-        reject(new Error(msg.error || 'Streaming transcription failed'))
-      }
-    })
   })
 
   return {
@@ -67,22 +145,13 @@ export async function openStreamingTranscription(): Promise<StreamingTranscripti
     },
     finish: () =>
       new Promise((resolve, reject) => {
-        ws.addEventListener('message', event => {
-          const msg = JSON.parse(String(event.data)) as { error?: string; text?: string; type?: string }
-
-          if (msg.type === 'final') {
-            ws.close()
-            resolve((msg.text || '').trim())
-          } else if (msg.type === 'error') {
-            ws.close()
-            reject(new Error(msg.error || 'Streaming transcription failed'))
-          }
-        })
-        ws.addEventListener('error', () => reject(new Error('Streaming transcription connection failed')), { once: true })
-        ws.addEventListener('close', () => resolve(''), { once: true })
+        resolveFinish = resolve
+        rejectFinish = reject
 
         if (ws.readyState === WebSocket.OPEN) {
           ws.send(JSON.stringify({ type: 'stop' }))
+        } else if (ws.readyState === WebSocket.CLOSED) {
+          settleFinish(() => resolve(''))
         }
       })
   }

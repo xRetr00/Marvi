@@ -11,6 +11,8 @@ export interface VoiceState {
   muted: boolean
   /** The TTS text currently being spoken, for the island's live caption. Null when not speaking. */
   caption: string | null
+  /** The user's live/final speech transcript, for the island's "what you said" caption. Null when none. */
+  userCaption: string | null
 }
 
 /** Conversation status from use-voice-conversation.ts. */
@@ -56,13 +58,20 @@ export const $conversation = atom<{ active: boolean; status: VoiceStatus; level:
 /** Wake-word status, published by chat/index.tsx (owns useWakeWord). */
 export const $wakeStatus = atom<WakeStatus>('idle')
 
+/** The user's live/final speech transcript, published by the voice loops (streaming partials + final flash). */
+export const $userCaption = atom<string | null>(null)
+
 /** The single derived presence state the island overlay mirrors. */
-export const $voiceState = computed([$conversation, $wakeStatus], (conv, wakeStatus): VoiceState => ({
-  phase: deriveVoicePhase({ active: conv.active, voiceStatus: conv.status, wakeStatus }),
-  level: conv.level,
-  muted: conv.muted,
-  caption: conv.caption
-}))
+export const $voiceState = computed(
+  [$conversation, $wakeStatus, $userCaption],
+  (conv, wakeStatus, userCaption): VoiceState => ({
+    phase: deriveVoicePhase({ active: conv.active, voiceStatus: conv.status, wakeStatus }),
+    level: conv.level,
+    muted: conv.muted,
+    caption: conv.caption,
+    userCaption
+  })
+)
 
 /** Publish the conversation slice (called from the composer). */
 export function publishConversation(next: { active: boolean; status: VoiceStatus; level: number; muted: boolean; caption: string | null }): void {
@@ -72,6 +81,11 @@ export function publishConversation(next: { active: boolean; status: VoiceStatus
 /** Publish the wake-word slice (called from chat/index.tsx). */
 export function publishWakeStatus(status: WakeStatus): void {
   $wakeStatus.set(status)
+}
+
+/** Publish the user's live/final speech transcript (called from the voice loops). */
+export function setUserCaption(v: string | null): void {
+  $userCaption.set(v)
 }
 
 // Log phase transitions only (not every level/tick) so the debug log stays

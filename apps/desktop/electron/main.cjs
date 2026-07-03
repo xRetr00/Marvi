@@ -3863,7 +3863,11 @@ function getWindowState() {
   return {
     isFullscreen: Boolean(mainWindow?.isFullScreen?.()),
     nativeOverlayWidth: getNativeOverlayWidth(),
-    windowButtonPosition: getWindowButtonPosition()
+    windowButtonPosition: getWindowButtonPosition(),
+    focused: Boolean(mainWindow && !mainWindow.isDestroyed() && mainWindow.isFocused()),
+    visible: Boolean(
+      mainWindow && !mainWindow.isDestroyed() && mainWindow.isVisible() && !mainWindow.isMinimized()
+    )
   }
 }
 
@@ -6123,6 +6127,15 @@ function createWindow() {
   mainWindow.on('enter-full-screen', () => sendWindowStateChanged(true))
   mainWindow.on('will-leave-full-screen', () => sendWindowStateChanged(false))
   mainWindow.on('leave-full-screen', () => sendWindowStateChanged(false))
+
+  // Keep the renderer's live focused/visible flags in sync (used to gate
+  // whether the voice-island surfaces cards instead of the main window).
+  mainWindow.on('focus', () => sendWindowStateChanged())
+  mainWindow.on('blur', () => sendWindowStateChanged())
+  mainWindow.on('minimize', () => sendWindowStateChanged())
+  mainWindow.on('restore', () => sendWindowStateChanged())
+  mainWindow.on('show', () => sendWindowStateChanged())
+  mainWindow.on('hide', () => sendWindowStateChanged())
 
   // Reopen where the user left off. resized/moved settle once per drag; close is
   // the cross-platform backstop, flushed synchronously before the window is gone.

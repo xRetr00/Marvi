@@ -21,7 +21,6 @@ import { storedSessionIdForNotification } from '../lib/session-ids'
 import { latestSessionTodos } from '../lib/todos'
 import { vpLog } from '../lib/voice-presence-log'
 import { setCronFocusJobId } from '../store/cron'
-import { initVoiceIslandBridge } from '../store/voice-island'
 import { dismissIslandCard, setIslandCardSubmitHandler } from '../store/island-cards'
 import {
   $fileBrowserOpen,
@@ -82,8 +81,10 @@ import {
 import { onSessionsChanged } from '../store/session-sync'
 import { clearSessionTodos, setSessionTodos, todoListActive } from '../store/todos'
 import { openUpdatesWindow, startUpdatePoller, stopUpdatePoller } from '../store/updates'
+import { initVoiceIslandBridge } from '../store/voice-island'
 import { publishWakeStatus } from '../store/voice-presence'
 import { $presenceEnabled, setPresenceEnabled } from '../store/voice-presence-settings'
+import { initWindowPresence } from '../store/window-presence'
 import { isSecondaryWindow } from '../store/windows'
 
 import { ChatView } from './chat'
@@ -793,6 +794,8 @@ export function DesktopController() {
     if (isSecondaryWindow()) {
       return
     }
+
+    initWindowPresence()
 
     setPetOverlaySubmitHandler(text => void submitTextRef.current(text))
     setIslandCardSubmitHandler(text => void submitTextRef.current(text))

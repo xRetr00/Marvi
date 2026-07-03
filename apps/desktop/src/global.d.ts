@@ -397,6 +397,8 @@ export interface HermesWindowState {
   isFullscreen: boolean
   nativeOverlayWidth: number
   windowButtonPosition: { x: number; y: number } | null
+  focused: boolean
+  visible: boolean
 }
 
 export interface DesktopActiveProfile {

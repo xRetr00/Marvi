@@ -462,6 +462,24 @@ class TestLocalWhisperGpuConfig:
         assert "batch_size" not in kwargs
         assert kwargs["vad_filter"] is True
 
+    def test_transcribe_local_normalizes_language_code(self, sample_wav):
+        segment = types.SimpleNamespace(text=" hello ")
+        info = types.SimpleNamespace(language="en", duration=1.0)
+        mock_model = MagicMock()
+        mock_model.transcribe.return_value = ([segment], info)
+
+        cfg = {"local": {"language": "EN"}}
+        with patch("tools.transcription_tools._HAS_FASTER_WHISPER", True), \
+             patch("tools.transcription_tools._load_stt_config", return_value=cfg), \
+             patch("tools.transcription_tools._load_local_whisper_model", return_value=mock_model), \
+             patch("tools.transcription_tools._local_model", None), \
+             patch("tools.transcription_tools._local_model_name", None):
+            from tools.transcription_tools import _transcribe_local
+            result = _transcribe_local(sample_wav, "base")
+
+        assert result["success"] is True
+        assert mock_model.transcribe.call_args.kwargs["language"] == "en"
+
 
 class TestWhisperLiveConfig:
     def test_builds_whisperlive_server_command_from_config(self):

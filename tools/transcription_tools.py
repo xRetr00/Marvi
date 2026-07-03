@@ -1186,6 +1186,8 @@ def _transcribe_local(file_path: str, model_name: str) -> Dict[str, Any]:
             or os.getenv(LOCAL_STT_LANGUAGE_ENV)
             or DEFAULT_LOCAL_STT_LANGUAGE
         )
+        if isinstance(_forced_lang, str):
+            _forced_lang = _forced_lang.strip().lower()
         transcribe_kwargs = {
             "beam_size": 1,
             "best_of": 1,

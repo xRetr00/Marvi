@@ -8,6 +8,7 @@ import json
 import logging
 import sys
 import threading
+import traceback
 from collections import deque
 from dataclasses import dataclass
 from pathlib import Path
@@ -348,6 +349,8 @@ def _run_stdio_server() -> int:
         return 0
     except BaseException as exc:  # noqa: BLE001
         logger.exception("Nemotron stdio helper failed")
+        traceback.print_exc(file=sys.stderr)
+        sys.stderr.flush()
         _emit_stdio({"type": "error", "error": str(exc)})
         return 1
 

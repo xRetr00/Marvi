@@ -12799,10 +12799,14 @@ async def transcribe_audio_stream_ws(ws: WebSocket) -> None:
                     if sample_rate != 16000:
                         await ws.send_json({"type": "error", "error": "Nemotron streaming STT requires 16 kHz mic audio"})
                         return
-                    from tools.nemotron_streaming_stt import NemotronStreamingSession
+                    try:
+                        from tools.nemotron_streaming_stt import NemotronStreamingSession
 
-                    nemotron_session = NemotronStreamingSession(stt_cfg)
-                    await asyncio.to_thread(nemotron_session.start)
+                        nemotron_session = NemotronStreamingSession(stt_cfg)
+                        await asyncio.to_thread(nemotron_session.start)
+                    except Exception as exc:
+                        _log.warning("Nemotron streaming STT unavailable; falling back to buffered STT: %s", exc)
+                        nemotron_session = None
                 await ws.send_json({"type": "ready"})
             elif event_type == "stop":
                 break

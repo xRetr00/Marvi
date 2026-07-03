@@ -95,6 +95,7 @@ async function playStreamingSpeechText(text: string, options: VoicePlaybackOptio
     const source = audioContext.createBufferSource()
     source.buffer = audioBuffer
     source.connect(audioContext.destination)
+    nextTime = Math.max(nextTime, audioContext.currentTime + 0.02)
     source.start(nextTime)
     nextTime += samples.length / sampleRate
   }

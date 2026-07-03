@@ -114,6 +114,66 @@ describe('playSpeechText', () => {
     expect(speakText).not.toHaveBeenCalled()
   })
 
+  it('schedules slow streaming chunks from current audio time instead of cutting them off', async () => {
+    const starts: number[] = []
+    const encoder = new TextEncoder()
+    const fetch = vi.fn().mockResolvedValue({
+      body: new ReadableStream({
+        start(controller) {
+          controller.enqueue(
+            encoder.encode(
+              [
+                JSON.stringify({ type: 'start', sample_rate: 24000 }),
+                JSON.stringify({ type: 'chunk', audio: 'AAE=' }),
+                JSON.stringify({ type: 'end' }),
+                ''
+              ].join('\n')
+            )
+          )
+          controller.close()
+        }
+      }),
+      ok: true
+    })
+    vi.stubGlobal('fetch', fetch)
+    vi.stubGlobal(
+      'AudioContext',
+      class {
+        currentTime = 5
+        destination = {}
+        createBuffer(_channels: number, length: number) {
+          return {
+            getChannelData: () => new Float32Array(length)
+          }
+        }
+        createBufferSource() {
+          return {
+            connect: vi.fn(),
+            start: (time: number) => starts.push(time)
+          }
+        }
+        close() {
+          return Promise.resolve()
+        }
+      }
+    )
+    Object.defineProperty(window, 'hermesDesktop', {
+      configurable: true,
+      value: {
+        getConnection: vi.fn().mockResolvedValue({
+          authMode: 'token',
+          baseUrl: 'http://127.0.0.1:9119',
+          token: 'secret'
+        })
+      }
+    })
+
+    await playSpeechText('Hello', { source: 'read-aloud' })
+
+    expect(starts[0]).toBeGreaterThanOrEqual(5.02)
+    expect(speakText).not.toHaveBeenCalled()
+  })
+
   it('falls back to normal speech synthesis when the stream endpoint reports unavailable', async () => {
     const encoder = new TextEncoder()
     const fetch = vi.fn().mockResolvedValue({

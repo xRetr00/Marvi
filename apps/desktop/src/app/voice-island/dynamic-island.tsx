@@ -88,7 +88,26 @@ function phaseColor(phase: VoicePhase): string {
   }
 }
 
-function resolveView(state: VoiceState, card: IslandCard | null, summoned: boolean): IslandView {
+// Which speaker's words are currently active for the caption line, and the
+// text to show. Marvi's spoken caption (TTS) takes priority while she's
+// actually speaking; otherwise the user's live/final transcript fills the
+// line across the wake/listening/transcribing/thinking phases.
+interface ActiveCaption {
+  text: string
+  who: 'you' | 'marvi'
+}
+
+function resolveCaption(state: VoiceState): ActiveCaption | null {
+  if (state.phase === 'speaking' && state.caption) {
+    return { text: state.caption, who: 'marvi' }
+  }
+  if (state.userCaption) {
+    return { text: state.userCaption, who: 'you' }
+  }
+  return null
+}
+
+function resolveView(state: VoiceState, card: IslandCard | null, summoned: boolean, caption: ActiveCaption | null): IslandView {
   if (summoned) {
     return 'summon'
   }
@@ -96,6 +115,11 @@ function resolveView(state: VoiceState, card: IslandCard | null, summoned: boole
     return 'expanded'
   }
   if (state.phase === 'listening' || state.phase === 'speaking') {
+    return 'expanded'
+  }
+  if (caption) {
+    // A caption ready to show (e.g. user speech during transcribing/thinking)
+    // earns the roomier expanded pill so the words aren't clipped.
     return 'expanded'
   }
   if (state.phase === 'off') {
@@ -116,7 +140,8 @@ export function DynamicIsland({
   onSummonCancel
 }: DynamicIslandProps) {
   const reducedMotion = useReducedMotion()
-  const view = resolveView(state, card, summoned)
+  const caption = resolveCaption(state)
+  const view = resolveView(state, card, summoned, caption)
   const active = state.phase === 'listening' || state.phase === 'speaking'
   const color = phaseColor(state.phase)
   // While thinking, narrate the agent's current tool action instead of the
@@ -124,10 +149,18 @@ export function DynamicIsland({
   // tools) or for phases that don't carry an activity.
   const narrating = (state.phase === 'thinking' || state.phase === 'transcribing') && Boolean(activity)
   const label = narrating ? activity! : phaseLabel(state.phase)
+  // Thinking with a live user caption: the caption becomes the primary line
+  // and the activity narration steps aside rather than stacking a third row.
+  const showActivityLabel = !(state.phase === 'thinking' && caption)
 
   const contentTransition = reducedMotion ? CONTENT_TRANSITION_INSTANT : CONTENT_TRANSITION_MOTION
   const springTransition = reducedMotion ? CONTENT_TRANSITION_INSTANT : SPRING
 
+  // Note: the key intentionally excludes caption text — captions update a
+  // few times/sec on streaming partials, and re-keying here would replay the
+  // whole pill's enter/exit blur animation on every partial. Only the
+  // Caption component's own AnimatePresence (keyed on who+text) should react
+  // to text changes.
   const contentKey =
     view === 'summon' ? 'summon' : card ? `card:${card.id}` : `state:${view}:${state.phase}:${narrating ? label : ''}`
 
@@ -213,13 +246,13 @@ export function DynamicIsland({
             ) : (
               <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6 }}>
                 <IslandWaveform level={state.level} active={active} width={300} height={72} />
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <StateDot color={color} active={active} reducedMotion={Boolean(reducedMotion)} />
-                  <span style={{ fontSize: 13, fontWeight: 500, color: 'rgba(255,255,255,0.78)' }}>{label}</span>
-                </div>
-                {state.phase === 'speaking' && state.caption ? (
-                  <SpeakingCaption caption={state.caption} reducedMotion={Boolean(reducedMotion)} />
+                {showActivityLabel ? (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <StateDot color={color} active={active} reducedMotion={Boolean(reducedMotion)} />
+                    <span style={{ fontSize: 13, fontWeight: 500, color: 'rgba(255,255,255,0.78)' }}>{label}</span>
+                  </div>
                 ) : null}
+                {caption ? <Caption text={caption.text} who={caption.who} reducedMotion={Boolean(reducedMotion)} /> : null}
               </div>
             )}
           </motion.div>
@@ -270,33 +303,55 @@ function StateDot({ color, active, reducedMotion }: { color: string; active: boo
   )
 }
 
-// Live caption of the words Marvi is currently speaking (TTS), shown under
-// the waveform while `state.phase === 'speaking'`. Clamped to two lines so a
-// long sentence doesn't blow out the pill; fades gently on each chunk change.
-function SpeakingCaption({ caption, reducedMotion }: { caption: string; reducedMotion: boolean }) {
+// Live caption of the words being spoken — either Marvi's (TTS, while
+// `state.phase === 'speaking'`) or the user's (live streaming partials on
+// the Nemotron path, or a final flash on other paths, while listening/
+// transcribing/thinking). Styled by speaker so it's obvious who's talking:
+// Marvi's line runs brighter, the user's line sits dimmer/muted with a tiny
+// "you" affordance. Clamped to two lines so long speech never blows out the
+// pill; fades gently on each change, keyed on who+text so a speaker switch
+// (user -> Marvi) also gets a clean crossfade rather than a jump-cut.
+function Caption({ text, who, reducedMotion }: { text: string; who: 'you' | 'marvi'; reducedMotion: boolean }) {
+  const isUser = who === 'you'
   return (
     <AnimatePresence mode="wait">
-      <motion.p
-        key={caption}
+      <motion.div
+        key={`${who}:${text}`}
         initial={reducedMotion ? false : { opacity: 0 }}
         animate={{ opacity: 1 }}
         exit={reducedMotion ? undefined : { opacity: 0 }}
         transition={reducedMotion ? CONTENT_TRANSITION_INSTANT : CONTENT_TRANSITION_MOTION}
-        style={{
-          margin: 0,
-          maxWidth: 280,
-          fontSize: 13,
-          lineHeight: 1.4,
-          color: '#e6e6f0',
-          textAlign: 'center',
-          display: '-webkit-box',
-          WebkitLineClamp: 2,
-          WebkitBoxOrient: 'vertical',
-          overflow: 'hidden'
-        }}
+        style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2, maxWidth: 280 }}
       >
-        {caption}
-      </motion.p>
+        {isUser && (
+          <span
+            style={{
+              fontSize: 10,
+              fontWeight: 500,
+              letterSpacing: '0.08em',
+              textTransform: 'uppercase',
+              color: 'rgba(185,185,201,0.55)'
+            }}
+          >
+            you
+          </span>
+        )}
+        <p
+          style={{
+            margin: 0,
+            fontSize: isUser ? 13 : 14,
+            lineHeight: 1.4,
+            color: isUser ? '#b9b9c9' : '#e6e6f0',
+            textAlign: 'center',
+            display: '-webkit-box',
+            WebkitLineClamp: 2,
+            WebkitBoxOrient: 'vertical',
+            overflow: 'hidden'
+          }}
+        >
+          {text}
+        </p>
+      </motion.div>
     </AnimatePresence>
   )
 }

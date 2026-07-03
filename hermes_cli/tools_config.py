@@ -112,6 +112,54 @@ def _ensure_whisperlive_cuda_torch(py: Path) -> None:
     _print_info(f"      {(result.stderr or '').strip()[:300]}")
 
 
+def _ensure_qwen3_performance_deps() -> None:
+    if os.name == "nt":
+        try:
+            import triton  # noqa: F401
+        except ImportError:
+            _print_info("    Installing Triton Windows kernels for Qwen3/TorchAO...")
+            result = _pip_install(["triton-windows==3.6.*", "--quiet"], timeout=300)
+            if result.returncode == 0:
+                _print_success("    triton-windows installed")
+            else:
+                _print_warning("    triton-windows install failed:")
+                _print_info(f"      {(result.stderr or '').strip()[:300]}")
+
+    if shutil.which("sox"):
+        return
+    user_path = [p for p in os.environ.get("PATH", "").split(os.pathsep) if p]
+    if any((Path(p) / "sox.exe").exists() for p in user_path):
+        return
+    winget_packages = Path(os.environ.get("LOCALAPPDATA", "")) / "Microsoft" / "WinGet" / "Packages"
+    if any(winget_packages.glob("ChrisBagwell.SoX_*/*/sox.exe")):
+        return
+    winget = shutil.which("winget")
+    if os.name != "nt" or not winget:
+        _print_warning("    SoX executable not found; install SoX to remove Qwen audio preprocessing warnings.")
+        return
+    _print_info("    Installing SoX audio utility...")
+    result = subprocess.run(
+        [
+            winget,
+            "install",
+            "--id",
+            "ChrisBagwell.SoX",
+            "-e",
+            "--accept-package-agreements",
+            "--accept-source-agreements",
+            "--silent",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=600,
+    )
+    if result.returncode == 0:
+        _print_success("    SoX installed; restart Marvi so the updated PATH is inherited.")
+    else:
+        _print_warning("    SoX install failed:")
+        _print_info(f"      {(result.stderr or result.stdout or '').strip()[:300]}")
+
+
 # ─── Toolset Registry ─────────────────────────────────────────────────────────
 
 # Toolsets shown in the configurator, grouped for display.
@@ -1221,6 +1269,8 @@ def _run_post_setup(post_setup_key: str):
             _print_info("    Run manually: uv pip install -U livekit-wakeword")
 
     elif post_setup_key == "qwen3_tts":
+        _ensure_whisperlive_cuda_torch(Path(sys.executable))
+        _ensure_qwen3_performance_deps()
         try:
             __import__("faster_qwen3_tts")
             _print_success("    faster-qwen3-tts is already installed")

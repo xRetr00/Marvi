@@ -141,4 +141,21 @@ describe('useHermesConfig refreshHermesConfig', () => {
 
     expect(refreshProjectBranch).toHaveBeenCalledWith('/workspace/attached-project')
   })
+
+  it('enables streaming STT for Nemotron as well as WhisperLive', async () => {
+    mockConfig({ stt: { streaming: { enabled: true, provider: 'nemotron' } } })
+
+    const { result } = renderHook(() =>
+      useHermesConfig({
+        activeSessionIdRef: { current: null },
+        refreshProjectBranch: vi.fn().mockResolvedValue(undefined)
+      })
+    )
+
+    await act(async () => {
+      await result.current.refreshHermesConfig()
+    })
+
+    expect(result.current.streamingSttEnabled).toBe(true)
+  })
 })

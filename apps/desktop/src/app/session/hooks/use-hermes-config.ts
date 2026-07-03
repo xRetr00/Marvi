@@ -73,7 +73,7 @@ export function useHermesConfig({ activeSessionIdRef, refreshProjectBranch }: He
       setVoiceMaxRecordingSeconds(recordingLimit(config.voice?.max_recording_seconds))
       setWakeWordConfig(normalizeWakeWordConfig(config.voice?.wake_word))
       setSttEnabled(config.stt?.enabled !== false)
-      setStreamingSttEnabled(config.stt?.streaming?.provider === 'whisperlive')
+      setStreamingSttEnabled(config.stt?.streaming?.enabled !== false && Boolean(config.stt?.streaming?.provider))
       applyAutoSpeakFromConfig(config)
     } catch {
       // Config is nice-to-have; chat still works without it.

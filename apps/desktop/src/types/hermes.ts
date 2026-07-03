@@ -222,6 +222,7 @@ export interface HermesConfig {
   stt?: {
     enabled?: boolean
     streaming?: {
+      enabled?: boolean
       provider?: string
     }
   }

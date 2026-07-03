@@ -487,6 +487,18 @@ class TestParseReasoningEffort:
         """The literal "none" disables reasoning explicitly."""
         assert parse_reasoning_effort("none") == {"enabled": False}
 
+    @pytest.mark.parametrize("value", [False, "false", "FALSE", "disabled", " Disabled "])
+    def test_false_aliases_disable_reasoning(self, value):
+        """YAML `reasoning_effort: false`/`off`/`no` reaches loaders as a
+        boolean; users also hand-write "false"/"disabled". All must mean
+        disabled — not "unset, fall back to the default and keep thinking"."""
+        assert parse_reasoning_effort(value) == {"enabled": False}
+
+    @pytest.mark.parametrize("value", [None, True])
+    def test_non_string_non_false_returns_none(self, value):
+        """None and boolean True fall back to the caller default."""
+        assert parse_reasoning_effort(value) is None
+
     @pytest.mark.parametrize("level", list(VALID_REASONING_EFFORTS))
     def test_each_valid_level(self, level):
         """Every level listed in VALID_REASONING_EFFORTS is accepted as-is."""
@@ -715,6 +727,15 @@ class TestGetHermesDir:
     def _set_home(self, tmp_path, monkeypatch):
         monkeypatch.setenv("HERMES_HOME", str(tmp_path))
 
+    @staticmethod
+    def _symlink_or_skip(link: Path, target: Path, *, target_is_directory: bool = False) -> None:
+        try:
+            link.symlink_to(target, target_is_directory=target_is_directory)
+        except (OSError, NotImplementedError) as exc:
+            if os.name == "nt" and getattr(exc, "winerror", None) == 1314:
+                pytest.skip("Windows symlink privilege is not available")
+            raise
+
     def test_neither_exists_returns_new(self, tmp_path, monkeypatch):
         self._set_home(tmp_path, monkeypatch)
         result = get_hermes_dir("platforms/pairing", "pairing")
@@ -848,7 +869,7 @@ class TestGetHermesDir:
         """
         self._set_home(tmp_path, monkeypatch)
         legacy = tmp_path / "pairing"
-        legacy.symlink_to(tmp_path / "does-not-exist")
+        self._symlink_or_skip(legacy, tmp_path / "does-not-exist")
         new = tmp_path / "platforms" / "pairing"
         new.mkdir(parents=True)
         (new / "discord-approved.json").write_text("[]")
@@ -862,7 +883,7 @@ class TestGetHermesDir:
         real.mkdir()
         (real / "cached.png").write_bytes(b"x")
         legacy = tmp_path / "image_cache"
-        legacy.symlink_to(real)
+        self._symlink_or_skip(legacy, real, target_is_directory=True)
         result = get_hermes_dir("cache/images", "image_cache")
         assert result == legacy
 
@@ -872,6 +893,6 @@ class TestGetHermesDir:
         empty = tmp_path / "empty_real"
         empty.mkdir()
         legacy = tmp_path / "audio_cache"
-        legacy.symlink_to(empty)
+        self._symlink_or_skip(legacy, empty, target_is_directory=True)
         result = get_hermes_dir("cache/audio", "audio_cache")
         assert result == tmp_path / "cache/audio"

@@ -47,8 +47,15 @@ def resolve_nemotron_config(stt_config: dict[str, Any] | None) -> NemotronStream
     except (TypeError, ValueError):
         lookahead = 1
 
+    nested_model = nested.get("model")
+    legacy_model = streaming.get("model")
+    model_value = nested_model
+    if model_value in (None, ""):
+        legacy_model_text = str(legacy_model or "").strip()
+        model_value = legacy_model_text if "nemotron" in legacy_model_text.lower() else DEFAULT_NEMOTRON_MODEL
+
     return NemotronStreamingConfig(
-        model=str(pick("model", DEFAULT_NEMOTRON_MODEL)).strip() or DEFAULT_NEMOTRON_MODEL,
+        model=str(model_value).strip() or DEFAULT_NEMOTRON_MODEL,
         lookahead_tokens=lookahead,
         device_map=str(pick("device_map", "auto")).strip() or "auto",
         dtype=str(pick("dtype", "auto")).strip().lower() or "auto",

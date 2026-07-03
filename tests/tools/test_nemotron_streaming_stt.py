@@ -59,7 +59,7 @@ def test_resolve_nemotron_config_uses_streaming_overrides():
         {
             "streaming": {
                 "provider": "nemotron",
-                "model": "custom/model",
+                "nemotron": {"model": "custom/model"},
                 "lookahead_tokens": 6,
                 "dtype": "float16",
             }
@@ -69,6 +69,21 @@ def test_resolve_nemotron_config_uses_streaming_overrides():
     assert cfg.model == "custom/model"
     assert cfg.lookahead_tokens == 6
     assert cfg.dtype == "float16"
+
+
+def test_resolve_nemotron_config_ignores_whisperlive_model_name():
+    cfg = resolve_nemotron_config(
+        {
+            "streaming": {
+                "provider": "nemotron",
+                "model": "large-v3-turbo",
+                "nemotron": {"lookahead_tokens": 2},
+            }
+        }
+    )
+
+    assert cfg.model == "nvidia/nemotron-speech-streaming-en-0.6b"
+    assert cfg.lookahead_tokens == 2
 
 
 def test_nemotron_streaming_session_feeds_chunks_to_generator():

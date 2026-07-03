@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
 
-import type { IslandCard } from '@/lib/island-queue'
+import type { IslandCard, IslandCardKind } from '@/lib/island-queue'
 import type { VoicePhase, VoiceState } from '@/store/voice-presence'
 
 import { IslandWaveform } from './island-waveform'
@@ -301,24 +301,103 @@ function SpeakingCaption({ caption, reducedMotion }: { caption: string; reducedM
   )
 }
 
+// Card content sizes to its text instead of a fixed layout: short bodies get
+// a bigger font and hug their width, long bodies shrink and clamp to a few
+// lines with an ellipsis so the pill never blows past the expanded max width.
+const CARD_MIN_WIDTH = 220
+const CARD_LONG_WIDTH = 300
+
+function bodyFontSize(length: number): number {
+  if (length <= 44) return 16
+  if (length <= 120) return 14
+  return 13
+}
+
+function bodyLineClamp(length: number): number {
+  if (length <= 44) return 2
+  if (length <= 120) return 3
+  return 4
+}
+
+function titleColor(kind: IslandCardKind): string {
+  switch (kind) {
+    case 'result':
+      return 'rgba(140,224,168,0.85)'
+    case 'approval':
+      return 'rgba(255,255,255,0.5)'
+    default:
+      return 'rgba(255,255,255,0.5)'
+  }
+}
+
+function dotColor(kind: IslandCardKind): string | null {
+  switch (kind) {
+    case 'result':
+      return '#5cd97e'
+    case 'approval':
+      return '#f5b95c'
+    default:
+      return null
+  }
+}
+
 function CardContent({ card, onCardAction }: { card: IslandCard; onCardAction: (payload: CardAction) => void }) {
   const dismiss = () => onCardAction({ type: 'dismiss', id: card.id })
+  const bodyLength = (card.body ?? '').length
+  const long = bodyLength > 120
+  const accentDot = dotColor(card.kind)
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 8, minWidth: 220 }}>
+    <div
+      style={{
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 8,
+        minWidth: CARD_MIN_WIDTH,
+        width: long ? CARD_LONG_WIDTH : undefined
+      }}
+    >
       {card.title && (
-        <div
-          style={{
-            fontSize: 11,
-            letterSpacing: '0.12em',
-            textTransform: 'uppercase',
-            color: 'rgba(255,255,255,0.5)'
-          }}
-        >
-          {card.title}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          {accentDot && (
+            <span
+              style={{
+                display: 'inline-block',
+                width: 6,
+                height: 6,
+                borderRadius: '50%',
+                background: accentDot,
+                flexShrink: 0
+              }}
+            />
+          )}
+          <div
+            style={{
+              fontSize: 11,
+              letterSpacing: '0.12em',
+              textTransform: 'uppercase',
+              color: titleColor(card.kind)
+            }}
+          >
+            {card.title}
+          </div>
         </div>
       )}
-      {card.body && <div style={{ fontSize: 14, lineHeight: 1.5, color: 'rgba(255,255,255,0.92)' }}>{card.body}</div>}
+      {card.body && (
+        <div
+          style={{
+            fontSize: bodyFontSize(bodyLength),
+            lineHeight: 1.5,
+            color: 'rgba(255,255,255,0.92)',
+            display: '-webkit-box',
+            WebkitLineClamp: bodyLineClamp(bodyLength),
+            WebkitBoxOrient: 'vertical',
+            overflow: 'hidden'
+          }}
+        >
+          {card.body}
+        </div>
+      )}
       {card.actions?.length ? (
         <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
           {card.actions.map(action => (

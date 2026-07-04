@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { useI18n } from '@/i18n'
+import { createBargeInGate } from '@/lib/voice-barge-in'
 import { openStreamingTranscription, type StreamingTranscriptionSession } from '@/lib/streaming-transcription'
 import { playSpeechText, stopVoicePlayback } from '@/lib/voice-playback'
+import { vpLog } from '@/lib/voice-presence-log'
 import { notify, notifyError } from '@/store/notifications'
 import { setUserCaption } from '@/store/voice-presence'
 
@@ -201,9 +203,13 @@ export function useVoiceConversation({
     const complete = await streamingRef.current?.checkTurn().catch(() => null)
 
     if (complete === false) {
+      vpLog('voice', 'turn incomplete')
       return false
     }
 
+    if (complete === true) {
+      vpLog('voice', 'turn complete')
+    }
     await handleTurn()
   }, [handleTurn])
 
@@ -257,12 +263,29 @@ export function useVoiceConversation({
     async (text: string) => {
       setStatus('speaking')
       setCaption(text)
+      const startedAt = Date.now()
+      const gate = createBargeInGate({ graceMs: 700, level: 0.32, sustainedMs: 350 })
+      let interrupted = false
 
       try {
+        void handle.start({
+          onError: () => undefined,
+          onLevel: level => {
+            if (interrupted || !gate.update(level, Date.now() - startedAt)) {
+              return
+            }
+
+            interrupted = true
+            vpLog('voice', 'barge-in accepted', { elapsedMs: Date.now() - startedAt, level })
+            stopVoicePlayback()
+            handle.cancel()
+          }
+        }).catch(() => undefined)
         await playSpeechText(text, { source: 'voice-conversation' })
       } catch (error) {
         notifyError(error, voiceCopy.playbackFailed)
       } finally {
+        handle.cancel()
         if (enabledRef.current) {
           pendingStartRef.current = true
           setStatus('idle')
@@ -272,7 +295,7 @@ export function useVoiceConversation({
         setCaption(null)
       }
     },
-    [voiceCopy.playbackFailed]
+    [handle, voiceCopy.playbackFailed]
   )
 
   const start = useCallback(async () => {

@@ -342,10 +342,14 @@ export function useWakeWord({
     const complete = await streamingSession?.checkTurn().catch(() => null)
 
     if (complete === false) {
+      vpLog('wake', 'turn incomplete')
       debugLog('turn incomplete')
       return false
     }
 
+    if (complete === true) {
+      vpLog('wake', 'turn complete')
+    }
     await finishCaptureRef.current?.()
   }, [debugLog])
 

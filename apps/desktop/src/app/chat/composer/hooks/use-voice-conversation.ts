@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { useI18n } from '@/i18n'
 import { createBargeInGate } from '@/lib/voice-barge-in'
+import { isLikelySelfEchoTranscript } from '@/lib/voice-echo-guard'
 import { openStreamingTranscription, type StreamingTranscriptionSession } from '@/lib/streaming-transcription'
 import { playSpeechText, stopVoicePlayback } from '@/lib/voice-playback'
 import { vpLog } from '@/lib/voice-presence-log'
@@ -170,6 +171,18 @@ export function useVoiceConversation({
 
           if (!transcript) {
             if (enabledRef.current) {
+              pendingStartRef.current = true
+            }
+
+            setStatus('idle')
+
+            return
+          }
+
+          if (isLikelySelfEchoTranscript(transcript)) {
+            vpLog('voice', 'self echo rejected', { transcript })
+
+            if (enabledRef.current && !mutedRef.current && !busyRef.current) {
               pendingStartRef.current = true
             }
 

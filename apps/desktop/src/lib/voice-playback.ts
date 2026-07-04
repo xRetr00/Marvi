@@ -7,6 +7,7 @@ import {
 } from '@/store/voice-playback'
 
 import { sanitizeTextForSpeech } from './speech-text'
+import { rememberSpokenText } from './voice-echo-guard'
 
 // Free Edge TTS occasionally hands back audio that never fires `playing`/`ended`
 // nor `error` — leaving voice mode stuck "speaking" forever. Reject if playback
@@ -226,6 +227,8 @@ export async function playSpeechText(text: string, options: VoicePlaybackOptions
   if (!speakableText) {
     return false
   }
+
+  rememberSpokenText(speakableText)
 
   const ownSequence = sequence
   const isCurrent = () => ownSequence === sequence

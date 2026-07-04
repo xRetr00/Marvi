@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 
 import { useI18n } from '@/i18n'
+import { isLikelySelfEchoTranscript } from '@/lib/voice-echo-guard'
+import { vpLog } from '@/lib/voice-presence-log'
 import { openStreamingTranscription, type StreamingTranscriptionSession } from '@/lib/streaming-transcription'
 import { notify, notifyError } from '@/store/notifications'
 
@@ -73,6 +75,8 @@ export function useVoiceRecorder({
 
       if (!transcript) {
         notify({ kind: 'warning', title: voiceCopy.noSpeechDetected, message: voiceCopy.tryRecordingAgain })
+      } else if (isLikelySelfEchoTranscript(transcript)) {
+        vpLog('voice', 'self echo rejected', { transcript })
       } else {
         onTranscript(transcript)
       }

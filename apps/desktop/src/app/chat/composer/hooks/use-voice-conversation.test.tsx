@@ -1,6 +1,8 @@
 import { act, renderHook, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
+import { clearRecentSpokenText, rememberSpokenText } from '@/lib/voice-echo-guard'
+
 import { useVoiceConversation } from './use-voice-conversation'
 
 const openStreamingTranscription = vi.fn()
@@ -61,6 +63,7 @@ vi.mock('./use-mic-recorder', () => ({
 describe('useVoiceConversation', () => {
   afterEach(() => {
     vi.clearAllMocks()
+    clearRecentSpokenText()
   })
 
   it('keeps listening when semantic turn detection says the user turn is incomplete', async () => {
@@ -95,6 +98,40 @@ describe('useVoiceConversation', () => {
     expect(streamSession.checkTurn).toHaveBeenCalledTimes(1)
     expect(stopMic).not.toHaveBeenCalled()
     expect(streamSession.finish).not.toHaveBeenCalled()
+    expect(result.current.status).toBe('listening')
+  })
+
+  it('drops transcripts that are self-echo from recent TTS', async () => {
+    const recorderState: { options?: RecorderOptionsForTest } = {}
+    const onSubmit = vi.fn()
+    rememberSpokenText('The deployment succeeded and the logs are green.', Date.now())
+    startMic.mockImplementation(async options => {
+      recorderState.options = options
+    })
+    stopMic.mockResolvedValue({ audio: new Blob(['voice']), durationMs: 1000, heardSpeech: true })
+
+    const { result } = renderHook(() =>
+      useVoiceConversation({
+        busy: false,
+        consumePendingResponse: vi.fn(),
+        enabled: true,
+        onSubmit,
+        onTranscribeAudio: vi.fn().mockResolvedValue('deployment succeeded and logs are green'),
+        pendingResponse: () => null,
+        streamingSttEnabled: false
+      })
+    )
+
+    await act(async () => {
+      await result.current.start()
+    })
+    await waitFor(() => expect(startMic).toHaveBeenCalled())
+
+    await act(async () => {
+      await recorderState.options?.onSilence?.()
+    })
+
+    expect(onSubmit).not.toHaveBeenCalled()
     expect(result.current.status).toBe('listening')
   })
 })

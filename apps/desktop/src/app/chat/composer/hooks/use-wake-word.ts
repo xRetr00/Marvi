@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { useI18n } from '@/i18n'
+import { isLikelySelfEchoTranscript } from '@/lib/voice-echo-guard'
 import { openStreamingTranscription, type StreamingTranscriptionSession } from '@/lib/streaming-transcription'
 import { vpLog } from '@/lib/voice-presence-log'
 import {
@@ -284,6 +285,12 @@ export function useWakeWord({
 
         if (transcript) {
           setUserCaption(transcript)
+        }
+
+        if (isLikelySelfEchoTranscript(transcript)) {
+          vpLog('wake', 'self echo rejected', { transcript })
+
+          return
         }
 
         const command = stripWakePhrase(transcript, wakeConfig.phrases)

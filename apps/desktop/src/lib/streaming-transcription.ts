@@ -3,6 +3,7 @@ import { resolveGatewayWsUrl } from '@hermes/shared'
 import { $connection } from '@/store/session'
 
 export interface StreamingTranscriptionSession {
+  checkTurn: () => Promise<boolean | null>
   finish: () => Promise<string>
   sendFrame: (samples: Float32Array) => void
 }
@@ -42,6 +43,8 @@ export async function openStreamingTranscription(
   let rejectReady: ((error: Error) => void) | null = null
   let resolveFinish: ((text: string) => void) | null = null
   let rejectFinish: ((error: Error) => void) | null = null
+  let resolveTurn: ((complete: boolean | null) => void) | null = null
+  let rejectTurn: ((error: Error) => void) | null = null
   let settledFinish = false
 
   const settleFinish = (fn: (() => void) | null) => {
@@ -54,10 +57,10 @@ export async function openStreamingTranscription(
   }
 
   ws.addEventListener('message', event => {
-    let msg: { error?: string; text?: string; type?: string }
+    let msg: { complete?: boolean; error?: string; text?: string; type?: string }
 
     try {
-      msg = JSON.parse(String(event.data)) as { error?: string; text?: string; type?: string }
+      msg = JSON.parse(String(event.data)) as { complete?: boolean; error?: string; text?: string; type?: string }
     } catch {
       return
     }
@@ -84,6 +87,14 @@ export async function openStreamingTranscription(
       return
     }
 
+    if (msg.type === 'turn') {
+      resolveTurn?.(typeof msg.complete === 'boolean' ? msg.complete : null)
+      resolveTurn = null
+      rejectTurn = null
+
+      return
+    }
+
     if (msg.type === 'error') {
       const error = new Error(msg.error || 'Streaming transcription failed')
 
@@ -94,6 +105,9 @@ export async function openStreamingTranscription(
       }
 
       ws.close()
+      rejectTurn?.(error)
+      resolveTurn = null
+      rejectTurn = null
       settleFinish(() => rejectFinish?.(error))
     }
   })
@@ -134,6 +148,18 @@ export async function openStreamingTranscription(
   })
 
   return {
+    checkTurn: () =>
+      new Promise(resolve => {
+        if (ws.readyState !== WebSocket.OPEN) {
+          resolve(null)
+
+          return
+        }
+
+        resolveTurn = resolve
+        rejectTurn = () => resolve(null)
+        ws.send(JSON.stringify({ type: 'turn' }))
+      }),
     sendFrame: samples => {
       if (ws.readyState !== WebSocket.OPEN) {
         return

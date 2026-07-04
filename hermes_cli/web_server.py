@@ -13188,6 +13188,7 @@ async def transcribe_audio_stream_ws(ws: WebSocket) -> None:
                     partial = await asyncio.to_thread(nemotron_session.accept_bytes, chunk)
                     if partial:
                         await ws.send_json({"type": "partial", "text": partial})
+                    chunks.append(chunk)
                     continue
                 chunks.append(chunk)
                 continue
@@ -13214,6 +13215,11 @@ async def transcribe_audio_stream_ws(ws: WebSocket) -> None:
                             await asyncio.to_thread(nemotron_session.close)
                         nemotron_session = None
                 await ws.send_json({"type": "ready"})
+            elif event_type == "turn":
+                from tools.semantic_turn import pipecat_smart_turn_complete
+
+                complete = await asyncio.to_thread(pipecat_smart_turn_complete, chunks, sample_rate)
+                await ws.send_json({"type": "turn", "complete": complete})
             elif event_type == "stop":
                 break
 

@@ -197,6 +197,16 @@ export function useVoiceConversation({
     [handle, onSubmit, onTranscribeAudio, voiceCopy.transcriptionFailed]
   )
 
+  const handleSilence = useCallback(async () => {
+    const complete = await streamingRef.current?.checkTurn().catch(() => null)
+
+    if (complete === false) {
+      return false
+    }
+
+    await handleTurn()
+  }, [handleTurn])
+
   const startListening = useCallback(async () => {
     pendingStartRef.current = false
 
@@ -229,7 +239,7 @@ export function useVoiceConversation({
           pendingStartRef.current = false
           onFatalError?.()
         },
-        onSilence: () => void handleTurn()
+        onSilence: () => handleSilence()
       })
       setStatus('listening')
       turnTimeoutRef.current = window.setTimeout(() => void handleTurn(), 60_000)
@@ -241,7 +251,7 @@ export function useVoiceConversation({
       setStatus('idle')
       onFatalError?.()
     }
-  }, [handle, handleTurn, onFatalError, streamingSttEnabled, voiceCopy.couldNotStartSession, voiceCopy.microphoneFailed])
+  }, [handle, handleSilence, onFatalError, streamingSttEnabled, voiceCopy.couldNotStartSession, voiceCopy.microphoneFailed])
 
   const speak = useCallback(
     async (text: string) => {

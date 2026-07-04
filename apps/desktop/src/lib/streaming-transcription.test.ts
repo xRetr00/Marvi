@@ -100,4 +100,20 @@ describe('openStreamingTranscription', () => {
 
     await expect(finalPromise).rejects.toThrow('torch failed')
   })
+
+  it('asks the streaming backend whether the current turn is complete', async () => {
+    const sessionPromise = openStreamingTranscription()
+    await vi.waitFor(() => expect(FakeWebSocket.instances).toHaveLength(1))
+
+    const ws = FakeWebSocket.instances[0]
+    ws.emit('message', new MessageEvent('message', { data: JSON.stringify({ type: 'ready' }) }))
+    const session = await sessionPromise
+
+    const turnPromise = session.checkTurn()
+    expect(ws.sent[1]).toBe(JSON.stringify({ type: 'turn' }))
+
+    ws.emit('message', new MessageEvent('message', { data: JSON.stringify({ complete: false, type: 'turn' }) }))
+
+    await expect(turnPromise).resolves.toBe(false)
+  })
 })

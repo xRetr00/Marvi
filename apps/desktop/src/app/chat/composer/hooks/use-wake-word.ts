@@ -119,6 +119,7 @@ export function useWakeWord({
   const onSubmitRef = useRef(onSubmit)
   const onTranscribeAudioRef = useRef(onTranscribeAudio)
   const finishCaptureRef = useRef<(() => Promise<void>) | null>(null)
+  const finishIfTurnCompleteRef = useRef<(() => Promise<boolean | void>) | null>(null)
 
   const debugLog = useCallback(
     (message: string, detail?: Record<string, unknown>) => {
@@ -332,6 +333,26 @@ export function useWakeWord({
     finishCaptureRef.current = finishCapture
   }, [finishCapture])
 
+  const finishIfTurnComplete = useCallback(async () => {
+    if (!detectedRef.current) {
+      return
+    }
+
+    const streamingSession = streamingSessionRef.current ?? (await streamingOpenRef.current)
+    const complete = await streamingSession?.checkTurn().catch(() => null)
+
+    if (complete === false) {
+      debugLog('turn incomplete')
+      return false
+    }
+
+    await finishCaptureRef.current?.()
+  }, [debugLog])
+
+  useEffect(() => {
+    finishIfTurnCompleteRef.current = finishIfTurnComplete
+  }, [finishIfTurnComplete])
+
   useEffect(() => {
     if (!pendingRestartAfterSubmitRef.current || busy || statusRef.current !== 'idle' || restartTimerRef.current) {
       return
@@ -437,8 +458,10 @@ export function useWakeWord({
           onError: error => notifyError(error, voiceCopy.microphoneFailed),
           onSilence: () => {
             if (detectedRef.current) {
-              void finishCaptureRef.current?.()
+              return finishIfTurnCompleteRef.current?.()
             }
+
+            return undefined
           },
           silenceLevel: 0.075,
           silenceMs: 1_250

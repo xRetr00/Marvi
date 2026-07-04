@@ -52,7 +52,7 @@ export interface MicRecorderOptions {
   onAudioFrame?: (samples: Float32Array) => void
   onLevel?: (level: number) => void
   onError?: (error: Error) => void
-  onSilence?: () => void
+  onSilence?: () => boolean | void | Promise<boolean | void>
   silenceLevel?: number
   silenceMs?: number
   idleSilenceMs?: number
@@ -141,6 +141,7 @@ export function useMicRecorder(copy: MicRecorderErrorCopy): {
   const startedAtRef = useRef(0)
   const heardSpeechRef = useRef(false)
   const silenceTriggeredRef = useRef(false)
+  const silencePendingRef = useRef(false)
   const silenceStartedAtRef = useRef<number | null>(null)
   const stopResolverRef = useRef<((recording: MicRecording | null) => void) | null>(null)
 
@@ -159,6 +160,7 @@ export function useMicRecorder(copy: MicRecorderErrorCopy): {
     setLevel(0)
     setRecording(false)
     silenceTriggeredRef.current = false
+    silencePendingRef.current = false
   }
 
   useEffect(() => () => cleanup(), [])
@@ -219,7 +221,7 @@ export function useMicRecorder(copy: MicRecorderErrorCopy): {
         const silenceMs = options.silenceMs ?? 0
         const idleSilenceMs = options.idleSilenceMs ?? 0
 
-        if (speechThreshold > 0 && options.onSilence && !silenceTriggeredRef.current) {
+        if (speechThreshold > 0 && options.onSilence && !silenceTriggeredRef.current && !silencePendingRef.current) {
           if (normalized >= speechThreshold) {
             heardSpeechRef.current = true
             silenceStartedAtRef.current = null
@@ -228,13 +230,30 @@ export function useMicRecorder(copy: MicRecorderErrorCopy): {
 
             if (now - silenceStartedAtRef.current >= silenceMs) {
               silenceTriggeredRef.current = true
-              options.onSilence()
+              silencePendingRef.current = true
+              Promise.resolve(options.onSilence()).then(shouldStop => {
+                silencePendingRef.current = false
+                if (shouldStop === false) {
+                  silenceTriggeredRef.current = false
+                  silenceStartedAtRef.current = null
+                  animationRef.current = window.requestAnimationFrame(tick)
+                }
+              })
 
               return
             }
           } else if (!heardSpeechRef.current && idleSilenceMs > 0 && now - startedAtRef.current >= idleSilenceMs) {
             silenceTriggeredRef.current = true
-            options.onSilence()
+            silencePendingRef.current = true
+            Promise.resolve(options.onSilence()).then(shouldStop => {
+              silencePendingRef.current = false
+              if (shouldStop === false) {
+                silenceTriggeredRef.current = false
+                silenceStartedAtRef.current = null
+                startedAtRef.current = Date.now()
+                animationRef.current = window.requestAnimationFrame(tick)
+              }
+            })
 
             return
           }

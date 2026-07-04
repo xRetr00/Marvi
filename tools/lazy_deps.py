@@ -134,6 +134,7 @@ LAZY_DEPS: dict[str, tuple[str, ...]] = {
         "sounddevice==0.5.5",
         "numpy==2.4.3",
     ),
+    "voice.semantic_turn": ("pipecat-ai==1.4.0", "numpy==2.4.3"),
 
     # ─── Image generation backends ─────────────────────────────────────────
     "image.fal": ("fal-client==0.13.1",),

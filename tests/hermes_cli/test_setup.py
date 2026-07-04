@@ -493,6 +493,7 @@ def test_tts_setup_configures_qwen3_clone_mode(tmp_path, monkeypatch):
     monkeypatch.setattr(setup_mod, "_install_qwen3_deps", lambda: True)
     monkeypatch.setattr(setup_mod, "_install_whisperlive_deps", lambda: True)
     monkeypatch.setattr(setup_mod, "_install_nemotron_stt_deps", lambda: True)
+    monkeypatch.setattr(setup_mod, "_install_semantic_turn_deps", lambda: True)
     monkeypatch.setattr(setup_mod, "prompt_choice", fake_prompt_choice)
     monkeypatch.setattr(setup_mod, "prompt_yes_no", lambda *args, **kwargs: True)
     monkeypatch.setattr(setup_mod, "prompt", fake_prompt)
@@ -514,6 +515,7 @@ def test_tts_setup_configures_qwen3_clone_mode(tmp_path, monkeypatch):
     assert config["stt"]["streaming"]["model"] == "nvidia/nemotron-speech-streaming-en-0.6b"
     assert config["stt"]["streaming"]["lookahead_tokens"] == 1
     assert config["stt"]["streaming"]["port"] == 9090
+    assert config["voice"]["semantic_turn"] is True
 
 
 def test_modal_setup_persists_direct_mode_when_user_chooses_their_own_account(tmp_path, monkeypatch):

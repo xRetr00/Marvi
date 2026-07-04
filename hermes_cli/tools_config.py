@@ -1441,6 +1441,22 @@ def _run_post_setup(post_setup_key: str):
         except Exception as e:
             _print_warning(f"    Nemotron streaming STT install failed: {e}")
 
+    elif post_setup_key == "semantic_turn":
+        _print_info("    Installing Smart Turn semantic VAD...")
+        try:
+            from tools.lazy_deps import ensure, feature_missing
+
+            missing = feature_missing("voice.semantic_turn")
+            if not missing:
+                _print_success("    Smart Turn semantic VAD is already installed")
+                return
+            ensure("voice.semantic_turn", prompt=False)
+            _print_success("    Smart Turn semantic VAD installed")
+            _print_info("    Enable with voice.semantic_turn=true for hands-free streaming voice.")
+        except Exception as e:
+            _print_warning(f"    Smart Turn semantic VAD install failed: {e}")
+            _print_info("    Run manually: python -m pip install pipecat-ai==1.4.0 numpy==2.4.3")
+
     elif post_setup_key == "ddgs":
         try:
             __import__("ddgs")
@@ -1599,7 +1615,7 @@ def valid_post_setup_keys() -> Set[str]:
     command and the dashboard post-setup endpoint validate against, so a
     caller can't drive ``_run_post_setup`` with an arbitrary key.
     """
-    keys: Set[str] = {"livekit_wakeword", "whisperlive", "nemotron_stt"}
+    keys: Set[str] = {"livekit_wakeword", "whisperlive", "nemotron_stt", "semantic_turn"}
     for cat in TOOL_CATEGORIES.values():
         for prov in cat.get("providers", []):
             ps = prov.get("post_setup")

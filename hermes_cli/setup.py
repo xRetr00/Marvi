@@ -983,6 +983,23 @@ def _install_nemotron_stt_deps() -> bool:
         return False
 
 
+def _install_semantic_turn_deps() -> bool:
+    """Install Smart Turn semantic VAD dependencies. Returns True on success."""
+    print()
+    print_info("Installing Smart Turn semantic VAD for hands-free streaming voice...")
+    print()
+    try:
+        from tools.lazy_deps import ensure
+
+        ensure("voice.semantic_turn", prompt=False)
+        print_success("Smart Turn semantic VAD dependencies installed successfully")
+        return True
+    except Exception as e:
+        print_error(f"Failed to install Smart Turn semantic VAD: {e}")
+        print_info("Try manually: hermes tools post-setup semantic_turn")
+        return False
+
+
 def _xai_oauth_logged_in_for_setup() -> bool:
     """True iff xAI Grok OAuth credentials are already stored locally.
 
@@ -1361,6 +1378,12 @@ def _setup_tts_provider(config: dict):
                     streaming["max_clients"] = 1
                     streaming["max_connection_time"] = 900
                     streaming["single_model"] = True
+
+            voice_cfg = config.setdefault("voice", {})
+            if prompt_yes_no("Install Smart Turn semantic VAD for hands-free barge-in now?", True):
+                voice_cfg["semantic_turn"] = bool(_install_semantic_turn_deps())
+            else:
+                voice_cfg["semantic_turn"] = False
 
     elif selected == "kittentts":
         # Check if already installed

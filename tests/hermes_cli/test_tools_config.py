@@ -1060,6 +1060,24 @@ def test_computer_use_blank_custom_driver_command_falls_back_to_default():
         assert _toolset_needs_configuration_prompt("computer_use", {}) is False
 
 
+def test_semantic_turn_post_setup_key_is_allowed():
+    from hermes_cli import tools_config
+
+    assert "semantic_turn" in tools_config.valid_post_setup_keys()
+
+
+def test_semantic_turn_post_setup_installs_lazy_dependency(monkeypatch):
+    import tools.lazy_deps as lazy_deps
+
+    calls = []
+    monkeypatch.setattr(lazy_deps, "feature_missing", lambda feature: ("pipecat-ai==1.4.0",))
+    monkeypatch.setattr(lazy_deps, "ensure", lambda feature, prompt=False: calls.append((feature, prompt)))
+
+    _run_post_setup("semantic_turn")
+
+    assert calls == [("voice.semantic_turn", False)]
+
+
 def test_computer_use_post_setup_respects_custom_driver_command_when_installed():
     """post_setup already-installed checks should version-probe the override."""
     def fake_which(name: str):

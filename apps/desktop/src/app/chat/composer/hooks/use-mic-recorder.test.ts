@@ -47,7 +47,7 @@ describe('getMicrophoneStream', () => {
 
     await expect(getMicrophoneStream({ getUserMedia } as unknown as MediaDevices)).resolves.toBe(stream)
     expect(getUserMedia).toHaveBeenNthCalledWith(1, {
-      audio: { echoCancellation: true, noiseSuppression: true }
+      audio: { autoGainControl: true, echoCancellation: true, noiseSuppression: true }
     })
     expect(getUserMedia).toHaveBeenNthCalledWith(2, { audio: true })
   })

@@ -874,7 +874,7 @@ export function DesktopController() {
   const voiceBusy = useStore($busy)
   const voicePlayback = useStore($voicePlayback)
   const wake = useWakeWord({
-    busy: voiceBusy,
+    busy: voiceBusy || voicePlayback.status !== 'idle',
     config: wakeWordConfig,
     enabled: !isSecondaryWindow() && presenceEnabled && gatewayState === 'open',
     onSubmit: async text => {

@@ -114,7 +114,7 @@ function shouldRetryPlainAudio(error: unknown): boolean {
 export async function getMicrophoneStream(mediaDevices: MediaDevices): Promise<MediaStream> {
   try {
     return await mediaDevices.getUserMedia({
-      audio: { echoCancellation: true, noiseSuppression: true }
+      audio: { autoGainControl: true, echoCancellation: true, noiseSuppression: true }
     })
   } catch (error) {
     if (!shouldRetryPlainAudio(error)) {

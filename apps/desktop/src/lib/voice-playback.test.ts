@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { playSpeechText } from './voice-playback'
+import { playSpeechText, stopVoicePlayback } from './voice-playback'
 
 const speakText = vi.fn()
 
@@ -108,10 +108,47 @@ describe('playSpeechText', () => {
       expect.objectContaining({
         body: JSON.stringify({ text: 'Hello.' }),
         headers: expect.objectContaining({ 'X-Hermes-Session-Token': 'secret' }),
-        method: 'POST'
+        method: 'POST',
+        signal: expect.any(AbortSignal)
       })
     )
     expect(speakText).not.toHaveBeenCalled()
+  })
+
+  it('aborts the streaming TTS request when playback is stopped', async () => {
+    let signal: AbortSignal | undefined
+    const fetch = vi.fn().mockImplementation((_url, options: RequestInit) => {
+      signal = options.signal instanceof AbortSignal ? options.signal : undefined
+
+      return Promise.resolve({
+        body: new ReadableStream({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode(`${JSON.stringify({ type: 'start', sample_rate: 24000 })}\n`))
+          }
+        }),
+        ok: true
+      })
+    })
+    vi.stubGlobal('fetch', fetch)
+    Object.defineProperty(window, 'hermesDesktop', {
+      configurable: true,
+      value: {
+        getConnection: vi.fn().mockResolvedValue({
+          authMode: 'token',
+          baseUrl: 'http://127.0.0.1:9119',
+          token: 'secret'
+        })
+      }
+    })
+
+    const playback = playSpeechText('Hello', { source: 'read-aloud' })
+    await vi.waitFor(() => expect(signal).toBeDefined())
+    const abortSignal = signal
+
+    stopVoicePlayback()
+
+    expect(abortSignal?.aborted).toBe(true)
+    await expect(playback).resolves.toBe(false)
   })
 
   it('prebuffers streaming chunks from current audio time instead of cutting them off', async () => {

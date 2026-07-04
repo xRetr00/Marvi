@@ -62,13 +62,15 @@ async function playStreamingSpeechText(text: string, options: VoicePlaybackOptio
     return false
   }
 
+  const abortController = new AbortController()
   const response = await fetch(`${conn.baseUrl.replace(/\/+$/, '')}/api/audio/speak/stream`, {
     body: JSON.stringify({ text }),
     headers: {
       'Content-Type': 'application/json',
       'X-Hermes-Session-Token': conn.token
     },
-    method: 'POST'
+    method: 'POST',
+    signal: abortController.signal
   })
 
   if (!response.ok || !response.body) {
@@ -101,6 +103,8 @@ async function playStreamingSpeechText(text: string, options: VoicePlaybackOptio
 
   currentStop = () => {
     stopped = true
+    abortController.abort()
+    void reader.cancel().catch(() => undefined)
     void audioContext.close?.()
   }
   setVoicePlaybackState(currentState('speaking', options))
@@ -142,31 +146,37 @@ async function playStreamingSpeechText(text: string, options: VoicePlaybackOptio
     }
   }
 
-  while (!stopped) {
-    const { done, value } = await reader.read()
-    if (done) {
-      break
-    }
-
-    buffer += decoder.decode(value, { stream: true })
-    const lines = buffer.split('\n')
-    buffer = lines.pop() ?? ''
-
-    for (const line of lines) {
-      if (!line.trim()) {
-        continue
-      }
-
-      const event = JSON.parse(line) as { audio?: string; error?: string; sample_rate?: number; type?: string }
-      if ((event.type === 'start' || event.type === 'sample_rate') && event.sample_rate) {
-        sampleRate = event.sample_rate
-      } else if (event.type === 'chunk' && event.audio) {
-        queueOrPlayChunk(event.audio)
-      } else if (event.type === 'error') {
-        failed = true
-        stopped = true
+  try {
+    while (!stopped) {
+      const { done, value } = await reader.read()
+      if (done) {
         break
       }
+
+      buffer += decoder.decode(value, { stream: true })
+      const lines = buffer.split('\n')
+      buffer = lines.pop() ?? ''
+
+      for (const line of lines) {
+        if (!line.trim()) {
+          continue
+        }
+
+        const event = JSON.parse(line) as { audio?: string; error?: string; sample_rate?: number; type?: string }
+        if ((event.type === 'start' || event.type === 'sample_rate') && event.sample_rate) {
+          sampleRate = event.sample_rate
+        } else if (event.type === 'chunk' && event.audio) {
+          queueOrPlayChunk(event.audio)
+        } else if (event.type === 'error') {
+          failed = true
+          stopped = true
+          break
+        }
+      }
+    }
+  } catch (error) {
+    if (!stopped) {
+      throw error
     }
   }
 

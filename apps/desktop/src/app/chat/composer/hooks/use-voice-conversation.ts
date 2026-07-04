@@ -246,9 +246,16 @@ export function useVoiceConversation({
     let streaming: StreamingTranscriptionSession | null = null
 
     try {
+      vpLog('stt', 'listen start', { streamingSttEnabled })
       streaming = streamingSttEnabled
-        ? await openStreamingTranscription({ onPartial: text => setUserCaption(text) })
+        ? await openStreamingTranscription({
+            onPartial: text => {
+              vpLog('stt', 'partial', { len: text.length })
+              setUserCaption(text)
+            }
+          })
         : null
+      vpLog('stt', streaming ? 'streaming open' : 'streaming disabled (no provider configured)')
       streamingRef.current = streaming
       const activeStreaming = streaming
       // VAD tuning mirrors `tools.voice_mode` defaults so the browser loop matches the CLI.
@@ -267,6 +274,7 @@ export function useVoiceConversation({
       setStatus('listening')
       turnTimeoutRef.current = window.setTimeout(() => void handleTurn(), 60_000)
     } catch (error) {
+      vpLog('stt', 'listen start failed', { error: String(error) })
       void streaming?.finish().catch(() => '')
       streamingRef.current = null
       notifyError(error, voiceCopy.couldNotStartSession)

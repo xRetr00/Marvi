@@ -17,6 +17,7 @@ import { useVoiceConversation } from './use-voice-conversation'
 import { useVoiceRecorder } from './use-voice-recorder'
 
 interface UseComposerVoiceArgs {
+  bargeInEnabled?: boolean
   busy: boolean
   clearDraft: () => void
   disabled: boolean
@@ -26,6 +27,7 @@ interface UseComposerVoiceArgs {
   onSubmit: ChatBarProps['onSubmit']
   onTranscribeAudio: ChatBarProps['onTranscribeAudio']
   sessionId: string | null | undefined
+  semanticTurnEnabled?: boolean
   streamingSttEnabled?: boolean
 }
 
@@ -36,6 +38,7 @@ interface UseComposerVoiceArgs {
  * so it lifts cleanly out of ChatBar.
  */
 export function useComposerVoice({
+  bargeInEnabled,
   busy,
   clearDraft,
   disabled,
@@ -45,6 +48,7 @@ export function useComposerVoice({
   onSubmit,
   onTranscribeAudio,
   sessionId,
+  semanticTurnEnabled,
   streamingSttEnabled
 }: UseComposerVoiceArgs) {
   const { t } = useI18n()
@@ -101,6 +105,7 @@ export function useComposerVoice({
   }
 
   const conversation = useVoiceConversation({
+    bargeInEnabled,
     busy,
     consumePendingResponse,
     enabled: voiceConversationActive,
@@ -108,6 +113,7 @@ export function useComposerVoice({
     onSubmit: submitVoiceTurn,
     onTranscribeAudio,
     pendingResponse,
+    semanticTurnEnabled,
     streamingSttEnabled
   })
 

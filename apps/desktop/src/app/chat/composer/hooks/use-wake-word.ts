@@ -24,6 +24,7 @@ interface WakeWordOptions {
   enabled: boolean
   onSubmit: (text: string) => Promise<void> | void
   onTranscribeAudio?: (audio: Blob) => Promise<string>
+  semanticTurnEnabled?: boolean
   streamingSttEnabled?: boolean
 }
 
@@ -78,6 +79,7 @@ export function useWakeWord({
   enabled,
   onSubmit,
   onTranscribeAudio,
+  semanticTurnEnabled = true,
   streamingSttEnabled
 }: WakeWordOptions) {
   const { t } = useI18n()
@@ -345,7 +347,7 @@ export function useWakeWord({
       return
     }
 
-    const streamingSession = streamingSessionRef.current ?? (await streamingOpenRef.current)
+    const streamingSession = semanticTurnEnabled ? streamingSessionRef.current ?? (await streamingOpenRef.current) : null
     const complete = await streamingSession?.checkTurn().catch(() => null)
 
     if (complete === false) {
@@ -358,7 +360,7 @@ export function useWakeWord({
       vpLog('wake', 'turn complete')
     }
     await finishCaptureRef.current?.()
-  }, [debugLog])
+  }, [debugLog, semanticTurnEnabled])
 
   useEffect(() => {
     finishIfTurnCompleteRef.current = finishIfTurnComplete

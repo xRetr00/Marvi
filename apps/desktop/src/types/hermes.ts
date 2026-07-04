@@ -227,6 +227,8 @@ export interface HermesConfig {
   voice?: {
     max_recording_seconds?: number
     auto_tts?: boolean
+    barge_in?: boolean
+    semantic_turn?: boolean
     wake_word?: {
       boost?: number
       command_timeout_ms?: number

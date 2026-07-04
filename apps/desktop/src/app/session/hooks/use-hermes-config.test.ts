@@ -180,4 +180,22 @@ describe('useHermesConfig refreshHermesConfig', () => {
     expect(result.current.streamingSttProvider).toBe('nemotron')
     expect(result.current.ttsProvider).toBe('qwen3')
   })
+
+  it('exposes duplex voice feature toggles', async () => {
+    mockConfig({ voice: { barge_in: false, semantic_turn: false } })
+
+    const { result } = renderHook(() =>
+      useHermesConfig({
+        activeSessionIdRef: { current: null },
+        refreshProjectBranch: vi.fn().mockResolvedValue(undefined)
+      })
+    )
+
+    await act(async () => {
+      await result.current.refreshHermesConfig()
+    })
+
+    expect(result.current.voiceBargeInEnabled).toBe(false)
+    expect(result.current.voiceSemanticTurnEnabled).toBe(false)
+  })
 })

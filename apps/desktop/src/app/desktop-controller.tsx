@@ -487,7 +487,9 @@ export function DesktopController() {
     sttEnabled,
     sttProvider,
     ttsProvider,
+    voiceBargeInEnabled,
     voiceMaxRecordingSeconds,
+    voiceSemanticTurnEnabled,
     wakeWordConfig
   } = useHermesConfig({
     activeSessionIdRef,
@@ -881,6 +883,7 @@ export function DesktopController() {
       await submitTextRef.current(text)
     },
     onTranscribeAudio: transcribeVoiceAudio,
+    semanticTurnEnabled: voiceSemanticTurnEnabled,
     streamingSttEnabled
   })
 
@@ -898,10 +901,20 @@ export function DesktopController() {
       className: 'w-8 justify-center px-0',
       icon: <VoicePipelineDots sttActive={sttActive} ttsActive={ttsActive} />,
       id: 'voice-pipeline',
-      title: `STT ${sttProvider || 'off'} · streaming ${streamingLabel} · TTS ${ttsProvider || 'off'}`,
+      title: `STT ${sttProvider || 'off'} · streaming ${streamingLabel} · TTS ${ttsProvider || 'off'} · smart turn ${voiceSemanticTurnEnabled ? 'on' : 'off'} · barge-in ${voiceBargeInEnabled ? 'on' : 'off'}`,
       variant: 'text'
     }
-  }, [streamingSttEnabled, streamingSttProvider, sttEnabled, sttProvider, ttsProvider, voicePlayback.status, wake.status])
+  }, [
+    streamingSttEnabled,
+    streamingSttProvider,
+    sttEnabled,
+    sttProvider,
+    ttsProvider,
+    voiceBargeInEnabled,
+    voicePlayback.status,
+    voiceSemanticTurnEnabled,
+    wake.status
+  ])
 
   useEffect(() => {
     vpLog('wake', 'status', { status: wake.status })
@@ -1250,6 +1263,7 @@ export function DesktopController() {
   const chatView = (
     <ChatView
       gateway={gatewayRef.current}
+      bargeInEnabled={voiceBargeInEnabled}
       maxVoiceRecordingSeconds={voiceMaxRecordingSeconds}
       modelMenuContent={modelMenuContent}
       onAddContextRef={composer.addContextRefAttachment}
@@ -1278,6 +1292,7 @@ export function DesktopController() {
       onThreadMessagesChange={handleThreadMessagesChange}
       onToggleSelectedPin={toggleSelectedPin}
       onTranscribeAudio={transcribeVoiceAudio}
+      semanticTurnEnabled={voiceSemanticTurnEnabled}
       streamingSttEnabled={streamingSttEnabled}
     />
   )

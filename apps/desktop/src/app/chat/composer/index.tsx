@@ -65,6 +65,7 @@ export function ChatBar({
   disabled,
   focusKey,
   gateway,
+  bargeInEnabled,
   maxRecordingSeconds = 120,
   queueSessionKey,
   sessionId,
@@ -81,6 +82,7 @@ export function ChatBar({
   onSteer,
   onSubmit,
   streamingSttEnabled,
+  semanticTurnEnabled,
   onTranscribeAudio
 }: ChatBarProps) {
   const attachments = useStore($composerAttachments)
@@ -656,6 +658,7 @@ export function ChatBar({
     voiceConversationActive,
     voiceStatus
   } = useComposerVoice({
+    bargeInEnabled,
     busy,
     clearDraft,
     disabled,
@@ -665,6 +668,7 @@ export function ChatBar({
     onSubmit,
     onTranscribeAudio,
     sessionId,
+    semanticTurnEnabled,
     streamingSttEnabled
   })
 

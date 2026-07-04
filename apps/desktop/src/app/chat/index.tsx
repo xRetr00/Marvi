@@ -72,6 +72,7 @@ interface ChatViewProps extends Omit<React.ComponentProps<'div'>, 'onSubmit'> {
   onAddContextRef: (refText: string, label?: string, detail?: string) => void
   onAddUrl: (url: string) => void
   onBranchInNewChat: (messageId: string) => void
+  bargeInEnabled?: boolean
   maxVoiceRecordingSeconds?: number
   onAttachImageBlob: (blob: Blob) => Promise<boolean | void> | boolean | void
   onAttachDroppedItems: (candidates: DroppedFile[]) => Promise<boolean | void> | boolean | void
@@ -91,6 +92,7 @@ interface ChatViewProps extends Omit<React.ComponentProps<'div'>, 'onSubmit'> {
   onRestoreToMessage?: (messageId: string, target?: { text?: string; userOrdinal?: number | null }) => Promise<void>
   onRetryResume: (sessionId: string) => void
   onTranscribeAudio?: (audio: Blob) => Promise<string>
+  semanticTurnEnabled?: boolean
   streamingSttEnabled?: boolean
   onDismissError?: (messageId: string) => void
 }
@@ -266,6 +268,7 @@ export function ChatView({
   onAttachImageBlob,
   onAttachDroppedItems,
   onBranchInNewChat,
+  bargeInEnabled,
   maxVoiceRecordingSeconds,
   onPasteClipboardImage,
   onPickFiles,
@@ -280,6 +283,7 @@ export function ChatView({
   onRestoreToMessage,
   onRetryResume,
   onTranscribeAudio,
+  semanticTurnEnabled,
   streamingSttEnabled,
   onDismissError
 }: ChatViewProps) {
@@ -498,6 +502,7 @@ export function ChatView({
           <Suspense fallback={<ChatBarFallback />}>
             <ChatBar
               busy={busy}
+              bargeInEnabled={bargeInEnabled}
               cwd={currentCwd}
               disabled={!gatewayOpen}
               focusKey={activeSessionId}
@@ -516,6 +521,7 @@ export function ChatView({
               onSteer={onSteer}
               onSubmit={onSubmit}
               onTranscribeAudio={onTranscribeAudio}
+              semanticTurnEnabled={semanticTurnEnabled}
               streamingSttEnabled={streamingSttEnabled}
               queueSessionKey={selectedSessionId}
               sessionId={activeSessionId}

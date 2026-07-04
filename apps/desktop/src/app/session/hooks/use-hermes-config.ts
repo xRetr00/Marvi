@@ -52,6 +52,8 @@ export function useHermesConfig({ activeSessionIdRef, refreshProjectBranch }: He
   const [streamingSttEnabled, setStreamingSttEnabled] = useState(false)
   const [streamingSttProvider, setStreamingSttProvider] = useState('')
   const [ttsProvider, setTtsProvider] = useState('')
+  const [voiceBargeInEnabled, setVoiceBargeInEnabled] = useState(true)
+  const [voiceSemanticTurnEnabled, setVoiceSemanticTurnEnabled] = useState(true)
   const [wakeWordConfig, setWakeWordConfig] = useState<WakeWordConfig>(() => normalizeWakeWordConfig(undefined))
 
   const refreshHermesConfig = useCallback(async () => {
@@ -92,6 +94,8 @@ export function useHermesConfig({ activeSessionIdRef, refreshProjectBranch }: He
       setCurrentFastMode(prev => (activeSessionIdRef.current ? prev : FAST_TIERS.has(tier.toLowerCase())))
 
       setVoiceMaxRecordingSeconds(recordingLimit(config.voice?.max_recording_seconds))
+      setVoiceBargeInEnabled(config.voice?.barge_in !== false)
+      setVoiceSemanticTurnEnabled(config.voice?.semantic_turn !== false)
       setWakeWordConfig(normalizeWakeWordConfig(config.voice?.wake_word))
       setSttEnabled(config.stt?.enabled !== false)
       setSttProvider((config.stt?.provider ?? '').trim())
@@ -111,7 +115,9 @@ export function useHermesConfig({ activeSessionIdRef, refreshProjectBranch }: He
     sttEnabled,
     sttProvider,
     ttsProvider,
+    voiceBargeInEnabled,
     voiceMaxRecordingSeconds,
+    voiceSemanticTurnEnabled,
     wakeWordConfig
   }
 }

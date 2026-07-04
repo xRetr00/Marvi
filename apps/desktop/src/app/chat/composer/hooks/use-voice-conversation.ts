@@ -20,6 +20,7 @@ interface PendingVoiceResponse {
 }
 
 interface VoiceConversationOptions {
+  bargeInEnabled?: boolean
   busy: boolean
   enabled: boolean
   onFatalError?: () => void
@@ -27,10 +28,12 @@ interface VoiceConversationOptions {
   onTranscribeAudio?: (audio: Blob) => Promise<string>
   streamingSttEnabled?: boolean
   pendingResponse: () => PendingVoiceResponse | null
+  semanticTurnEnabled?: boolean
   consumePendingResponse: () => void
 }
 
 export function useVoiceConversation({
+  bargeInEnabled = true,
   busy,
   enabled,
   onFatalError,
@@ -38,6 +41,7 @@ export function useVoiceConversation({
   onTranscribeAudio,
   streamingSttEnabled,
   pendingResponse,
+  semanticTurnEnabled = true,
   consumePendingResponse
 }: VoiceConversationOptions) {
   const { t } = useI18n()
@@ -213,7 +217,7 @@ export function useVoiceConversation({
   )
 
   const handleSilence = useCallback(async () => {
-    const complete = await streamingRef.current?.checkTurn().catch(() => null)
+    const complete = semanticTurnEnabled ? await streamingRef.current?.checkTurn().catch(() => null) : null
 
     if (complete === false) {
       vpLog('voice', 'turn incomplete')
@@ -224,7 +228,7 @@ export function useVoiceConversation({
       vpLog('voice', 'turn complete')
     }
     await handleTurn()
-  }, [handleTurn])
+  }, [handleTurn, semanticTurnEnabled])
 
   const startListening = useCallback(async () => {
     pendingStartRef.current = false
@@ -281,19 +285,21 @@ export function useVoiceConversation({
       let interrupted = false
 
       try {
-        void handle.start({
-          onError: () => undefined,
-          onLevel: level => {
-            if (interrupted || !gate.update(level, Date.now() - startedAt)) {
-              return
-            }
+        if (bargeInEnabled) {
+          void handle.start({
+            onError: () => undefined,
+            onLevel: level => {
+              if (interrupted || !gate.update(level, Date.now() - startedAt)) {
+                return
+              }
 
-            interrupted = true
-            vpLog('voice', 'barge-in accepted', { elapsedMs: Date.now() - startedAt, level })
-            stopVoicePlayback()
-            handle.cancel()
-          }
-        }).catch(() => undefined)
+              interrupted = true
+              vpLog('voice', 'barge-in accepted', { elapsedMs: Date.now() - startedAt, level })
+              stopVoicePlayback()
+              handle.cancel()
+            }
+          }).catch(() => undefined)
+        }
         await playSpeechText(text, { source: 'voice-conversation' })
       } catch (error) {
         notifyError(error, voiceCopy.playbackFailed)
@@ -308,7 +314,7 @@ export function useVoiceConversation({
         setCaption(null)
       }
     },
-    [handle, voiceCopy.playbackFailed]
+    [bargeInEnabled, handle, voiceCopy.playbackFailed]
   )
 
   const start = useCallback(async () => {

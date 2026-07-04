@@ -375,6 +375,8 @@ export const FIELD_LABELS: Record<string, string> = defineFieldCopy({
     recordKey: 'Voice Shortcut',
     maxRecordingSeconds: 'Max Recording Length',
     autoTts: 'Read Responses Aloud',
+    semanticTurn: 'Smart Turn',
+    bargeIn: 'Barge-In',
     wakeWord: {
       enabled: 'Wake Word',
       provider: 'Wake Word Provider',
@@ -558,6 +560,8 @@ export const FIELD_DESCRIPTIONS: Record<string, string> = defineFieldCopy({
   },
   voice: {
     autoTts: 'Automatically speak assistant responses.',
+    semanticTurn: 'Use Pipecat Smart Turn when available to avoid cutting off unfinished speech after VAD silence.',
+    bargeIn: 'Allow sustained user speech to interrupt hands-free TTS playback.',
     wakeWord: {
       enabled: 'Listen for a local wake phrase and submit one spoken command, then return to wake-only mode.',
       provider: 'Local keyword spotter used for wake detection.',
@@ -738,6 +742,8 @@ export const SECTIONS: DesktopConfigSection[] = [
       'stt.elevenlabs.diarize',
       'voice.record_key',
       'voice.max_recording_seconds',
+      'voice.semantic_turn',
+      'voice.barge_in',
       'voice.wake_word.enabled',
       'voice.wake_word.provider',
       'voice.wake_word.model',

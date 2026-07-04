@@ -36,6 +36,7 @@ export interface ChatBarProps {
   disabled: boolean
   focusKey?: string | null
   maxRecordingSeconds?: number
+  bargeInEnabled?: boolean
   state: ChatBarState
   gateway?: HermesGateway | null
   queueSessionKey?: string | null
@@ -57,6 +58,7 @@ export interface ChatBarProps {
     options?: { attachments?: ComposerAttachment[]; fromQueue?: boolean }
   ) => Promise<boolean> | boolean
   onTranscribeAudio?: (audio: Blob) => Promise<string>
+  semanticTurnEnabled?: boolean
   streamingSttEnabled?: boolean
 }
 

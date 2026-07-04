@@ -27,9 +27,11 @@ class NemotronStreamingConfig:
     lookahead_tokens: int = 1
     device_map: str = "auto"
     dtype: str = "auto"
+    max_gpu_memory_gb: float | None = None
+    cpu_fallback: bool = True
 
 
-_MODEL_CACHE: dict[tuple[str, int, str, str], tuple[Any, Any, Any]] = {}
+_MODEL_CACHE: dict[tuple[str, int, str, str, float | None, bool], tuple[Any, Any, Any]] = {}
 _MODEL_LOCK = threading.Lock()
 
 
@@ -43,10 +45,21 @@ def resolve_nemotron_config(stt_config: dict[str, Any] | None) -> NemotronStream
         value = nested.get(key, streaming.get(key, default))
         return default if value in (None, "") else value
 
+    def pick_bool(key: str, default: bool) -> bool:
+        value = pick(key, default)
+        if isinstance(value, str):
+            return value.strip().lower() not in {"0", "false", "no", "off"}
+        return bool(value)
+
     try:
         lookahead = max(0, int(pick("lookahead_tokens", 1)))
     except (TypeError, ValueError):
         lookahead = 1
+
+    try:
+        max_gpu_memory = float(pick("max_gpu_memory_gb", 0) or 0)
+    except (TypeError, ValueError):
+        max_gpu_memory = 0
 
     nested_model = nested.get("model")
     legacy_model = streaming.get("model")
@@ -60,11 +73,57 @@ def resolve_nemotron_config(stt_config: dict[str, Any] | None) -> NemotronStream
         lookahead_tokens=lookahead,
         device_map=str(pick("device_map", "auto")).strip() or "auto",
         dtype=str(pick("dtype", "auto")).strip().lower() or "auto",
+        max_gpu_memory_gb=max_gpu_memory if max_gpu_memory > 0 else None,
+        cpu_fallback=pick_bool("cpu_fallback", True),
+    )
+
+
+def _is_memory_load_error(exc: BaseException) -> bool:
+    text = f"{type(exc).__name__}: {exc}".lower()
+    return any(
+        marker in text
+        for marker in (
+            "cuda out of memory",
+            "outofmemoryerror",
+            "paging file is too small",
+            "os error 1455",
+        )
+    )
+
+
+def _apply_memory_aware_cuda_kwargs(torch: Any, config: NemotronStreamingConfig, kwargs: dict[str, Any]) -> None:
+    if str(kwargs.get("device_map") or "").lower() != "auto":
+        return
+    if not getattr(torch, "cuda", None) or not torch.cuda.is_available():
+        return
+
+    free_bytes, total_bytes = torch.cuda.mem_get_info()
+    free_gib = free_bytes / 1024**3
+    total_gib = total_bytes / 1024**3
+    gpu_gib = config.max_gpu_memory_gb
+    if gpu_gib is None:
+        gpu_gib = max(0.5, min(free_gib - 0.75, total_gib * 0.8))
+
+    kwargs["max_memory"] = {0: f"{max(512, int(gpu_gib * 1024))}MiB", "cpu": "48GiB"}
+    if config.dtype == "auto":
+        kwargs["torch_dtype"] = torch.float16
+    logger.info(
+        "Nemotron CUDA memory budget: free=%.2fGiB total=%.2fGiB max_gpu=%.2fGiB",
+        free_gib,
+        total_gib,
+        gpu_gib,
     )
 
 
 def _load_nemotron_model(config: NemotronStreamingConfig) -> tuple[Any, Any, Any]:
-    key = (config.model, config.lookahead_tokens, config.device_map, config.dtype)
+    key = (
+        config.model,
+        config.lookahead_tokens,
+        config.device_map,
+        config.dtype,
+        config.max_gpu_memory_gb,
+        config.cpu_fallback,
+    )
     with _MODEL_LOCK:
         cached = _MODEL_CACHE.get(key)
         if cached is not None:
@@ -88,6 +147,7 @@ def _load_nemotron_model(config: NemotronStreamingConfig) -> tuple[Any, Any, Any
             kwargs["device_map"] = config.device_map
         if config.dtype in {"float16", "bfloat16", "float32"}:
             kwargs["torch_dtype"] = getattr(torch, config.dtype)
+        _apply_memory_aware_cuda_kwargs(torch, config, kwargs)
 
         logger.info(
             "Loading Nemotron streaming STT model %s (lookahead=%s, device_map=%s, dtype=%s)",
@@ -96,7 +156,19 @@ def _load_nemotron_model(config: NemotronStreamingConfig) -> tuple[Any, Any, Any
             config.device_map,
             config.dtype,
         )
-        model = AutoModelForRNNT.from_pretrained(config.model, **kwargs)
+        try:
+            model = AutoModelForRNNT.from_pretrained(config.model, **kwargs)
+        except Exception as exc:
+            if not config.cpu_fallback or not _is_memory_load_error(exc) or str(kwargs.get("device_map")) == "cpu":
+                raise
+
+            logger.warning("Nemotron CUDA load failed from memory pressure; retrying on CPU/offload: %s", exc)
+            cpu_kwargs = dict(kwargs)
+            cpu_kwargs["device_map"] = "cpu"
+            cpu_kwargs.pop("max_memory", None)
+            if config.dtype == "auto":
+                cpu_kwargs.pop("torch_dtype", None)
+            model = AutoModelForRNNT.from_pretrained(config.model, **cpu_kwargs)
         if hasattr(model, "eval"):
             model.eval()
         cached = (processor, model, TextIteratorStreamer)

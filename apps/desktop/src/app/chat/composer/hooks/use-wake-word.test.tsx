@@ -265,6 +265,54 @@ describe('useWakeWord', () => {
     expect(streamSession.finish).toHaveBeenCalledTimes(1)
   })
 
+  it('does not immediately re-arm after submitting a wake command', async () => {
+    let wakeOptions: { debug?: boolean; onDetected: (phrase: string) => void } | null = null
+    const recorderState: { options?: RecorderOptionsForTest } = {}
+    const wakeSession = { sendFrame: vi.fn(), stop: vi.fn() }
+    const onTranscribeAudio = vi.fn().mockResolvedValue('hey marvi send this')
+    const onSubmit = vi.fn()
+    openWakeWordSession.mockImplementation(async options => {
+      wakeOptions = options
+      return wakeSession
+    })
+    startMic.mockImplementation(async options => {
+      recorderState.options = options
+    })
+    stopMic.mockResolvedValue({ audio: new Blob(['idle'], { type: 'audio/webm' }), durationMs: 1200, heardSpeech: true })
+
+    renderHook(() =>
+      useWakeWord({
+        busy: false,
+        config: {
+          boost: 2,
+          commandTimeoutMs: 8000,
+          cooldownMs: 10,
+          debug: false,
+          enabled: true,
+          phrases: ['hey marvi'],
+          provider: 'sherpa_onnx',
+          sampleRate: 16000,
+          threshold: 0.35
+        },
+        enabled: true,
+        onSubmit,
+        onTranscribeAudio
+      })
+    )
+
+    await waitFor(() => expect(startMic).toHaveBeenCalled())
+    await act(async () => {
+      wakeOptions?.onDetected('hey marvi')
+      recorderState.options?.onAudioFrame?.(new Float32Array([0.3, 0.4]))
+      recorderState.options?.onSilence?.()
+      await waitFor(() => expect(onSubmit).toHaveBeenCalledWith('send this'))
+    })
+
+    await new Promise(resolve => window.setTimeout(resolve, 50))
+
+    expect(openWakeWordSession).toHaveBeenCalledTimes(1)
+  })
+
   it('falls back to batch STT when streaming STT is enabled but unavailable', async () => {
     let wakeOptions: { debug?: boolean; onDetected: (phrase: string) => void } | null = null
     const recorderState: { options?: RecorderOptionsForTest } = {}

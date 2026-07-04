@@ -108,6 +108,7 @@ export function useWakeWord({
   const detectedRef = useRef(false)
   const stoppingRef = useRef(false)
   const startupFailedRef = useRef(false)
+  const pendingRestartAfterSubmitRef = useRef(false)
   const commandFramesRef = useRef<Float32Array[]>([])
   const restartTimerRef = useRef<number | null>(null)
   const commandTimerRef = useRef<number | null>(null)
@@ -186,6 +187,7 @@ export function useWakeWord({
     stopStreamingSession()
     handleRef.current.cancel()
     detectedRef.current = false
+    pendingRestartAfterSubmitRef.current = false
     stoppingRef.current = false
     commandFramesRef.current = []
     setStatus('idle')
@@ -210,6 +212,23 @@ export function useWakeWord({
     }, wakeConfig.cooldownMs)
   }, [debugLog, wakeConfig.cooldownMs])
 
+  const scheduleRestartAfterSubmittedTurn = useCallback(() => {
+    pendingRestartAfterSubmitRef.current = true
+    setStatus('idle')
+    setUserCaption(null)
+
+    restartTimerRef.current = window.setTimeout(() => {
+      restartTimerRef.current = null
+
+      if (!pendingRestartAfterSubmitRef.current || busyRef.current) {
+        return
+      }
+
+      pendingRestartAfterSubmitRef.current = false
+      scheduleRestart()
+    }, Math.max(wakeConfig.cooldownMs, 1500))
+  }, [scheduleRestart, wakeConfig.cooldownMs])
+
   const finishCapture = useCallback(async () => {
     if (stoppingRef.current) {
       return
@@ -218,6 +237,8 @@ export function useWakeWord({
     stoppingRef.current = true
     clearTimers()
     stopWakeSession()
+
+    let submittedCommand = false
 
     try {
       await handleRef.current.stop()
@@ -273,6 +294,7 @@ export function useWakeWord({
 
         if (command) {
           await onSubmitRef.current(command)
+          submittedCommand = true
         } else if (transcript) {
           notify({ kind: 'warning', title: voiceCopy.noSpeechDetected, message: voiceCopy.tryRecordingAgain })
         } else {
@@ -287,10 +309,15 @@ export function useWakeWord({
       streamingErrorRef.current = null
       streamedCommandFramesRef.current = 0
       stoppingRef.current = false
-      scheduleRestart()
+      if (submittedCommand) {
+        scheduleRestartAfterSubmittedTurn()
+      } else {
+        scheduleRestart()
+      }
     }
   }, [
     scheduleRestart,
+    scheduleRestartAfterSubmittedTurn,
     voiceCopy.noSpeechDetected,
     voiceCopy.streamingUnavailable,
     voiceCopy.transcriptionFailed,
@@ -304,6 +331,15 @@ export function useWakeWord({
   useEffect(() => {
     finishCaptureRef.current = finishCapture
   }, [finishCapture])
+
+  useEffect(() => {
+    if (!pendingRestartAfterSubmitRef.current || busy || statusRef.current !== 'idle' || restartTimerRef.current) {
+      return
+    }
+
+    pendingRestartAfterSubmitRef.current = false
+    scheduleRestart()
+  }, [busy, scheduleRestart])
 
   useEffect(() => {
     if (!wakeConfig.enabled || !enabled || busy || !transcribeAvailable) {
@@ -421,6 +457,7 @@ export function useWakeWord({
           detectedRef.current = false
           stoppingRef.current = false
           commandFramesRef.current = []
+          pendingRestartAfterSubmitRef.current = false
           setStatus('idle')
         }
       }

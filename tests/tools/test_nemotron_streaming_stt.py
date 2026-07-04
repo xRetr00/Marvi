@@ -71,6 +71,23 @@ def test_resolve_nemotron_config_uses_streaming_overrides():
     assert cfg.dtype == "float16"
 
 
+def test_resolve_nemotron_config_uses_nested_memory_limits():
+    cfg = resolve_nemotron_config(
+        {
+            "streaming": {
+                "provider": "nemotron",
+                "nemotron": {
+                    "cpu_fallback": "false",
+                    "max_gpu_memory_gb": "2.5",
+                },
+            }
+        }
+    )
+
+    assert cfg.cpu_fallback is False
+    assert cfg.max_gpu_memory_gb == 2.5
+
+
 def test_resolve_nemotron_config_ignores_whisperlive_model_name():
     cfg = resolve_nemotron_config(
         {

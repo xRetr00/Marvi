@@ -13,8 +13,8 @@ import { sanitizeTextForSpeech } from './speech-text'
 // fails to start or stalls mid-stream for this long (rearmed on each progress
 // tick, so legitimately long speech is never cut off).
 const PLAYBACK_STALL_MS = 15_000
-const STREAM_START_BUFFER_SECONDS = 0.12
-const STREAM_UNDERRUN_BUFFER_SECONDS = 0.08
+const STREAM_START_BUFFER_SECONDS = 0.25
+const STREAM_UNDERRUN_BUFFER_SECONDS = 0.12
 
 let currentAudio: HTMLAudioElement | null = null
 let currentStop: (() => void) | null = null
@@ -75,6 +75,7 @@ async function playStreamingSpeechText(text: string, options: VoicePlaybackOptio
   }
 
   const audioContext = new AudioContext()
+  await audioContext.resume?.().catch(() => undefined)
   const reader = response.body.getReader()
   const decoder = new TextDecoder()
   let buffer = ''

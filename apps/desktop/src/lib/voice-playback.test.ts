@@ -116,6 +116,7 @@ describe('playSpeechText', () => {
 
   it('prebuffers streaming chunks from current audio time instead of cutting them off', async () => {
     const starts: number[] = []
+    const resume = vi.fn().mockResolvedValue(undefined)
     const encoder = new TextEncoder()
     const fetch = vi.fn().mockResolvedValue({
       body: new ReadableStream({
@@ -155,6 +156,9 @@ describe('playSpeechText', () => {
         close() {
           return Promise.resolve()
         }
+        resume() {
+          return resume()
+        }
       }
     )
     Object.defineProperty(window, 'hermesDesktop', {
@@ -170,7 +174,8 @@ describe('playSpeechText', () => {
 
     await playSpeechText('Hello', { source: 'read-aloud' })
 
-    expect(starts[0]).toBeGreaterThanOrEqual(5.12)
+    expect(resume).toHaveBeenCalled()
+    expect(starts[0]).toBeGreaterThanOrEqual(5.25)
     expect(speakText).not.toHaveBeenCalled()
   })
 

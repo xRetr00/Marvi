@@ -1103,6 +1103,10 @@ def _setup_tts_provider(config: dict):
             pocket_cfg = config.setdefault("tts", {}).setdefault("pockettts", {})
             pocket_cfg.setdefault("voice", "alba")
             pocket_cfg["device"] = "cuda" if prompt_yes_no("Try PocketTTS on CUDA when supported?", False) else "cpu"
+            if pocket_cfg["device"] == "cuda":
+                from hermes_cli.tools_config import _ensure_cuda_torch
+
+                _ensure_cuda_torch(Path(sys.executable))
 
             stt_local = config.setdefault("stt", {}).setdefault("local", {})
             config["stt"].setdefault("provider", "local")

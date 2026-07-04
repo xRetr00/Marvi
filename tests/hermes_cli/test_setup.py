@@ -460,6 +460,7 @@ def test_modal_setup_can_use_nous_subscription_without_modal_creds(tmp_path, mon
 def test_tts_setup_configures_pockettts_with_streaming_voice(tmp_path, monkeypatch):
     monkeypatch.setenv("HERMES_HOME", str(tmp_path))
     config = load_config()
+    cuda_torch_calls = []
 
     def fake_prompt_choice(question, choices, default=0, description=None):
         if question == "Select TTS provider:":
@@ -479,6 +480,10 @@ def test_tts_setup_configures_pockettts_with_streaming_voice(tmp_path, monkeypat
     monkeypatch.setattr(setup_mod, "_install_pockettts_deps", lambda: True)
     monkeypatch.setattr(setup_mod, "_install_nemotron_stt_deps", lambda: True)
     monkeypatch.setattr(setup_mod, "_install_semantic_turn_deps", lambda: True)
+    monkeypatch.setattr(
+        "hermes_cli.tools_config._ensure_cuda_torch",
+        lambda py: cuda_torch_calls.append(py),
+    )
     monkeypatch.setattr(setup_mod, "prompt_choice", fake_prompt_choice)
     monkeypatch.setattr(setup_mod, "prompt_yes_no", lambda *args, **kwargs: True)
     monkeypatch.setattr(setup_mod, "prompt", fake_prompt)
@@ -489,6 +494,7 @@ def test_tts_setup_configures_pockettts_with_streaming_voice(tmp_path, monkeypat
     assert config["tts"]["provider"] == "pockettts"
     assert config["tts"]["pockettts"]["voice"] == "alba"
     assert config["tts"]["pockettts"]["device"] == "cuda"
+    assert cuda_torch_calls
     assert config["stt"]["provider"] == "local"
     assert config["stt"]["local"]["device"] == "cuda"
     assert config["stt"]["local"]["compute_type"] == "float16"

@@ -85,7 +85,7 @@ def _ensure_cuda_torch(py: Path) -> None:
         check = None
     if check is not None and check.returncode == 0:
         return
-    _print_info("    Installing CUDA PyTorch for Nemotron GPU inference...")
+    _print_info("    Installing CUDA PyTorch for local GPU inference...")
     try:
         result = subprocess.run(
             [
@@ -103,12 +103,12 @@ def _ensure_cuda_torch(py: Path) -> None:
             timeout=1800,
         )
     except subprocess.TimeoutExpired:
-        _print_warning("    CUDA PyTorch install timed out; Nemotron may fall back to CPU.")
+        _print_warning("    CUDA PyTorch install timed out; local GPU inference may fall back to CPU.")
         return
     if result.returncode == 0:
-        _print_success("    CUDA PyTorch installed for Nemotron")
+        _print_success("    CUDA PyTorch installed")
         return
-    _print_warning("    CUDA PyTorch install failed; Nemotron may fall back to CPU:")
+    _print_warning("    CUDA PyTorch install failed; local GPU inference may fall back to CPU:")
     _print_info(f"      {(result.stderr or '').strip()[:300]}")
 
 
@@ -1180,25 +1180,30 @@ def _run_post_setup(post_setup_key: str):
         install_cua_driver(upgrade=False)
 
     elif post_setup_key == "pockettts":
+        installed = False
         try:
             __import__("pocket_tts")
             _print_success("    pocket-tts is already installed")
-            return
         except ImportError:
-            pass
-        _print_info("    Installing PocketTTS...")
-        try:
-            result = _pip_install(["-U", "pocket-tts", "scipy", "--quiet"], timeout=600)
-            if result.returncode == 0:
-                _print_success("    PocketTTS installed")
-                _print_info("    Set tts.provider to pockettts and choose tts.pockettts.voice.")
-            else:
-                _print_warning("    PocketTTS install failed:")
-                _print_info(f"      {(result.stderr or '').strip()[:300]}")
+            _print_info("    Installing PocketTTS...")
+            try:
+                result = _pip_install(["-U", "pocket-tts", "scipy", "--quiet"], timeout=600)
+                if result.returncode == 0:
+                    _print_success("    PocketTTS installed")
+                    installed = True
+                else:
+                    _print_warning("    PocketTTS install failed:")
+                    _print_info(f"      {(result.stderr or '').strip()[:300]}")
+                    _print_info("    Run manually: uv pip install -U pocket-tts scipy")
+            except subprocess.TimeoutExpired:
+                _print_warning("    PocketTTS install timed out (>10min)")
                 _print_info("    Run manually: uv pip install -U pocket-tts scipy")
-        except subprocess.TimeoutExpired:
-            _print_warning("    PocketTTS install timed out (>10min)")
-            _print_info("    Run manually: uv pip install -U pocket-tts scipy")
+        else:
+            installed = True
+        if installed and cfg_get(load_config(), "tts", "pockettts", "device", default="cpu") == "cuda":
+            _ensure_cuda_torch(Path(sys.executable))
+        if installed:
+            _print_info("    Set tts.provider to pockettts and choose tts.pockettts.voice.")
 
     elif post_setup_key == "piper":
         try:

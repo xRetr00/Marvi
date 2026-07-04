@@ -13,6 +13,7 @@ import { onComposerVoiceToggleRequest } from '../focus'
 import type { ChatBarProps } from '../types'
 
 import { useAutoSpeakReplies } from './use-auto-speak-replies'
+import { useReadAloudBargeIn } from './use-read-aloud-barge-in'
 import { useVoiceConversation } from './use-voice-conversation'
 import { useVoiceRecorder } from './use-voice-recorder'
 
@@ -115,6 +116,11 @@ export function useComposerVoice({
     pendingResponse,
     semanticTurnEnabled,
     streamingSttEnabled
+  })
+
+  useReadAloudBargeIn({
+    blocked: voiceConversationActive || voiceStatus !== 'idle',
+    enabled: bargeInEnabled !== false
   })
 
   useEffect(() => {

@@ -48,7 +48,10 @@ interface HermesConfigOptions {
 export function useHermesConfig({ activeSessionIdRef, refreshProjectBranch }: HermesConfigOptions) {
   const [voiceMaxRecordingSeconds, setVoiceMaxRecordingSeconds] = useState(DEFAULT_VOICE_SECONDS)
   const [sttEnabled, setSttEnabled] = useState(true)
+  const [sttProvider, setSttProvider] = useState('')
   const [streamingSttEnabled, setStreamingSttEnabled] = useState(false)
+  const [streamingSttProvider, setStreamingSttProvider] = useState('')
+  const [ttsProvider, setTtsProvider] = useState('')
   const [wakeWordConfig, setWakeWordConfig] = useState<WakeWordConfig>(() => normalizeWakeWordConfig(undefined))
 
   const refreshHermesConfig = useCallback(async () => {
@@ -91,6 +94,9 @@ export function useHermesConfig({ activeSessionIdRef, refreshProjectBranch }: He
       setVoiceMaxRecordingSeconds(recordingLimit(config.voice?.max_recording_seconds))
       setWakeWordConfig(normalizeWakeWordConfig(config.voice?.wake_word))
       setSttEnabled(config.stt?.enabled !== false)
+      setSttProvider((config.stt?.provider ?? '').trim())
+      setTtsProvider((config.tts?.provider ?? '').trim())
+      setStreamingSttProvider((config.stt?.streaming?.provider ?? '').trim())
       setStreamingSttEnabled(config.stt?.streaming?.enabled !== false && Boolean(config.stt?.streaming?.provider))
       applyAutoSpeakFromConfig(config)
     } catch {
@@ -98,5 +104,14 @@ export function useHermesConfig({ activeSessionIdRef, refreshProjectBranch }: He
     }
   }, [activeSessionIdRef, refreshProjectBranch])
 
-  return { refreshHermesConfig, streamingSttEnabled, sttEnabled, voiceMaxRecordingSeconds, wakeWordConfig }
+  return {
+    refreshHermesConfig,
+    streamingSttEnabled,
+    streamingSttProvider,
+    sttEnabled,
+    sttProvider,
+    ttsProvider,
+    voiceMaxRecordingSeconds,
+    wakeWordConfig
+  }
 }

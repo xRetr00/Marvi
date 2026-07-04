@@ -142,6 +142,7 @@ describe('playSpeechText', () => {
       class {
         currentTime = 5
         destination = {}
+        sampleRate = 24000
         createBuffer(_channels: number, length: number) {
           return {
             getChannelData: () => new Float32Array(length)
@@ -175,7 +176,8 @@ describe('playSpeechText', () => {
     await playSpeechText('Hello', { source: 'read-aloud' })
 
     expect(resume).toHaveBeenCalled()
-    expect(starts[0]).toBeGreaterThanOrEqual(5.25)
+    expect(starts[0]).toBe(5)
+    expect(Math.max(...starts)).toBeGreaterThanOrEqual(5.9)
     expect(speakText).not.toHaveBeenCalled()
   })
 

@@ -158,4 +158,26 @@ describe('useHermesConfig refreshHermesConfig', () => {
 
     expect(result.current.streamingSttEnabled).toBe(true)
   })
+
+  it('exposes selected voice providers for status indicators', async () => {
+    mockConfig({
+      stt: { enabled: true, provider: 'local', streaming: { enabled: true, provider: 'nemotron' } },
+      tts: { provider: 'qwen3' }
+    })
+
+    const { result } = renderHook(() =>
+      useHermesConfig({
+        activeSessionIdRef: { current: null },
+        refreshProjectBranch: vi.fn().mockResolvedValue(undefined)
+      })
+    )
+
+    await act(async () => {
+      await result.current.refreshHermesConfig()
+    })
+
+    expect(result.current.sttProvider).toBe('local')
+    expect(result.current.streamingSttProvider).toBe('nemotron')
+    expect(result.current.ttsProvider).toBe('qwen3')
+  })
 })

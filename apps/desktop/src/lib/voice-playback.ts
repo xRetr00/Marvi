@@ -13,8 +13,9 @@ import { sanitizeTextForSpeech } from './speech-text'
 // fails to start or stalls mid-stream for this long (rearmed on each progress
 // tick, so legitimately long speech is never cut off).
 const PLAYBACK_STALL_MS = 15_000
-const STREAM_START_BUFFER_SECONDS = 0.25
+const STREAM_START_BUFFER_SECONDS = 0.9
 const STREAM_UNDERRUN_BUFFER_SECONDS = 0.12
+const OUTPUT_PRIME_SECONDS = 0.35
 
 let currentAudio: HTMLAudioElement | null = null
 let currentStop: (() => void) | null = null
@@ -85,6 +86,18 @@ async function playStreamingSpeechText(text: string, options: VoicePlaybackOptio
   let failed = false
   let stopped = false
   let startedStream = false
+  let queuedSeconds = 0
+  const queuedChunks: string[] = []
+
+  const primeAudioOutput = () => {
+    const frames = Math.max(1, Math.floor((audioContext.sampleRate || sampleRate) * OUTPUT_PRIME_SECONDS))
+    const silent = audioContext.createBuffer(1, frames, audioContext.sampleRate || sampleRate)
+    const source = audioContext.createBufferSource()
+    source.buffer = silent
+    source.connect(audioContext.destination)
+    source.start(audioContext.currentTime)
+    nextTime = audioContext.currentTime + OUTPUT_PRIME_SECONDS
+  }
 
   currentStop = () => {
     stopped = true
@@ -108,6 +121,27 @@ async function playStreamingSpeechText(text: string, options: VoicePlaybackOptio
     startedStream = true
   }
 
+  const queueOrPlayChunk = (encoded: string) => {
+    if (startedStream) {
+      playChunk(encoded)
+      playedChunks += 1
+
+      return
+    }
+
+    const samples = pcm16Base64ToFloat32(encoded)
+    queuedChunks.push(encoded)
+    queuedSeconds += samples.length / sampleRate
+
+    if (queuedSeconds >= STREAM_START_BUFFER_SECONDS) {
+      primeAudioOutput()
+      for (const chunk of queuedChunks.splice(0)) {
+        playChunk(chunk)
+        playedChunks += 1
+      }
+    }
+  }
+
   while (!stopped) {
     const { done, value } = await reader.read()
     if (done) {
@@ -124,16 +158,23 @@ async function playStreamingSpeechText(text: string, options: VoicePlaybackOptio
       }
 
       const event = JSON.parse(line) as { audio?: string; error?: string; sample_rate?: number; type?: string }
-      if (event.type === 'start' && event.sample_rate) {
+      if ((event.type === 'start' || event.type === 'sample_rate') && event.sample_rate) {
         sampleRate = event.sample_rate
       } else if (event.type === 'chunk' && event.audio) {
-        playChunk(event.audio)
-        playedChunks += 1
+        queueOrPlayChunk(event.audio)
       } else if (event.type === 'error') {
         failed = true
         stopped = true
         break
       }
+    }
+  }
+
+  if (!stopped && !startedStream && queuedChunks.length > 0) {
+    primeAudioOutput()
+    for (const chunk of queuedChunks.splice(0)) {
+      playChunk(chunk)
+      playedChunks += 1
     }
   }
 

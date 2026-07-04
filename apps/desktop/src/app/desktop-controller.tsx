@@ -78,6 +78,7 @@ import {
 import { onSessionsChanged } from '../store/session-sync'
 import { clearSessionTodos, setSessionTodos, todosForHydration } from '../store/todos'
 import { openUpdatesWindow, startUpdatePoller, stopUpdatePoller } from '../store/updates'
+import { $voicePlayback } from '../store/voice-playback'
 import { initVoiceIslandBridge } from '../store/voice-island'
 import { publishWakeStatus } from '../store/voice-presence'
 import { $presenceEnabled, setPresenceEnabled } from '../store/voice-presence-settings'
@@ -157,6 +158,22 @@ const CRON_POLL_INTERVAL_MS = 30_000
 // appears without requiring a manual refresh or route change.
 const MESSAGING_POLL_INTERVAL_MS = 10_000
 const ACTIVE_MESSAGING_SESSION_POLL_INTERVAL_MS = 5_000
+
+function VoicePipelineDots({ sttActive, ttsActive }: { sttActive: boolean; ttsActive: boolean }) {
+  const dot = (active: boolean) => (
+    <span
+      aria-hidden="true"
+      className={cn('size-1.5 rounded-full', active ? 'bg-emerald-400' : 'bg-muted-foreground/45')}
+    />
+  )
+
+  return (
+    <span className="inline-flex items-center gap-1">
+      {dot(sttActive)}
+      {dot(ttsActive)}
+    </span>
+  )
+}
 
 function sessionMatchesStoredId(session: { id: string; _lineage_root_id?: null | string }, id: string): boolean {
   return session.id === id || session._lineage_root_id === id
@@ -463,11 +480,19 @@ export function DesktopController() {
     requestGateway
   })
 
-  const { refreshHermesConfig, streamingSttEnabled, sttEnabled, voiceMaxRecordingSeconds, wakeWordConfig } =
-    useHermesConfig({
-      activeSessionIdRef,
-      refreshProjectBranch
-    })
+  const {
+    refreshHermesConfig,
+    streamingSttEnabled,
+    streamingSttProvider,
+    sttEnabled,
+    sttProvider,
+    ttsProvider,
+    voiceMaxRecordingSeconds,
+    wakeWordConfig
+  } = useHermesConfig({
+    activeSessionIdRef,
+    refreshProjectBranch
+  })
 
   const { refreshCurrentModel, selectModel, updateModelOptionsCache } = useModelControls({
     activeSessionId,
@@ -847,6 +872,7 @@ export function DesktopController() {
   requestGatewayRef.current = requestGateway
   const presenceEnabled = useStore($presenceEnabled)
   const voiceBusy = useStore($busy)
+  const voicePlayback = useStore($voicePlayback)
   const wake = useWakeWord({
     busy: voiceBusy,
     config: wakeWordConfig,
@@ -857,6 +883,25 @@ export function DesktopController() {
     onTranscribeAudio: transcribeVoiceAudio,
     streamingSttEnabled
   })
+
+  const voicePipelineStatusItem = useMemo<StatusbarItem>(() => {
+    const sttActive =
+      sttEnabled &&
+      (streamingSttEnabled ||
+        wake.status === 'woken' ||
+        wake.status === 'listening' ||
+        wake.status === 'transcribing')
+    const ttsActive = ttsProvider === 'qwen3' && voicePlayback.status !== 'idle'
+    const streamingLabel = streamingSttEnabled ? streamingSttProvider || 'on' : 'off'
+
+    return {
+      className: 'w-8 justify-center px-0',
+      icon: <VoicePipelineDots sttActive={sttActive} ttsActive={ttsActive} />,
+      id: 'voice-pipeline',
+      title: `STT ${sttProvider || 'off'} · streaming ${streamingLabel} · TTS ${ttsProvider || 'off'}`,
+      variant: 'text'
+    }
+  }, [streamingSttEnabled, streamingSttProvider, sttEnabled, sttProvider, ttsProvider, voicePlayback.status, wake.status])
 
   useEffect(() => {
     vpLog('wake', 'status', { status: wake.status })
@@ -1078,8 +1123,8 @@ export function DesktopController() {
   })
 
   const leftStatusbarItemsWithWake = useMemo(
-    () => [wakeStatusItem, ...leftStatusbarItems],
-    [leftStatusbarItems, wakeStatusItem]
+    () => [wakeStatusItem, voicePipelineStatusItem, ...leftStatusbarItems],
+    [leftStatusbarItems, voicePipelineStatusItem, wakeStatusItem]
   )
 
   const sidebar = (

@@ -55,9 +55,9 @@ describe('voiceFieldVisible', () => {
     expect(voiceFieldVisible('tts.edge.voice', cfg({ tts: { provider: 'openai', openai: {} } }))).toBe(false)
   })
 
-  it('shows Qwen3 TTS fields only when Qwen3 is selected', () => {
-    expect(voiceFieldVisible('tts.qwen3.model', cfg())).toBe(false)
-    expect(voiceFieldVisible('tts.qwen3.ref_audio', cfg({ tts: { provider: 'qwen3', qwen3: {} } }))).toBe(true)
-    expect(voiceFieldVisible('tts.qwen3.instruct', cfg({ tts: { provider: 'qwen3', qwen3: {} } }))).toBe(true)
+  it('shows PocketTTS fields only when PocketTTS is selected', () => {
+    expect(voiceFieldVisible('tts.pockettts.voice', cfg())).toBe(false)
+    expect(voiceFieldVisible('tts.pockettts.voice', cfg({ tts: { provider: 'pockettts', pockettts: {} } }))).toBe(true)
+    expect(voiceFieldVisible('tts.pockettts.device', cfg({ tts: { provider: 'pockettts', pockettts: {} } }))).toBe(true)
   })
 })

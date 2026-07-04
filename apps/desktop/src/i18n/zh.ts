@@ -548,13 +548,9 @@ export const zh: Translations = {
           model: 'Gemini TTS 模型',
           voice: 'Gemini 语音'
         },
-        neutts: {
-          model: 'NeuTTS 模型',
-          device: 'NeuTTS 设备'
-        },
-        kittentts: {
-          model: 'KittenTTS 模型',
-          voice: 'KittenTTS 语音'
+        pockettts: {
+          voice: 'PocketTTS 语音',
+          device: 'PocketTTS 设备'
         },
         piper: {
           voice: 'Piper 语音'

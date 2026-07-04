@@ -6594,7 +6594,7 @@ class TestDesktopCronTicker:
             assert not called.wait(0.5), "ticker must not run outside the desktop app"
 
 
-class TestDesktopWhisperLiveStartup:
+class TestDesktopVoiceStartup:
     def _client(self):
         try:
             from starlette.testclient import TestClient
@@ -6604,24 +6604,14 @@ class TestDesktopWhisperLiveStartup:
 
         return TestClient(app)
 
-    def test_starts_whisperlive_when_desktop_streaming_stt_enabled(self, monkeypatch, _isolate_hermes_home):
+    def test_desktop_startup_does_not_spawn_streaming_stt_sidecar(self, monkeypatch, _isolate_hermes_home):
         import cron.scheduler as sched
         import hermes_cli.web_server as web_server
 
         started = {}
 
-        class Proc:
-            pid = 123
-
-            def poll(self):
-                return None
-
-            def terminate(self):
-                started["terminated"] = True
-
         monkeypatch.setattr(sched, "tick", lambda *a, **k: None)
         monkeypatch.setenv("HERMES_DESKTOP", "1")
-        monkeypatch.setattr(web_server, "_port_open", lambda *_a: False)
         monkeypatch.setattr(
             web_server,
             "load_config",
@@ -6629,30 +6619,21 @@ class TestDesktopWhisperLiveStartup:
                 "stt": {
                     "streaming": {
                         "enabled": True,
-                        "provider": "whisperlive",
+                        "provider": "nemotron",
                         "host": "127.0.0.1",
                         "port": 9090,
                     }
                 }
             },
         )
-        monkeypatch.setattr(
-            "tools.transcription_tools.whisperlive_server_command",
-            lambda _cfg: ["python", "-c", "pass"],
-        )
-        def fake_popen(cmd, **kwargs):
-            started["cmd"] = cmd
-            started["kwargs"] = kwargs
-            return Proc()
-
-        monkeypatch.setattr(web_server.subprocess, "Popen", fake_popen)
+        monkeypatch.setattr(web_server.subprocess, "Popen", lambda *a, **k: started.setdefault("called", True))
 
         with self._client():
-            assert started["cmd"] == ["python", "-c", "pass"]
+            pass
 
-        assert started["terminated"] is True
+        assert started == {}
 
-    def test_warms_qwen_without_loading_nemotron_in_main_venv(self, monkeypatch):
+    def test_warms_pockettts_without_loading_nemotron_in_main_venv(self, monkeypatch):
         import hermes_cli.web_server as web_server
 
         warmed = []
@@ -6660,7 +6641,7 @@ class TestDesktopWhisperLiveStartup:
             web_server,
             "load_config",
             lambda: {
-                "tts": {"provider": "qwen3", "qwen3": {}},
+                "tts": {"provider": "pockettts", "pockettts": {}},
                 "stt": {
                     "streaming": {
                         "enabled": True,

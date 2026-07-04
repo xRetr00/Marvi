@@ -172,41 +172,6 @@ def _port_open(host: str, port: int) -> bool:
         return False
 
 
-def _start_desktop_whisperlive() -> tuple["subprocess.Popen | None", Any]:
-    cfg = load_config()
-    streaming = (((cfg.get("stt") or {}).get("streaming") or {}) if isinstance(cfg, dict) else {})
-    if not (
-        streaming.get("enabled") is True
-        and str(streaming.get("provider") or "").strip().lower() == "whisperlive"
-    ):
-        return None, None
-
-    host = str(streaming.get("host") or "127.0.0.1")
-    port = int(streaming.get("port") or 9090)
-    if _port_open(host, port):
-        _log.info("WhisperLive already listening on %s:%s", host, port)
-        return None, None
-
-    from tools.transcription_tools import whisperlive_server_command
-
-    log_path = get_hermes_home() / "logs" / "whisperlive.log"
-    log_path.parent.mkdir(parents=True, exist_ok=True)
-    log_file = log_path.open("ab")
-    try:
-        proc = subprocess.Popen(
-            whisperlive_server_command(cfg.get("stt") or {}),
-            stdout=log_file,
-            stderr=subprocess.STDOUT,
-            stdin=subprocess.DEVNULL,
-            creationflags=windows_hide_flags(),
-        )
-    except Exception:
-        log_file.close()
-        raise
-    _log.info("Started WhisperLive for desktop STT (pid=%s, %s:%s)", proc.pid, host, port)
-    return proc, log_file
-
-
 class _NemotronSubprocessSession:
     def __init__(self, stt_config: dict[str, Any]) -> None:
         self._stt_config = stt_config
@@ -214,11 +179,11 @@ class _NemotronSubprocessSession:
         self._log_file = None
 
     def start(self) -> None:
-        from tools.nemotron_streaming_stt import nemotron_stdio_command, whisperlive_venv_python
+        from tools.nemotron_streaming_stt import nemotron_stdio_command, nemotron_venv_python
 
-        py = whisperlive_venv_python()
+        py = nemotron_venv_python()
         if not py.exists():
-            raise RuntimeError("WhisperLive shared venv is missing. Run: hermes tools post-setup nemotron_stt")
+            raise RuntimeError("Nemotron venv is missing. Run: hermes tools post-setup nemotron_stt")
 
         log_path = get_hermes_home() / "logs" / "nemotron-stt.log"
         log_path.parent.mkdir(parents=True, exist_ok=True)
@@ -293,14 +258,14 @@ def _warm_desktop_voice_models() -> None:
         return
 
     tts_cfg = cfg.get("tts") or {}
-    if isinstance(tts_cfg, dict) and str(tts_cfg.get("provider") or "").strip().lower() == "qwen3":
+    if isinstance(tts_cfg, dict) and str(tts_cfg.get("provider") or "").strip().lower() == "pockettts":
         try:
             from tools.tts_tool import warm_tts_provider
 
             warm_tts_provider(tts_cfg)
-            _log.info("Warmed Qwen3 TTS for desktop streaming")
+            _log.info("Warmed PocketTTS for desktop streaming")
         except Exception as exc:
-            _log.warning("Could not warm Qwen3 TTS: %s", exc)
+            _log.warning("Could not warm PocketTTS: %s", exc)
 
     stt_cfg = cfg.get("stt") or {}
     streaming = (stt_cfg.get("streaming") or {}) if isinstance(stt_cfg, dict) else {}
@@ -309,7 +274,7 @@ def _warm_desktop_voice_models() -> None:
         and streaming.get("enabled") is True
         and str(streaming.get("provider") or "").strip().lower() == "nemotron"
     ):
-        _log.info("Nemotron streaming STT will run in the WhisperLive shared venv")
+        _log.info("Nemotron streaming STT will run in the Nemotron venv")
 
 
 def _resolve_restart_drain_timeout() -> float:
@@ -345,8 +310,6 @@ async def _lifespan(app: "FastAPI"):
     # dashboard` is unaffected — it relies on its own gateway.
     cron_stop: "threading.Event | None" = None
     cron_thread: "threading.Thread | None" = None
-    whisperlive_proc: "subprocess.Popen | None" = None
-    whisperlive_log = None
     if os.getenv("HERMES_DESKTOP") == "1":
         cron_stop = threading.Event()
         cron_thread = threading.Thread(
@@ -356,10 +319,6 @@ async def _lifespan(app: "FastAPI"):
             name="desktop-cron-ticker",
         )
         cron_thread.start()
-        try:
-            whisperlive_proc, whisperlive_log = _start_desktop_whisperlive()
-        except Exception as exc:
-            _log.warning("Could not start WhisperLive for desktop STT: %s", exc)
         threading.Thread(target=_warm_desktop_voice_models, daemon=True, name="desktop-voice-warmup").start()
 
     try:
@@ -367,10 +326,6 @@ async def _lifespan(app: "FastAPI"):
     finally:
         if cron_stop is not None:
             cron_stop.set()
-        if whisperlive_proc is not None and whisperlive_proc.poll() is None:
-            whisperlive_proc.terminate()
-        if whisperlive_log is not None:
-            whisperlive_log.close()
 
 
 def _get_event_state(app: "FastAPI"):
@@ -791,7 +746,7 @@ _SCHEMA_OVERRIDES: Dict[str, Dict[str, Any]] = {
     "tts.provider": {
         "type": "select",
         "description": "Text-to-speech provider",
-        "options": ["edge", "elevenlabs", "openai", "neutts"],
+        "options": ["pockettts", "edge", "elevenlabs", "openai", "piper"],
     },
     "stt.provider": {
         "type": "select",
@@ -3729,7 +3684,7 @@ async def speak_text(payload: TTSSpeakRequest):
 
 @app.post("/api/audio/speak/stream")
 async def speak_text_stream(payload: TTSSpeakRequest):
-    """Stream Qwen3-TTS PCM chunks as newline-delimited JSON."""
+    """Stream TTS PCM chunks as newline-delimited JSON."""
     text = (payload.text or "").strip()
     if not text:
         raise HTTPException(status_code=400, detail="Text is required")

@@ -149,10 +149,12 @@ describe('settings helpers', () => {
       const opts = enumOptionsFor('tts.provider', 'edge', config)
       expect(opts).toBeDefined()
       expect(opts).toContain('xai')
-      expect(opts).toContain('qwen3')
       expect(opts).toContain('pockettts')
       expect(opts).toContain('edge')
       expect(opts).toContain('elevenlabs')
+      expect(opts).not.toContain('qwen3')
+      expect(opts).not.toContain('neutts')
+      expect(opts).not.toContain('kittentts')
     })
 
     it('renders a dropdown for the STT provider including xAI (Grok)', () => {
@@ -165,7 +167,7 @@ describe('settings helpers', () => {
       expect(enumOptionsFor('stt.local.model', 'large-v3-turbo', config)).toContain('large-v3-turbo')
       expect(enumOptionsFor('stt.local.device', 'cuda', config)).toEqual(['auto', 'cuda', 'cpu'])
       expect(enumOptionsFor('stt.local.compute_type', 'float16', config)).toContain('int8_float16')
-      expect(enumOptionsFor('stt.streaming.provider', 'whisperlive', config)).toEqual(['', 'whisperlive', 'nemotron'])
+      expect(enumOptionsFor('stt.streaming.provider', 'nemotron', config)).toEqual(['', 'nemotron'])
       expect(enumOptionsFor('stt.streaming.backend', 'faster_whisper', config)).toEqual([
         'faster_whisper',
         'tensorrt',
@@ -176,11 +178,7 @@ describe('settings helpers', () => {
         'nvidia/nemotron-speech-streaming-en-0.6b'
       )
       expect(enumOptionsFor('tts.openai.model', 'gpt-4o-mini-tts', config)).toContain('tts-1-hd')
-      expect(enumOptionsFor('tts.neutts.device', 'cpu', config)).toEqual(['cpu', 'cuda', 'mps'])
-      expect(enumOptionsFor('tts.qwen3.mode', 'clone', config)).toEqual(['clone', 'custom', 'design'])
-      expect(enumOptionsFor('tts.qwen3.model', 'Qwen/Qwen3-TTS-12Hz-0.6B-Base', config)).toContain(
-        'Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign'
-      )
+      expect(enumOptionsFor('tts.pockettts.device', 'cpu', config)).toEqual(['cpu', 'cuda'])
     })
 
     it('renders a dropdown for PocketTTS preset voices', () => {

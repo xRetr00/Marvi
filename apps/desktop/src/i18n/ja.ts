@@ -466,13 +466,9 @@ export const ja = defineLocale({
           model: 'Gemini TTS モデル',
           voice: 'Gemini 音声'
         },
-        neutts: {
-          model: 'NeuTTS モデル',
-          device: 'NeuTTS デバイス'
-        },
-        kittentts: {
-          model: 'KittenTTS モデル',
-          voice: 'KittenTTS 音声'
+        pockettts: {
+          voice: 'PocketTTS 音声',
+          device: 'PocketTTS デバイス'
         },
         piper: {
           voice: 'Piper 音声'

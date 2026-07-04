@@ -223,7 +223,7 @@ describe('playSpeechText', () => {
     const fetch = vi.fn().mockResolvedValue({
       body: new ReadableStream({
         start(controller) {
-          controller.enqueue(encoder.encode(`${JSON.stringify({ type: 'error', error: 'not qwen3' })}\n`))
+          controller.enqueue(encoder.encode(`${JSON.stringify({ type: 'error', error: 'not pockettts' })}\n`))
           controller.close()
         }
       }),

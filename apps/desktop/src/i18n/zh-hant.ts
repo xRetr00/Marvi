@@ -455,13 +455,9 @@ export const zhHant = defineLocale({
           model: 'Gemini TTS 模型',
           voice: 'Gemini 語音'
         },
-        neutts: {
-          model: 'NeuTTS 模型',
-          device: 'NeuTTS 裝置'
-        },
-        kittentts: {
-          model: 'KittenTTS 模型',
-          voice: 'KittenTTS 語音'
+        pockettts: {
+          voice: 'PocketTTS 語音',
+          device: 'PocketTTS 裝置'
         },
         piper: {
           voice: 'Piper 語音'

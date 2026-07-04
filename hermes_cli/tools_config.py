@@ -67,7 +67,7 @@ def _has_nvidia_gpu() -> bool:
         return False
 
 
-def _ensure_whisperlive_cuda_torch(py: Path) -> None:
+def _ensure_cuda_torch(py: Path) -> None:
     if not _has_nvidia_gpu():
         return
     try:
@@ -85,7 +85,7 @@ def _ensure_whisperlive_cuda_torch(py: Path) -> None:
         check = None
     if check is not None and check.returncode == 0:
         return
-    _print_info("    Installing CUDA PyTorch for WhisperLive GPU inference...")
+    _print_info("    Installing CUDA PyTorch for Nemotron GPU inference...")
     try:
         result = subprocess.run(
             [
@@ -103,61 +103,13 @@ def _ensure_whisperlive_cuda_torch(py: Path) -> None:
             timeout=1800,
         )
     except subprocess.TimeoutExpired:
-        _print_warning("    CUDA PyTorch install timed out; WhisperLive may fall back to CPU.")
+        _print_warning("    CUDA PyTorch install timed out; Nemotron may fall back to CPU.")
         return
     if result.returncode == 0:
-        _print_success("    CUDA PyTorch installed for WhisperLive")
+        _print_success("    CUDA PyTorch installed for Nemotron")
         return
-    _print_warning("    CUDA PyTorch install failed; WhisperLive may fall back to CPU:")
+    _print_warning("    CUDA PyTorch install failed; Nemotron may fall back to CPU:")
     _print_info(f"      {(result.stderr or '').strip()[:300]}")
-
-
-def _ensure_qwen3_performance_deps() -> None:
-    if os.name == "nt":
-        try:
-            import triton  # noqa: F401
-        except ImportError:
-            _print_info("    Installing Triton Windows kernels for Qwen3/TorchAO...")
-            result = _pip_install(["triton-windows==3.6.*", "--quiet"], timeout=300)
-            if result.returncode == 0:
-                _print_success("    triton-windows installed")
-            else:
-                _print_warning("    triton-windows install failed:")
-                _print_info(f"      {(result.stderr or '').strip()[:300]}")
-
-    if shutil.which("sox"):
-        return
-    user_path = [p for p in os.environ.get("PATH", "").split(os.pathsep) if p]
-    if any((Path(p) / "sox.exe").exists() for p in user_path):
-        return
-    winget_packages = Path(os.environ.get("LOCALAPPDATA", "")) / "Microsoft" / "WinGet" / "Packages"
-    if any(winget_packages.glob("ChrisBagwell.SoX_*/*/sox.exe")):
-        return
-    winget = shutil.which("winget")
-    if os.name != "nt" or not winget:
-        _print_warning("    SoX executable not found; install SoX to remove Qwen audio preprocessing warnings.")
-        return
-    _print_info("    Installing SoX audio utility...")
-    result = subprocess.run(
-        [
-            winget,
-            "install",
-            "--id",
-            "ChrisBagwell.SoX",
-            "-e",
-            "--accept-package-agreements",
-            "--accept-source-agreements",
-            "--silent",
-        ],
-        capture_output=True,
-        text=True,
-        timeout=600,
-    )
-    if result.returncode == 0:
-        _print_success("    SoX installed; restart Marvi so the updated PATH is inherited.")
-    else:
-        _print_warning("    SoX install failed:")
-        _print_info(f"      {(result.stderr or result.stdout or '').strip()[:300]}")
 
 
 # ─── Toolset Registry ─────────────────────────────────────────────────────────
@@ -415,20 +367,12 @@ TOOL_CATEGORIES = {
                 "tts_provider": "gemini",
             },
             {
-                "name": "Qwen3 TTS",
-                "badge": "local · CUDA",
-                "tag": "Local streaming TTS with custom, design, and clone modes",
+                "name": "PocketTTS",
+                "badge": "local · fast",
+                "tag": "Kyutai local TTS with preset/custom voices",
                 "env_vars": [],
-                "tts_provider": "qwen3",
-                "post_setup": "qwen3_tts",
-            },
-            {
-                "name": "KittenTTS",
-                "badge": "local · free",
-                "tag": "Lightweight local ONNX TTS (~25MB), no API key",
-                "env_vars": [],
-                "tts_provider": "kittentts",
-                "post_setup": "kittentts",
+                "tts_provider": "pockettts",
+                "post_setup": "pockettts",
             },
             {
                 "name": "Piper",
@@ -1235,31 +1179,26 @@ def _run_post_setup(post_setup_key: str):
     elif post_setup_key == "cua_driver":
         install_cua_driver(upgrade=False)
 
-    elif post_setup_key == "kittentts":
+    elif post_setup_key == "pockettts":
         try:
-            __import__("kittentts")
-            _print_success("    kittentts is already installed")
+            __import__("pocket_tts")
+            _print_success("    pocket-tts is already installed")
             return
         except ImportError:
             pass
-        _print_info("    Installing kittentts (~25-80MB model, CPU-only)...")
-        wheel_url = (
-            "https://github.com/KittenML/KittenTTS/releases/download/"
-            "0.8.1/kittentts-0.8.1-py3-none-any.whl"
-        )
+        _print_info("    Installing PocketTTS...")
         try:
-            result = _pip_install(["-U", wheel_url, "soundfile", "--quiet"], timeout=300)
+            result = _pip_install(["-U", "pocket-tts", "scipy", "--quiet"], timeout=600)
             if result.returncode == 0:
-                _print_success("    kittentts installed")
-                _print_info("    Voices: Jasper, Bella, Luna, Bruno, Rosie, Hugo, Kiki, Leo")
-                _print_info("    Models: KittenML/kitten-tts-nano-0.8-int8 (25MB), micro (41MB), mini (80MB)")
+                _print_success("    PocketTTS installed")
+                _print_info("    Set tts.provider to pockettts and choose tts.pockettts.voice.")
             else:
-                _print_warning("    kittentts install failed:")
+                _print_warning("    PocketTTS install failed:")
                 _print_info(f"      {(result.stderr or '').strip()[:300]}")
-                _print_info(f"    Run manually: uv pip install -U '{wheel_url}' soundfile")
+                _print_info("    Run manually: uv pip install -U pocket-tts scipy")
         except subprocess.TimeoutExpired:
-            _print_warning("    kittentts install timed out (>5min)")
-            _print_info(f"    Run manually: uv pip install -U '{wheel_url}' soundfile")
+            _print_warning("    PocketTTS install timed out (>10min)")
+            _print_info("    Run manually: uv pip install -U pocket-tts scipy")
 
     elif post_setup_key == "piper":
         try:
@@ -1305,111 +1244,24 @@ def _run_post_setup(post_setup_key: str):
             _print_warning("    livekit-wakeword install timed out (>5min)")
             _print_info("    Run manually: uv pip install -U livekit-wakeword")
 
-    elif post_setup_key == "qwen3_tts":
-        _ensure_whisperlive_cuda_torch(Path(sys.executable))
-        _ensure_qwen3_performance_deps()
-        try:
-            __import__("faster_qwen3_tts")
-            _print_success("    faster-qwen3-tts is already installed")
-            return
-        except ImportError:
-            pass
-        _print_info("    Installing faster-qwen3-tts...")
-        try:
-            result = _pip_install(["-U", "faster-qwen3-tts", "packaging", "--quiet"], timeout=600)
-            if result.returncode == 0:
-                _print_success("    faster-qwen3-tts installed")
-                _print_info("    Models download on first use; set tts.qwen3.device to cuda for GPU.")
-            else:
-                _print_warning("    faster-qwen3-tts install failed:")
-                _print_info(f"      {(result.stderr or '').strip()[:300]}")
-                _print_info("    Run manually: uv pip install -U faster-qwen3-tts packaging")
-        except subprocess.TimeoutExpired:
-            _print_warning("    faster-qwen3-tts install timed out (>10min)")
-            _print_info("    Run manually: uv pip install -U faster-qwen3-tts packaging")
-
-    elif post_setup_key == "whisperlive":
-        from hermes_constants import get_hermes_home
-
-        venv_dir = get_hermes_home() / "whisperlive-venv"
-        py = venv_dir / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
-        start_cmd = (
-            f'"{py}" -c "from whisper_live.server import TranscriptionServer; '
-            "TranscriptionServer().run(host='127.0.0.1', port=9090, backend='faster_whisper', "
-            "faster_whisper_custom_model_path='en-20m-int8', single_model=True, max_clients=1, "
-            'max_connection_time=900)"'
-        )
-        try:
-            if py.exists():
-                result = subprocess.run(
-                    [str(py), "-c", "import whisper_live"],
-                    capture_output=True, text=True, timeout=30,
-                )
-                if result.returncode == 0:
-                    _print_success(f"    WhisperLive is already installed in {venv_dir}")
-                    _ensure_whisperlive_cuda_torch(py)
-                    _print_info(f"    Start it with: {start_cmd}")
-                    return
-        except (subprocess.TimeoutExpired, OSError):
-            pass
-
-        _print_info(f"    Installing WhisperLive into isolated venv: {venv_dir}")
-        try:
-            if not py.exists():
-                subprocess.run([sys.executable, "-m", "venv", str(venv_dir)], check=True, timeout=120)
-            result = subprocess.run(
-                [str(py), "-m", "pip", "install", "-U", "pip", "setuptools", "wheel", "whisper-live"],
-                capture_output=True, text=True, timeout=900,
-            )
-            if result.returncode == 0:
-                _print_success("    WhisperLive installed")
-                _ensure_whisperlive_cuda_torch(py)
-                _print_info(f"    Start it with: {start_cmd}")
-                return
-            _print_warning("    WhisperLive install failed:")
-            _print_info(f"      {(result.stderr or '').strip()[:300]}")
-            _print_info(f"    Run manually: \"{py}\" -m pip install -U whisper-live")
-        except subprocess.TimeoutExpired:
-            _print_warning("    WhisperLive install timed out (>15min)")
-            _print_info(f"    Run manually: \"{py}\" -m pip install -U whisper-live")
-        except Exception as e:
-            _print_warning(f"    WhisperLive install failed: {e}")
-
     elif post_setup_key == "nemotron_stt":
-        _print_info("    Installing Nemotron streaming STT into the WhisperLive shared venv...")
+        _print_info("    Installing Nemotron streaming STT into its venv...")
         try:
             from hermes_constants import get_hermes_home
 
-            venv_dir = get_hermes_home() / "whisperlive-venv"
+            venv_dir = get_hermes_home() / "nemotron-venv"
             py = venv_dir / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
             if not py.exists():
-                _print_info(f"    Creating shared voice venv: {venv_dir}")
+                _print_info(f"    Creating Nemotron venv: {venv_dir}")
                 subprocess.run([sys.executable, "-m", "venv", str(venv_dir)], check=True, timeout=120)
-            try:
-                whisperlive_check = subprocess.run(
-                    [str(py), "-c", "import whisper_live"],
-                    capture_output=True,
-                    text=True,
-                    timeout=30,
-                )
-            except (OSError, subprocess.TimeoutExpired):
-                whisperlive_check = subprocess.CompletedProcess([], 1, "", "")
-            if whisperlive_check.returncode != 0:
-                _print_info("    Installing WhisperLive into the shared voice venv...")
-                whisperlive_result = _pip_install_with_python(
-                    py,
-                    ["-U", "pip", "setuptools", "wheel", "whisper-live"],
-                    timeout=900,
-                )
-                if whisperlive_result.returncode != 0:
-                    _print_warning("    WhisperLive shared venv install failed:")
-                    _print_info(f"      {(whisperlive_result.stderr or '').strip()[:300]}")
-                    return
-            _ensure_whisperlive_cuda_torch(py)
+            _ensure_cuda_torch(py)
             result = _pip_install_with_python(
                 py,
                 [
                     "-U",
+                    "pip",
+                    "setuptools",
+                    "wheel",
                     "git+https://github.com/huggingface/transformers",
                     "accelerate",
                     "soundfile",
@@ -1429,7 +1281,7 @@ def _run_post_setup(post_setup_key: str):
                     _print_warning("    Nemotron install completed, but Transformers RNNT verification failed:")
                     _print_info(f"      {(verify.stderr or '').strip()[:300]}")
                     return
-                _print_success("    Nemotron streaming STT dependencies installed in whisperlive-venv")
+                _print_success("    Nemotron streaming STT dependencies installed in nemotron-venv")
                 _print_info("    Model downloads on first use; set stt.streaming.provider to nemotron.")
                 return
             _print_warning("    Nemotron streaming STT install failed:")
@@ -1437,7 +1289,7 @@ def _run_post_setup(post_setup_key: str):
             _print_info(f"    Run manually: \"{py}\" -m pip install -U git+https://github.com/huggingface/transformers accelerate soundfile packaging")
         except subprocess.TimeoutExpired:
             _print_warning("    Nemotron streaming STT install timed out (>15min)")
-            _print_info("    Run manually from the whisperlive-venv Python shown above.")
+            _print_info("    Run manually from the nemotron-venv Python shown above.")
         except Exception as e:
             _print_warning(f"    Nemotron streaming STT install failed: {e}")
 
@@ -1615,7 +1467,7 @@ def valid_post_setup_keys() -> Set[str]:
     command and the dashboard post-setup endpoint validate against, so a
     caller can't drive ``_run_post_setup`` with an arbitrary key.
     """
-    keys: Set[str] = {"livekit_wakeword", "whisperlive", "nemotron_stt", "semantic_turn"}
+    keys: Set[str] = {"livekit_wakeword", "nemotron_stt", "semantic_turn"}
     for cat in TOOL_CATEGORIES.values():
         for prov in cat.get("providers", []):
             ps = prov.get("post_setup")
@@ -1642,7 +1494,7 @@ def run_post_setup_command(args) -> int:
     """``hermes tools post-setup <key>`` — non-interactive post-setup runner.
 
     Runs the install/bootstrap hook a provider declares (npm install for
-    browser/Camofox, pip install for kittentts/piper/ddgs, cua-driver fetch,
+    browser/Camofox, pip install for pockettts/piper/ddgs, cua-driver fetch,
     etc.). This is the stable, scriptable target the dashboard spawns so the
     GUI can drive backend setup without re-implementing the install logic.
     Returns a process exit code (0 ok, 2 unknown key).
@@ -2645,7 +2497,7 @@ _POST_SETUP_INSTALLED: dict = {
     # because the gate sees "no env vars to ask about" and skips the
     # provider-setup flow that would have run the post_setup hook).
     #
-    # Only entries here are gated; other post_setup hooks (kittentts,
+    # Only entries here are gated; other post_setup hooks (pockettts,
     # piper, agent_browser, etc.) keep their existing behaviour. Add an
     # entry when (a) the post_setup is the ONLY install side-effect for
     # a no-key provider, and (b) an installed-state check is cheap and

@@ -457,30 +457,16 @@ def test_modal_setup_can_use_nous_subscription_without_modal_creds(tmp_path, mon
     assert "bill to your subscription" in out
 
 
-def test_tts_setup_configures_qwen3_clone_mode(tmp_path, monkeypatch):
+def test_tts_setup_configures_pockettts_with_streaming_voice(tmp_path, monkeypatch):
     monkeypatch.setenv("HERMES_HOME", str(tmp_path))
     config = load_config()
 
     def fake_prompt_choice(question, choices, default=0, description=None):
         if question == "Select TTS provider:":
-            return next(i for i, choice in enumerate(choices) if "Qwen3" in choice)
-        if question == "Qwen3 TTS mode:":
-            return 0
-        if question == "Streaming STT backend:":
-            return 0
+            return next(i for i, choice in enumerate(choices) if "PocketTTS" in choice)
         raise AssertionError(f"Unexpected prompt_choice call: {question}")
 
     def fake_prompt(message, *args, **kwargs):
-        if "model" in message:
-            return ""
-        if "language" in message:
-            return ""
-        if "reference audio" in message:
-            return "C:/voices/me.wav"
-        if "reference text" in message:
-            return "Hello reference"
-        if "streaming chunk size" in message:
-            return "1"
         raise AssertionError(f"Unexpected prompt call: {message}")
 
     monkeypatch.setattr(setup_mod, "managed_nous_tools_enabled", lambda: False)
@@ -490,8 +476,7 @@ def test_tts_setup_configures_qwen3_clone_mode(tmp_path, monkeypatch):
         lambda _config: type("Features", (), {"nous_auth_present": False})(),
     )
     monkeypatch.setattr(setup_mod.importlib.util, "find_spec", lambda name: None)
-    monkeypatch.setattr(setup_mod, "_install_qwen3_deps", lambda: True)
-    monkeypatch.setattr(setup_mod, "_install_whisperlive_deps", lambda: True)
+    monkeypatch.setattr(setup_mod, "_install_pockettts_deps", lambda: True)
     monkeypatch.setattr(setup_mod, "_install_nemotron_stt_deps", lambda: True)
     monkeypatch.setattr(setup_mod, "_install_semantic_turn_deps", lambda: True)
     monkeypatch.setattr(setup_mod, "prompt_choice", fake_prompt_choice)
@@ -501,17 +486,13 @@ def test_tts_setup_configures_qwen3_clone_mode(tmp_path, monkeypatch):
 
     setup_mod.setup_tts(config)
 
-    assert config["tts"]["provider"] == "qwen3"
-    assert config["tts"]["qwen3"]["mode"] == "clone"
-    assert config["tts"]["qwen3"]["model"] == "Qwen/Qwen3-TTS-12Hz-0.6B-Base"
-    assert config["tts"]["qwen3"]["ref_audio"] == "C:/voices/me.wav"
-    assert config["tts"]["qwen3"]["ref_text"] == "Hello reference"
-    assert config["tts"]["qwen3"]["chunk_size"] == 1
+    assert config["tts"]["provider"] == "pockettts"
+    assert config["tts"]["pockettts"]["voice"] == "alba"
+    assert config["tts"]["pockettts"]["device"] == "cuda"
     assert config["stt"]["provider"] == "local"
     assert config["stt"]["local"]["device"] == "cuda"
     assert config["stt"]["local"]["compute_type"] == "float16"
     assert config["stt"]["streaming"]["provider"] == "nemotron"
-    assert config["stt"]["streaming"]["backend"] == "faster_whisper"
     assert config["stt"]["streaming"]["model"] == "nvidia/nemotron-speech-streaming-en-0.6b"
     assert config["stt"]["streaming"]["lookahead_tokens"] == 1
     assert config["stt"]["streaming"]["port"] == 9090

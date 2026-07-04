@@ -271,7 +271,5 @@ class TestRegressionGuard:
             return_value={"MINIMAX_API_KEY": "dotenv-secret"},
         ), patch.object(tts_tool, "_import_edge_tts", side_effect=ImportError), \
              patch.object(tts_tool, "_import_elevenlabs", side_effect=ImportError), \
-             patch.object(tts_tool, "_import_openai_client", side_effect=ImportError), \
-             patch.object(tts_tool, "_check_neutts_available", return_value=False), \
-             patch.object(tts_tool, "_check_kittentts_available", return_value=False):
+             patch.object(tts_tool, "_import_openai_client", side_effect=ImportError):
             assert tts_tool.check_tts_requirements() is True

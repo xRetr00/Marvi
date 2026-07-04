@@ -217,7 +217,7 @@ def _tts_label(current_provider: str) -> str:
         "edge": "Edge TTS",
         "xai": "xAI TTS",
         "mistral": "Mistral Voxtral TTS",
-        "neutts": "NeuTTS",
+        "pockettts": "PocketTTS",
     }
     return mapping.get(current_provider or "edge", current_provider or "Edge TTS")
 
@@ -547,7 +547,7 @@ def get_nous_subscription_features(
         and not direct_openai_tts
     )
     tts_available = bool(
-        tts_current_provider in {"edge", "neutts"}
+        tts_current_provider in {"edge", "pockettts"}
         or (tts_current_provider == "openai" and (managed_tts_available or direct_openai_tts))
         or (tts_current_provider == "elevenlabs" and direct_elevenlabs)
         or (tts_current_provider == "mistral" and bool(get_env_value("MISTRAL_API_KEY")))

@@ -480,36 +480,6 @@ class TestLocalWhisperGpuConfig:
         assert result["success"] is True
         assert mock_model.transcribe.call_args.kwargs["language"] == "en"
 
-
-class TestWhisperLiveConfig:
-    def test_builds_whisperlive_server_command_from_config(self):
-        import sys
-
-        from tools.transcription_tools import whisperlive_server_command
-
-        command = whisperlive_server_command({
-            "streaming": {
-                "host": "127.0.0.1",
-                "port": 9091,
-                "backend": "faster_whisper",
-                "model": "small",
-                "max_clients": 1,
-                "max_connection_time": 900,
-                "single_model": True,
-            }
-        })
-
-        assert command == [
-            sys.executable,
-            "-c",
-            (
-                "from whisper_live.server import TranscriptionServer; "
-                "TranscriptionServer().run(host='127.0.0.1', port=9091, backend='faster_whisper', "
-                "max_clients=1, max_connection_time=900, faster_whisper_custom_model_path='small', single_model=True)"
-            ),
-        ]
-
-
 # ============================================================================
 # _transcribe_local — additional tests
 # ============================================================================

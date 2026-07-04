@@ -10,10 +10,8 @@ Built-in TTS providers:
 - Mistral (Voxtral TTS): Multilingual, native Opus, needs MISTRAL_API_KEY
 - Google Gemini TTS: Controllable, 30 prebuilt voices, needs GEMINI_API_KEY
 - xAI TTS: Grok voices, uses xAI Grok OAuth credentials or XAI_API_KEY
-- NeuTTS (local, free, no API key): On-device TTS via neutts
-- KittenTTS (local, free, no API key): On-device 25MB model
 - Piper (local, free, no API key): OHF-Voice/piper1-gpl neural VITS, 44 languages
-- PocketTTS (local, free, no API key): Kyutai CPU TTS with preset/custom voices
+- PocketTTS (local, free, no API key): Kyutai TTS with preset/custom voices
 
 Custom command providers:
 - Users can declare any number of named providers with ``type: command``
@@ -46,6 +44,7 @@ import re
 import shlex
 import shutil
 import subprocess
+import sys
 import tempfile
 import threading
 import uuid
@@ -131,13 +130,14 @@ def _import_mistral_client():
     but never ran the post-setup hook (e.g. enabled it by editing config.yaml
     directly). Mirrors the ElevenLabs lazy-import path.
     """
-    try:
-        from tools.lazy_deps import ensure
-        ensure("tts.mistral", prompt=False)
-    except ImportError:
-        pass
-    except Exception as e:  # FeatureUnavailable or any unexpected error
-        raise ImportError(str(e))
+    if "mistralai.client" not in sys.modules:
+        try:
+            from tools.lazy_deps import ensure
+            ensure("tts.mistral", prompt=False)
+        except ImportError:
+            pass
+        except Exception as e:  # FeatureUnavailable or any unexpected error
+            raise ImportError(str(e))
     from mistralai.client import Mistral
     return Mistral
 
@@ -145,12 +145,6 @@ def _import_sounddevice():
     """Lazy import sounddevice. Returns the module or raises ImportError/OSError."""
     import sounddevice as sd
     return sd
-
-
-def _import_kittentts():
-    """Lazy import KittenTTS. Returns the class or raises ImportError."""
-    from kittentts import KittenTTS
-    return KittenTTS
 
 
 def _import_piper():
@@ -185,19 +179,8 @@ DEFAULT_OPENAI_MODEL = "gpt-4o-mini-tts"
 # is rejected with a 400 "Unsupported managed OpenAI speech model", so it must be
 # coerced to a supported model when routing through the gateway.
 MANAGED_OPENAI_TTS_MODELS = frozenset({"gpt-4o-mini-tts"})
-DEFAULT_KITTENTTS_MODEL = "KittenML/kitten-tts-nano-0.8-int8"  # 25MB
-DEFAULT_KITTENTTS_VOICE = "Jasper"
 DEFAULT_PIPER_VOICE = "en_US-lessac-medium"  # balanced size/quality
 DEFAULT_POCKETTTS_VOICE = "alba"
-DEFAULT_QWEN3_MODEL = "Qwen/Qwen3-TTS-12Hz-0.6B-Base"
-QWEN3_VOICE_DESIGN_MODEL = "Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign"
-QWEN3_REMOVED_MODEL_ALIASES = {
-    "Qwen/Qwen3-TTS-12Hz-0.6B-VoiceDesign": QWEN3_VOICE_DESIGN_MODEL,
-}
-DEFAULT_QWEN3_LANGUAGE = "English"
-DEFAULT_QWEN3_DEVICE = "cuda"
-DEFAULT_QWEN3_DTYPE = "bfloat16"
-DEFAULT_QWEN3_CHUNK_SIZE = 1
 POCKETTTS_PRESET_VOICES = frozenset({
     "alba",
     "anna",
@@ -272,11 +255,8 @@ PROVIDER_MAX_TEXT_LENGTH: Dict[str, int] = {
     "mistral": 4000,      # conservative; no published per-request cap
     "gemini": 32000,      # Gemini TTS has a 32k-token context window; char cap is conservative
     "elevenlabs": 10000,  # fallback when model-aware lookup can't resolve (multilingual_v2)
-    "neutts": 1200,       # local model, capped below llama_cpp 2048-token context (phonemes expand ~1.5x), quality falls off on long text
-    "kittentts": 2000,    # local 25MB model
     "piper": 5000,        # local VITS model, phoneme-based; practical cap
     "pockettts": 5000,    # local Kyutai CPU model; practical cap
-    "qwen3": 2000,        # local Qwen3-TTS; keep CLI voice turns short for low TTFA
 }
 
 # ElevenLabs caps vary by model_id. https://elevenlabs.io/docs/overview/models
@@ -437,11 +417,8 @@ BUILTIN_TTS_PROVIDERS = frozenset({
     "xai",
     "mistral",
     "gemini",
-    "neutts",
-    "kittentts",
     "piper",
     "pockettts",
-    "qwen3",
 })
 
 DEFAULT_COMMAND_TTS_TIMEOUT_SECONDS = 120
@@ -1863,27 +1840,6 @@ def _generate_gemini_tts(text: str, output_path: str, tts_config: Dict[str, Any]
 
 
 # ===========================================================================
-# NeuTTS (local, on-device TTS via neutts_cli)
-# ===========================================================================
-
-def _check_neutts_available() -> bool:
-    """Check if the neutts engine is importable (installed locally)."""
-    try:
-        import importlib.util
-        return importlib.util.find_spec("neutts") is not None
-    except Exception:
-        return False
-
-
-def _check_kittentts_available() -> bool:
-    """Check if the kittentts engine is importable (installed locally)."""
-    try:
-        import importlib.util
-        return importlib.util.find_spec("kittentts") is not None
-    except Exception:
-        return False
-
-
 def _check_pockettts_available() -> bool:
     """Check whether the pocket-tts package is importable."""
     try:
@@ -1893,281 +1849,20 @@ def _check_pockettts_available() -> bool:
         return False
 
 
-def _check_qwen3_available() -> bool:
-    """Check whether faster-qwen3-tts is importable."""
-    try:
-        import importlib.util
-        return importlib.util.find_spec("faster_qwen3_tts") is not None
-    except Exception:
-        return False
-
-
-def _import_qwen3_tts():
-    from faster_qwen3_tts import FasterQwen3TTS
-    return FasterQwen3TTS
-
-
-def _default_neutts_ref_audio() -> str:
-    """Return path to the bundled default voice reference audio."""
-    return str(Path(__file__).parent / "neutts_samples" / "jo.wav")
-
-
-def _default_neutts_ref_text() -> str:
-    """Return path to the bundled default voice reference transcript."""
-    return str(Path(__file__).parent / "neutts_samples" / "jo.txt")
-
-
-def _generate_neutts(text: str, output_path: str, tts_config: Dict[str, Any]) -> str:
-    """Generate speech using the local NeuTTS engine.
-
-    Runs synthesis in a subprocess via tools/neutts_synth.py to keep the
-    ~500MB model in a separate process that exits after synthesis.
-    Outputs WAV; the caller handles conversion for Telegram if needed.
-    """
-    import sys
-
-    neutts_config = tts_config.get("neutts", {})
-    ref_audio = neutts_config.get("ref_audio", "") or _default_neutts_ref_audio()
-    ref_text = neutts_config.get("ref_text", "") or _default_neutts_ref_text()
-    model = neutts_config.get("model", "neuphonic/neutts-air-q4-gguf")
-    device = neutts_config.get("device", "cpu")
-
-    # NeuTTS outputs WAV natively — use a .wav path for generation,
-    # let the caller convert to the final format afterward.
-    wav_path = output_path
-    if not output_path.endswith(".wav"):
-        wav_path = output_path.rsplit(".", 1)[0] + ".wav"
-
-    synth_script = str(Path(__file__).parent / "neutts_synth.py")
-    cmd = [
-        sys.executable, synth_script,
-        "--text", text,
-        "--out", wav_path,
-        "--ref-audio", ref_audio,
-        "--ref-text", ref_text,
-        "--model", model,
-        "--device", device,
-    ]
-
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=120, stdin=subprocess.DEVNULL)
-    if result.returncode != 0:
-        stderr = result.stderr.strip()
-        # Filter out the "OK:" line from stderr
-        error_lines = [l for l in stderr.splitlines() if not l.startswith("OK:")]
-        raise RuntimeError(f"NeuTTS synthesis failed: {chr(10).join(error_lines) or 'unknown error'}")
-
-    # If the caller wanted .mp3 or .ogg, convert from WAV
-    if wav_path != output_path:
-        ffmpeg = shutil.which("ffmpeg")
-        if ffmpeg:
-            conv_cmd = [ffmpeg, "-i", wav_path, "-y", "-loglevel", "error", output_path]
-            subprocess.run(conv_cmd, check=True, timeout=30, stdin=subprocess.DEVNULL, creationflags=windows_hide_flags())
-            os.remove(wav_path)
-        else:
-            # No ffmpeg — just rename the WAV to the expected path
-            os.rename(wav_path, output_path)
-
-    return output_path
-
-
-# ===========================================================================
-# Qwen3-TTS (local, CUDA graph accelerated via faster-qwen3-tts)
-# ===========================================================================
-
-_qwen3_model_cache: Dict[tuple, Any] = {}
-_qwen3_cache_lock = threading.Lock()
-
-
-def _qwen3_config(tts_config: Dict[str, Any]) -> Dict[str, Any]:
-    cfg = tts_config.get("qwen3", {}) if isinstance(tts_config, dict) else {}
-    return cfg if isinstance(cfg, dict) else {}
-
-
-def _qwen3_model_key(cfg: Dict[str, Any]) -> tuple:
-    model = str(cfg.get("model") or DEFAULT_QWEN3_MODEL).strip() or DEFAULT_QWEN3_MODEL
-    return (
-        QWEN3_REMOVED_MODEL_ALIASES.get(model, model),
-        str(cfg.get("device") or DEFAULT_QWEN3_DEVICE).strip() or DEFAULT_QWEN3_DEVICE,
-        str(cfg.get("dtype") or DEFAULT_QWEN3_DTYPE).strip() or DEFAULT_QWEN3_DTYPE,
-        str(cfg.get("attn_implementation") or "sdpa").strip() or "sdpa",
-        _qwen3_int(cfg, "max_seq_len", 2048),
-    )
-
-
-def _resolve_qwen3_model(tts_config: Dict[str, Any]) -> Any:
-    cfg = _qwen3_config(tts_config)
-    key = _qwen3_model_key(cfg)
-    with _qwen3_cache_lock:
-        if key not in _qwen3_model_cache:
-            FasterQwen3TTS = _import_qwen3_tts()
-            model, device, dtype, attn, max_seq_len = key
-            logger.info("[Qwen3-TTS] Loading %s on %s (%s)", model, device, dtype)
-            _qwen3_model_cache[key] = FasterQwen3TTS.from_pretrained(
-                model,
-                device=device,
-                dtype=dtype,
-                attn_implementation=attn,
-                max_seq_len=max_seq_len,
-            )
-        return _qwen3_model_cache[key]
-
-
-def _qwen3_int(cfg: Dict[str, Any], name: str, default: int) -> int:
-    value = cfg.get(name, default)
-    if isinstance(value, bool):
-        return default
-    try:
-        parsed = int(value)
-    except (TypeError, ValueError):
-        return default
-    return parsed if parsed > 0 else default
-
-
-def _qwen3_float(cfg: Dict[str, Any], name: str, default: float) -> float:
-    value = cfg.get(name, default)
-    if isinstance(value, bool):
-        return default
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return default
-
-
-def _qwen3_bool(cfg: Dict[str, Any], name: str, default: bool) -> bool:
-    return _config_bool(cfg.get(name), default)
-
-
-def _qwen3_generation_kwargs(text: str, cfg: Dict[str, Any], *, streaming: bool = False) -> Dict[str, Any]:
-    kwargs: Dict[str, Any] = {
-        "text": text,
-        "language": str(cfg.get("language") or DEFAULT_QWEN3_LANGUAGE).strip() or DEFAULT_QWEN3_LANGUAGE,
-        "max_new_tokens": _qwen3_int(cfg, "max_new_tokens", 2048),
-        "min_new_tokens": _qwen3_int(cfg, "min_new_tokens", 2),
-        "temperature": _qwen3_float(cfg, "temperature", 0.9),
-        "top_k": _qwen3_int(cfg, "top_k", 50),
-        "top_p": _qwen3_float(cfg, "top_p", 1.0),
-        "do_sample": _qwen3_bool(cfg, "do_sample", True),
-        "repetition_penalty": _qwen3_float(cfg, "repetition_penalty", 1.05),
-    }
-    if streaming:
-        kwargs["chunk_size"] = _qwen3_int(cfg, "chunk_size", DEFAULT_QWEN3_CHUNK_SIZE)
-    if "non_streaming_mode" in cfg:
-        kwargs["non_streaming_mode"] = _qwen3_bool(cfg, "non_streaming_mode", False)
-    return kwargs
-
-
-def _qwen3_audio_to_wav(audio: Any, sample_rate: int, output_path: str) -> None:
+def _audio_to_pcm16_base64(audio: Any) -> str:
     import numpy as np
 
     samples = audio[0] if isinstance(audio, (list, tuple)) and audio else audio
-    arr = np.asarray(samples, dtype=np.float32).flatten()
-    arr = np.nan_to_num(arr, nan=0.0, posinf=1.0, neginf=-1.0)
-    if arr.size == 0:
-        arr = np.zeros(1, dtype=np.float32)
-    pcm = (np.clip(arr, -1.0, 1.0) * 32767).astype(np.int16)
-
-    with wave.open(output_path, "wb") as wf:
-        wf.setnchannels(1)
-        wf.setsampwidth(2)
-        wf.setframerate(int(sample_rate or 24000))
-        wf.writeframes(pcm.tobytes())
-
-
-def _qwen3_audio_to_pcm16_base64(audio: Any) -> str:
-    import numpy as np
-
-    samples = audio[0] if isinstance(audio, (list, tuple)) and audio else audio
+    if hasattr(samples, "detach"):
+        samples = samples.detach()
+    if hasattr(samples, "cpu"):
+        samples = samples.cpu()
+    if hasattr(samples, "numpy"):
+        samples = samples.numpy()
     arr = np.asarray(samples, dtype=np.float32).flatten()
     arr = np.nan_to_num(arr, nan=0.0, posinf=1.0, neginf=-1.0)
     pcm = (np.clip(arr, -1.0, 1.0) * 32767).astype(np.int16)
     return base64.b64encode(pcm.tobytes()).decode("ascii")
-
-
-def _generate_qwen3_tts(text: str, output_path: str, tts_config: Dict[str, Any]) -> str:
-    cfg = _qwen3_config(tts_config)
-    model = _resolve_qwen3_model(tts_config)
-    mode = str(cfg.get("mode") or "clone").strip().lower()
-    kwargs = _qwen3_generation_kwargs(text, cfg)
-
-    wav_path = output_path if output_path.endswith(".wav") else output_path.rsplit(".", 1)[0] + ".wav"
-    if mode == "custom":
-        speaker = str(cfg.get("speaker") or "").strip()
-        if not speaker:
-            raise ValueError("tts.qwen3.speaker is required when mode is 'custom'")
-        audio, sr = model.generate_custom_voice(
-            speaker=speaker,
-            instruct=cfg.get("instruct") or None,
-            **kwargs,
-        )
-    elif mode == "design":
-        instruct = str(cfg.get("instruct") or "").strip()
-        if not instruct:
-            raise ValueError("tts.qwen3.instruct is required when mode is 'design'")
-        audio, sr = model.generate_voice_design(instruct=instruct, **kwargs)
-    else:
-        ref_audio = str(cfg.get("ref_audio") or "").strip()
-        ref_text = str(cfg.get("ref_text") or "").strip()
-        if not ref_audio or not ref_text:
-            raise ValueError("tts.qwen3.ref_audio and tts.qwen3.ref_text are required for voice cloning")
-        audio, sr = model.generate_voice_clone(
-            ref_audio=ref_audio,
-            ref_text=ref_text,
-            xvec_only=_qwen3_bool(cfg, "xvec_only", False),
-            append_silence=_qwen3_bool(cfg, "append_silence", True),
-            instruct=cfg.get("instruct") or None,
-            **kwargs,
-        )
-
-    _qwen3_audio_to_wav(audio, sr, wav_path)
-
-    if wav_path != output_path:
-        ffmpeg = shutil.which("ffmpeg")
-        if ffmpeg:
-            subprocess.run([ffmpeg, "-i", wav_path, "-y", "-loglevel", "error", output_path],
-                           check=True, timeout=30, stdin=subprocess.DEVNULL)
-            try:
-                os.remove(wav_path)
-            except OSError:
-                pass
-        else:
-            os.rename(wav_path, output_path)
-
-    return output_path
-
-
-def _stream_qwen3_audio(text: str, tts_config: Dict[str, Any]):
-    cfg = _qwen3_config(tts_config)
-    model = _resolve_qwen3_model(tts_config)
-    mode = str(cfg.get("mode") or "clone").strip().lower()
-    kwargs = _qwen3_generation_kwargs(text, cfg, streaming=True)
-
-    if mode == "custom":
-        speaker = str(cfg.get("speaker") or "").strip()
-        if not speaker:
-            raise ValueError("tts.qwen3.speaker is required when mode is 'custom'")
-        return model.generate_custom_voice_streaming(
-            speaker=speaker,
-            instruct=cfg.get("instruct") or None,
-            **kwargs,
-        )
-    if mode == "design":
-        instruct = str(cfg.get("instruct") or "").strip()
-        if not instruct:
-            raise ValueError("tts.qwen3.instruct is required when mode is 'design'")
-        return model.generate_voice_design_streaming(instruct=instruct, **kwargs)
-
-    ref_audio = str(cfg.get("ref_audio") or "").strip()
-    ref_text = str(cfg.get("ref_text") or "").strip()
-    if not ref_audio or not ref_text:
-        raise ValueError("tts.qwen3.ref_audio and tts.qwen3.ref_text are required for voice cloning")
-    return model.generate_voice_clone_streaming(
-        ref_audio=ref_audio,
-        ref_text=ref_text,
-        xvec_only=_qwen3_bool(cfg, "xvec_only", False),
-        append_silence=_qwen3_bool(cfg, "append_silence", True),
-        instruct=cfg.get("instruct") or None,
-        **kwargs,
-    )
 
 
 def stream_text_to_speech_chunks(text: str):
@@ -2178,18 +1873,18 @@ def stream_text_to_speech_chunks(text: str):
 
     tts_config = _load_tts_config()
     provider = _get_provider(tts_config)
-    if provider != "qwen3":
-        raise ValueError("Streaming TTS is only available for qwen3")
-
-    yield {"type": "start", "sample_rate": 24000, "provider": provider}
-    for audio_chunk, sample_rate, _timing in _stream_qwen3_audio(text, tts_config):
-        encoded = _qwen3_audio_to_pcm16_base64(audio_chunk)
-        if encoded:
-            if sample_rate and int(sample_rate) != 24000:
+    if provider == "pockettts":
+        yield {"type": "start", "sample_rate": int(_pockettts_sample_rate(tts_config)), "provider": provider}
+        for audio_chunk, sample_rate in _stream_pockettts_audio(text, tts_config):
+            encoded = _audio_to_pcm16_base64(audio_chunk)
+            if encoded:
                 yield {"type": "sample_rate", "sample_rate": int(sample_rate)}
-            yield {"type": "chunk", "audio": encoded}
+                yield {"type": "chunk", "audio": encoded}
+        yield {"type": "end", "provider": provider}
+        return
 
-    yield {"type": "end", "provider": provider}
+    if provider != "pockettts":
+        raise ValueError("Streaming TTS is only available for pockettts")
 
 
 # ===========================================================================
@@ -2209,24 +1904,59 @@ def _resolve_pockettts_model_and_voice(tts_config: Dict[str, Any]) -> tuple[Any,
     raw_voice = str(pocket_config.get("voice") or DEFAULT_POCKETTTS_VOICE).strip() or DEFAULT_POCKETTTS_VOICE
     voice = raw_voice.lower() if raw_voice.lower() in POCKETTTS_PRESET_VOICES else raw_voice
     model_name = str(pocket_config.get("model") or "default").strip() or "default"
+    device = str(pocket_config.get("device") or "cpu").strip().lower() or "cpu"
+    if device not in {"cpu", "cuda"}:
+        device = "cpu"
+    model_key = f"{model_name}::{device}"
 
     global _pockettts_model_cache, _pockettts_voice_cache
     with _pockettts_cache_lock:
-        if model_name not in _pockettts_model_cache:
-            logger.info("[PocketTTS] Loading model: %s", model_name)
+        if model_key not in _pockettts_model_cache:
+            logger.info("[PocketTTS] Loading model: %s (%s)", model_name, device)
             # The public API currently exposes load_model() without requiring a
             # model id. Keep the config key in the cache key so a future model
             # option can be added without changing user config shape.
-            _pockettts_model_cache[model_name] = TTSModel.load_model()
+            model = TTSModel.load_model()
+            if device == "cuda" and hasattr(model, "to"):
+                try:
+                    moved = model.to("cuda")
+                    model = moved if moved is not None else model
+                except Exception as exc:
+                    logger.warning("[PocketTTS] CUDA requested but unavailable; using CPU: %s", exc)
+            _pockettts_model_cache[model_key] = model
             logger.info("[PocketTTS] Model loaded")
 
-        model = _pockettts_model_cache[model_name]
-        voice_key = f"{model_name}::{voice}"
+        model = _pockettts_model_cache[model_key]
+        voice_key = f"{model_key}::{voice}"
         if voice_key not in _pockettts_voice_cache:
             logger.info("[PocketTTS] Loading voice: %s", voice)
             _pockettts_voice_cache[voice_key] = model.get_state_for_audio_prompt(voice)
 
         return model, _pockettts_voice_cache[voice_key]
+
+
+def _pockettts_sample_rate(tts_config: Dict[str, Any]) -> int:
+    model, _voice_state = _resolve_pockettts_model_and_voice(tts_config)
+    return int(getattr(model, "sample_rate", 24000) or 24000)
+
+
+def _stream_pockettts_audio(text: str, tts_config: Dict[str, Any]):
+    model, voice_state = _resolve_pockettts_model_and_voice(tts_config)
+    sample_rate = int(getattr(model, "sample_rate", 24000) or 24000)
+    audio = model.generate_audio(voice_state, text)
+    if hasattr(audio, "detach"):
+        audio = audio.detach()
+    if hasattr(audio, "cpu"):
+        audio = audio.cpu()
+    if hasattr(audio, "numpy"):
+        audio = audio.numpy()
+
+    import numpy as np
+
+    samples = np.asarray(audio, dtype=np.float32).flatten()
+    chunk_samples = max(1, int(sample_rate * 0.18))
+    for start in range(0, samples.size, chunk_samples):
+        yield samples[start:start + chunk_samples], sample_rate
 
 
 def warm_tts_provider(tts_config: Optional[Dict[str, Any]] = None) -> bool:
@@ -2244,14 +1974,6 @@ def warm_tts_provider(tts_config: Optional[Dict[str, Any]] = None) -> bool:
 
     if provider == "piper":
         _resolve_piper_voice(cfg)
-        return True
-
-    if provider == "kittentts":
-        _resolve_kittentts_model(cfg)
-        return True
-
-    if provider == "qwen3":
-        _resolve_qwen3_model(cfg)
         return True
 
     return False
@@ -2481,76 +2203,6 @@ def _generate_piper_tts(text: str, output_path: str, tts_config: Dict[str, Any])
 
 
 # ===========================================================================
-# Provider: KittenTTS (local, lightweight)
-# ===========================================================================
-
-# Module-level cache for KittenTTS model instance
-_kittentts_model_cache: Dict[str, Any] = {}
-_kittentts_model_cache_lock = threading.Lock()
-
-
-def _resolve_kittentts_model(tts_config: Dict[str, Any]) -> Any:
-    """Return the cached KittenTTS model for the configured model name."""
-    KittenTTS = _import_kittentts()
-    kt_config = tts_config.get("kittentts", {}) if isinstance(tts_config, dict) else {}
-    model_name = kt_config.get("model", DEFAULT_KITTENTTS_MODEL)
-
-    global _kittentts_model_cache
-    with _kittentts_model_cache_lock:
-        if model_name not in _kittentts_model_cache:
-            logger.info("[KittenTTS] Loading model: %s", model_name)
-            _kittentts_model_cache[model_name] = KittenTTS(model_name)
-            logger.info("[KittenTTS] Model loaded successfully")
-
-        return _kittentts_model_cache[model_name]
-
-
-def _generate_kittentts(text: str, output_path: str, tts_config: Dict[str, Any]) -> str:
-    """Generate speech using KittenTTS local ONNX model.
-
-    KittenTTS is a lightweight TTS engine (25-80MB models) that runs
-    entirely on CPU without requiring a GPU or API key.
-
-    Args:
-        text: Text to convert to speech.
-        output_path: Where to save the audio file.
-        tts_config: TTS config dict.
-
-    Returns:
-        Path to the saved audio file.
-    """
-    kt_config = tts_config.get("kittentts", {}) if isinstance(tts_config, dict) else {}
-    voice = kt_config.get("voice", DEFAULT_KITTENTTS_VOICE)
-    speed = kt_config.get("speed", 1.0)
-    clean_text = kt_config.get("clean_text", True)
-    model = _resolve_kittentts_model(tts_config)
-
-    # Generate audio (returns numpy array at 24kHz)
-    audio = model.generate(text, voice=voice, speed=speed, clean_text=clean_text)
-
-    # Save as WAV
-    import soundfile as sf
-    wav_path = output_path
-    if not output_path.endswith(".wav"):
-        wav_path = output_path.rsplit(".", 1)[0] + ".wav"
-
-    sf.write(wav_path, audio, 24000)
-
-    # Convert to desired format if needed
-    if wav_path != output_path:
-        ffmpeg = shutil.which("ffmpeg")
-        if ffmpeg:
-            conv_cmd = [ffmpeg, "-i", wav_path, "-y", "-loglevel", "error", output_path]
-            subprocess.run(conv_cmd, check=True, timeout=30, stdin=subprocess.DEVNULL, creationflags=windows_hide_flags())
-            os.remove(wav_path)
-        else:
-            # No ffmpeg — rename the WAV to the expected path
-            os.rename(wav_path, output_path)
-
-    return output_path
-
-
-# ===========================================================================
 # Main tool function
 # ===========================================================================
 def text_to_speech_tool(
@@ -2649,7 +2301,7 @@ def text_to_speech_tool(
         # otherwise fall back to .mp3 (Edge TTS will attempt ffmpeg conversion later).
         elif want_opus and provider in {"openai", "elevenlabs", "mistral", "gemini"}:
             file_path = out_dir / f"{filename_stem}.ogg"
-        elif provider == "qwen3":
+        elif provider == "pockettts":
             file_path = out_dir / f"{filename_stem}.wav"
         else:
             file_path = out_dir / f"{filename_stem}.mp3"
@@ -2729,41 +2381,6 @@ def text_to_speech_tool(
             logger.info("Generating speech with Google Gemini TTS...")
             _generate_gemini_tts(text, file_str, tts_config)
 
-        elif provider == "neutts":
-            if not _check_neutts_available():
-                return json.dumps({
-                    "success": False,
-                    "error": "NeuTTS provider selected but neutts is not installed. "
-                             "Run hermes setup and choose NeuTTS, or install espeak-ng and run python -m pip install -U neutts[all]."
-                }, ensure_ascii=False)
-            logger.info("Generating speech with NeuTTS (local)...")
-            _generate_neutts(text, file_str, tts_config)
-
-        elif provider == "qwen3":
-            try:
-                _import_qwen3_tts()
-            except ImportError:
-                return json.dumps({
-                    "success": False,
-                    "error": "Qwen3-TTS provider selected but 'faster-qwen3-tts' is not installed. "
-                             "Install manually: pip install faster-qwen3-tts",
-                }, ensure_ascii=False)
-            logger.info("Generating speech with Qwen3-TTS (local CUDA)...")
-            _generate_qwen3_tts(text, file_str, tts_config)
-
-        elif provider == "kittentts":
-            try:
-                _import_kittentts()
-            except ImportError:
-                return json.dumps({
-                    "success": False,
-                    "error": "KittenTTS provider selected but 'kittentts' package not installed. "
-                             "Run 'hermes setup tts' and choose KittenTTS, or install manually: "
-                             "pip install https://github.com/KittenML/KittenTTS/releases/download/0.8.1/kittentts-0.8.1-py3-none-any.whl"
-                }, ensure_ascii=False)
-            logger.info("Generating speech with KittenTTS (local, ~25MB)...")
-            _generate_kittentts(text, file_str, tts_config)
-
         elif provider == "piper":
             try:
                 _import_piper()
@@ -2787,11 +2404,11 @@ def text_to_speech_tool(
                              "Run 'hermes tools' and select PocketTTS under TTS, or install manually: "
                              "pip install pocket-tts scipy",
                 }, ensure_ascii=False)
-            logger.info("Generating speech with PocketTTS (local CPU)...")
+            logger.info("Generating speech with PocketTTS (local)...")
             _generate_pockettts(text, file_str, tts_config)
 
         else:
-            # Default: Edge TTS (free), with NeuTTS as local fallback
+            # Default: Edge TTS (free).
             edge_available = True
             try:
                 _import_edge_tts()
@@ -2808,15 +2425,11 @@ def text_to_speech_tool(
                         ).result(timeout=60)
                 except RuntimeError:
                     asyncio.run(_generate_edge_tts(text, file_str, tts_config))
-            elif _check_neutts_available():
-                logger.info("Edge TTS not available, falling back to NeuTTS (local)...")
-                provider = "neutts"
-                _generate_neutts(text, file_str, tts_config)
             else:
                 return json.dumps({
                     "success": False,
                     "error": "No TTS provider available. Install edge-tts (pip install edge-tts) "
-                             "or set up NeuTTS for local synthesis."
+                             "or set up PocketTTS for local synthesis."
                 }, ensure_ascii=False)
 
         # Check the file was actually created
@@ -2855,7 +2468,7 @@ def text_to_speech_tool(
                 voice_compatible = file_str.endswith(".ogg")
         elif (
             want_opus
-            and provider in {"edge", "neutts", "minimax", "xai", "kittentts", "piper", "pockettts", "qwen3"}
+            and provider in {"edge", "minimax", "xai", "piper", "pockettts"}
             and not file_str.endswith(".ogg")
         ):
             opus_path = _convert_to_opus(file_str)
@@ -2949,15 +2562,9 @@ def check_tts_requirements() -> bool:
             return True
     except ImportError:
         pass
-    if _check_neutts_available():
-        return True
-    if _check_kittentts_available():
-        return True
     if _check_piper_available():
         return True
     if _check_pockettts_available():
-        return True
-    if _check_qwen3_available():
         return True
     return False
 
@@ -3055,7 +2662,7 @@ def stream_tts_to_speaker(
         # --- TTS client setup (optional -- display_callback works without it) ---
         client = None
         output_stream = None
-        qwen3_streaming = False
+        pockettts_streaming = False
         voice_id = DEFAULT_ELEVENLABS_VOICE_ID
         model_id = DEFAULT_ELEVENLABS_STREAMING_MODEL_ID
 
@@ -3075,13 +2682,13 @@ def stream_tts_to_speaker(
         )
 
         api_key = (get_env_value("ELEVENLABS_API_KEY") or "")
-        if provider == "qwen3":
+        if provider == "pockettts":
             try:
-                _import_qwen3_tts()
+                _import_pockettts_model()
                 _import_sounddevice()
-                qwen3_streaming = True
+                pockettts_streaming = True
             except (ImportError, OSError) as exc:
-                logger.warning("Qwen3 streaming TTS disabled: %s", exc)
+                logger.warning("PocketTTS streaming disabled: %s", exc)
         elif not api_key:
             logger.warning("ELEVENLABS_API_KEY not set; streaming TTS audio disabled")
         else:
@@ -3133,10 +2740,10 @@ def stream_tts_to_speaker(
             # Display raw sentence on screen before TTS processing
             if display_callback is not None:
                 display_callback(sentence)
-            if qwen3_streaming:
+            if pockettts_streaming:
                 try:
                     sd = _import_sounddevice()
-                    for audio_chunk, sr, _timing in _stream_qwen3_audio(cleaned, tts_config):
+                    for audio_chunk, sr in _stream_pockettts_audio(cleaned, tts_config):
                         if stop_event.is_set():
                             break
                         import numpy as _np
@@ -3148,7 +2755,7 @@ def stream_tts_to_speaker(
                             output_stream.start()
                         output_stream.write(audio_array)
                 except Exception as exc:
-                    logger.warning("Qwen3 streaming TTS sentence failed: %s", exc)
+                    logger.warning("PocketTTS streaming sentence failed: %s", exc)
                 return
             # Skip audio generation if no TTS client available
             if client is None:

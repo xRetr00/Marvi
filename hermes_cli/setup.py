@@ -525,33 +525,8 @@ def _print_setup_summary(config: dict, hermes_home):
         tool_status.append(("Text-to-Speech (Mistral Voxtral)", True, None))
     elif tts_provider == "gemini" and (get_env_value("GEMINI_API_KEY") or get_env_value("GOOGLE_API_KEY")):
         tool_status.append(("Text-to-Speech (Google Gemini)", True, None))
-    elif tts_provider == "qwen3":
-        try:
-            qwen3_ok = importlib.util.find_spec("faster_qwen3_tts") is not None
-        except Exception:
-            qwen3_ok = False
-        if qwen3_ok:
-            tool_status.append(("Text-to-Speech (Qwen3 local CUDA)", True, None))
-        else:
-            tool_status.append(("Text-to-Speech (Qwen3 — not installed)", False, "run 'hermes setup tts'"))
-    elif tts_provider == "neutts":
-        try:
-            neutts_ok = importlib.util.find_spec("neutts") is not None
-        except Exception:
-            neutts_ok = False
-        if neutts_ok:
-            tool_status.append(("Text-to-Speech (NeuTTS local)", True, None))
-        else:
-            tool_status.append(("Text-to-Speech (NeuTTS — not installed)", False, "run 'hermes setup tts'"))
-    elif tts_provider == "kittentts":
-        try:
-            kittentts_ok = importlib.util.find_spec("kittentts") is not None
-        except Exception:
-            kittentts_ok = False
-        if kittentts_ok:
-            tool_status.append(("Text-to-Speech (KittenTTS local)", True, None))
-        else:
-            tool_status.append(("Text-to-Speech (KittenTTS — not installed)", False, "run 'hermes setup tts'"))
+    elif tts_provider in {"qwen3", "neutts", "kittentts"}:
+        tool_status.append(("Text-to-Speech (removed local provider)", False, "run 'hermes setup tts' and choose PocketTTS"))
     elif tts_provider == "pockettts":
         try:
             pockettts_ok = importlib.util.find_spec("pocket_tts") is not None
@@ -804,86 +779,6 @@ def setup_model_provider(config: dict, *, quick: bool = False):
 # =============================================================================
 
 
-def _check_espeak_ng() -> bool:
-    """Check if espeak-ng is installed."""
-    return shutil.which("espeak-ng") is not None or shutil.which("espeak") is not None
-
-
-def _install_neutts_deps() -> bool:
-    """Install NeuTTS dependencies with user approval. Returns True on success."""
-    import subprocess
-    import sys
-
-    # Check espeak-ng
-    if not _check_espeak_ng():
-        print()
-        print_warning("NeuTTS requires espeak-ng for phonemization.")
-        if sys.platform == "darwin":
-            print_info("Install with: brew install espeak-ng")
-        elif sys.platform == "win32":
-            print_info("Install with: choco install espeak-ng")
-        else:
-            print_info("Install with: sudo apt install espeak-ng")
-        print()
-        if prompt_yes_no("Install espeak-ng now?", True):
-            try:
-                if sys.platform == "darwin":
-                    subprocess.run(["brew", "install", "espeak-ng"], check=True)
-                elif sys.platform == "win32":
-                    subprocess.run(["choco", "install", "espeak-ng", "-y"], check=True)
-                else:
-                    subprocess.run(["sudo", "apt", "install", "-y", "espeak-ng"], check=True)
-                print_success("espeak-ng installed")
-            except (subprocess.CalledProcessError, FileNotFoundError) as e:
-                print_warning(f"Could not install espeak-ng automatically: {e}")
-                print_info("Please install it manually and re-run setup.")
-                return False
-        else:
-            print_warning("espeak-ng is required for NeuTTS. Install it manually before using NeuTTS.")
-
-    # Install neutts Python package
-    print()
-    print_info("Installing neutts Python package...")
-    print_info("This will also download the TTS model (~300MB) on first use.")
-    print()
-    try:
-        subprocess.run(
-            [sys.executable, "-m", "pip", "install", "-U", "neutts[all]", "--quiet"],
-            check=True, timeout=300,
-        )
-        print_success("neutts installed successfully")
-        return True
-    except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
-        print_error(f"Failed to install neutts: {e}")
-        print_info("Try manually: python -m pip install -U neutts[all]")
-        return False
-
-
-def _install_kittentts_deps() -> bool:
-    """Install KittenTTS dependencies with user approval. Returns True on success."""
-    import subprocess
-    import sys
-
-    wheel_url = (
-        "https://github.com/KittenML/KittenTTS/releases/download/"
-        "0.8.1/kittentts-0.8.1-py3-none-any.whl"
-    )
-    print()
-    print_info("Installing kittentts Python package (~25-80MB model downloaded on first use)...")
-    print()
-    try:
-        subprocess.run(
-            [sys.executable, "-m", "pip", "install", "-U", wheel_url, "soundfile", "--quiet"],
-            check=True, timeout=300,
-        )
-        print_success("kittentts installed successfully")
-        return True
-    except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
-        print_error(f"Failed to install kittentts: {e}")
-        print_info(f"Try manually: python -m pip install -U '{wheel_url}' soundfile")
-        return False
-
-
 def _install_pockettts_deps() -> bool:
     """Install PocketTTS dependencies with user approval. Returns True on success."""
     import subprocess
@@ -903,57 +798,6 @@ def _install_pockettts_deps() -> bool:
     except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
         print_error(f"Failed to install pocket-tts: {e}")
         print_info("Try manually: python -m pip install -U pocket-tts scipy")
-        return False
-
-
-def _install_qwen3_deps() -> bool:
-    """Install Qwen3 TTS dependencies. Returns True on success."""
-    import subprocess
-    import sys
-
-    print()
-    print_info("Installing faster-qwen3-tts and audio playback support...")
-    print_info("The Qwen3 model downloads from Hugging Face on first use.")
-    print()
-    try:
-        subprocess.run(
-            [sys.executable, "-m", "pip", "install", "-U", "faster-qwen3-tts", "packaging", "sounddevice", "--quiet"],
-            check=True,
-            timeout=900,
-        )
-        print_success("faster-qwen3-tts installed successfully")
-        return True
-    except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
-        print_error(f"Failed to install faster-qwen3-tts: {e}")
-        print_info("Try manually: python -m pip install -U faster-qwen3-tts packaging sounddevice")
-        return False
-
-
-def _install_whisperlive_deps() -> bool:
-    """Install WhisperLive dependencies. Returns True on success."""
-    import subprocess
-
-    print()
-    print_info("Installing WhisperLive for streaming STT...")
-    print()
-    try:
-        from hermes_cli.tools_config import _run_post_setup
-        from hermes_constants import get_hermes_home
-
-        _run_post_setup("whisperlive")
-        py = get_hermes_home() / "whisperlive-venv" / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
-        subprocess.run(
-            [str(py), "-c", "import whisper_live"],
-            check=True,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            timeout=30,
-        )
-        print_success("whisper-live installed successfully")
-        return True
-    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError) as e:
-        print_error(f"Failed to install whisper-live: {e}")
-        print_info("Try manually: hermes tools post-setup whisperlive")
         return False
 
 
@@ -1054,7 +898,7 @@ def _run_xai_oauth_login_from_setup() -> bool:
 
 
 def _setup_tts_provider(config: dict):
-    """Interactive TTS provider selection with install flow for NeuTTS."""
+    """Interactive TTS provider selection."""
     tts_config = config.get("tts", {})
     current_provider = tts_config.get("provider", "edge")
     subscription_features = get_nous_subscription_features(config)
@@ -1067,9 +911,6 @@ def _setup_tts_provider(config: dict):
         "minimax": "MiniMax TTS",
         "mistral": "Mistral Voxtral TTS",
         "gemini": "Google Gemini TTS",
-        "qwen3": "Qwen3 TTS",
-        "neutts": "NeuTTS",
-        "kittentts": "KittenTTS",
         "pockettts": "PocketTTS",
     }
     current_label = provider_labels.get(current_provider, current_provider)
@@ -1093,13 +934,10 @@ def _setup_tts_provider(config: dict):
             "MiniMax TTS (high quality with voice cloning, needs API key)",
             "Mistral Voxtral TTS (multilingual, native Opus, needs API key)",
             "Google Gemini TTS (30 prebuilt voices, prompt-controllable, needs API key)",
-            "Qwen3 TTS (local CUDA, fast streaming, voice clone/custom/design)",
-            "NeuTTS (local on-device, free, ~300MB model download)",
-            "KittenTTS (local on-device, free, lightweight ~25-80MB ONNX)",
-            "PocketTTS (local CPU TTS, free, Kyutai preset/custom voices)",
+            "PocketTTS (local, fast streaming, Kyutai preset/custom voices)",
         ]
     )
-    providers.extend(["edge", "elevenlabs", "openai", "xai", "minimax", "mistral", "gemini", "qwen3", "neutts", "kittentts", "pockettts"])
+    providers.extend(["edge", "elevenlabs", "openai", "xai", "minimax", "mistral", "gemini", "pockettts"])
     choices.append(f"Keep current ({current_label})")
     keep_current_idx = len(choices) - 1
     idx = prompt_choice("Select TTS provider:", choices, keep_current_idx)
@@ -1117,30 +955,7 @@ def _setup_tts_provider(config: dict):
                 "Direct OpenAI credentials are still configured and may take precedence until removed from ~/.hermes/.env."
             )
 
-    if selected == "neutts":
-        # Check if already installed
-        try:
-            already_installed = importlib.util.find_spec("neutts") is not None
-        except Exception:
-            already_installed = False
-
-        if already_installed:
-            print_success("NeuTTS is already installed")
-        else:
-            print()
-            print_info("NeuTTS requires:")
-            print_info("  • Python package: neutts (~50MB install + ~300MB model on first use)")
-            print_info("  • System package: espeak-ng (phonemizer)")
-            print()
-            if prompt_yes_no("Install NeuTTS dependencies now?", True):
-                if not _install_neutts_deps():
-                    print_warning("NeuTTS installation incomplete. Falling back to Edge TTS.")
-                    selected = "edge"
-            else:
-                print_info("Skipping install. Set tts.provider to 'neutts' after installing manually.")
-                selected = "edge"
-
-    elif selected == "elevenlabs":
+    if selected == "elevenlabs":
         existing = get_env_value("ELEVENLABS_API_KEY")
         if not existing:
             print()
@@ -1263,150 +1078,6 @@ def _setup_tts_provider(config: dict):
                 print_warning("No API key provided. Falling back to Edge TTS.")
                 selected = "edge"
 
-    elif selected == "qwen3":
-        try:
-            already_installed = importlib.util.find_spec("faster_qwen3_tts") is not None
-        except Exception:
-            already_installed = False
-
-        if already_installed:
-            print_success("faster-qwen3-tts is already installed")
-        else:
-            print()
-            print_info("Qwen3 TTS requires a CUDA-capable PyTorch install and a Hugging Face model download on first use.")
-            print_info("Recommended for your RTX 3060 12GB: 0.6B model, device=cuda, dtype=bfloat16, chunk_size=1.")
-            print()
-            if prompt_yes_no("Install Qwen3 TTS dependencies now?", True):
-                if not _install_qwen3_deps():
-                    print_warning("Qwen3 TTS installation incomplete. Falling back to Edge TTS.")
-                    selected = "edge"
-            else:
-                print_info("Skipping install. Set tts.provider to 'qwen3' after installing the package.")
-                selected = "edge"
-
-        if selected == "qwen3":
-            print()
-            mode_idx = prompt_choice(
-                "Qwen3 TTS mode:",
-                [
-                    "Voice cloning (reference audio + transcript)",
-                    "Custom voice (named speaker)",
-                    "Voice design (prompted style)",
-                ],
-                0,
-            )
-            modes = ["clone", "custom", "design"]
-            mode = modes[mode_idx]
-            model_defaults = {
-                "clone": "Qwen/Qwen3-TTS-12Hz-0.6B-Base",
-                "custom": "Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice",
-                "design": "Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign",
-            }
-            qwen_cfg = config.setdefault("tts", {}).setdefault("qwen3", {})
-            qwen_cfg["mode"] = mode
-            model = prompt(f"Qwen3 model (Enter for {model_defaults[mode]})")
-            qwen_cfg["model"] = model.strip() if model and model.strip() else model_defaults[mode]
-            language = prompt("Qwen3 language (Enter for English)")
-            qwen_cfg["language"] = language.strip() if language and language.strip() else "English"
-            qwen_cfg["device"] = "cuda"
-            qwen_cfg["dtype"] = "bfloat16"
-
-            if mode == "clone":
-                ref_audio = prompt("Qwen3 reference audio path")
-                ref_text = prompt("Qwen3 reference text")
-                qwen_cfg["ref_audio"] = ref_audio.strip() if ref_audio else ""
-                qwen_cfg["ref_text"] = ref_text.strip() if ref_text else ""
-            elif mode == "custom":
-                speaker = prompt("Qwen3 speaker name (Enter for aiden)")
-                qwen_cfg["speaker"] = speaker.strip() if speaker and speaker.strip() else "aiden"
-            else:
-                instruct = prompt("Qwen3 voice design prompt")
-                qwen_cfg["instruct"] = instruct.strip() if instruct and instruct.strip() else "Warm, clear, natural voice"
-
-            chunk_size = prompt("Qwen3 streaming chunk size (Enter for 1)")
-            try:
-                qwen_cfg["chunk_size"] = max(1, int(chunk_size.strip())) if chunk_size and chunk_size.strip() else 1
-            except ValueError:
-                qwen_cfg["chunk_size"] = 1
-
-            stt_local = config.setdefault("stt", {}).setdefault("local", {})
-            config["stt"].setdefault("provider", "local")
-            stt_local.setdefault("model", "base")
-            stt_local["device"] = "cuda"
-            stt_local["compute_type"] = "float16"
-            stt_local.setdefault("batch_size", 8)
-            stt_local.setdefault("vad_filter", True)
-            streaming_idx = prompt_choice(
-                "Streaming STT backend:",
-                [
-                    "Nemotron streaming ASR (local CUDA RNNT, lowest latency)",
-                    "WhisperLive (faster-whisper server, compatible fallback)",
-                    "Skip streaming STT setup",
-                ],
-                0,
-            )
-            streaming = config["stt"].setdefault("streaming", {})
-            if streaming_idx == 0:
-                if prompt_yes_no("Install Nemotron streaming STT dependencies now?", True):
-                    _install_nemotron_stt_deps()
-                streaming["enabled"] = True
-                streaming["provider"] = "nemotron"
-                streaming["model"] = "nvidia/nemotron-speech-streaming-en-0.6b"
-                streaming["lookahead_tokens"] = 1
-                streaming["host"] = "127.0.0.1"
-                streaming["port"] = 9090
-                streaming["backend"] = "faster_whisper"
-                streaming["max_clients"] = 1
-                streaming["max_connection_time"] = 900
-                streaming["single_model"] = True
-            elif streaming_idx == 1:
-                try:
-                    whisperlive_installed = importlib.util.find_spec("whisper_live") is not None
-                except Exception:
-                    whisperlive_installed = False
-                if not whisperlive_installed:
-                    print()
-                    if prompt_yes_no("Install WhisperLive for streaming STT now?", True):
-                        whisperlive_installed = _install_whisperlive_deps()
-                if whisperlive_installed:
-                    streaming["enabled"] = True
-                    streaming["provider"] = "whisperlive"
-                    streaming["host"] = "127.0.0.1"
-                    streaming["port"] = 9090
-                    streaming["backend"] = "faster_whisper"
-                    streaming["model"] = "large-v3-turbo"
-                    streaming["max_clients"] = 1
-                    streaming["max_connection_time"] = 900
-                    streaming["single_model"] = True
-
-            voice_cfg = config.setdefault("voice", {})
-            if prompt_yes_no("Install Smart Turn semantic VAD for hands-free barge-in now?", True):
-                voice_cfg["semantic_turn"] = bool(_install_semantic_turn_deps())
-            else:
-                voice_cfg["semantic_turn"] = False
-
-    elif selected == "kittentts":
-        # Check if already installed
-        try:
-            already_installed = importlib.util.find_spec("kittentts") is not None
-        except Exception:
-            already_installed = False
-
-        if already_installed:
-            print_success("KittenTTS is already installed")
-        else:
-            print()
-            print_info("KittenTTS is lightweight (~25-80MB, CPU-only, no API key required).")
-            print_info("Voices: Jasper, Bella, Luna, Bruno, Rosie, Hugo, Kiki, Leo")
-            print()
-            if prompt_yes_no("Install KittenTTS now?", True):
-                if not _install_kittentts_deps():
-                    print_warning("KittenTTS installation incomplete. Falling back to Edge TTS.")
-                    selected = "edge"
-            else:
-                print_info("Skipping install. Set tts.provider to 'kittentts' after installing manually.")
-                selected = "edge"
-
     elif selected == "pockettts":
         try:
             already_installed = importlib.util.find_spec("pocket_tts") is not None
@@ -1417,7 +1088,7 @@ def _setup_tts_provider(config: dict):
             print_success("PocketTTS is already installed")
         else:
             print()
-            print_info("PocketTTS is a local Kyutai CPU TTS provider with preset/custom voices.")
+            print_info("PocketTTS is a local Kyutai TTS provider with preset/custom voices.")
             print_info("Preset voices: alba, marius, javert, jean, fantine, cosette, eponine, azelma")
             print()
             if prompt_yes_no("Install PocketTTS now?", True):
@@ -1427,6 +1098,38 @@ def _setup_tts_provider(config: dict):
             else:
                 print_info("Skipping install. Set tts.provider to 'pockettts' after installing manually.")
                 selected = "edge"
+
+        if selected == "pockettts":
+            pocket_cfg = config.setdefault("tts", {}).setdefault("pockettts", {})
+            pocket_cfg.setdefault("voice", "alba")
+            pocket_cfg["device"] = "cuda" if prompt_yes_no("Try PocketTTS on CUDA when supported?", False) else "cpu"
+
+            stt_local = config.setdefault("stt", {}).setdefault("local", {})
+            config["stt"].setdefault("provider", "local")
+            stt_local.setdefault("model", "base")
+            stt_local["device"] = "cuda"
+            stt_local["compute_type"] = "float16"
+            stt_local.setdefault("batch_size", 8)
+            stt_local.setdefault("vad_filter", True)
+
+            if prompt_yes_no("Install Nemotron streaming STT dependencies now?", True):
+                _install_nemotron_stt_deps()
+            streaming = config["stt"].setdefault("streaming", {})
+            streaming["enabled"] = True
+            streaming["provider"] = "nemotron"
+            streaming["model"] = "nvidia/nemotron-speech-streaming-en-0.6b"
+            streaming["lookahead_tokens"] = 1
+            streaming["host"] = "127.0.0.1"
+            streaming["port"] = 9090
+            streaming["max_clients"] = 1
+            streaming["max_connection_time"] = 900
+            streaming["single_model"] = True
+
+            voice_cfg = config.setdefault("voice", {})
+            if prompt_yes_no("Install Smart Turn semantic VAD for hands-free barge-in now?", True):
+                voice_cfg["semantic_turn"] = bool(_install_semantic_turn_deps())
+            else:
+                voice_cfg["semantic_turn"] = False
 
     # Save the selection
     if "tts" not in config:

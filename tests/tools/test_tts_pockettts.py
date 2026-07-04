@@ -178,6 +178,21 @@ class TestGeneratePocketTts:
         fake_cls.load_model.assert_called_once()
         fake_model.get_state_for_audio_prompt.assert_called_once_with("cosette")
 
+    def test_streaming_chunks_start_audio_and_end(self, monkeypatch, mock_pockettts_modules):
+        from tools import tts_tool
+
+        monkeypatch.setattr(
+            tts_tool,
+            "_load_tts_config",
+            lambda: {"provider": "pockettts", "pockettts": {"voice": "marius"}},
+        )
+
+        events = list(tts_tool.stream_text_to_speech_chunks("**hello**"))
+
+        assert events[0] == {"type": "start", "sample_rate": 24000, "provider": "pockettts"}
+        assert any(event.get("type") == "chunk" and event.get("audio") for event in events)
+        assert events[-1] == {"type": "end", "provider": "pockettts"}
+
 
 class TestCheckPocketTtsAvailable:
     def test_reports_available_when_package_present(self, monkeypatch):

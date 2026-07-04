@@ -181,14 +181,14 @@ def warm_nemotron_stt(stt_config: dict[str, Any] | None = None) -> bool:
     return True
 
 
-def whisperlive_venv_python() -> Path:
+def nemotron_venv_python() -> Path:
     from hermes_constants import get_hermes_home
 
-    return get_hermes_home() / "whisperlive-venv" / ("Scripts/python.exe" if sys.platform == "win32" else "bin/python")
+    return get_hermes_home() / "nemotron-venv" / ("Scripts/python.exe" if sys.platform == "win32" else "bin/python")
 
 
 def nemotron_stdio_command() -> list[str]:
-    return [str(whisperlive_venv_python()), "-m", "tools.nemotron_streaming_stt", "--stdio"]
+    return [str(nemotron_venv_python()), "-m", "tools.nemotron_streaming_stt", "--stdio"]
 
 
 def _model_device(model: Any) -> Any:

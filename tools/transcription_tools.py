@@ -87,7 +87,6 @@ _HAS_MISTRAL = _safe_find_spec("mistralai")
 
 DEFAULT_PROVIDER = "local"
 DEFAULT_LOCAL_MODEL = "base"
-DEFAULT_WHISPERLIVE_PORT = 9090
 DEFAULT_LOCAL_STT_LANGUAGE = "en"
 DEFAULT_STT_MODEL = os.getenv("STT_OPENAI_MODEL", "whisper-1")
 DEFAULT_GROQ_STT_MODEL = os.getenv("STT_GROQ_MODEL", "whisper-large-v3-turbo")
@@ -1093,40 +1092,6 @@ def _local_whisper_runtime_config() -> tuple[str, str]:
     device = str(local_cfg.get("device") or "auto").strip() or "auto"
     compute_type = str(local_cfg.get("compute_type") or "auto").strip() or "auto"
     return device, compute_type
-
-
-def whisperlive_server_command(stt_config: Optional[dict] = None) -> list[str]:
-    """Return the command that starts the configured WhisperLive server."""
-    streaming = (stt_config or _load_stt_config()).get("streaming", {})
-    host = str(streaming.get("host") or "127.0.0.1")
-    port = int(streaming.get("port") or DEFAULT_WHISPERLIVE_PORT)
-    backend = str(streaming.get("backend") or "faster_whisper")
-    model = str(streaming.get("model") or "small")
-    max_clients = int(streaming.get("max_clients") or 1)
-    max_connection_time = int(streaming.get("max_connection_time") or 900)
-    single_model = bool(streaming.get("single_model", True))
-
-    args = [
-        f"host={host!r}",
-        f"port={port}",
-        f"backend={backend!r}",
-        f"max_clients={max_clients}",
-        f"max_connection_time={max_connection_time}",
-    ]
-    if backend == "faster_whisper":
-        args.append(f"faster_whisper_custom_model_path={model!r}")
-    if single_model:
-        args.append("single_model=True")
-
-    code = f"from whisper_live.server import TranscriptionServer; TranscriptionServer().run({', '.join(args)})"
-    try:
-        from hermes_constants import get_hermes_home
-
-        py = get_hermes_home() / "whisperlive-venv" / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
-        executable = str(py) if py.exists() else sys.executable
-    except Exception:
-        executable = sys.executable
-    return [executable, "-c", code]
 
 
 def _load_local_whisper_model(model_name: str):

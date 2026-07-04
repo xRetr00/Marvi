@@ -142,7 +142,7 @@ describe('useHermesConfig refreshHermesConfig', () => {
     expect(refreshProjectBranch).toHaveBeenCalledWith('/workspace/attached-project')
   })
 
-  it('enables streaming STT for Nemotron as well as WhisperLive', async () => {
+  it('enables streaming STT for Nemotron', async () => {
     mockConfig({ stt: { streaming: { enabled: true, provider: 'nemotron' } } })
 
     const { result } = renderHook(() =>
@@ -162,7 +162,7 @@ describe('useHermesConfig refreshHermesConfig', () => {
   it('exposes selected voice providers for status indicators', async () => {
     mockConfig({
       stt: { enabled: true, provider: 'local', streaming: { enabled: true, provider: 'nemotron' } },
-      tts: { provider: 'qwen3' }
+      tts: { provider: 'pockettts' }
     })
 
     const { result } = renderHook(() =>
@@ -178,7 +178,7 @@ describe('useHermesConfig refreshHermesConfig', () => {
 
     expect(result.current.sttProvider).toBe('local')
     expect(result.current.streamingSttProvider).toBe('nemotron')
-    expect(result.current.ttsProvider).toBe('qwen3')
+    expect(result.current.ttsProvider).toBe('pockettts')
   })
 
   it('exposes duplex voice feature toggles', async () => {

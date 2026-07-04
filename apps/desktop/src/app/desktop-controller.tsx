@@ -894,7 +894,7 @@ export function DesktopController() {
         wake.status === 'woken' ||
         wake.status === 'listening' ||
         wake.status === 'transcribing')
-    const ttsActive = ttsProvider === 'qwen3' && voicePlayback.status !== 'idle'
+    const ttsActive = ttsProvider === 'pockettts' && voicePlayback.status !== 'idle'
     const streamingLabel = streamingSttEnabled ? streamingSttProvider || 'on' : 'off'
 
     return {

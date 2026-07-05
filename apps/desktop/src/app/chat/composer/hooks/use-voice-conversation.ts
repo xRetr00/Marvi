@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { useI18n } from '@/i18n'
-import { createBargeInGate } from '@/lib/voice-barge-in'
+import { type BargeInGateState, createBargeInGate } from '@/lib/voice-barge-in'
 import { isLikelySelfEchoTranscript } from '@/lib/voice-echo-guard'
 import { openStreamingTranscription, type StreamingTranscriptionSession } from '@/lib/streaming-transcription'
 import { playSpeechText, stopVoicePlayback } from '@/lib/voice-playback'
@@ -12,6 +12,13 @@ import { setUserCaption } from '@/store/voice-presence'
 import { useMicRecorder } from './use-mic-recorder'
 
 export type ConversationStatus = 'idle' | 'listening' | 'transcribing' | 'thinking' | 'speaking'
+
+// NOTE(duplex-phase2): barge-in tuning knobs (see
+// docs/design/2026-07-05-voice-duplex-design.md Tunables). On SPEAKERS raise
+// `level` so Marvi's own voice leaking past AEC doesn't self-trigger a barge-in.
+// The echo-robust upgrade is to pass `confirmed` to gate.update() below from a
+// streamed partial that is NOT isLikelySelfEchoTranscript (already imported).
+const BARGE_IN_DEFAULTS = { graceMs: 700, level: 0.32, sustainedMs: 350 }
 
 interface PendingVoiceResponse {
   id: string
@@ -291,20 +298,43 @@ export function useVoiceConversation({
       setStatus('speaking')
       setCaption(text)
       const startedAt = Date.now()
-      const gate = createBargeInGate({ graceMs: 700, level: 0.32, sustainedMs: 350 })
+      const gate = createBargeInGate(BARGE_IN_DEFAULTS)
       let interrupted = false
+      let lastGateState: BargeInGateState = 'idle'
 
       try {
         if (bargeInEnabled) {
           void handle.start({
             onError: () => undefined,
             onLevel: level => {
-              if (interrupted || !gate.update(level, Date.now() - startedAt)) {
+              if (interrupted) {
+                return
+              }
+
+              const elapsedMs = Date.now() - startedAt
+              // NOTE(duplex-phase2): to make this echo-robust on speakers, pass a
+              // third arg `confirmed=false` here while the audio is believed to be
+              // Marvi's own voice (e.g. a streamed partial matching
+              // isLikelySelfEchoTranscript). Today it's energy-only (confirmed=true).
+              const triggered = gate.update(level, elapsedMs)
+
+              // Rich, tunable telemetry: log every gate state transition so
+              // thresholds can be tuned from the [voice-presence] logs.
+              if (gate.state !== lastGateState) {
+                vpLog('voice', 'barge-in gate', {
+                  state: gate.state,
+                  level: Number(level.toFixed(3)),
+                  elapsedMs
+                })
+                lastGateState = gate.state
+              }
+
+              if (!triggered) {
                 return
               }
 
               interrupted = true
-              vpLog('voice', 'barge-in accepted', { elapsedMs: Date.now() - startedAt, level })
+              vpLog('voice', 'barge-in accepted', { elapsedMs, level })
               awaitingSpokenResponseRef.current = false
               consumePendingResponse()
               resetSpeechBuffer()

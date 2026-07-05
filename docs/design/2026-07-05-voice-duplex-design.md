@@ -110,24 +110,38 @@ Each phase is independently shippable and **push-merges to `main`** (user's cade
 
 ### Phase 2 — True duplex (AEC + barge-in)
 
-- **Where:** mic capture (wherever `getUserMedia` is called for voice) + new
-  `duplex-session.ts`.
-  **Why:** today the mic closes while Marvi speaks; duplex needs it open, and needs echo
-  removed so we don't transcribe her own voice.
-  **What to do:**
-  1. Keep the STT stream alive through the `speaking` state.
-  2. Request `getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true,
-     autoGainControl: true } })`; ensure TTS plays through a WebRTC-referenceable output.
-  3. **Barge-in detector** (armed only during `speaking`): trigger when
-     `mic_energy > ENERGY_THRESHOLD for ≥ ONSET_MS` **and** Parakeet emits non-empty
-     partial words. On trigger: `stopTts()` → snap to `listening`; the user's ongoing
-     utterance becomes the next turn. Use a **higher** confidence gate during playback to
-     reject residual echo. Put every threshold in one exported `BARGE_IN` config object
-     with `// ponytail:` notes — these WILL need hardware tuning.
-  4. Config surface: `voice.duplex.enabled`, `voice.barge_in.sensitivity`,
-     `voice.aec.enabled` (+ Settings UI in `apps/desktop/src/app/settings`).
+> **UPDATE 2026-07-05 (found during impl):** most of this already exists in the
+> codebase and works. Re-scoped to the true remaining delta below.
+>
+> **Already present (do NOT rebuild):**
+> - Mic **is** open during `speaking` — `use-voice-conversation.ts` `speak()` calls
+>   `handle.start({ onLevel })` while playback runs.
+> - **Energy barge-in gate** — `apps/desktop/src/lib/voice-barge-in.ts`
+>   (`createBargeInGate`, has tests). Wired in `speak()` with
+>   `{ graceMs: 700, level: 0.32, sustainedMs: 350 }`; on trigger it
+>   `stopVoicePlayback()` + `handle.cancel()` + `onInterrupt()`.
+> - **AEC** — `use-mic-recorder.ts` requests `echoCancellation/noiseSuppression/`
+>   `autoGainControl`.
+> - **Text-level echo rejection** — `apps/desktop/src/lib/voice-echo-guard.ts`
+>   (`rememberSpokenText` / `isLikelySelfEchoTranscript`) drops transcripts that
+>   match what Marvi just said.
 
-*Deliverable: talk over Marvi, she stops and listens.*
+**Remaining delta (the "speakers must work" gap):** the barge-in gate triggers on
+**raw mic energy only**, so Marvi's own voice through speakers (residual past AEC)
+can self-trigger it. The fix:
+
+  1. **Echo-robust confirmation.** Add a `confirm` signal to the gate so a trigger
+     needs sustained energy **AND** confirmation it's the user (not echo). Confirmation
+     source options, cheapest first: (a) require the energy onset to persist through a
+     short window where `isLikelySelfEchoTranscript` is false; (b) run streaming STT
+     during `speaking` and require a non-empty partial. Start with (a).
+  2. **Tunable thresholds + rich logs.** Lift `{graceMs, level, sustainedMs}` out of the
+     `speak()` literal into a config object; log gate state transitions
+     (`idle→rising→triggered`, and *rejected-as-echo*) via `vpLog('voice', ...)` so it's
+     tunable from `[voice-presence]` logs. On speakers you'll likely raise `level`.
+  3. Config surface: `voice.barge_in.sensitivity` (+ Settings UI later).
+
+*Deliverable: talk over Marvi on speakers without her cutting herself off.*
 
 ### Phase 3 — Island duplex UI, both modes
 

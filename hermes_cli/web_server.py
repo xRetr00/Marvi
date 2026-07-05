@@ -363,9 +363,15 @@ atexit.register(_close_warm_parakeet_session)
 
 
 def _warm_desktop_voice_models() -> None:
+    # Warm ALL THREE voice engines once at desktop startup (in this background
+    # thread, while the app shows "connecting") so the first use of each is
+    # instant and never triggers a mid-session model load / GPU stall:
+    #   1) PocketTTS  2) Parakeet STT  3) wake word.
     cfg = load_config()
     if not isinstance(cfg, dict):
         return
+
+    _log.info("Warming desktop voice models (TTS + STT + wake word)…")
 
     tts_cfg = cfg.get("tts") or {}
     if isinstance(tts_cfg, dict) and str(tts_cfg.get("provider") or "").strip().lower() == "pockettts":
@@ -388,6 +394,17 @@ def _warm_desktop_voice_models() -> None:
             _warm_parakeet_session(stt_cfg)
         except Exception as exc:
             _log.warning("Could not warm Parakeet Realtime EOU STT: %s", exc)
+
+    # Wake word: preload its model so the first arm at startup is instant.
+    try:
+        from tools.streaming_stt import warm_wake_word
+
+        if warm_wake_word(cfg):
+            _log.info("Warmed wake-word model")
+    except Exception as exc:
+        _log.warning("Could not warm wake word: %s", exc)
+
+    _log.info("Desktop voice models warmed")
 
 
 def _resolve_restart_drain_timeout() -> float:
@@ -13379,9 +13396,12 @@ async def wake_word_stream_ws(ws: WebSocket) -> None:
                 event_type = payload.get("type")
                 if event_type == "start":
                     sample_rate = int(payload.get("sample_rate") or 16000)
-                    from tools.streaming_stt import WakeWordFactory
+                    from tools.streaming_stt import WakeWordFactory, take_warm_wake_word_spotter
 
-                    spotter = await asyncio.to_thread(WakeWordFactory().create, load_config())
+                    cfg = load_config()
+                    spotter = await asyncio.to_thread(take_warm_wake_word_spotter, cfg)
+                    if spotter is None:
+                        spotter = await asyncio.to_thread(WakeWordFactory().create, cfg)
                     await asyncio.to_thread(spotter.start, sample_rate)
                     await ws.send_json({"type": "ready"})
                 elif event_type == "stop":

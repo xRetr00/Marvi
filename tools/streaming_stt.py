@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 import hashlib
 import json
 import logging
+import threading
 import os
 import shutil
 import subprocess
@@ -573,3 +574,60 @@ class WakeWordFactory:
         if cfg.provider == "livekit":
             return self._create_livekit_spotter(cfg)
         raise WakeWordUnavailable(f"Unsupported wake-word provider: {cfg.provider}")
+
+
+# --- Wake-word warm pool ----------------------------------------------------
+# The wake word loads its model lazily on first arm. Warming a spotter at app
+# startup (alongside TTS + STT) and handing it to the wake-word stream makes the
+# first arm instant. The spotter's detection lifecycle (start/accept/stop) is
+# unchanged — this only moves the model load earlier. Additive: the stream falls
+# back to a fresh spotter if none is warm.
+_WARM_WAKE_LOCK = threading.Lock()
+_WARM_WAKE_SPOTTER: Any = None
+_WARM_WAKE_SIGNATURE: Any = None
+
+
+def _wake_signature(config: Optional[dict[str, Any] | WakeWordConfig]) -> Any:
+    try:
+        cfg = config if isinstance(config, WakeWordConfig) else wake_word_config(config)
+        return (cfg.provider, cfg.model, round(float(cfg.threshold), 4), round(float(cfg.boost), 4))
+    except Exception:
+        return None
+
+
+def warm_wake_word(config: Optional[dict[str, Any]] = None) -> bool:
+    """Preload the wake-word model into the warm pool. Returns False when wake
+    word is disabled/unavailable. Safe to call from a background thread."""
+    global _WARM_WAKE_SPOTTER, _WARM_WAKE_SIGNATURE
+    cfg = wake_word_config(config)
+    if not cfg.enabled:
+        return False
+    signature = _wake_signature(cfg)
+    with _WARM_WAKE_LOCK:
+        if _WARM_WAKE_SPOTTER is not None and _WARM_WAKE_SIGNATURE == signature:
+            return True
+    spotter = WakeWordFactory().create(cfg)  # loads the model (the slow part)
+    stale = None
+    with _WARM_WAKE_LOCK:
+        stale = _WARM_WAKE_SPOTTER
+        _WARM_WAKE_SPOTTER = spotter
+        _WARM_WAKE_SIGNATURE = signature
+    if stale is not None:
+        try:
+            stale.stop()
+        except Exception:
+            pass
+    return True
+
+
+def take_warm_wake_word_spotter(config: Optional[dict[str, Any]] = None) -> Any:
+    """Hand the warm spotter to the wake-word stream, or None if not warm."""
+    global _WARM_WAKE_SPOTTER, _WARM_WAKE_SIGNATURE
+    signature = _wake_signature(config)
+    with _WARM_WAKE_LOCK:
+        if _WARM_WAKE_SPOTTER is not None and _WARM_WAKE_SIGNATURE == signature:
+            spotter = _WARM_WAKE_SPOTTER
+            _WARM_WAKE_SPOTTER = None
+            _WARM_WAKE_SIGNATURE = None
+            return spotter
+    return None

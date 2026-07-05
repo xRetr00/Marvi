@@ -80,3 +80,21 @@ def test_parakeet_streaming_session_returns_empty_without_audio(tmp_path):
     session.start()
 
     assert session.finish() == ""
+
+
+def test_parakeet_streaming_session_emits_partials_and_eou(tmp_path):
+    import numpy as np
+
+    session = ParakeetStreamingSession({}, loader=lambda _cfg: FakeModel(), temp_dir=tmp_path)
+    session.start()
+
+    interval = ParakeetStreamingSession._PARTIAL_INTERVAL_SAMPLES
+    silent = np.zeros(interval // 2, dtype=np.float32).tobytes()
+
+    # Below one interval of audio: buffer only, no partial yet.
+    assert session.accept_bytes(silent) == ""
+    assert session.last_eou is False
+
+    # Crossing the interval yields a live partial and surfaces the <EOU> flag.
+    assert session.accept_bytes(silent) == "hello marvi"
+    assert session.last_eou is True

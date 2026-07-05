@@ -177,6 +177,7 @@ class _ParakeetSubprocessSession:
         self._stt_config = stt_config
         self._proc: subprocess.Popen | None = None
         self._log_file = None
+        self.last_eou = False
 
     def start(self) -> None:
         from tools.parakeet_streaming_stt import parakeet_stdio_command, parakeet_venv_python
@@ -209,6 +210,7 @@ class _ParakeetSubprocessSession:
     def accept_bytes(self, chunk: bytes) -> str:
         self._send({"type": "audio", "data": base64.b64encode(chunk).decode("ascii")})
         payload = self._read()
+        self.last_eou = bool(payload.get("eou"))
         if payload.get("type") == "partial":
             return str(payload.get("text") or "").strip()
         if payload.get("type") == "ok":
@@ -13171,9 +13173,15 @@ async def transcribe_audio_stream_ws(ws: WebSocket) -> None:
                         parakeet_session = None
                 await ws.send_json({"type": "ready"})
             elif event_type == "turn":
-                from tools.semantic_turn import pipecat_smart_turn_complete
+                # Parakeet Realtime EOU reports end-of-utterance itself; use its
+                # signal when active and fall back to the pipecat smart-turn
+                # model for the buffered/whisper paths.
+                if parakeet_session is not None:
+                    complete = parakeet_session.last_eou
+                else:
+                    from tools.semantic_turn import pipecat_smart_turn_complete
 
-                complete = await asyncio.to_thread(pipecat_smart_turn_complete, chunks, sample_rate)
+                    complete = await asyncio.to_thread(pipecat_smart_turn_complete, chunks, sample_rate)
                 await ws.send_json({"type": "turn", "complete": complete})
             elif event_type == "stop":
                 break

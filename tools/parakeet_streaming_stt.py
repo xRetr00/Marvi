@@ -175,6 +175,12 @@ def _strip_eou(text: str, token: str) -> str:
 class ParakeetStreamingSession:
     """Session fed by browser Float32 mic frames and finalized with Parakeet EOU."""
 
+    # Re-transcribe the whole buffer every ~0.5s of new audio to produce a live
+    # partial. ponytail: O(n^2) over the utterance (re-runs the growing buffer);
+    # fine for short spoken turns, swap to NeMo cache-aware streaming inference
+    # if long-form latency matters.
+    _PARTIAL_INTERVAL_SAMPLES = 8000  # 0.5s at 16 kHz
+
     def __init__(
         self,
         stt_config: dict[str, Any] | None = None,
@@ -186,6 +192,9 @@ class ParakeetStreamingSession:
         self._loader = loader
         self._model: Any = None
         self._samples: list[float] = []
+        self._since_last = 0
+        self._last_partial = ""
+        self.last_eou = False
         self._closed = False
         self._temp_dir = Path(temp_dir) if temp_dir is not None else None
 
@@ -195,14 +204,30 @@ class ParakeetStreamingSession:
     def accept_samples(self, samples: Iterable[float]) -> None:
         if self._closed:
             return
-        self._samples.extend(float(max(-1.0, min(1.0, sample))) for sample in samples)
+        clamped = [float(max(-1.0, min(1.0, sample))) for sample in samples]
+        self._samples.extend(clamped)
+        self._since_last += len(clamped)
 
     def accept_bytes(self, chunk: bytes) -> str:
+        """Accept a Float32 mic chunk; return a fresh partial transcript or ''.
+
+        A partial is computed at most every ~0.5s of new audio so the helper
+        emits live captions without re-transcribing on every tiny mic frame.
+        """
         self.accept_samples(np.frombuffer(chunk, dtype=np.float32))
-        return ""
+        if self._closed or self._since_last < self._PARTIAL_INTERVAL_SAMPLES or not self._samples:
+            return ""
+        if self._model is None:
+            self.start()
+
+        self._since_last = 0
+        raw = self._transcribe_current()
+        self.last_eou = self.config.eou_token.lower() in raw.lower()
+        self._last_partial = _strip_eou(raw, self.config.eou_token)
+        return self._last_partial
 
     def drain_text(self) -> str:
-        return ""
+        return self._last_partial
 
     def finish(self) -> str:
         self._closed = True
@@ -210,7 +235,9 @@ class ParakeetStreamingSession:
             return ""
         if self._model is None:
             self.start()
+        return _strip_eou(self._transcribe_current(), self.config.eou_token)
 
+    def _transcribe_current(self) -> str:
         temp_path = ""
         try:
             import soundfile as sf
@@ -220,8 +247,7 @@ class ParakeetStreamingSession:
             ) as tmp:
                 temp_path = tmp.name
             sf.write(temp_path, np.asarray(self._samples, dtype=np.float32), 16000)
-            result = self._model.transcribe([temp_path], batch_size=1)
-            return _strip_eou(_extract_text(result), self.config.eou_token)
+            return _extract_text(self._model.transcribe([temp_path], batch_size=1))
         finally:
             if temp_path:
                 try:
@@ -260,8 +286,11 @@ def _run_stdio_server() -> int:
             event_type = payload.get("type")
             if event_type == "audio":
                 raw = base64.b64decode(str(payload.get("data") or ""))
-                session.accept_bytes(raw)
-                _emit_stdio({"type": "ok"})
+                partial = session.accept_bytes(raw)
+                if partial:
+                    _emit_stdio({"type": "partial", "text": partial, "eou": session.last_eou})
+                else:
+                    _emit_stdio({"type": "ok", "eou": session.last_eou})
             elif event_type == "stop":
                 final = session.finish()
                 _emit_stdio({"type": "final", "text": final})

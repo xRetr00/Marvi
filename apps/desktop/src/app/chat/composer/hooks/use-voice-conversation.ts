@@ -24,6 +24,7 @@ interface VoiceConversationOptions {
   busy: boolean
   enabled: boolean
   onFatalError?: () => void
+  onInterrupt?: () => Promise<void> | void
   onSubmit: (text: string) => Promise<void> | void
   onTranscribeAudio?: (audio: Blob) => Promise<string>
   streamingSttEnabled?: boolean
@@ -37,6 +38,7 @@ export function useVoiceConversation({
   busy,
   enabled,
   onFatalError,
+  onInterrupt,
   onSubmit,
   onTranscribeAudio,
   streamingSttEnabled,
@@ -303,8 +305,13 @@ export function useVoiceConversation({
 
               interrupted = true
               vpLog('voice', 'barge-in accepted', { elapsedMs: Date.now() - startedAt, level })
+              awaitingSpokenResponseRef.current = false
+              consumePendingResponse()
+              resetSpeechBuffer()
+              pendingStartRef.current = true
               stopVoicePlayback()
               handle.cancel()
+              void Promise.resolve(onInterrupt?.()).catch(error => vpLog('voice', 'barge-in interrupt failed', { error: String(error) }))
             }
           }).catch(() => undefined)
         }
@@ -322,7 +329,7 @@ export function useVoiceConversation({
         setCaption(null)
       }
     },
-    [bargeInEnabled, handle, voiceCopy.playbackFailed]
+    [bargeInEnabled, consumePendingResponse, handle, onInterrupt, voiceCopy.playbackFailed]
   )
 
   const start = useCallback(async () => {

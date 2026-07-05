@@ -10,6 +10,7 @@ import os
 import sys
 import tempfile
 import traceback
+from contextlib import redirect_stdout
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Iterable
@@ -264,6 +265,12 @@ def _emit_stdio(payload: dict[str, Any]) -> None:
     sys.stdout.flush()
 
 
+def _call_with_stdout_on_stderr(fn: Callable[[], Any]) -> Any:
+    # NeMo logs to stdout on Windows; stdout is our JSON protocol.
+    with redirect_stdout(sys.stderr):
+        return fn()
+
+
 def _run_stdio_server() -> int:
     session: ParakeetStreamingSession | None = None
     try:
@@ -276,7 +283,7 @@ def _run_stdio_server() -> int:
             return 2
 
         session = ParakeetStreamingSession(first.get("stt_config") if isinstance(first.get("stt_config"), dict) else {})
-        session.start()
+        _call_with_stdout_on_stderr(session.start)
         _emit_stdio({"type": "ready"})
 
         for line in sys.stdin:
@@ -286,13 +293,13 @@ def _run_stdio_server() -> int:
             event_type = payload.get("type")
             if event_type == "audio":
                 raw = base64.b64decode(str(payload.get("data") or ""))
-                partial = session.accept_bytes(raw)
+                partial = _call_with_stdout_on_stderr(lambda: session.accept_bytes(raw))
                 if partial:
                     _emit_stdio({"type": "partial", "text": partial, "eou": session.last_eou})
                 else:
                     _emit_stdio({"type": "ok", "eou": session.last_eou})
             elif event_type == "stop":
-                final = session.finish()
+                final = _call_with_stdout_on_stderr(session.finish)
                 _emit_stdio({"type": "final", "text": final})
                 return 0
             else:

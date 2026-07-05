@@ -1,6 +1,7 @@
 from tools.parakeet_streaming_stt import (
     DEFAULT_PARAKEET_MODEL,
     ParakeetStreamingSession,
+    _run_stdio_server,
     resolve_parakeet_config,
 )
 
@@ -98,3 +99,39 @@ def test_parakeet_streaming_session_emits_partials_and_eou(tmp_path):
     # Crossing the interval yields a live partial and surfaces the <EOU> flag.
     assert session.accept_bytes(silent) == "hello marvi"
     assert session.last_eou is True
+
+
+def test_stdio_server_keeps_stdout_json_only_when_model_logs(monkeypatch):
+    import io
+    import json
+    import sys
+
+    class NoisySession:
+        last_eou = False
+
+        def __init__(self, _cfg):
+            pass
+
+        def start(self):
+            print("[NeMo W noisy startup line]")
+
+        def accept_bytes(self, _raw):
+            print("[NeMo I noisy transcribe line]")
+            return "hello"
+
+        def finish(self):
+            print("[NeMo I noisy final line]")
+            return "hello"
+
+    stdout = io.StringIO()
+    stderr = io.StringIO()
+    monkeypatch.setattr("tools.parakeet_streaming_stt.ParakeetStreamingSession", NoisySession)
+    monkeypatch.setattr(sys, "stdin", io.StringIO('{"type":"start","stt_config":{}}\n{"type":"audio","data":""}\n{"type":"stop"}\n'))
+    monkeypatch.setattr(sys, "stdout", stdout)
+    monkeypatch.setattr(sys, "stderr", stderr)
+
+    assert _run_stdio_server() == 0
+    lines = stdout.getvalue().splitlines()
+    assert [json.loads(line)["type"] for line in lines] == ["ready", "partial", "final"]
+    assert "[NeMo" not in stdout.getvalue()
+    assert "[NeMo" in stderr.getvalue()

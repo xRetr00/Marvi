@@ -25,6 +25,7 @@ interface UseComposerVoiceArgs {
   focusInput: () => void
   insertText: (text: string) => void
   maxRecordingSeconds: number
+  onCancel: ChatBarProps['onCancel']
   onSubmit: ChatBarProps['onSubmit']
   onTranscribeAudio: ChatBarProps['onTranscribeAudio']
   sessionId: string | null | undefined
@@ -46,6 +47,7 @@ export function useComposerVoice({
   focusInput,
   insertText,
   maxRecordingSeconds,
+  onCancel,
   onSubmit,
   onTranscribeAudio,
   sessionId,
@@ -111,6 +113,7 @@ export function useComposerVoice({
     consumePendingResponse,
     enabled: voiceConversationActive,
     onFatalError: () => setVoiceConversationActive(false),
+    onInterrupt: onCancel,
     onSubmit: submitVoiceTurn,
     onTranscribeAudio,
     pendingResponse,

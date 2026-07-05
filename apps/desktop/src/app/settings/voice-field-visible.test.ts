@@ -60,4 +60,16 @@ describe('voiceFieldVisible', () => {
     expect(voiceFieldVisible('tts.pockettts.voice', cfg({ tts: { provider: 'pockettts', pockettts: {} } }))).toBe(true)
     expect(voiceFieldVisible('tts.pockettts.device', cfg({ tts: { provider: 'pockettts', pockettts: {} } }))).toBe(true)
   })
+
+  it('hides legacy streaming sidecar fields when Parakeet is selected', () => {
+    const config = cfg({ stt: { enabled: true, provider: 'local', streaming: { provider: 'parakeet' } } })
+
+    expect(voiceFieldVisible('stt.streaming.provider', config)).toBe(true)
+    expect(voiceFieldVisible('stt.streaming.model', config)).toBe(true)
+    expect(voiceFieldVisible('stt.streaming.eou_token', config)).toBe(true)
+    expect(voiceFieldVisible('stt.streaming.backend', config)).toBe(false)
+    expect(voiceFieldVisible('stt.streaming.host', config)).toBe(false)
+    expect(voiceFieldVisible('stt.streaming.port', config)).toBe(false)
+    expect(voiceFieldVisible('stt.streaming.max_clients', config)).toBe(false)
+  })
 })

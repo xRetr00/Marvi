@@ -33,12 +33,20 @@ import { ModelSettings, ModelSettingsSkeleton } from './model-settings'
 import { EmptyState, ListRow, LoadingState, SettingsContent } from './primitives'
 import { ProviderConfigPanel } from './provider-config-panel'
 
+const PARAKEET_STREAMING_FIELDS = new Set(['stt.streaming.provider', 'stt.streaming.model', 'stt.streaming.eou_token'])
+
 // On the Voice page, only surface the sub-fields of the *selected* TTS/STT
 // provider — otherwise every provider's options render at once (the "totally
 // crazy" wall of ~30 fields). Top-level keys (tts.provider, stt.enabled,
 // voice.*) always show; STT provider fields hide entirely when STT is off.
 export function voiceFieldVisible(key: string, config: HermesConfigRecord): boolean {
   if (key.startsWith('stt.streaming.')) {
+    const provider = String(getNested(config, 'stt.streaming.provider') ?? '')
+
+    if (provider === 'parakeet') {
+      return PARAKEET_STREAMING_FIELDS.has(key)
+    }
+
     return true
   }
 

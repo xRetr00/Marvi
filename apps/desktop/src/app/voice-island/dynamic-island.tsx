@@ -62,9 +62,8 @@ function phaseLabel(phase: VoicePhase): string {
     case 'wake':
       return 'Listening'
     case 'listening':
-      return 'Listening'
     case 'transcribing':
-      return 'Transcribing'
+      return 'Listening'
     case 'thinking':
       return 'Thinking'
     case 'speaking':
@@ -78,6 +77,7 @@ function phaseColor(phase: VoicePhase): string {
   switch (phase) {
     case 'wake':
     case 'listening':
+    case 'transcribing':
       return '#6ea8ff'
     case 'thinking':
       return '#f5b95c'

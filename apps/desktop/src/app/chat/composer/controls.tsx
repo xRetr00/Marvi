@@ -168,7 +168,7 @@ function ConversationPill({
     status === 'speaking'
       ? c.speaking
       : status === 'transcribing'
-        ? c.transcribing
+        ? c.listening
         : status === 'thinking'
           ? c.thinking
           : muted

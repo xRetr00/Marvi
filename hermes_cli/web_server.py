@@ -233,6 +233,9 @@ class _ParakeetSubprocessSession:
         if self._log_file is not None:
             self._log_file.close()
 
+    def running(self) -> bool:
+        return self._proc is not None and self._proc.poll() is None
+
     def _send(self, payload: dict[str, Any]) -> None:
         proc = self._proc
         if proc is None or proc.stdin is None:
@@ -252,6 +255,61 @@ class _ParakeetSubprocessSession:
         if payload.get("type") == "error":
             raise RuntimeError(str(payload.get("error") or "Parakeet helper failed"))
         return payload
+
+
+_WARM_PARAKEET_SESSION: _ParakeetSubprocessSession | None = None
+_WARM_PARAKEET_SIGNATURE = ""
+_WARM_PARAKEET_LOCK = threading.Lock()
+
+
+def _parakeet_config_signature(stt_config: dict[str, Any]) -> str:
+    streaming = stt_config.get("streaming") if isinstance(stt_config, dict) else {}
+    return json.dumps(streaming if isinstance(streaming, dict) else {}, sort_keys=True, default=str)
+
+
+def _close_warm_parakeet_session() -> None:
+    global _WARM_PARAKEET_SESSION, _WARM_PARAKEET_SIGNATURE
+    with _WARM_PARAKEET_LOCK:
+        session = _WARM_PARAKEET_SESSION
+        _WARM_PARAKEET_SESSION = None
+        _WARM_PARAKEET_SIGNATURE = ""
+    if session is not None:
+        session.close()
+
+
+def _warm_parakeet_session(stt_config: dict[str, Any]) -> None:
+    global _WARM_PARAKEET_SESSION, _WARM_PARAKEET_SIGNATURE
+    signature = _parakeet_config_signature(stt_config)
+    stale: _ParakeetSubprocessSession | None = None
+    with _WARM_PARAKEET_LOCK:
+        if _WARM_PARAKEET_SESSION is not None and _WARM_PARAKEET_SESSION.running() and _WARM_PARAKEET_SIGNATURE == signature:
+            return
+        stale = _WARM_PARAKEET_SESSION
+        _WARM_PARAKEET_SESSION = None
+        _WARM_PARAKEET_SIGNATURE = ""
+        session = _ParakeetSubprocessSession(stt_config)
+        session.start()
+        _WARM_PARAKEET_SESSION = session
+        _WARM_PARAKEET_SIGNATURE = signature
+    if stale is not None:
+        stale.close()
+    _log.info("Warmed Parakeet Realtime EOU STT helper")
+
+
+def _take_warm_parakeet_session(stt_config: dict[str, Any]) -> _ParakeetSubprocessSession | None:
+    global _WARM_PARAKEET_SESSION, _WARM_PARAKEET_SIGNATURE
+    signature = _parakeet_config_signature(stt_config)
+    with _WARM_PARAKEET_LOCK:
+        session = _WARM_PARAKEET_SESSION
+        if session is None or not session.running() or _WARM_PARAKEET_SIGNATURE != signature:
+            return None
+        _WARM_PARAKEET_SESSION = None
+        _WARM_PARAKEET_SIGNATURE = ""
+        _log.info("Using warmed Parakeet Realtime EOU STT helper")
+        return session
+
+
+atexit.register(_close_warm_parakeet_session)
 
 
 def _warm_desktop_voice_models() -> None:
@@ -276,7 +334,10 @@ def _warm_desktop_voice_models() -> None:
         and streaming.get("enabled") is True
         and str(streaming.get("provider") or "").strip().lower() == "parakeet"
     ):
-        _log.info("Parakeet Realtime EOU STT will run in the Parakeet venv")
+        try:
+            _warm_parakeet_session(stt_cfg)
+        except Exception as exc:
+            _log.warning("Could not warm Parakeet Realtime EOU STT: %s", exc)
 
 
 def _resolve_restart_drain_timeout() -> float:
@@ -13164,8 +13225,10 @@ async def transcribe_audio_stream_ws(ws: WebSocket) -> None:
                             await asyncio.to_thread(parakeet_session.close)
                         return
                     try:
-                        parakeet_session = _ParakeetSubprocessSession(stt_cfg)
-                        await asyncio.to_thread(parakeet_session.start)
+                        parakeet_session = await asyncio.to_thread(_take_warm_parakeet_session, stt_cfg)
+                        if parakeet_session is None:
+                            parakeet_session = _ParakeetSubprocessSession(stt_cfg)
+                            await asyncio.to_thread(parakeet_session.start)
                     except Exception as exc:
                         _log.warning("Parakeet Realtime EOU STT unavailable; falling back to buffered STT: %s", exc)
                         if parakeet_session is not None:

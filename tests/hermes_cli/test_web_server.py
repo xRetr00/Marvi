@@ -6604,11 +6604,11 @@ class TestDesktopVoiceStartup:
 
         return TestClient(app)
 
-    def test_desktop_startup_does_not_spawn_streaming_stt_sidecar(self, monkeypatch, _isolate_hermes_home):
+    def test_desktop_startup_warms_parakeet_stt_sidecar(self, monkeypatch, _isolate_hermes_home):
         import cron.scheduler as sched
         import hermes_cli.web_server as web_server
 
-        started = {}
+        warmed = []
 
         monkeypatch.setattr(sched, "tick", lambda *a, **k: None)
         monkeypatch.setenv("HERMES_DESKTOP", "1")
@@ -6626,12 +6626,12 @@ class TestDesktopVoiceStartup:
                 }
             },
         )
-        monkeypatch.setattr(web_server.subprocess, "Popen", lambda *a, **k: started.setdefault("called", True))
+        monkeypatch.setattr(web_server, "_warm_parakeet_session", lambda cfg: warmed.append(cfg))
 
         with self._client():
             pass
 
-        assert started == {}
+        assert warmed and warmed[0]["streaming"]["provider"] == "parakeet"
 
     def test_warms_pockettts_without_loading_parakeet_in_main_venv(self, monkeypatch):
         import hermes_cli.web_server as web_server
@@ -6652,8 +6652,8 @@ class TestDesktopVoiceStartup:
             },
         )
         monkeypatch.setattr("tools.tts_tool.warm_tts_provider", lambda cfg: warmed.append(("tts", cfg)) or True)
-        monkeypatch.setattr("tools.parakeet_streaming_stt.warm_parakeet_stt", lambda cfg: warmed.append(("stt", cfg)) or True)
+        monkeypatch.setattr(web_server, "_warm_parakeet_session", lambda cfg: warmed.append(("stt", cfg)) or None)
 
         web_server._warm_desktop_voice_models()
 
-        assert [kind for kind, _cfg in warmed] == ["tts"]
+        assert [kind for kind, _cfg in warmed] == ["tts", "stt"]

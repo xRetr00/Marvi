@@ -227,6 +227,7 @@ class _CacheAwareStream:
         except Exception:  # pragma: no cover - defensive
             self._device = "cpu"
 
+        self._configure_decoding(model)
         if hasattr(model.encoder, "setup_streaming_params"):
             model.encoder.setup_streaming_params()
         (self._cache_ch, self._cache_t, self._cache_ch_len) = model.encoder.get_initial_cache_state(batch_size=1)
@@ -236,6 +237,33 @@ class _CacheAwareStream:
             self._chunk_samples,
             self._device,
         )
+
+    @staticmethod
+    def _configure_decoding(model: Any) -> None:
+        """Work around a NeMo RNNT streaming crash.
+
+        The batched greedy decoder's ``loop_labels`` path calls
+        ``Hypothesis.merge_``, which does ``self.timestamp.extend(...)`` on a
+        dict timestamp → ``AttributeError: 'dict' object has no attribute
+        'extend'`` the moment a chunk contains real speech (silence chunks emit
+        nothing and slip through). ``loop_labels=False`` uses the frame-loop
+        decoder that avoids ``merge_``. Timestamps/alignments are unused here, so
+        turn them off too. Defensive: if the decoding cfg lacks these keys we log
+        and continue (push() still falls back to re-transcribe on any error).
+        """
+        try:
+            from omegaconf import open_dict
+
+            decoding_cfg = model.cfg.decoding
+            with open_dict(decoding_cfg):
+                if "greedy" in decoding_cfg:
+                    decoding_cfg.greedy.loop_labels = False
+                decoding_cfg.compute_timestamps = False
+                decoding_cfg.preserve_alignments = False
+            model.change_decoding_strategy(decoding_cfg)
+            logger.info("Parakeet streaming decoding set (loop_labels=False, timestamps off)")
+        except Exception:
+            logger.exception("Parakeet: could not adjust streaming decoding; may hit NeMo merge_ bug")
 
     def _decode_chunk(self, chunk: np.ndarray, *, last: bool) -> str:
         torch = self._torch

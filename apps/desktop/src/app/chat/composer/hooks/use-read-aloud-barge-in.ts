@@ -2,7 +2,7 @@ import { useStore } from '@nanostores/react'
 import { useEffect, useRef } from 'react'
 
 import { useI18n } from '@/i18n'
-import { createBargeInGate } from '@/lib/voice-barge-in'
+import { BARGE_IN_DEFAULTS, createBargeInGate } from '@/lib/voice-barge-in'
 import { stopVoicePlayback } from '@/lib/voice-playback'
 import { vpLog } from '@/lib/voice-presence-log'
 import { $voicePlayback } from '@/store/voice-playback'
@@ -38,25 +38,45 @@ export function useReadAloudBargeIn({ blocked, enabled }: ReadAloudBargeInOption
 
     activeRef.current = true
     const startedAt = Date.now()
-    const gate = createBargeInGate({ graceMs: 700, level: 0.32, sustainedMs: 350 })
+    const gate = createBargeInGate(BARGE_IN_DEFAULTS)
     let interrupted = false
+    let peakLevel = 0
+    let lastPeakLogAt = 0
 
-    void handle.start({
-      onError: () => undefined,
-      onLevel: level => {
-        if (interrupted || !gate.update(level, Date.now() - startedAt)) {
-          return
+    // Guarantee a clean recorder — useMicRecorder.start() silently early-returns
+    // if one is already active, which would arm nothing (see use-voice-conversation).
+    handle.cancel()
+    vpLog('voice', 'read-aloud barge-in armed', { defaults: BARGE_IN_DEFAULTS })
+    void handle
+      .start({
+        onError: err => vpLog('voice', 'read-aloud barge-in mic error', { error: String(err) }),
+        onLevel: level => {
+          if (interrupted) {
+            return
+          }
+
+          peakLevel = Math.max(peakLevel, level)
+          if (Date.now() - lastPeakLogAt > 1000) {
+            vpLog('voice', 'read-aloud barge-in level', { peak: Number(peakLevel.toFixed(3)), threshold: BARGE_IN_DEFAULTS.level })
+            lastPeakLogAt = Date.now()
+            peakLevel = 0
+          }
+
+          if (!gate.update(level, Date.now() - startedAt)) {
+            return
+          }
+
+          interrupted = true
+          vpLog('voice', 'read-aloud barge-in accepted', { elapsedMs: Date.now() - startedAt, level })
+          stopVoicePlayback()
+          handle.cancel()
+          activeRef.current = false
         }
-
-        interrupted = true
-        vpLog('voice', 'read-aloud barge-in accepted', { elapsedMs: Date.now() - startedAt, level })
-        stopVoicePlayback()
-        handle.cancel()
+      })
+      .catch(err => {
+        vpLog('voice', 'read-aloud barge-in mic start failed', { error: String(err) })
         activeRef.current = false
-      }
-    }).catch(() => {
-      activeRef.current = false
-    })
+      })
 
     return () => {
       handle.cancel()

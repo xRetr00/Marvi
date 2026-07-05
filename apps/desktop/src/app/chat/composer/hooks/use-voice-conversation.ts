@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { useI18n } from '@/i18n'
-import { type BargeInGateState, createBargeInGate } from '@/lib/voice-barge-in'
+import { BARGE_IN_DEFAULTS, type BargeInGateState, createBargeInGate } from '@/lib/voice-barge-in'
 import { isLikelySelfEchoTranscript } from '@/lib/voice-echo-guard'
 import { openStreamingTranscription, type StreamingTranscriptionSession } from '@/lib/streaming-transcription'
 import { playSpeechText, stopVoicePlayback } from '@/lib/voice-playback'
@@ -12,13 +12,6 @@ import { setUserCaption } from '@/store/voice-presence'
 import { useMicRecorder } from './use-mic-recorder'
 
 export type ConversationStatus = 'idle' | 'listening' | 'transcribing' | 'thinking' | 'speaking'
-
-// NOTE(duplex-phase2): barge-in tuning knobs (see
-// docs/design/2026-07-05-voice-duplex-design.md Tunables). On SPEAKERS raise
-// `level` so Marvi's own voice leaking past AEC doesn't self-trigger a barge-in.
-// The echo-robust upgrade is to pass `confirmed` to gate.update() below from a
-// streamed partial that is NOT isLikelySelfEchoTranscript (already imported).
-const BARGE_IN_DEFAULTS = { graceMs: 700, level: 0.32, sustainedMs: 350 }
 
 interface PendingVoiceResponse {
   id: string
@@ -301,49 +294,64 @@ export function useVoiceConversation({
       const gate = createBargeInGate(BARGE_IN_DEFAULTS)
       let interrupted = false
       let lastGateState: BargeInGateState = 'idle'
+      let peakLevel = 0
+      let lastPeakLogAt = 0
 
       try {
         if (bargeInEnabled) {
-          void handle.start({
-            onError: () => undefined,
-            onLevel: level => {
-              if (interrupted) {
-                return
+          // Guarantee a clean recorder: useMicRecorder.start() silently
+          // early-returns if one is already active, which would arm NOTHING and
+          // make barge-in look dead. cancel() is a no-op when idle.
+          handle.cancel()
+          vpLog('voice', 'barge-in armed', { defaults: BARGE_IN_DEFAULTS })
+          void handle
+            .start({
+              onError: err => vpLog('voice', 'barge-in mic error', { error: String(err) }),
+              onLevel: level => {
+                if (interrupted) {
+                  return
+                }
+
+                const elapsedMs = Date.now() - startedAt
+                // Peak-level heartbeat (~1s): proves the mic is delivering audio
+                // during playback and shows how high user speech reaches vs the
+                // `level` threshold — the number to tune barge-in from.
+                peakLevel = Math.max(peakLevel, level)
+                if (Date.now() - lastPeakLogAt > 1000) {
+                  vpLog('voice', 'barge-in level', { peak: Number(peakLevel.toFixed(3)), threshold: BARGE_IN_DEFAULTS.level })
+                  lastPeakLogAt = Date.now()
+                  peakLevel = 0
+                }
+
+                // NOTE(duplex-phase2): to make this echo-robust on speakers, pass a
+                // third arg `confirmed=false` here while the audio is believed to be
+                // Marvi's own voice (e.g. a streamed partial matching
+                // isLikelySelfEchoTranscript). Today it's energy-only (confirmed=true).
+                const triggered = gate.update(level, elapsedMs)
+
+                if (gate.state !== lastGateState) {
+                  vpLog('voice', 'barge-in gate', { state: gate.state, level: Number(level.toFixed(3)), elapsedMs })
+                  lastGateState = gate.state
+                }
+
+                if (!triggered) {
+                  return
+                }
+
+                interrupted = true
+                vpLog('voice', 'barge-in accepted', { elapsedMs, level })
+                awaitingSpokenResponseRef.current = false
+                consumePendingResponse()
+                resetSpeechBuffer()
+                pendingStartRef.current = true
+                stopVoicePlayback()
+                handle.cancel()
+                void Promise.resolve(onInterrupt?.()).catch(error =>
+                  vpLog('voice', 'barge-in interrupt failed', { error: String(error) })
+                )
               }
-
-              const elapsedMs = Date.now() - startedAt
-              // NOTE(duplex-phase2): to make this echo-robust on speakers, pass a
-              // third arg `confirmed=false` here while the audio is believed to be
-              // Marvi's own voice (e.g. a streamed partial matching
-              // isLikelySelfEchoTranscript). Today it's energy-only (confirmed=true).
-              const triggered = gate.update(level, elapsedMs)
-
-              // Rich, tunable telemetry: log every gate state transition so
-              // thresholds can be tuned from the [voice-presence] logs.
-              if (gate.state !== lastGateState) {
-                vpLog('voice', 'barge-in gate', {
-                  state: gate.state,
-                  level: Number(level.toFixed(3)),
-                  elapsedMs
-                })
-                lastGateState = gate.state
-              }
-
-              if (!triggered) {
-                return
-              }
-
-              interrupted = true
-              vpLog('voice', 'barge-in accepted', { elapsedMs, level })
-              awaitingSpokenResponseRef.current = false
-              consumePendingResponse()
-              resetSpeechBuffer()
-              pendingStartRef.current = true
-              stopVoicePlayback()
-              handle.cancel()
-              void Promise.resolve(onInterrupt?.()).catch(error => vpLog('voice', 'barge-in interrupt failed', { error: String(error) }))
-            }
-          }).catch(() => undefined)
+            })
+            .catch(err => vpLog('voice', 'barge-in mic start failed', { error: String(err) }))
         }
         await playSpeechText(text, { source: 'voice-conversation' })
       } catch (error) {

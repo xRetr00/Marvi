@@ -6,6 +6,18 @@ interface BargeInGateOptions {
   sustainedMs: number
 }
 
+// NOTE(duplex-phase2): shared barge-in tuning defaults for BOTH speak paths
+// (hands-free conversation + read-aloud). See
+// docs/design/2026-07-05-voice-duplex-design.md Tunables.
+//   level: mic RMS 0..1 (normalized as rms/42 in use-mic-recorder). 0.22 is
+//     deliberately lower than the old 0.32 because AEC + noiseSuppression +
+//     autoGainControl shrink the user's voice during playback, so the old
+//     threshold rarely triggered. If SPEAKER echo starts self-triggering,
+//     raise this first (the `[voice-presence] barge-in level` logs show peaks).
+//   graceMs: ignore the first N ms of playback (avoids the TTS onset click).
+//   sustainedMs: how long speech must persist before it counts as an interrupt.
+export const BARGE_IN_DEFAULTS = { graceMs: 500, level: 0.22, sustainedMs: 300 }
+
 export interface BargeInGate {
   /** Last computed state — read after `update()` for logging/telemetry. */
   state: BargeInGateState

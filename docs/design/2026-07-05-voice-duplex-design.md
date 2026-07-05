@@ -1,8 +1,27 @@
 # Voice: Full-Duplex "Phone Call" Refactor — Design Spec
 
 **Date:** 2026-07-05
-**Status:** Approved, implementation starting
+**Status:** Phases 1–3 core shipped to `main`; awaiting user hardware test
 **Owner:** @xRetr00
+
+### Implementation status (2026-07-05)
+
+| Item | State | Commit theme |
+| --- | --- | --- |
+| P1 · Parakeet cache-aware streaming STT + fallback + rich logs | ✅ shipped (validate on GPU) | "cache-aware streaming STT engine" |
+| P1 · Clause-level streaming TTS | ✅ shipped | "clause-level streaming TTS" |
+| P1 · `eou_prob` plumbed helper→endpoint→client | ✅ shipped | (same as STT engine) |
+| P2 · Echo-robust + tunable barge-in gate + gate-state logs | ✅ shipped | "echo-robust + tunable barge-in gate" |
+| P2 · Mic-during-playback, AEC, text echo-guard | ✅ pre-existing | — |
+| P3 · Island "talk to interrupt" in ALL modes (incl. read-aloud/wake) | ✅ shipped | "island shows talk to interrupt in every mode" |
+| P1 · LLM→TTS token overlap | ⏸ deferred | server clause-streaming already starts audio after the first clause; token-level overlap is a riskier change with diminishing returns |
+| P2 · STT-during-speak echo *confirmation* | ⏸ deferred (hook in place) | AEC + sustained-energy threshold + text echo-guard already suppress self-echo; whether a 2nd STT stream is needed is a TUNING question answerable only from the barge-in gate logs on real speakers. `gate.update(…, confirmed)` is ready to receive it. |
+| P2 · Barge-in sensitivity settings UI | ⏸ deferred | don't add a knob before testing reveals the right default; tune `BARGE_IN_DEFAULTS` from logs first |
+
+**What to check first when testing** (both feed the deferred items above):
+1. `logs/parakeet-stt.log` — did `engine=cache_aware ACTIVE` appear or did it fall back? Set `stt.streaming.parakeet.debug: true` for per-chunk timing.
+2. `[voice-presence]` `barge-in gate` logs on **speakers** — does energy-only self-trigger? If yes, raise `BARGE_IN_DEFAULTS.level` first; only wire STT-confirmation if that's not enough.
+
 **Related:** `tools/parakeet_streaming_stt.py`, `hermes_cli/web_server.py` (`/api/audio/transcribe/stream`), `tools/tts_tool.py` (PocketTTS), `apps/desktop` voice-island + voice-conversation + wake-word.
 
 > **How to read this doc (for future-you):** every phase lists **Where** (files),

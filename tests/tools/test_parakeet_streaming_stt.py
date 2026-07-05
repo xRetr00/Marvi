@@ -118,7 +118,7 @@ def test_session_uses_cache_aware_engine_when_available(tmp_path, monkeypatch):
     monkeypatch.setattr(mod, "_CacheAwareStream", FakeStream)
 
     session = mod.ParakeetStreamingSession(
-        {"streaming": {"provider": "parakeet"}},
+        {"streaming": {"provider": "parakeet", "engine": "cache_aware"}},
         loader=lambda _cfg: _FakeStreamingModel(),
         temp_dir=tmp_path,
     )
@@ -134,9 +134,9 @@ def test_session_uses_cache_aware_engine_when_available(tmp_path, monkeypatch):
 
 
 def test_session_falls_back_when_model_lacks_streaming_api(tmp_path):
-    # FakeModel has only .transcribe -> no cache-aware API -> re-transcribe engine.
+    # Even with cache_aware requested, a model lacking the API -> no stream.
     session = ParakeetStreamingSession(
-        {"streaming": {"provider": "parakeet"}},
+        {"streaming": {"provider": "parakeet", "engine": "cache_aware"}},
         loader=lambda _cfg: FakeModel(),
         temp_dir=tmp_path,
     )
@@ -144,10 +144,30 @@ def test_session_falls_back_when_model_lacks_streaming_api(tmp_path):
     assert session._stream is None
 
 
+def test_default_engine_is_batch_no_partials(tmp_path):
+    # Default (auto) engine buffers only during listening and transcribes once at
+    # finish -- keeps the GPU free for the wake word + TTS.
+    session = ParakeetStreamingSession(
+        {"streaming": {"provider": "parakeet"}},
+        loader=lambda _cfg: FakeModel(),
+        temp_dir=tmp_path,
+    )
+    session.start()
+    assert session._stream is None
+    big = np.ones(ParakeetStreamingSession._PARTIAL_INTERVAL_SAMPLES * 2, dtype=np.float32).tobytes()
+    assert session.accept_bytes(big) == ""  # no live partial in batch mode
+    assert session.finish() == "hello marvi"  # transcribed once at the end
+
+
 def test_parakeet_streaming_session_emits_partials_and_eou(tmp_path):
     import numpy as np
 
-    session = ParakeetStreamingSession({}, loader=lambda _cfg: FakeModel(), temp_dir=tmp_path)
+    # Live partials are opt-in via engine=rebuffer.
+    session = ParakeetStreamingSession(
+        {"streaming": {"provider": "parakeet", "engine": "rebuffer"}},
+        loader=lambda _cfg: FakeModel(),
+        temp_dir=tmp_path,
+    )
     session.start()
 
     interval = ParakeetStreamingSession._PARTIAL_INTERVAL_SAMPLES

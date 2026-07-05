@@ -180,7 +180,14 @@ class _ParakeetSubprocessSession:
         self.last_eou = False
         self.last_eou_prob = 0.0
 
-    def start(self) -> None:
+    def _ensure_process(self) -> None:
+        # Spawn the PERSISTENT helper once. The helper loads NeMo/CUDA (~12-20s)
+        # on its first utterance and then stays alive across turns, so subsequent
+        # turns are instant. Previously we spawned+killed per turn, reloading the
+        # model every time (slow start + GPU thrash that froze the device).
+        if self._proc is not None and self._proc.poll() is None:
+            return
+
         from tools.parakeet_streaming_stt import parakeet_stdio_command, parakeet_venv_python
 
         py = parakeet_venv_python()
@@ -202,11 +209,26 @@ class _ParakeetSubprocessSession:
             env=env,
             creationflags=windows_hide_flags(),
         )
+
+    def begin(self) -> None:
+        """Start a new utterance on the (persistent) helper process."""
+        self._ensure_process()
+        self.last_eou = False
+        self.last_eou_prob = 0.0
         self._send({"type": "start", "stt_config": self._stt_config})
         payload = self._read()
         if payload.get("type") == "ready":
             return
         raise RuntimeError(str(payload.get("error") or "Parakeet helper did not become ready"))
+
+    # Back-compat alias.
+    def start(self) -> None:
+        self.begin()
+
+    def warm(self) -> None:
+        """Load the model without capturing audio, leaving the process idle+warm."""
+        self.begin()
+        self.finish()
 
     def accept_bytes(self, chunk: bytes) -> str:
         self._send({"type": "audio", "data": base64.b64encode(chunk).decode("ascii")})
@@ -231,9 +253,17 @@ class _ParakeetSubprocessSession:
     def close(self) -> None:
         proc = self._proc
         if proc is not None and proc.poll() is None:
+            try:
+                self._send({"type": "close"})
+            except Exception:
+                pass
             proc.terminate()
         if self._log_file is not None:
-            self._log_file.close()
+            try:
+                self._log_file.close()
+            except Exception:
+                pass
+        self._proc = None
 
     def running(self) -> bool:
         return self._proc is not None and self._proc.poll() is None
@@ -290,12 +320,30 @@ def _warm_parakeet_session(stt_config: dict[str, Any]) -> None:
         _WARM_PARAKEET_SESSION = None
         _WARM_PARAKEET_SIGNATURE = ""
         session = _ParakeetSubprocessSession(stt_config)
-        session.start()
+        session.warm()
         _WARM_PARAKEET_SESSION = session
         _WARM_PARAKEET_SIGNATURE = signature
     if stale is not None:
         stale.close()
     _log.info("Warmed Parakeet Realtime EOU STT helper")
+
+
+def _return_warm_parakeet_session(session: _ParakeetSubprocessSession, stt_config: dict[str, Any]) -> None:
+    """Return a still-running helper to the warm pool so the next turn reuses its
+    loaded model instead of respawning. Replaces any existing warm session."""
+    global _WARM_PARAKEET_SESSION, _WARM_PARAKEET_SIGNATURE
+    if not session.running():
+        session.close()
+        return
+    stale: _ParakeetSubprocessSession | None = None
+    with _WARM_PARAKEET_LOCK:
+        if _WARM_PARAKEET_SESSION is session:
+            return
+        stale = _WARM_PARAKEET_SESSION
+        _WARM_PARAKEET_SESSION = session
+        _WARM_PARAKEET_SIGNATURE = _parakeet_config_signature(stt_config)
+    if stale is not None:
+        stale.close()
 
 
 def _take_warm_parakeet_session(stt_config: dict[str, Any]) -> _ParakeetSubprocessSession | None:
@@ -13234,7 +13282,9 @@ async def transcribe_audio_stream_ws(ws: WebSocket) -> None:
                         parakeet_session = await asyncio.to_thread(_take_warm_parakeet_session, stt_cfg)
                         if parakeet_session is None:
                             parakeet_session = _ParakeetSubprocessSession(stt_cfg)
-                            await asyncio.to_thread(parakeet_session.start)
+                        # begin() reuses the warm process's loaded model (instant)
+                        # or spawns+loads on the very first cold start.
+                        await asyncio.to_thread(parakeet_session.begin)
                     except Exception as exc:
                         _log.warning("Parakeet Realtime EOU STT unavailable; falling back to buffered STT: %s", exc)
                         if parakeet_session is not None:
@@ -13258,7 +13308,8 @@ async def transcribe_audio_stream_ws(ws: WebSocket) -> None:
         if parakeet_session is not None:
             text = await asyncio.to_thread(parakeet_session.finish)
             await ws.send_json({"type": "final", "text": text})
-            await asyncio.to_thread(parakeet_session.close)
+            # Keep the loaded model warm for the next turn instead of killing it.
+            await asyncio.to_thread(_return_warm_parakeet_session, parakeet_session, stt_cfg)
             return
 
         if not chunks:

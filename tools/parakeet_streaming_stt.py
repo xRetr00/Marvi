@@ -80,8 +80,10 @@ def resolve_parakeet_config(stt_config: dict[str, Any] | None) -> ParakeetStream
     except (TypeError, ValueError):
         stream_chunk_seconds = 0.5
 
+    # auto/batch: buffer + transcribe once at end (stable, low GPU). rebuffer:
+    # live partials via re-transcribe. cache_aware: experimental frame streaming.
     engine = str(pick("engine", "auto")).strip().lower() or "auto"
-    if engine not in {"auto", "cache_aware", "rebuffer"}:
+    if engine not in {"auto", "batch", "rebuffer", "cache_aware"}:
         engine = "auto"
 
     return ParakeetStreamingConfig(
@@ -364,8 +366,12 @@ class ParakeetStreamingSession:
         self._stream = self._maybe_start_cache_aware()
 
     def _maybe_start_cache_aware(self) -> _CacheAwareStream | None:
-        if self.config.engine == "rebuffer":
-            logger.info("Parakeet STT engine=rebuffer (forced) — re-transcribe fallback active")
+        # Cache-aware streaming is OPT-IN only (engine=cache_aware). It needs a
+        # specific NeMo/CUDA config and currently crashes on some setups
+        # (partial_hypotheses + frame-looping + cuda graphs -> NotImplementedError),
+        # so the default engines never attempt it — a failed attempt would just
+        # burn a GPU decode per turn before falling back.
+        if self.config.engine != "cache_aware":
             return None
 
         model = self._model
@@ -426,7 +432,12 @@ class ParakeetStreamingSession:
                 self._last_partial = text
                 return text
 
-        # Fallback: re-transcribe the whole buffer on an interval.
+        # Live partials via whole-buffer re-transcribe are OPT-IN (engine=rebuffer):
+        # they run the model every ~0.5s DURING listening, competing with the wake
+        # word + TTS for the GPU (a cause of stutter/freezes). The default (batch/
+        # auto) buffers only and transcribes once in finish(), keeping listening cheap.
+        if self.config.engine != "rebuffer":
+            return ""
         if self._since_last < self._PARTIAL_INTERVAL_SAMPLES:
             return ""
         self._since_last = 0
@@ -499,38 +510,45 @@ def _configure_logging(debug: bool) -> None:
 
 
 def _run_stdio_server() -> int:
+    # PERSISTENT across utterances: the model loads once (process-level cache) and
+    # the process stays alive for every 'start'/'stop' cycle. Previously the
+    # backend spawned+killed this per turn, reloading NeMo/CUDA (~12-20s) every
+    # time — the cause of "STT takes forever to start" and the GPU thrash that
+    # froze the device and starved the wake word. Each 'start' makes a fresh
+    # session that reuses the cached model, so only the FIRST start pays the cost.
     session: ParakeetStreamingSession | None = None
+    logging_configured = False
     try:
-        first_line = sys.stdin.readline()
-        if not first_line:
-            return 0
-        first = json.loads(first_line)
-        if first.get("type") != "start":
-            _emit_stdio({"type": "error", "error": "Parakeet helper expected a start message"})
-            return 2
-
-        stt_config = first.get("stt_config") if isinstance(first.get("stt_config"), dict) else {}
-        cfg = resolve_parakeet_config(stt_config)
-        _configure_logging(cfg.debug)
-        logger.info(
-            "Parakeet helper starting | model=%s device=%s engine=%s chunk=%.3fs eou_token=%s",
-            cfg.model,
-            cfg.device,
-            cfg.engine,
-            cfg.stream_chunk_seconds,
-            cfg.eou_token,
-        )
-
-        session = ParakeetStreamingSession(stt_config)
-        _call_with_stdout_on_stderr(session.start)
-        _emit_stdio({"type": "ready"})
-
         for line in sys.stdin:
             if not line:
                 break
-            payload = json.loads(line)
+            try:
+                payload = json.loads(line)
+            except ValueError:
+                continue
             event_type = payload.get("type")
-            if event_type == "audio":
+
+            if event_type == "start":
+                stt_config = payload.get("stt_config") if isinstance(payload.get("stt_config"), dict) else {}
+                cfg = resolve_parakeet_config(stt_config)
+                if not logging_configured:
+                    _configure_logging(cfg.debug)
+                    logging_configured = True
+                logger.info(
+                    "Parakeet utterance start | model=%s device=%s engine=%s chunk=%.3fs",
+                    cfg.model,
+                    cfg.device,
+                    cfg.engine,
+                    cfg.stream_chunk_seconds,
+                )
+                session = ParakeetStreamingSession(stt_config)
+                _call_with_stdout_on_stderr(session.start)
+                _emit_stdio({"type": "ready"})
+
+            elif event_type == "audio":
+                if session is None:
+                    _emit_stdio({"type": "error", "error": "Parakeet helper received audio before start"})
+                    continue
                 raw = base64.b64decode(str(payload.get("data") or ""))
                 partial = _call_with_stdout_on_stderr(lambda: session.accept_bytes(raw))
                 eou_prob = getattr(session, "last_eou_prob", 1.0 if session.last_eou else 0.0)
@@ -538,13 +556,17 @@ def _run_stdio_server() -> int:
                     _emit_stdio({"type": "partial", "text": partial, "eou": session.last_eou, "eou_prob": eou_prob})
                 else:
                     _emit_stdio({"type": "ok", "eou": session.last_eou, "eou_prob": eou_prob})
+
             elif event_type == "stop":
-                final = _call_with_stdout_on_stderr(session.finish)
+                final = _call_with_stdout_on_stderr(session.finish) if session is not None else ""
                 _emit_stdio({"type": "final", "text": final})
-                return 0
+                session = None  # keep the process + model cache warm for the next turn
+
+            elif event_type == "close":
+                break
+
             else:
                 _emit_stdio({"type": "error", "error": f"Unknown Parakeet helper event: {event_type}"})
-                return 2
         return 0
     except BaseException as exc:  # noqa: BLE001
         logger.exception("Parakeet stdio helper failed")

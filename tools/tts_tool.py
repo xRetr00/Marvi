@@ -1865,6 +1865,38 @@ def _audio_to_pcm16_base64(audio: Any) -> str:
     return base64.b64encode(pcm.tobytes()).decode("ascii")
 
 
+# NOTE(duplex-phase1): clause-sized segments for low-latency streaming TTS.
+# See docs/design/2026-07-05-voice-duplex-design.md (§2 PocketTTS ceiling +
+# Tunables). PocketTTS `generate_audio` is one-shot, so time-to-first-audio =
+# synthesis time of the FIRST segment. Splitting the message into clauses makes
+# Marvi start speaking after the first clause instead of the whole reply.
+# Smaller `min_chars` => faster first audio, choppier prosody. This is the knob
+# to turn if she feels laggy to start; the real fix (token streaming-in) needs a
+# TTS with a streaming API, which PocketTTS does not expose.
+_TTS_STREAM_SPLIT_RE = re.compile(r"[^.!?;:,…\n]+[.!?;:,…\n]*")
+_TTS_MIN_SEGMENT_CHARS = 24
+
+
+def _split_for_streaming(text: str, min_chars: int = _TTS_MIN_SEGMENT_CHARS) -> list:
+    """Split text into clause-sized speakable segments (order preserved).
+
+    Flushes a segment at a sentence end (``. ! ? …`` / newline) or once enough
+    characters have buffered, whichever comes first, so tiny fragments merge
+    (keeping prosody) while long clauses still start audio early.
+    """
+    segments: list = []
+    buf = ""
+    for piece in _TTS_STREAM_SPLIT_RE.findall(text):
+        buf += piece
+        stripped = buf.strip()
+        if stripped and (buf.rstrip()[-1:] in ".!?…\n" or len(stripped) >= min_chars):
+            segments.append(stripped)
+            buf = ""
+    if buf.strip():
+        segments.append(buf.strip())
+    return segments
+
+
 def stream_text_to_speech_chunks(text: str):
     """Yield browser-playable PCM chunks for streaming TTS."""
     text = _strip_markdown_for_tts(text)
@@ -1875,10 +1907,18 @@ def stream_text_to_speech_chunks(text: str):
     provider = _get_provider(tts_config)
     if provider == "pockettts":
         yield {"type": "start", "sample_rate": int(_pockettts_sample_rate(tts_config)), "provider": provider}
-        for audio_chunk, sample_rate in _stream_pockettts_audio(text, tts_config):
-            encoded = _audio_to_pcm16_base64(audio_chunk)
-            if encoded:
-                yield {"type": "sample_rate", "sample_rate": int(sample_rate)}
+        emitted_sr = False
+        # NOTE(duplex-phase1): synthesize per clause (was: one generate_audio()
+        # over the whole message) so the first chunk streams after the first
+        # clause. See _split_for_streaming above.
+        for segment in _split_for_streaming(text):
+            for audio_chunk, sample_rate in _stream_pockettts_audio(segment, tts_config):
+                encoded = _audio_to_pcm16_base64(audio_chunk)
+                if not encoded:
+                    continue
+                if not emitted_sr:
+                    yield {"type": "sample_rate", "sample_rate": int(sample_rate)}
+                    emitted_sr = True
                 yield {"type": "chunk", "audio": encoded}
         yield {"type": "end", "provider": provider}
         return

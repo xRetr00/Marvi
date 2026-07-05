@@ -249,3 +249,41 @@ class TestDispatcherBranch:
 
         assert result["success"] is False
         assert "pocket-tts" in result["error"].lower()
+
+
+class TestSplitForStreaming:
+    """Clause splitter that drives low-latency streaming TTS (duplex phase 1)."""
+
+    def test_flushes_each_sentence_end_for_early_audio(self):
+        from tools.tts_tool import _split_for_streaming
+
+        segments = _split_for_streaming("Hi. How are you doing today? I am fine.")
+
+        # Every sentence end flushes (even a short "Hi.") so audio starts ASAP.
+        assert segments == ["Hi.", "How are you doing today?", "I am fine."]
+
+    def test_short_comma_fragments_merge_until_min_length(self):
+        from tools.tts_tool import _split_for_streaming
+
+        # Sub-clause fragments with no sentence end merge until they're long
+        # enough, so we don't synthesize choppy one-word snippets.
+        assert _split_for_streaming("a, b, c, this is now long enough to flush") == [
+            "a, b, c, this is now long enough to flush"
+        ]
+
+    def test_long_clause_flushes_early_for_first_audio(self):
+        from tools.tts_tool import _split_for_streaming
+
+        segments = _split_for_streaming(
+            "Well, that is a genuinely long opening clause, and then more."
+        )
+
+        # The first comma-clause is past the min length, so it streams first
+        # instead of waiting for the whole sentence.
+        assert len(segments) >= 2
+        assert segments[0] == "Well, that is a genuinely long opening clause,"
+
+    def test_no_delimiters_returns_single_segment(self):
+        from tools.tts_tool import _split_for_streaming
+
+        assert _split_for_streaming("just a few words") == ["just a few words"]

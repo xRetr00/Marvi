@@ -478,7 +478,7 @@ def test_tts_setup_configures_pockettts_with_streaming_voice(tmp_path, monkeypat
     )
     monkeypatch.setattr(setup_mod.importlib.util, "find_spec", lambda name: None)
     monkeypatch.setattr(setup_mod, "_install_pockettts_deps", lambda: True)
-    monkeypatch.setattr(setup_mod, "_install_nemotron_stt_deps", lambda: True)
+    monkeypatch.setattr(setup_mod, "_install_parakeet_stt_deps", lambda: True)
     monkeypatch.setattr(setup_mod, "_install_semantic_turn_deps", lambda: True)
     monkeypatch.setattr(
         "hermes_cli.tools_config._ensure_cuda_torch",
@@ -498,9 +498,9 @@ def test_tts_setup_configures_pockettts_with_streaming_voice(tmp_path, monkeypat
     assert config["stt"]["provider"] == "local"
     assert config["stt"]["local"]["device"] == "cuda"
     assert config["stt"]["local"]["compute_type"] == "float16"
-    assert config["stt"]["streaming"]["provider"] == "nemotron"
-    assert config["stt"]["streaming"]["model"] == "nvidia/nemotron-speech-streaming-en-0.6b"
-    assert config["stt"]["streaming"]["lookahead_tokens"] == 1
+    assert config["stt"]["streaming"]["provider"] == "parakeet"
+    assert config["stt"]["streaming"]["model"] == "nvidia/parakeet_realtime_eou_120m-v1"
+    assert config["stt"]["streaming"]["eou_token"] == "<EOU>"
     assert config["stt"]["streaming"]["port"] == 9090
     assert config["voice"]["semantic_turn"] is True
 

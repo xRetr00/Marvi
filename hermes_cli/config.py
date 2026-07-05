@@ -2025,12 +2025,12 @@ DEFAULT_CONFIG = {
             "vad_filter": True,
         },
         "streaming": {
-            "provider": "",  # "" = off, "nemotron" = local RNNT streaming STT
+            "provider": "",  # "" = off, "parakeet" = local NVIDIA Parakeet Realtime EOU STT
             "host": "127.0.0.1",
             "port": 9090,
             "backend": "faster_whisper",  # faster_whisper, tensorrt, openvino
-            "model": "small",  # tiny, base, small, medium, large-v3, large-v3-turbo
-            "lookahead_tokens": 1,  # Nemotron: 0=80ms, 1=160ms, 6=560ms, 13=1120ms
+            "model": "small",  # tiny, base, small, medium, large-v3, large-v3-turbo, nvidia/parakeet_realtime_eou_120m-v1
+            "eou_token": "<EOU>",
             "max_clients": 1,
             "max_connection_time": 900,
             "single_model": True,

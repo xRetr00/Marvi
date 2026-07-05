@@ -142,8 +142,8 @@ describe('useHermesConfig refreshHermesConfig', () => {
     expect(refreshProjectBranch).toHaveBeenCalledWith('/workspace/attached-project')
   })
 
-  it('enables streaming STT for Nemotron', async () => {
-    mockConfig({ stt: { streaming: { enabled: true, provider: 'nemotron' } } })
+  it('enables streaming STT for Parakeet', async () => {
+    mockConfig({ stt: { streaming: { enabled: true, provider: 'parakeet' } } })
 
     const { result } = renderHook(() =>
       useHermesConfig({
@@ -161,7 +161,7 @@ describe('useHermesConfig refreshHermesConfig', () => {
 
   it('exposes selected voice providers for status indicators', async () => {
     mockConfig({
-      stt: { enabled: true, provider: 'local', streaming: { enabled: true, provider: 'nemotron' } },
+      stt: { enabled: true, provider: 'local', streaming: { enabled: true, provider: 'parakeet' } },
       tts: { provider: 'pockettts' }
     })
 
@@ -177,7 +177,7 @@ describe('useHermesConfig refreshHermesConfig', () => {
     })
 
     expect(result.current.sttProvider).toBe('local')
-    expect(result.current.streamingSttProvider).toBe('nemotron')
+    expect(result.current.streamingSttProvider).toBe('parakeet')
     expect(result.current.ttsProvider).toBe('pockettts')
   })
 

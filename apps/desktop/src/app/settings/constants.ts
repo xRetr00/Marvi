@@ -240,7 +240,7 @@ export const ENUM_OPTIONS: Record<string, string[]> = {
   'stt.local.model': ['tiny', 'base', 'small', 'medium', 'large-v3', 'large-v3-turbo'],
   'stt.local.device': ['auto', 'cuda', 'cpu'],
   'stt.local.compute_type': ['auto', 'float16', 'int8_float16', 'int8'],
-  'stt.streaming.provider': ['', 'nemotron'],
+  'stt.streaming.provider': ['', 'parakeet'],
   'stt.streaming.backend': ['faster_whisper', 'tensorrt', 'openvino'],
   'stt.streaming.model': [
     'tiny',
@@ -249,8 +249,7 @@ export const ENUM_OPTIONS: Record<string, string[]> = {
     'medium',
     'large-v3',
     'large-v3-turbo',
-    'nvidia/nemotron-speech-streaming-en-0.6b',
-    'nvidia/nemotron-3.5-asr-streaming-0.6b'
+    'nvidia/parakeet_realtime_eou_120m-v1'
   ],
   'voice.wake_word.provider': ['sherpa_onnx', 'livekit'],
   'voice.wake_word.model': ['kws-en-3.3m', 'livekit-marvi'],
@@ -393,7 +392,7 @@ export const FIELD_LABELS: Record<string, string> = defineFieldCopy({
       port: 'Streaming STT Port',
       backend: 'Streaming STT Backend',
       model: 'Streaming STT Model',
-      lookaheadTokens: 'Nemotron Lookahead Tokens',
+      eouToken: 'Parakeet EOU Token',
       maxClients: 'Streaming STT Max Clients',
       maxConnectionTime: 'Streaming STT Max Seconds',
       singleModel: 'Streaming STT Single Model'
@@ -561,10 +560,10 @@ export const FIELD_DESCRIPTIONS: Record<string, string> = defineFieldCopy({
       vadFilter: 'Skip non-speech sections before transcription.'
     },
     streaming: {
-      provider: 'Optional live STT backend. Nemotron runs locally for low-latency streaming.',
+      provider: 'Optional live STT backend. Parakeet Realtime EOU runs locally for low-latency English STT.',
       backend: 'Use faster_whisper for the built-in GPU path. TensorRT needs prebuilt engines.',
-      model: 'Nemotron Hugging Face model id.',
-      lookaheadTokens: 'Nemotron latency/accuracy setting: 0=80ms, 1=160ms, 6=560ms, 13=1120ms.'
+      model: 'Parakeet Realtime EOU Hugging Face model id.',
+      eouToken: 'Token emitted by Parakeet when the utterance is complete.'
     },
     elevenlabs: {
       languageCode: 'Optional ISO-639-3 language code. Blank lets ElevenLabs auto-detect.'
@@ -677,7 +676,7 @@ export const SECTIONS: DesktopConfigSection[] = [
       'stt.streaming.port',
       'stt.streaming.backend',
       'stt.streaming.model',
-      'stt.streaming.lookahead_tokens',
+      'stt.streaming.eou_token',
       'stt.streaming.max_clients',
       'stt.streaming.max_connection_time',
       'stt.streaming.single_model',

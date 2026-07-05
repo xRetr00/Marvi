@@ -172,25 +172,25 @@ def _port_open(host: str, port: int) -> bool:
         return False
 
 
-class _NemotronSubprocessSession:
+class _ParakeetSubprocessSession:
     def __init__(self, stt_config: dict[str, Any]) -> None:
         self._stt_config = stt_config
         self._proc: subprocess.Popen | None = None
         self._log_file = None
 
     def start(self) -> None:
-        from tools.nemotron_streaming_stt import nemotron_stdio_command, nemotron_venv_python
+        from tools.parakeet_streaming_stt import parakeet_stdio_command, parakeet_venv_python
 
-        py = nemotron_venv_python()
+        py = parakeet_venv_python()
         if not py.exists():
-            raise RuntimeError("Nemotron venv is missing. Run: hermes tools post-setup nemotron_stt")
+            raise RuntimeError("Parakeet venv is missing. Run: hermes tools post-setup parakeet_stt")
 
-        log_path = get_hermes_home() / "logs" / "nemotron-stt.log"
+        log_path = get_hermes_home() / "logs" / "parakeet-stt.log"
         log_path.parent.mkdir(parents=True, exist_ok=True)
         self._log_file = log_path.open("ab")
         env = {**os.environ, "PYTHONPATH": str(PROJECT_ROOT)}
         self._proc = subprocess.Popen(
-            nemotron_stdio_command(),
+            parakeet_stdio_command(),
             cwd=str(PROJECT_ROOT),
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
@@ -204,7 +204,7 @@ class _NemotronSubprocessSession:
         payload = self._read()
         if payload.get("type") == "ready":
             return
-        raise RuntimeError(str(payload.get("error") or "Nemotron helper did not become ready"))
+        raise RuntimeError(str(payload.get("error") or "Parakeet helper did not become ready"))
 
     def accept_bytes(self, chunk: bytes) -> str:
         self._send({"type": "audio", "data": base64.b64encode(chunk).decode("ascii")})
@@ -213,7 +213,7 @@ class _NemotronSubprocessSession:
             return str(payload.get("text") or "").strip()
         if payload.get("type") == "ok":
             return ""
-        raise RuntimeError(str(payload.get("error") or "Nemotron helper failed"))
+        raise RuntimeError(str(payload.get("error") or "Parakeet helper failed"))
 
     def finish(self) -> str:
         self._send({"type": "stop"})
@@ -222,7 +222,7 @@ class _NemotronSubprocessSession:
             if payload.get("type") == "final":
                 return str(payload.get("text") or "").strip()
             if payload.get("type") == "error":
-                raise RuntimeError(str(payload.get("error") or "Nemotron helper failed"))
+                raise RuntimeError(str(payload.get("error") or "Parakeet helper failed"))
 
     def close(self) -> None:
         proc = self._proc
@@ -234,21 +234,21 @@ class _NemotronSubprocessSession:
     def _send(self, payload: dict[str, Any]) -> None:
         proc = self._proc
         if proc is None or proc.stdin is None:
-            raise RuntimeError("Nemotron helper is not running")
+            raise RuntimeError("Parakeet helper is not running")
         proc.stdin.write(json.dumps(payload, separators=(",", ":")) + "\n")
         proc.stdin.flush()
 
     def _read(self) -> dict[str, Any]:
         proc = self._proc
         if proc is None or proc.stdout is None:
-            raise RuntimeError("Nemotron helper is not running")
+            raise RuntimeError("Parakeet helper is not running")
         line = proc.stdout.readline()
         if not line:
             code = proc.poll()
-            raise RuntimeError(f"Nemotron helper exited unexpectedly (code={code}); see logs/nemotron-stt.log")
+            raise RuntimeError(f"Parakeet helper exited unexpectedly (code={code}); see logs/parakeet-stt.log")
         payload = json.loads(line)
         if payload.get("type") == "error":
-            raise RuntimeError(str(payload.get("error") or "Nemotron helper failed"))
+            raise RuntimeError(str(payload.get("error") or "Parakeet helper failed"))
         return payload
 
 
@@ -272,9 +272,9 @@ def _warm_desktop_voice_models() -> None:
     if (
         isinstance(streaming, dict)
         and streaming.get("enabled") is True
-        and str(streaming.get("provider") or "").strip().lower() == "nemotron"
+        and str(streaming.get("provider") or "").strip().lower() == "parakeet"
     ):
-        _log.info("Nemotron streaming STT will run in the Nemotron venv")
+        _log.info("Parakeet Realtime EOU STT will run in the Parakeet venv")
 
 
 def _resolve_restart_drain_timeout() -> float:
@@ -13118,7 +13118,7 @@ async def transcribe_audio_stream_ws(ws: WebSocket) -> None:
     stt_cfg = (cfg.get("stt") or {}) if isinstance(cfg, dict) else {}
     streaming_cfg = (stt_cfg.get("streaming") or {}) if isinstance(stt_cfg, dict) else {}
     streaming_provider = str(streaming_cfg.get("provider") or "").strip().lower() if isinstance(streaming_cfg, dict) else ""
-    nemotron_session = None
+    parakeet_session = None
     chunks: list[bytes] = []
     sample_rate = 16000
     total_bytes = 0
@@ -13136,11 +13136,11 @@ async def transcribe_audio_stream_ws(ws: WebSocket) -> None:
                 if total_bytes > _MAX_TRANSCRIPTION_UPLOAD_BYTES:
                     await ws.send_json({"type": "error", "error": "Audio recording is too large"})
                     await ws.close(code=1009)
-                    if nemotron_session is not None:
-                        await asyncio.to_thread(nemotron_session.close)
+                    if parakeet_session is not None:
+                        await asyncio.to_thread(parakeet_session.close)
                     return
-                if nemotron_session is not None:
-                    partial = await asyncio.to_thread(nemotron_session.accept_bytes, chunk)
+                if parakeet_session is not None:
+                    partial = await asyncio.to_thread(parakeet_session.accept_bytes, chunk)
                     if partial:
                         await ws.send_json({"type": "partial", "text": partial})
                     chunks.append(chunk)
@@ -13155,20 +13155,20 @@ async def transcribe_audio_stream_ws(ws: WebSocket) -> None:
             event_type = payload.get("type")
             if event_type == "start":
                 sample_rate = int(payload.get("sample_rate") or 16000)
-                if streaming_provider == "nemotron":
+                if streaming_provider == "parakeet":
                     if sample_rate != 16000:
-                        await ws.send_json({"type": "error", "error": "Nemotron streaming STT requires 16 kHz mic audio"})
-                        if nemotron_session is not None:
-                            await asyncio.to_thread(nemotron_session.close)
+                        await ws.send_json({"type": "error", "error": "Parakeet Realtime EOU STT requires 16 kHz mic audio"})
+                        if parakeet_session is not None:
+                            await asyncio.to_thread(parakeet_session.close)
                         return
                     try:
-                        nemotron_session = _NemotronSubprocessSession(stt_cfg)
-                        await asyncio.to_thread(nemotron_session.start)
+                        parakeet_session = _ParakeetSubprocessSession(stt_cfg)
+                        await asyncio.to_thread(parakeet_session.start)
                     except Exception as exc:
-                        _log.warning("Nemotron streaming STT unavailable; falling back to buffered STT: %s", exc)
-                        if nemotron_session is not None:
-                            await asyncio.to_thread(nemotron_session.close)
-                        nemotron_session = None
+                        _log.warning("Parakeet Realtime EOU STT unavailable; falling back to buffered STT: %s", exc)
+                        if parakeet_session is not None:
+                            await asyncio.to_thread(parakeet_session.close)
+                        parakeet_session = None
                 await ws.send_json({"type": "ready"})
             elif event_type == "turn":
                 from tools.semantic_turn import pipecat_smart_turn_complete
@@ -13178,10 +13178,10 @@ async def transcribe_audio_stream_ws(ws: WebSocket) -> None:
             elif event_type == "stop":
                 break
 
-        if nemotron_session is not None:
-            text = await asyncio.to_thread(nemotron_session.finish)
+        if parakeet_session is not None:
+            text = await asyncio.to_thread(parakeet_session.finish)
             await ws.send_json({"type": "final", "text": text})
-            await asyncio.to_thread(nemotron_session.close)
+            await asyncio.to_thread(parakeet_session.close)
             return
 
         if not chunks:
@@ -13208,12 +13208,12 @@ async def transcribe_audio_stream_ws(ws: WebSocket) -> None:
                 except OSError:
                     pass
     except WebSocketDisconnect:
-        if nemotron_session is not None:
-            await asyncio.to_thread(nemotron_session.close)
+        if parakeet_session is not None:
+            await asyncio.to_thread(parakeet_session.close)
         return
     except Exception as exc:
-        if nemotron_session is not None:
-            await asyncio.to_thread(nemotron_session.close)
+        if parakeet_session is not None:
+            await asyncio.to_thread(parakeet_session.close)
         _log.exception("Desktop streaming transcription failed")
         try:
             await ws.send_json({"type": "error", "error": f"Streaming transcription failed: {exc}"})

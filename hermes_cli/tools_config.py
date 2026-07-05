@@ -1249,15 +1249,15 @@ def _run_post_setup(post_setup_key: str):
             _print_warning("    livekit-wakeword install timed out (>5min)")
             _print_info("    Run manually: uv pip install -U livekit-wakeword")
 
-    elif post_setup_key == "nemotron_stt":
-        _print_info("    Installing Nemotron streaming STT into its venv...")
+    elif post_setup_key == "parakeet_stt":
+        _print_info("    Installing Parakeet Realtime EOU STT into its venv...")
         try:
             from hermes_constants import get_hermes_home
 
-            venv_dir = get_hermes_home() / "nemotron-venv"
+            venv_dir = get_hermes_home() / "parakeet-venv"
             py = venv_dir / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
             if not py.exists():
-                _print_info(f"    Creating Nemotron venv: {venv_dir}")
+                _print_info(f"    Creating Parakeet venv: {venv_dir}")
                 subprocess.run([sys.executable, "-m", "venv", str(venv_dir)], check=True, timeout=120)
             _ensure_cuda_torch(py)
             result = _pip_install_with_python(
@@ -1267,8 +1267,8 @@ def _run_post_setup(post_setup_key: str):
                     "pip",
                     "setuptools",
                     "wheel",
-                    "git+https://github.com/huggingface/transformers",
-                    "accelerate",
+                    "nemo_toolkit[asr]",
+                    "hf_xet",
                     "soundfile",
                     "packaging",
                     "--quiet",
@@ -1277,26 +1277,26 @@ def _run_post_setup(post_setup_key: str):
             )
             if result.returncode == 0:
                 verify = subprocess.run(
-                    [str(py), "-c", "from transformers import AutoModelForRNNT, AutoProcessor"],
+                    [str(py), "-c", "import nemo.collections.asr"],
                     capture_output=True,
                     text=True,
                     timeout=60,
                 )
                 if verify.returncode != 0:
-                    _print_warning("    Nemotron install completed, but Transformers RNNT verification failed:")
+                    _print_warning("    Parakeet install completed, but NeMo ASR verification failed:")
                     _print_info(f"      {(verify.stderr or '').strip()[:300]}")
                     return
-                _print_success("    Nemotron streaming STT dependencies installed in nemotron-venv")
-                _print_info("    Model downloads on first use; set stt.streaming.provider to nemotron.")
+                _print_success("    Parakeet Realtime EOU STT dependencies installed in parakeet-venv")
+                _print_info("    Model downloads on first use; set stt.streaming.provider to parakeet.")
                 return
-            _print_warning("    Nemotron streaming STT install failed:")
+            _print_warning("    Parakeet Realtime EOU STT install failed:")
             _print_info(f"      {(result.stderr or '').strip()[:300]}")
-            _print_info(f"    Run manually: \"{py}\" -m pip install -U git+https://github.com/huggingface/transformers accelerate soundfile packaging")
+            _print_info(f"    Run manually: \"{py}\" -m pip install -U \"nemo_toolkit[asr]\" hf_xet soundfile packaging")
         except subprocess.TimeoutExpired:
-            _print_warning("    Nemotron streaming STT install timed out (>15min)")
-            _print_info("    Run manually from the nemotron-venv Python shown above.")
+            _print_warning("    Parakeet Realtime EOU STT install timed out (>15min)")
+            _print_info("    Run manually from the parakeet-venv Python shown above.")
         except Exception as e:
-            _print_warning(f"    Nemotron streaming STT install failed: {e}")
+            _print_warning(f"    Parakeet Realtime EOU STT install failed: {e}")
 
     elif post_setup_key == "semantic_turn":
         _print_info("    Installing Smart Turn semantic VAD...")
@@ -1472,7 +1472,7 @@ def valid_post_setup_keys() -> Set[str]:
     command and the dashboard post-setup endpoint validate against, so a
     caller can't drive ``_run_post_setup`` with an arbitrary key.
     """
-    keys: Set[str] = {"livekit_wakeword", "nemotron_stt", "semantic_turn"}
+    keys: Set[str] = {"livekit_wakeword", "parakeet_stt", "semantic_turn"}
     for cat in TOOL_CATEGORIES.values():
         for prov in cat.get("providers", []):
             ps = prov.get("post_setup")

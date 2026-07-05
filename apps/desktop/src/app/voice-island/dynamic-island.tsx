@@ -305,7 +305,7 @@ function StateDot({ color, active, reducedMotion }: { color: string; active: boo
 
 // Live caption of the words being spoken — either Marvi's (TTS, while
 // `state.phase === 'speaking'`) or the user's (live streaming partials on
-// the Nemotron path, or a final flash on other paths, while listening/
+// the Parakeet path, or a final flash on other paths, while listening/
 // transcribing/thinking). Styled by speaker so it's obvious who's talking:
 // Marvi's line runs brighter, the user's line sits dimmer/muted with a tiny
 // "you" affordance. Clamped to two lines so long speech never blows out the

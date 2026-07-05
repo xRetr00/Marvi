@@ -801,29 +801,31 @@ def _install_pockettts_deps() -> bool:
         return False
 
 
-def _install_nemotron_stt_deps() -> bool:
-    """Install Nemotron streaming STT dependencies. Returns True on success."""
+def _install_parakeet_stt_deps() -> bool:
+    """Install Parakeet Realtime EOU STT dependencies. Returns True on success."""
     import subprocess
 
     print()
-    print_info("Installing Nemotron streaming STT...")
+    print_info("Installing Parakeet Realtime EOU STT...")
     print()
     try:
         from hermes_cli.tools_config import _run_post_setup
 
-        _run_post_setup("nemotron_stt")
+        _run_post_setup("parakeet_stt")
+        from tools.parakeet_streaming_stt import parakeet_venv_python
+
         subprocess.run(
-            [sys.executable, "-c", "from transformers import AutoModelForRNNT, AutoProcessor"],
+            [str(parakeet_venv_python()), "-c", "import nemo.collections.asr"],
             check=True,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             timeout=30,
         )
-        print_success("Nemotron streaming STT dependencies installed successfully")
+        print_success("Parakeet Realtime EOU STT dependencies installed successfully")
         return True
     except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError) as e:
-        print_error(f"Failed to install Nemotron streaming STT: {e}")
-        print_info("Try manually: hermes tools post-setup nemotron_stt")
+        print_error(f"Failed to install Parakeet Realtime EOU STT: {e}")
+        print_info("Try manually: hermes tools post-setup parakeet_stt")
         return False
 
 
@@ -1116,13 +1118,13 @@ def _setup_tts_provider(config: dict):
             stt_local.setdefault("batch_size", 8)
             stt_local.setdefault("vad_filter", True)
 
-            if prompt_yes_no("Install Nemotron streaming STT dependencies now?", True):
-                _install_nemotron_stt_deps()
+            if prompt_yes_no("Install Parakeet Realtime EOU streaming STT dependencies now?", True):
+                _install_parakeet_stt_deps()
             streaming = config["stt"].setdefault("streaming", {})
             streaming["enabled"] = True
-            streaming["provider"] = "nemotron"
-            streaming["model"] = "nvidia/nemotron-speech-streaming-en-0.6b"
-            streaming["lookahead_tokens"] = 1
+            streaming["provider"] = "parakeet"
+            streaming["model"] = "nvidia/parakeet_realtime_eou_120m-v1"
+            streaming["eou_token"] = "<EOU>"
             streaming["host"] = "127.0.0.1"
             streaming["port"] = 9090
             streaming["max_clients"] = 1

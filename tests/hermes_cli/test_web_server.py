@@ -6619,7 +6619,7 @@ class TestDesktopVoiceStartup:
                 "stt": {
                     "streaming": {
                         "enabled": True,
-                        "provider": "nemotron",
+                        "provider": "parakeet",
                         "host": "127.0.0.1",
                         "port": 9090,
                     }
@@ -6633,7 +6633,7 @@ class TestDesktopVoiceStartup:
 
         assert started == {}
 
-    def test_warms_pockettts_without_loading_nemotron_in_main_venv(self, monkeypatch):
+    def test_warms_pockettts_without_loading_parakeet_in_main_venv(self, monkeypatch):
         import hermes_cli.web_server as web_server
 
         warmed = []
@@ -6645,14 +6645,14 @@ class TestDesktopVoiceStartup:
                 "stt": {
                     "streaming": {
                         "enabled": True,
-                        "provider": "nemotron",
-                        "model": "nvidia/nemotron-speech-streaming-en-0.6b",
+                        "provider": "parakeet",
+                        "model": "nvidia/parakeet_realtime_eou_120m-v1",
                     }
                 },
             },
         )
         monkeypatch.setattr("tools.tts_tool.warm_tts_provider", lambda cfg: warmed.append(("tts", cfg)) or True)
-        monkeypatch.setattr("tools.nemotron_streaming_stt.warm_nemotron_stt", lambda cfg: warmed.append(("stt", cfg)) or True)
+        monkeypatch.setattr("tools.parakeet_streaming_stt.warm_parakeet_stt", lambda cfg: warmed.append(("stt", cfg)) or True)
 
         web_server._warm_desktop_voice_models()
 

@@ -30,6 +30,17 @@ export function vpLog(scope: string, message: string, detail?: unknown): void {
   } else {
     console.info(`[voice-presence] ${scope}: ${message}`)
   }
+  // Mirror to logs/voice-presence.log so it's reviewable as a file, not only in
+  // DevTools. Fire-and-forget; absent on the island window / non-desktop shells.
+  try {
+    ;(window as unknown as { hermesDesktop?: { logVoicePresence?: (e: unknown) => void } }).hermesDesktop?.logVoicePresence?.({
+      scope,
+      message,
+      detail
+    })
+  } catch {
+    // never let logging throw
+  }
 }
 
 /** Snapshot of recent voice-presence log entries (most recent last). */

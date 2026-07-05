@@ -14,9 +14,15 @@ import { rememberSpokenText } from './voice-echo-guard'
 // fails to start or stalls mid-stream for this long (rearmed on each progress
 // tick, so legitimately long speech is never cut off).
 const PLAYBACK_STALL_MS = 15_000
-const STREAM_START_BUFFER_SECONDS = 0.9
-const STREAM_UNDERRUN_BUFFER_SECONDS = 0.12
-const OUTPUT_PRIME_SECONDS = 0.35
+// NOTE(duplex): these are the per-utterance startup buffers. Because the voice
+// loop speaks one sentence chunk per playSpeechText call, EACH sentence paid
+// this latency before its first sound (0.9 + 0.35 ≈ 1.25s), which is why speech
+// started late and stuttered between sentences. Lowered for time-to-first-audio;
+// if PocketTTS chunks arrive unevenly and you hear underruns, nudge
+// STREAM_START_BUFFER_SECONDS back up. See docs/design/2026-07-05-voice-duplex-design.md.
+const STREAM_START_BUFFER_SECONDS = 0.3
+const STREAM_UNDERRUN_BUFFER_SECONDS = 0.1
+const OUTPUT_PRIME_SECONDS = 0.12
 
 let currentAudio: HTMLAudioElement | null = null
 let currentStop: (() => void) | null = null

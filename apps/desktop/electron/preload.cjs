@@ -95,6 +95,9 @@ contextBridge.exposeInMainWorld('hermesDesktop', {
   api: request => ipcRenderer.invoke('hermes:api', request),
   notify: payload => ipcRenderer.invoke('hermes:notify', payload),
   requestMicrophoneAccess: () => ipcRenderer.invoke('hermes:requestMicrophoneAccess'),
+  // Fire-and-forget: mirror voice-presence debug logs into logs/voice-presence.log
+  // so they can be reviewed alongside the other logs (not just DevTools).
+  logVoicePresence: entry => ipcRenderer.send('hermes:voice-presence-log', entry),
   readFileDataUrl: filePath => ipcRenderer.invoke('hermes:readFileDataUrl', filePath),
   readFileText: filePath => ipcRenderer.invoke('hermes:readFileText', filePath),
   selectPaths: options => ipcRenderer.invoke('hermes:selectPaths', options),

@@ -388,6 +388,22 @@ const DEFAULT_UPDATE_BRANCH = 'main'
 // errors.log, gateway.log produced by hermes_logging.setup_logging — one log
 // directory per user, regardless of which UI surface produced the line.
 const DESKTOP_LOG_PATH = path.join(HERMES_HOME, 'logs', 'desktop.log')
+// Renderer voice-presence debug logs (Dynamic Island / wake / barge-in / captions)
+// are mirrored here from vpLog() when the debug toggle is on, so they can be
+// reviewed as a file instead of only in DevTools.
+const VOICE_PRESENCE_LOG_PATH = path.join(HERMES_HOME, 'logs', 'voice-presence.log')
+ipcMain.on('hermes:voice-presence-log', (_event, entry) => {
+  try {
+    const at = new Date().toISOString()
+    const scope = entry && entry.scope ? String(entry.scope) : '?'
+    const message = entry && entry.message ? String(entry.message) : ''
+    const detail = entry && entry.detail !== undefined ? ' ' + JSON.stringify(entry.detail) : ''
+    fs.mkdirSync(path.dirname(VOICE_PRESENCE_LOG_PATH), { recursive: true })
+    fs.appendFileSync(VOICE_PRESENCE_LOG_PATH, `${at} [${scope}] ${message}${detail}\n`)
+  } catch {
+    // Logging must never crash the shell.
+  }
+})
 const DESKTOP_LOG_FLUSH_MS = 120
 const DESKTOP_LOG_BUFFER_MAX_CHARS = 64 * 1024
 // Bound desktop.log on disk. It is an append-only forensic log, so a boot loop

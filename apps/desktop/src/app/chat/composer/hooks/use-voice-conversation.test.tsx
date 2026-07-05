@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 import { act, renderHook, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
@@ -6,7 +7,9 @@ import { clearRecentSpokenText, rememberSpokenText } from '@/lib/voice-echo-guar
 import { useVoiceConversation } from './use-voice-conversation'
 
 const openStreamingTranscription = vi.fn()
-const playSpeechText = vi.fn()
+const startSpeechSession = vi.fn()
+const enqueueSpeech = vi.fn()
+const finishSpeech = vi.fn().mockResolvedValue(true)
 const stopVoicePlayback = vi.fn()
 const startMic = vi.fn()
 const stopMic = vi.fn()
@@ -38,11 +41,14 @@ vi.mock('@/lib/streaming-transcription', () => ({
 }))
 
 vi.mock('@/lib/voice-barge-in', () => ({
-  createBargeInGate: () => ({ update: (level: number) => level > 0 })
+  BARGE_IN_DEFAULTS: { graceMs: 0, level: 0.2, sustainedMs: 0 },
+  createBargeInGate: () => ({ state: 'idle', update: (level: number) => level > 0 })
 }))
 
 vi.mock('@/lib/voice-playback', () => ({
-  playSpeechText: (...args: unknown[]) => playSpeechText(...args),
+  startSpeechSession: (...args: unknown[]) => startSpeechSession(...args),
+  enqueueSpeech: (...args: unknown[]) => enqueueSpeech(...args),
+  finishSpeech: () => finishSpeech(),
   stopVoicePlayback: () => stopVoicePlayback()
 }))
 
@@ -147,18 +153,11 @@ describe('useVoiceConversation', () => {
     const onInterrupt = vi.fn()
     const consumePendingResponse = vi.fn()
     let response = null as null | { id: string; pending: boolean; text: string }
-    let releasePlayback!: () => void
 
     startMic.mockImplementation(async options => {
       recorderState.options = options
     })
     stopMic.mockResolvedValue({ audio: new Blob(['voice']), durationMs: 1000, heardSpeech: true })
-    playSpeechText.mockImplementation(
-      () =>
-        new Promise<void>(resolve => {
-          releasePlayback = resolve
-        })
-    )
 
     const { result, rerender } = renderHook(() =>
       useVoiceConversation({
@@ -179,22 +178,22 @@ describe('useVoiceConversation', () => {
       await recorderState.options?.onSilence?.()
     })
     rerender()
-    await waitFor(() => expect(playSpeechText).toHaveBeenCalledTimes(1))
+    // The first sentence is fed into the gapless session (which arms barge-in).
+    await waitFor(() => expect(enqueueSpeech).toHaveBeenCalledTimes(1))
+    expect(startSpeechSession).toHaveBeenCalledTimes(1)
 
     act(() => {
       recorderState.options?.onLevel?.(0.5)
     })
 
-    expect(stopVoicePlayback).toHaveBeenCalledTimes(1)
+    expect(stopVoicePlayback).toHaveBeenCalled()
     expect(onInterrupt).toHaveBeenCalledTimes(1)
     expect(consumePendingResponse).toHaveBeenCalled()
 
+    // After a barge-in the turn is abandoned — stale streamed text is NOT spoken.
     response = { id: 'assistant-1', pending: true, text: 'This is a spoken sentence. More stale text.' }
-    act(() => {
-      releasePlayback()
-    })
     rerender()
 
-    expect(playSpeechText).toHaveBeenCalledTimes(1)
+    expect(enqueueSpeech).toHaveBeenCalledTimes(1)
   })
 })

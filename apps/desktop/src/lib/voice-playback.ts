@@ -11,40 +11,32 @@ import { rememberSpokenText } from './voice-echo-guard'
 
 // Free Edge TTS occasionally hands back audio that never fires `playing`/`ended`
 // nor `error` — leaving voice mode stuck "speaking" forever. Reject if playback
-// fails to start or stalls mid-stream for this long (rearmed on each progress
-// tick, so legitimately long speech is never cut off).
+// fails to start or stalls mid-stream for this long.
 const PLAYBACK_STALL_MS = 15_000
-// NOTE(duplex): these are the per-utterance startup buffers. Because the voice
-// loop speaks one sentence chunk per playSpeechText call, EACH sentence paid
-// this latency before its first sound (0.9 + 0.35 ≈ 1.25s), which is why speech
-// started late and stuttered between sentences. Lowered for time-to-first-audio;
-// if PocketTTS chunks arrive unevenly and you hear underruns, nudge
-// STREAM_START_BUFFER_SECONDS back up. See docs/design/2026-07-05-voice-duplex-design.md.
+
+// NOTE(duplex): gapless streaming player buffers. The whole utterance now plays
+// through ONE AudioContext with a single contiguous timeline, so these apply
+// once at the start of an utterance — not per sentence like the old code. Small
+// = low time-to-first-audio; if PocketTTS chunks arrive unevenly and you hear
+// underruns, nudge STREAM_START_BUFFER_SECONDS up.
+// See docs/design/2026-07-05-voice-duplex-design.md.
 const STREAM_START_BUFFER_SECONDS = 0.3
 const STREAM_UNDERRUN_BUFFER_SECONDS = 0.1
 const OUTPUT_PRIME_SECONDS = 0.12
 
-let currentAudio: HTMLAudioElement | null = null
-let currentStop: (() => void) | null = null
-let sequence = 0
-
-function currentState(
-  status: VoicePlaybackState['status'],
-  options?: VoicePlaybackOptions,
-  audioElement: HTMLAudioElement | null = null
-): VoicePlaybackState {
-  return {
-    audioElement,
-    messageId: options?.messageId ?? null,
-    sequence,
-    source: options?.source ?? null,
-    status
-  }
-}
+// Absolute cap so a session can never hang the voice loop even if the audio
+// clock or a fetch misbehaves — finishSpeech() always resolves within this.
+const SESSION_SAFETY_MS = 180_000
 
 export interface VoicePlaybackOptions {
   messageId?: string | null
   source: VoicePlaybackSource
+}
+
+interface GaplessPlayerDeps {
+  createAudioContext?: () => AudioContext
+  fetchImpl?: typeof fetch
+  getConnection?: () => Promise<{ authMode?: string; baseUrl: string; token?: string | null } | null>
 }
 
 function pcm16Base64ToFloat32(encoded: string): Float32Array {
@@ -62,207 +54,434 @@ function pcm16Base64ToFloat32(encoded: string): Float32Array {
   return samples
 }
 
-async function playStreamingSpeechText(text: string, options: VoicePlaybackOptions): Promise<boolean> {
-  const conn = await window.hermesDesktop.getConnection().catch(() => null)
+/**
+ * Gapless streaming TTS player. Text segments are enqueued as the LLM streams;
+ * the player synthesizes the next segment while the current one plays and
+ * schedules every PCM chunk on a single AudioContext timeline, so speech is
+ * continuous instead of restarting per sentence.
+ */
+class GaplessPlayer {
+  private readonly createAudioContext: () => AudioContext
+  private readonly fetchImpl: typeof fetch
+  private readonly getConnection: () => Promise<{ authMode?: string; baseUrl: string; token?: string | null } | null>
 
-  if (!conn || conn.authMode === 'oauth' || !conn.token) {
-    return false
+  private ctx: AudioContext | null = null
+  private nextTime = 0
+  private sampleRate = 24000
+  private started = false
+  private primed = false
+  private queue: string[] = []
+  private pumping = false
+  private moreComing = false
+  private closed = true
+  private stopped = false
+  private playedChunks = 0
+  private sequence = 0
+  private abort: AbortController | null = null
+  private readonly sources = new Set<AudioBufferSourceNode>()
+  private drainResolvers: Array<(playedAudio: boolean) => void> = []
+  private finalizeTimer: number | null = null
+  private safetyTimer: number | null = null
+  private options: VoicePlaybackOptions = { source: 'voice-conversation' }
+
+  constructor(deps: GaplessPlayerDeps = {}) {
+    this.createAudioContext = deps.createAudioContext ?? (() => new AudioContext())
+    this.fetchImpl = deps.fetchImpl ?? ((...args) => fetch(...args))
+    this.getConnection =
+      deps.getConnection ??
+      (async () => {
+        try {
+          return (await window.hermesDesktop?.getConnection?.()) ?? null
+        } catch {
+          return null
+        }
+      })
   }
 
-  const abortController = new AbortController()
-  const response = await fetch(`${conn.baseUrl.replace(/\/+$/, '')}/api/audio/speak/stream`, {
-    body: JSON.stringify({ text }),
-    headers: {
-      'Content-Type': 'application/json',
-      'X-Hermes-Session-Token': conn.token
-    },
-    method: 'POST',
-    signal: abortController.signal
-  })
-
-  if (!response.ok || !response.body) {
-    return false
+  get sequenceId(): number {
+    return this.sequence
   }
 
-  const audioContext = new AudioContext()
-  await audioContext.resume?.().catch(() => undefined)
-  const reader = response.body.getReader()
-  const decoder = new TextDecoder()
-  let buffer = ''
-  let sampleRate = 24000
-  let nextTime = audioContext.currentTime
-  let playedChunks = 0
-  let failed = false
-  let stopped = false
-  let startedStream = false
-  let queuedSeconds = 0
-  const queuedChunks: string[] = []
-
-  const primeAudioOutput = () => {
-    const frames = Math.max(1, Math.floor((audioContext.sampleRate || sampleRate) * OUTPUT_PRIME_SECONDS))
-    const silent = audioContext.createBuffer(1, frames, audioContext.sampleRate || sampleRate)
-    const source = audioContext.createBufferSource()
-    source.buffer = silent
-    source.connect(audioContext.destination)
-    source.start(audioContext.currentTime)
-    nextTime = audioContext.currentTime + OUTPUT_PRIME_SECONDS
+  isActive(): boolean {
+    return !this.closed
   }
 
-  currentStop = () => {
-    stopped = true
-    abortController.abort()
-    void reader.cancel().catch(() => undefined)
-    void audioContext.close?.()
-  }
-  setVoicePlaybackState(currentState('speaking', options))
-
-  const playChunk = (encoded: string) => {
-    const samples = pcm16Base64ToFloat32(encoded)
-    const audioBuffer = audioContext.createBuffer(1, samples.length, sampleRate)
-    audioBuffer.getChannelData(0).set(samples)
-    const source = audioContext.createBufferSource()
-    source.buffer = audioBuffer
-    source.connect(audioContext.destination)
-    nextTime = Math.max(
-      nextTime,
-      audioContext.currentTime + (startedStream ? STREAM_UNDERRUN_BUFFER_SECONDS : STREAM_START_BUFFER_SECONDS)
-    )
-    source.start(nextTime)
-    nextTime += samples.length / sampleRate
-    startedStream = true
+  /** True when the last session ended via stop() (user/interrupt) rather than
+   *  finishing naturally — callers use this to skip a fallback after a stop. */
+  wasStopped(): boolean {
+    return this.stopped
   }
 
-  const queueOrPlayChunk = (encoded: string) => {
-    if (startedStream) {
-      playChunk(encoded)
-      playedChunks += 1
+  /** Begin a new utterance session, replacing any previous one. */
+  start(options: VoicePlaybackOptions): void {
+    this.hardStop(false)
+    this.closed = false
+    this.stopped = false
+    this.moreComing = true
+    this.started = false
+    this.primed = false
+    this.playedChunks = 0
+    this.queue = []
+    this.nextTime = 0
+    // Abandon any stale pump from a previous session (e.g. a fetch that never
+    // resolved). The new sequence makes the old pump exit on its next tick.
+    this.pumping = false
+    this.options = options
+    this.sequence += 1
+    this.abort = new AbortController()
 
+    try {
+      this.ctx = this.createAudioContext()
+      void this.ctx.resume?.()?.catch?.(() => undefined)
+    } catch {
+      this.ctx = null
+    }
+
+    setVoicePlaybackState({
+      audioElement: null,
+      messageId: options.messageId ?? null,
+      sequence: this.sequence,
+      source: options.source,
+      status: 'speaking'
+    })
+
+    this.safetyTimer = window.setTimeout(() => this.finalize(), SESSION_SAFETY_MS)
+  }
+
+  enqueue(text: string): void {
+    if (this.closed || !this.moreComing) {
       return
     }
 
-    const samples = pcm16Base64ToFloat32(encoded)
-    queuedChunks.push(encoded)
-    queuedSeconds += samples.length / sampleRate
+    const clean = sanitizeTextForSpeech(text)
+    if (!clean) {
+      return
+    }
 
-    if (queuedSeconds >= STREAM_START_BUFFER_SECONDS) {
-      primeAudioOutput()
-      for (const chunk of queuedChunks.splice(0)) {
-        playChunk(chunk)
-        playedChunks += 1
+    rememberSpokenText(clean)
+    this.queue.push(clean)
+    void this.pump()
+  }
+
+  /** No more text is coming. Resolves once queued audio has finished playing
+   *  (or the session is stopped). Returns whether any audio actually played. */
+  finish(): Promise<boolean> {
+    this.moreComing = false
+
+    return new Promise<boolean>(resolve => {
+      if (this.closed) {
+        resolve(this.playedChunks > 0)
+        return
+      }
+      this.drainResolvers.push(resolve)
+      void this.pump()
+      this.scheduleFinalizeIfDrained()
+    })
+  }
+
+  /** Hard stop: abort synthesis, silence scheduled audio, mark idle. */
+  stop(): void {
+    this.stopped = true
+    this.hardStop(true)
+  }
+
+  private hardStop(publishIdle: boolean): void {
+    const wasActive = !this.closed
+    this.closed = true
+    this.moreComing = false
+    this.queue = []
+
+    if (this.finalizeTimer !== null) {
+      window.clearTimeout(this.finalizeTimer)
+      this.finalizeTimer = null
+    }
+    if (this.safetyTimer !== null) {
+      window.clearTimeout(this.safetyTimer)
+      this.safetyTimer = null
+    }
+
+    this.abort?.abort()
+    this.abort = null
+
+    for (const source of this.sources) {
+      try {
+        source.stop()
+      } catch {
+        // already stopped
+      }
+    }
+    this.sources.clear()
+
+    void this.ctx?.close?.()
+    this.ctx = null
+
+    if (publishIdle && wasActive) {
+      setVoicePlaybackState({ audioElement: null, messageId: null, sequence: this.sequence, source: null, status: 'idle' })
+    }
+
+    this.resolveDrain()
+  }
+
+  private resolveDrain(): void {
+    const resolvers = this.drainResolvers
+    this.drainResolvers = []
+    for (const resolve of resolvers) {
+      resolve(this.playedChunks > 0)
+    }
+  }
+
+  private async pump(): Promise<void> {
+    if (this.pumping || this.closed) {
+      return
+    }
+    const seq = this.sequence
+    this.pumping = true
+
+    try {
+      while (this.queue.length && !this.closed && this.sequence === seq) {
+        const text = this.queue.shift() as string
+        await this.streamSegment(text, seq)
+      }
+    } finally {
+      // Only the current session's pump owns the pumping flag / finalize.
+      if (this.sequence === seq) {
+        this.pumping = false
+        this.scheduleFinalizeIfDrained()
       }
     }
   }
 
-  try {
-    while (!stopped) {
-      const { done, value } = await reader.read()
-      if (done) {
-        break
-      }
+  private scheduleFinalizeIfDrained(): void {
+    if (this.closed || this.moreComing || this.queue.length > 0 || this.pumping) {
+      return
+    }
+    if (this.finalizeTimer !== null) {
+      return
+    }
 
-      buffer += decoder.decode(value, { stream: true })
-      const lines = buffer.split('\n')
-      buffer = lines.pop() ?? ''
+    // All text synthesized and scheduled; finalize once the last chunk finishes.
+    const remainingMs = this.ctx ? Math.max(0, (this.nextTime - this.ctx.currentTime) * 1000) : 0
+    this.finalizeTimer = window.setTimeout(() => this.finalize(), remainingMs + 60)
+  }
 
-      for (const line of lines) {
-        if (!line.trim()) {
-          continue
-        }
+  private finalize(): void {
+    if (this.closed) {
+      return
+    }
+    this.closed = true
 
-        const event = JSON.parse(line) as { audio?: string; error?: string; sample_rate?: number; type?: string }
-        if ((event.type === 'start' || event.type === 'sample_rate') && event.sample_rate) {
-          sampleRate = event.sample_rate
-        } else if (event.type === 'chunk' && event.audio) {
-          queueOrPlayChunk(event.audio)
-        } else if (event.type === 'error') {
-          failed = true
-          stopped = true
+    if (this.finalizeTimer !== null) {
+      window.clearTimeout(this.finalizeTimer)
+      this.finalizeTimer = null
+    }
+    if (this.safetyTimer !== null) {
+      window.clearTimeout(this.safetyTimer)
+      this.safetyTimer = null
+    }
+
+    this.abort?.abort()
+    this.abort = null
+    this.sources.clear()
+    void this.ctx?.close?.()
+    this.ctx = null
+
+    // Only clear the shared state if it still belongs to this session (a newer
+    // session may already have taken over).
+    if ($voicePlayback.get().sequence === this.sequence) {
+      setVoicePlaybackState({ audioElement: null, messageId: null, sequence: this.sequence, source: null, status: 'idle' })
+    }
+
+    this.resolveDrain()
+  }
+
+  private async streamSegment(text: string, seq: number): Promise<void> {
+    const conn = await this.getConnection()
+    if (!conn || conn.authMode === 'oauth' || !conn.token || !this.ctx || this.closed || this.sequence !== seq) {
+      return
+    }
+
+    let response: Response
+    try {
+      response = await this.fetchImpl(`${conn.baseUrl.replace(/\/+$/, '')}/api/audio/speak/stream`, {
+        body: JSON.stringify({ text }),
+        headers: { 'Content-Type': 'application/json', 'X-Hermes-Session-Token': conn.token },
+        method: 'POST',
+        signal: this.abort?.signal
+      })
+    } catch {
+      return // aborted or network error; drain logic still finalizes
+    }
+
+    if (!response.ok || !response.body) {
+      return
+    }
+
+    const reader = response.body.getReader()
+    const decoder = new TextDecoder()
+    let buffer = ''
+
+    try {
+      while (!this.closed) {
+        const { done, value } = await reader.read()
+        if (done) {
           break
         }
+
+        buffer += decoder.decode(value, { stream: true })
+        const lines = buffer.split('\n')
+        buffer = lines.pop() ?? ''
+
+        for (const line of lines) {
+          if (!line.trim()) {
+            continue
+          }
+          const event = JSON.parse(line) as { audio?: string; error?: string; sample_rate?: number; type?: string }
+          if ((event.type === 'start' || event.type === 'sample_rate') && event.sample_rate) {
+            this.sampleRate = event.sample_rate
+          } else if (event.type === 'chunk' && event.audio) {
+            this.scheduleChunk(event.audio)
+          }
+        }
       }
-    }
-  } catch (error) {
-    if (!stopped) {
-      throw error
+    } catch {
+      // aborted mid-read; finalize handles cleanup
     }
   }
 
-  if (!stopped && !startedStream && queuedChunks.length > 0) {
-    primeAudioOutput()
-    for (const chunk of queuedChunks.splice(0)) {
-      playChunk(chunk)
-      playedChunks += 1
+  private primeOnce(): void {
+    if (this.primed || !this.ctx) {
+      return
     }
+    this.primed = true
+    const frames = Math.max(1, Math.floor((this.ctx.sampleRate || this.sampleRate) * OUTPUT_PRIME_SECONDS))
+    const silent = this.ctx.createBuffer(1, frames, this.ctx.sampleRate || this.sampleRate)
+    const source = this.ctx.createBufferSource()
+    source.buffer = silent
+    source.connect(this.ctx.destination)
+    source.start(this.ctx.currentTime)
+    this.nextTime = this.ctx.currentTime + OUTPUT_PRIME_SECONDS
   }
 
-  if (!stopped) {
-    await new Promise(resolve => window.setTimeout(resolve, Math.max(0, (nextTime - audioContext.currentTime) * 1000)))
-  }
+  private scheduleChunk(encoded: string): void {
+    if (!this.ctx || this.closed) {
+      return
+    }
+    this.primeOnce()
 
-  currentStop = null
-  await audioContext.close?.()
-  return !stopped && !failed && playedChunks > 0
+    const samples = pcm16Base64ToFloat32(encoded)
+    const audioBuffer = this.ctx.createBuffer(1, samples.length, this.sampleRate)
+    audioBuffer.getChannelData(0).set(samples)
+    const source = this.ctx.createBufferSource()
+    source.buffer = audioBuffer
+    source.connect(this.ctx.destination)
+
+    const buffer = this.started ? STREAM_UNDERRUN_BUFFER_SECONDS : STREAM_START_BUFFER_SECONDS
+    this.nextTime = Math.max(this.nextTime, this.ctx.currentTime + buffer)
+    source.start(this.nextTime)
+    this.nextTime += samples.length / this.sampleRate
+    this.started = true
+    this.playedChunks += 1
+
+    this.sources.add(source)
+    source.onended = () => this.sources.delete(source)
+  }
 }
 
-export function stopVoicePlayback() {
-  sequence += 1
-  currentStop?.()
-  currentStop = null
+export const gaplessPlayer = new GaplessPlayer()
+/** Test seam: build a player with injected AudioContext/fetch/connection. */
+export function createGaplessPlayerForTest(deps: GaplessPlayerDeps): GaplessPlayer {
+  return new GaplessPlayer(deps)
+}
 
+// --- Streaming session API (used by the voice conversation loop) -----------
+
+/** Begin a gapless speaking session for an utterance. */
+export function startSpeechSession(options: VoicePlaybackOptions): void {
+  gaplessPlayer.start(options)
+}
+
+/** Feed one sentence/clause into the current session (non-blocking). */
+export function enqueueSpeech(text: string): void {
+  gaplessPlayer.enqueue(text)
+}
+
+/** Mark the utterance complete; resolves once audio finishes (or is stopped). */
+export function finishSpeech(): Promise<boolean> {
+  return gaplessPlayer.finish()
+}
+
+// --- Legacy one-shot API ----------------------------------------------------
+
+let currentAudio: HTMLAudioElement | null = null
+let legacySequence = 0
+
+function stopLegacyAudio(): void {
   if (currentAudio) {
     currentAudio.pause()
     currentAudio.src = ''
     currentAudio.load()
     currentAudio = null
   }
-
-  setVoicePlaybackState({
-    audioElement: null,
-    messageId: null,
-    sequence,
-    source: null,
-    status: 'idle'
-  })
 }
 
+export function stopVoicePlayback(): void {
+  legacySequence += 1
+  gaplessPlayer.stop()
+  stopLegacyAudio()
+  setVoicePlaybackState({ audioElement: null, messageId: null, sequence: gaplessPlayer.sequenceId, source: null, status: 'idle' })
+}
+
+/**
+ * One-shot speak of a complete piece of text (read-aloud / auto-speak). Streams
+ * gaplessly via the player; falls back to Edge `speakText` when streaming
+ * produced no audio (e.g. PocketTTS unavailable).
+ */
 export async function playSpeechText(text: string, options: VoicePlaybackOptions): Promise<boolean> {
   stopVoicePlayback()
 
   const speakableText = sanitizeTextForSpeech(text)
-
   if (!speakableText) {
     return false
   }
 
-  rememberSpokenText(speakableText)
+  startSpeechSession(options)
+  enqueueSpeech(speakableText)
+  const playedAudio = await finishSpeech()
 
-  const ownSequence = sequence
-  const isCurrent = () => ownSequence === sequence
+  if (playedAudio) {
+    return true
+  }
 
-  setVoicePlaybackState(currentState('preparing', options))
+  // Stopped by the user/interrupt — don't resurrect audio via the fallback.
+  if (gaplessPlayer.wasStopped()) {
+    return false
+  }
+
+  // Streaming produced nothing — fall back to the non-streaming Edge clip.
+  const ownSequence = ++legacySequence
+  const isCurrent = () => ownSequence === legacySequence
+
+  setVoicePlaybackState({ audioElement: null, messageId: options.messageId ?? null, sequence: ownSequence, source: options.source, status: 'preparing' })
+
+  let response: { data_url: string }
+  try {
+    response = await speakText(speakableText)
+  } catch {
+    if (isCurrent()) {
+      setVoicePlaybackState({ audioElement: null, messageId: null, sequence: ownSequence, source: null, status: 'idle' })
+    }
+    return false
+  }
+
+  if (!isCurrent()) {
+    return false
+  }
+
+  const audio = new Audio(response.data_url)
+  currentAudio = audio
+  setVoicePlaybackState({ audioElement: audio, messageId: options.messageId ?? null, sequence: ownSequence, source: options.source, status: 'speaking' })
 
   try {
-    if (await playStreamingSpeechText(speakableText, options).catch(() => false)) {
-      if (isCurrent()) {
-        setVoicePlaybackState(currentState('idle'))
-      }
-      return true
-    }
-
-    if (!isCurrent()) {
-      return false
-    }
-
-    const response = await speakText(speakableText)
-
-    if (!isCurrent()) {
-      return false
-    }
-
-    const audio = new Audio(response.data_url)
-    currentAudio = audio
-    setVoicePlaybackState(currentState('speaking', options, audio))
-
     await new Promise<void>((resolve, reject) => {
       let stall: number | null = null
 
@@ -271,18 +490,15 @@ export async function playSpeechText(text: string, options: VoicePlaybackOptions
           window.clearTimeout(stall)
           stall = null
         }
-
         audio.removeEventListener('ended', onEnded)
         audio.removeEventListener('error', onError)
         audio.removeEventListener('timeupdate', armStall)
-        currentStop = null
       }
 
       const armStall = () => {
         if (stall !== null) {
           window.clearTimeout(stall)
         }
-
         stall = window.setTimeout(() => {
           cleanup()
           reject(new Error('Playback stalled'))
@@ -293,15 +509,9 @@ export async function playSpeechText(text: string, options: VoicePlaybackOptions
         cleanup()
         resolve()
       }
-
       const onError = () => {
         cleanup()
         reject(new Error('Playback failed'))
-      }
-
-      currentStop = () => {
-        cleanup()
-        resolve()
       }
 
       audio.addEventListener('ended', onEnded, { once: true })
@@ -310,26 +520,16 @@ export async function playSpeechText(text: string, options: VoicePlaybackOptions
       armStall()
       void audio.play().catch(onError)
     })
-
-    if (!isCurrent()) {
-      return false
-    }
-
-    currentAudio = null
-    setVoicePlaybackState(currentState('idle'))
-
-    return true
-  } catch (error) {
+  } finally {
     if (isCurrent()) {
-      currentStop = null
       currentAudio = null
-      setVoicePlaybackState(currentState('idle'))
+      setVoicePlaybackState({ audioElement: null, messageId: null, sequence: ownSequence, source: null, status: 'idle' })
     }
-
-    throw error
   }
+
+  return isCurrent()
 }
 
-export function isVoicePlaybackActive() {
+export function isVoicePlaybackActive(): boolean {
   return $voicePlayback.get().status !== 'idle'
 }

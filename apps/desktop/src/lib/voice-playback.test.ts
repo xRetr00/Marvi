@@ -1,6 +1,7 @@
+// @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { playSpeechText, stopVoicePlayback } from './voice-playback'
+import { createGaplessPlayerForTest, playSpeechText, stopVoicePlayback } from './voice-playback'
 
 const speakText = vi.fn()
 
@@ -214,7 +215,8 @@ describe('playSpeechText', () => {
 
     expect(resume).toHaveBeenCalled()
     expect(starts[0]).toBe(5)
-    expect(Math.max(...starts)).toBeGreaterThanOrEqual(5.9)
+    // First real chunk waits STREAM_START_BUFFER_SECONDS (0.3) past currentTime.
+    expect(Math.max(...starts)).toBeGreaterThanOrEqual(5.3)
     expect(speakText).not.toHaveBeenCalled()
   })
 
@@ -245,5 +247,92 @@ describe('playSpeechText', () => {
 
     expect(fetch).toHaveBeenCalled()
     expect(speakText).toHaveBeenCalledWith('Hello.')
+  })
+})
+
+class FakeSource {
+  started: number | null = null
+  buffer: unknown = null
+  onended: (() => void) | null = null
+  connect() {}
+  start(_t: number) {}
+  stop() {}
+}
+
+class FakeCtx {
+  currentTime = 0
+  sampleRate = 48000
+  destination = {}
+  starts: number[] = []
+
+  createBuffer(_channels: number, length: number) {
+    return { getChannelData: () => new Float32Array(length) }
+  }
+  createBufferSource() {
+    const source = new FakeSource()
+    source.start = (t: number) => {
+      this.starts.push(t)
+    }
+    return source as unknown as AudioBufferSourceNode
+  }
+  resume() {
+    return Promise.resolve()
+  }
+  close() {
+    return Promise.resolve()
+  }
+}
+
+// One ndjson body: a sample-rate header then two identical 2-sample chunks.
+function fakeFetchOnce(): typeof fetch {
+  const body =
+    '{"type":"start","sample_rate":24000}\n{"type":"chunk","audio":"AAAAAA=="}\n{"type":"chunk","audio":"AAAAAA=="}\n'
+  return (async () => {
+    let sent = false
+    const reader = {
+      read: async () => {
+        if (sent) {
+          return { done: true, value: undefined }
+        }
+        sent = true
+        return { done: false, value: new TextEncoder().encode(body) }
+      }
+    }
+    return { ok: true, body: { getReader: () => reader } } as unknown as Response
+  }) as unknown as typeof fetch
+}
+
+describe('GaplessPlayer', () => {
+  it('schedules chunks contiguously and finish() resolves after playback', async () => {
+    const ctx = new FakeCtx()
+    const player = createGaplessPlayerForTest({
+      createAudioContext: () => ctx as unknown as AudioContext,
+      fetchImpl: fakeFetchOnce(),
+      getConnection: async () => ({ baseUrl: 'http://x', token: 't' })
+    })
+
+    player.start({ source: 'voice-conversation' })
+    player.enqueue('hello world')
+    const playedAudio = await player.finish()
+
+    expect(playedAudio).toBe(true)
+    // starts = [prime, chunk1, chunk2]; the two chunks are back-to-back (no gap).
+    expect(ctx.starts.length).toBe(3)
+    const chunkDuration = 2 / 24000
+    expect(ctx.starts[2] - ctx.starts[1]).toBeCloseTo(chunkDuration, 5)
+    expect(player.isActive()).toBe(false)
+  })
+
+  it('finish() resolves false (no audio) when there is no connection', async () => {
+    const ctx = new FakeCtx()
+    const player = createGaplessPlayerForTest({
+      createAudioContext: () => ctx as unknown as AudioContext,
+      fetchImpl: fakeFetchOnce(),
+      getConnection: async () => null
+    })
+
+    player.start({ source: 'read-aloud' })
+    player.enqueue('nothing to say')
+    expect(await player.finish()).toBe(false)
   })
 })

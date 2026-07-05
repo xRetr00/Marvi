@@ -4,7 +4,7 @@ import { useI18n } from '@/i18n'
 import { BARGE_IN_DEFAULTS, type BargeInGateState, createBargeInGate } from '@/lib/voice-barge-in'
 import { isLikelySelfEchoTranscript } from '@/lib/voice-echo-guard'
 import { openStreamingTranscription, type StreamingTranscriptionSession } from '@/lib/streaming-transcription'
-import { playSpeechText, stopVoicePlayback } from '@/lib/voice-playback'
+import { enqueueSpeech, finishSpeech, startSpeechSession, stopVoicePlayback } from '@/lib/voice-playback'
 import { vpLog } from '@/lib/voice-presence-log'
 import { notify, notifyError } from '@/store/notifications'
 import { setUserCaption } from '@/store/voice-presence'
@@ -65,6 +65,10 @@ export function useVoiceConversation({
   const statusRef = useRef<ConversationStatus>('idle')
   const wasEnabledRef = useRef(enabled)
   const streamingRef = useRef<StreamingTranscriptionSession | null>(null)
+  // duplex: one gapless speaking session per utterance (fed sentence-by-sentence
+  // as the LLM streams) instead of a separate play call per sentence.
+  const speakingRef = useRef(false)
+  const bargeInterruptedRef = useRef(false)
 
   useEffect(() => {
     enabledRef.current = enabled
@@ -286,89 +290,116 @@ export function useVoiceConversation({
     }
   }, [handle, handleSilence, onFatalError, streamingSttEnabled, voiceCopy.couldNotStartSession, voiceCopy.microphoneFailed])
 
-  const speak = useCallback(
-    async (text: string) => {
-      setStatus('speaking')
-      setCaption(text)
-      const startedAt = Date.now()
-      const gate = createBargeInGate(BARGE_IN_DEFAULTS)
-      let interrupted = false
-      let lastGateState: BargeInGateState = 'idle'
-      let peakLevel = 0
-      let lastPeakLogAt = 0
+  // Arm barge-in for the whole speaking session (mic stays open through
+  // playback; talking over Marvi stops her). Armed once per utterance.
+  const armBargeIn = useCallback(() => {
+    if (!bargeInEnabled) {
+      return
+    }
 
-      try {
-        if (bargeInEnabled) {
-          // Guarantee a clean recorder: useMicRecorder.start() silently
-          // early-returns if one is already active, which would arm NOTHING and
-          // make barge-in look dead. cancel() is a no-op when idle.
-          handle.cancel()
-          vpLog('voice', 'barge-in armed', { defaults: BARGE_IN_DEFAULTS })
-          void handle
-            .start({
-              onError: err => vpLog('voice', 'barge-in mic error', { error: String(err) }),
-              onLevel: level => {
-                if (interrupted) {
-                  return
-                }
+    const startedAt = Date.now()
+    const gate = createBargeInGate(BARGE_IN_DEFAULTS)
+    let lastGateState: BargeInGateState = 'idle'
+    let peakLevel = 0
+    let lastPeakLogAt = 0
+    bargeInterruptedRef.current = false
 
-                const elapsedMs = Date.now() - startedAt
-                // Peak-level heartbeat (~1s): proves the mic is delivering audio
-                // during playback and shows how high user speech reaches vs the
-                // `level` threshold — the number to tune barge-in from.
-                peakLevel = Math.max(peakLevel, level)
-                if (Date.now() - lastPeakLogAt > 1000) {
-                  vpLog('voice', 'barge-in level', { peak: Number(peakLevel.toFixed(3)), threshold: BARGE_IN_DEFAULTS.level })
-                  lastPeakLogAt = Date.now()
-                  peakLevel = 0
-                }
+    // useMicRecorder.start() silently early-returns if a recorder is already
+    // active, which would arm NOTHING — cancel() first for a guaranteed start.
+    handle.cancel()
+    vpLog('voice', 'barge-in armed', { defaults: BARGE_IN_DEFAULTS })
+    void handle
+      .start({
+        onError: err => vpLog('voice', 'barge-in mic error', { error: String(err) }),
+        onLevel: level => {
+          if (bargeInterruptedRef.current) {
+            return
+          }
 
-                // NOTE(duplex-phase2): to make this echo-robust on speakers, pass a
-                // third arg `confirmed=false` here while the audio is believed to be
-                // Marvi's own voice (e.g. a streamed partial matching
-                // isLikelySelfEchoTranscript). Today it's energy-only (confirmed=true).
-                const triggered = gate.update(level, elapsedMs)
+          const elapsedMs = Date.now() - startedAt
+          // Peak-level heartbeat (~1s): proves the mic is delivering audio during
+          // playback and shows how high user speech reaches vs the threshold.
+          peakLevel = Math.max(peakLevel, level)
+          if (Date.now() - lastPeakLogAt > 1000) {
+            vpLog('voice', 'barge-in level', { peak: Number(peakLevel.toFixed(3)), threshold: BARGE_IN_DEFAULTS.level })
+            lastPeakLogAt = Date.now()
+            peakLevel = 0
+          }
 
-                if (gate.state !== lastGateState) {
-                  vpLog('voice', 'barge-in gate', { state: gate.state, level: Number(level.toFixed(3)), elapsedMs })
-                  lastGateState = gate.state
-                }
+          // NOTE(duplex-phase2): to make this echo-robust on speakers, pass a
+          // third arg `confirmed=false` here while the audio is believed to be
+          // Marvi's own voice (matching isLikelySelfEchoTranscript). Energy-only today.
+          const triggered = gate.update(level, elapsedMs)
 
-                if (!triggered) {
-                  return
-                }
+          if (gate.state !== lastGateState) {
+            vpLog('voice', 'barge-in gate', { state: gate.state, level: Number(level.toFixed(3)), elapsedMs })
+            lastGateState = gate.state
+          }
 
-                interrupted = true
-                vpLog('voice', 'barge-in accepted', { elapsedMs, level })
-                awaitingSpokenResponseRef.current = false
-                consumePendingResponse()
-                resetSpeechBuffer()
-                pendingStartRef.current = true
-                stopVoicePlayback()
-                handle.cancel()
-                void Promise.resolve(onInterrupt?.()).catch(error =>
-                  vpLog('voice', 'barge-in interrupt failed', { error: String(error) })
-                )
-              }
-            })
-            .catch(err => vpLog('voice', 'barge-in mic start failed', { error: String(err) }))
-        }
-        await playSpeechText(text, { source: 'voice-conversation' })
-      } catch (error) {
-        notifyError(error, voiceCopy.playbackFailed)
-      } finally {
-        handle.cancel()
-        if (enabledRef.current) {
+          if (!triggered) {
+            return
+          }
+
+          bargeInterruptedRef.current = true
+          vpLog('voice', 'barge-in accepted', { elapsedMs, level })
+          awaitingSpokenResponseRef.current = false
+          consumePendingResponse()
+          resetSpeechBuffer()
           pendingStartRef.current = true
+          speakingRef.current = false
+          stopVoicePlayback()
+          handle.cancel()
+          setCaption(null)
           setStatus('idle')
-        } else {
-          setStatus('idle')
+          void Promise.resolve(onInterrupt?.()).catch(error =>
+            vpLog('voice', 'barge-in interrupt failed', { error: String(error) })
+          )
         }
-        setCaption(null)
+      })
+      .catch(err => vpLog('voice', 'barge-in mic start failed', { error: String(err) }))
+  }, [bargeInEnabled, consumePendingResponse, handle, onInterrupt])
+
+  // Feed one sentence/clause into the gapless player, starting the session on
+  // the first chunk. Non-blocking — the player pipelines synthesis + playback.
+  const feedSpeaking = useCallback(
+    (chunk: string) => {
+      if (!speakingRef.current) {
+        speakingRef.current = true
+        setStatus('speaking')
+        startSpeechSession({ source: 'voice-conversation' })
+        armBargeIn()
       }
+      setCaption(chunk)
+      enqueueSpeech(chunk)
     },
-    [bargeInEnabled, consumePendingResponse, handle, onInterrupt, voiceCopy.playbackFailed]
+    [armBargeIn]
   )
+
+  // Utterance complete: wait for the queued audio to finish, then disarm and
+  // hand back to listening (unless a barge-in already took over).
+  const endSpeaking = useCallback(async () => {
+    if (!speakingRef.current) {
+      return
+    }
+
+    try {
+      await finishSpeech()
+    } catch (error) {
+      notifyError(error, voiceCopy.playbackFailed)
+    }
+
+    if (bargeInterruptedRef.current) {
+      return
+    }
+
+    speakingRef.current = false
+    handle.cancel()
+    setCaption(null)
+    if (enabledRef.current) {
+      pendingStartRef.current = true
+    }
+    setStatus('idle')
+  }, [handle, voiceCopy.playbackFailed])
 
   const start = useCallback(async () => {
     if (!onTranscribeAudio) {
@@ -401,6 +432,7 @@ export function useVoiceConversation({
     pendingStartRef.current = false
     clearTurnTimeout()
     stopVoicePlayback()
+    speakingRef.current = false
     void streamingRef.current?.finish().catch(() => '')
     streamingRef.current = null
     handle.cancel()
@@ -426,6 +458,8 @@ export function useVoiceConversation({
 
       if (next) {
         clearTurnTimeout()
+        stopVoicePlayback()
+        speakingRef.current = false
         void streamingRef.current?.finish().catch(() => '')
         streamingRef.current = null
         handle.cancel()
@@ -468,7 +502,10 @@ export function useVoiceConversation({
       return
     }
 
-    if (awaitingSpokenResponseRef.current && status !== 'speaking') {
+    // Feed the gapless speaking session as the assistant stream grows. Runs
+    // even while status is 'speaking' so new sentences keep the audio flowing
+    // (the player schedules them contiguously — no per-sentence restart).
+    if (awaitingSpokenResponseRef.current) {
       const response = pendingResponse()
 
       if (response) {
@@ -482,23 +519,29 @@ export function useVoiceConversation({
           spokenSourceLengthRef.current = response.text.length
         }
 
-        const chunk = takeSpeechChunk(!response.pending && !busy)
-
-        if (chunk) {
-          void speak(chunk)
-
-          return
+        const final = !response.pending && !busy
+        let chunk: string | null
+        while ((chunk = takeSpeechChunk(final))) {
+          feedSpeaking(chunk)
         }
 
-        if (!response.pending && !busy) {
+        if (final) {
           awaitingSpokenResponseRef.current = false
           consumePendingResponse()
           resetSpeechBuffer()
-          pendingStartRef.current = true
-          setStatus('idle')
+
+          if (speakingRef.current) {
+            void endSpeaking()
+          } else {
+            // Nothing spoken (empty reply) — go straight back to listening.
+            pendingStartRef.current = true
+            setStatus('idle')
+          }
 
           return
         }
+
+        return
       }
 
       if (!busy && status === 'thinking') {
@@ -518,7 +561,7 @@ export function useVoiceConversation({
     if (pendingStartRef.current) {
       void startListening()
     }
-  }, [busy, consumePendingResponse, enabled, muted, pendingResponse, speak, startListening, status])
+  }, [busy, consumePendingResponse, enabled, endSpeaking, feedSpeaking, muted, pendingResponse, startListening, status])
 
   useEffect(() => {
     if (enabled && !wasEnabledRef.current) {

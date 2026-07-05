@@ -9,6 +9,7 @@ import logging
 import os
 import sys
 import tempfile
+import time
 import traceback
 from contextlib import redirect_stdout
 from dataclasses import dataclass
@@ -30,6 +31,17 @@ class ParakeetStreamingConfig:
     max_gpu_memory_gb: float | None = None
     cpu_fallback: bool = True
     eou_token: str = "<EOU>"
+    # NOTE(duplex-phase1): STT engine selection + tuning knobs. See
+    # docs/design/2026-07-05-voice-duplex-design.md (Tunables).
+    #   engine: "auto" (cache-aware if the model exposes it, else re-transcribe),
+    #           "cache_aware" (force streaming; error+fallback if unavailable),
+    #           "rebuffer" (force the O(n^2) re-transcribe fallback).
+    #   stream_chunk_seconds: cache-aware decode cadence — smaller = lower
+    #           latency, more GPU calls. Tune from logs/parakeet-stt.log.
+    #   debug: verbose per-chunk logs (timing, eou_prob, partial text).
+    engine: str = "auto"
+    stream_chunk_seconds: float = 0.5
+    debug: bool = False
 
 
 _MODEL_CACHE: dict[tuple[str, str, str, float | None, bool, str], Any] = {}
@@ -63,6 +75,15 @@ def resolve_parakeet_config(stt_config: dict[str, Any] | None) -> ParakeetStream
         legacy_model_text = str(legacy_model or "").strip()
         model_value = legacy_model_text if "parakeet" in legacy_model_text.lower() else DEFAULT_PARAKEET_MODEL
 
+    try:
+        stream_chunk_seconds = float(pick("stream_chunk_seconds", 0.5) or 0.5)
+    except (TypeError, ValueError):
+        stream_chunk_seconds = 0.5
+
+    engine = str(pick("engine", "auto")).strip().lower() or "auto"
+    if engine not in {"auto", "cache_aware", "rebuffer"}:
+        engine = "auto"
+
     return ParakeetStreamingConfig(
         model=str(model_value).strip() or DEFAULT_PARAKEET_MODEL,
         device=str(pick("device", "cuda")).strip().lower() or "cuda",
@@ -70,6 +91,9 @@ def resolve_parakeet_config(stt_config: dict[str, Any] | None) -> ParakeetStream
         max_gpu_memory_gb=max_gpu_memory if max_gpu_memory > 0 else None,
         cpu_fallback=pick_bool("cpu_fallback", True),
         eou_token=str(pick("eou_token", "<EOU>")).strip() or "<EOU>",
+        engine=engine,
+        stream_chunk_seconds=stream_chunk_seconds if stream_chunk_seconds > 0 else 0.5,
+        debug=pick_bool("debug", False),
     )
 
 
@@ -173,13 +197,119 @@ def _strip_eou(text: str, token: str) -> str:
     return text.replace(token, " ").replace("<eou>", " ").strip()
 
 
-class ParakeetStreamingSession:
-    """Session fed by browser Float32 mic frames and finalized with Parakeet EOU."""
+class _CacheAwareStream:
+    """Frame-synchronous NeMo cache-aware streaming decode (the fast path).
 
-    # Re-transcribe the whole buffer every ~0.5s of new audio to produce a live
-    # partial. ponytail: O(n^2) over the utterance (re-runs the growing buffer);
-    # fine for short spoken turns, swap to NeMo cache-aware streaming inference
-    # if long-form latency matters.
+    NOTE(duplex-phase1): this is the O(n) streaming engine that makes Parakeet
+    emit partials + a continuous end-of-utterance signal at ~frame latency
+    instead of the O(n^2) re-transcribe. It follows NeMo's
+    ``conformer_stream_step`` cache-aware recipe, which is version/model
+    specific — so it is *best-effort* and MUST be validated on GPU. If setup or
+    any step raises, ``ParakeetStreamingSession`` catches it, logs loudly to
+    logs/parakeet-stt.log, and falls back to re-transcribe. Rich logs here let
+    you confirm the engine engaged and tune ``stream_chunk_seconds``.
+    """
+
+    def __init__(self, model: Any, config: ParakeetStreamingConfig) -> None:
+        import torch
+
+        self._torch = torch
+        self._model = model
+        self.config = config
+        self._chunk_samples = max(1, int(config.stream_chunk_seconds * 16000))
+        self._buf = np.empty(0, dtype=np.float32)
+        self._text = ""
+        self._prev_hyp: Any = None
+        self._pred_out: Any = None
+
+        try:
+            self._device = next(model.parameters()).device
+        except Exception:  # pragma: no cover - defensive
+            self._device = "cpu"
+
+        if hasattr(model.encoder, "setup_streaming_params"):
+            model.encoder.setup_streaming_params()
+        (self._cache_ch, self._cache_t, self._cache_ch_len) = model.encoder.get_initial_cache_state(batch_size=1)
+        logger.info(
+            "Parakeet cache-aware stream initialised | chunk=%.3fs (%d samples) device=%s",
+            config.stream_chunk_seconds,
+            self._chunk_samples,
+            self._device,
+        )
+
+    def _decode_chunk(self, chunk: np.ndarray, *, last: bool) -> str:
+        torch = self._torch
+        sig = torch.tensor(chunk, dtype=torch.float32, device=self._device).unsqueeze(0)
+        sig_len = torch.tensor([chunk.shape[0]], dtype=torch.long, device=self._device)
+        with torch.inference_mode():
+            processed, processed_len = self._model.preprocessor(input_signal=sig, length=sig_len)
+            (
+                self._pred_out,
+                texts,
+                self._cache_ch,
+                self._cache_t,
+                self._cache_ch_len,
+                self._prev_hyp,
+            ) = self._model.conformer_stream_step(
+                processed_signal=processed,
+                processed_signal_length=processed_len,
+                cache_last_channel=self._cache_ch,
+                cache_last_time=self._cache_t,
+                cache_last_channel_len=self._cache_ch_len,
+                keep_all_outputs=last,
+                previous_hypotheses=self._prev_hyp,
+                previous_pred_out=self._pred_out,
+                drop_extra_pre_encoded=None,
+                return_transcription=True,
+            )
+        return _extract_text(texts)
+
+    def push(self, samples: np.ndarray) -> tuple[str, float] | None:
+        """Feed new samples. Returns (partial_text, eou_prob) when a chunk
+        decoded, else None (still buffering toward the next chunk)."""
+        incoming = np.asarray(samples, dtype=np.float32)
+        self._buf = np.concatenate([self._buf, incoming]) if self._buf.size else incoming
+        result: tuple[str, float] | None = None
+        while self._buf.shape[0] >= self._chunk_samples:
+            chunk = self._buf[: self._chunk_samples]
+            self._buf = self._buf[self._chunk_samples :]
+            t0 = time.perf_counter()
+            text = self._decode_chunk(chunk, last=False)
+            dt_ms = (time.perf_counter() - t0) * 1000
+            if text:
+                self._text = text
+            eou_prob = 1.0 if self.config.eou_token.lower() in self._text.lower() else 0.0
+            logger.info(
+                "Parakeet chunk decoded in %.0fms | eou_prob=%.2f | text=%r",
+                dt_ms,
+                eou_prob,
+                self._text[-80:],
+            )
+            result = (_strip_eou(self._text, self.config.eou_token), eou_prob)
+        return result
+
+    def finish(self) -> str:
+        # Flush trick: decode whatever is left immediately for the final.
+        if self._buf.shape[0] > 0:
+            t0 = time.perf_counter()
+            text = self._decode_chunk(self._buf, last=True)
+            logger.info("Parakeet flush decoded %d samples in %.0fms", self._buf.shape[0], (time.perf_counter() - t0) * 1000)
+            if text:
+                self._text = text
+            self._buf = np.empty(0, dtype=np.float32)
+        return _strip_eou(self._text, self.config.eou_token)
+
+
+class ParakeetStreamingSession:
+    """Session fed by browser Float32 mic frames and finalized with Parakeet EOU.
+
+    Two engines: the cache-aware streaming fast path (``_CacheAwareStream``) when
+    the model exposes it, else a re-transcribe fallback. The full sample buffer
+    is always retained so we can fall back mid-stream if the fast path throws.
+    """
+
+    # Re-transcribe cadence for the FALLBACK engine only. ponytail: O(n^2) over
+    # the utterance; fine for short turns. The cache-aware engine replaces this.
     _PARTIAL_INTERVAL_SAMPLES = 8000  # 0.5s at 16 kHz
 
     def __init__(
@@ -192,15 +322,48 @@ class ParakeetStreamingSession:
         self.config = resolve_parakeet_config(stt_config)
         self._loader = loader
         self._model: Any = None
+        self._stream: _CacheAwareStream | None = None
         self._samples: list[float] = []
         self._since_last = 0
         self._last_partial = ""
         self.last_eou = False
+        self.last_eou_prob = 0.0
         self._closed = False
         self._temp_dir = Path(temp_dir) if temp_dir is not None else None
 
     def start(self) -> None:
         self._model = self._loader(self.config)
+        self._stream = self._maybe_start_cache_aware()
+
+    def _maybe_start_cache_aware(self) -> _CacheAwareStream | None:
+        if self.config.engine == "rebuffer":
+            logger.info("Parakeet STT engine=rebuffer (forced) — re-transcribe fallback active")
+            return None
+
+        model = self._model
+        encoder = getattr(model, "encoder", None)
+        has_api = (
+            hasattr(model, "conformer_stream_step")
+            and encoder is not None
+            and hasattr(encoder, "get_initial_cache_state")
+        )
+        if not has_api:
+            level = logger.error if self.config.engine == "cache_aware" else logger.warning
+            level(
+                "Parakeet STT: cache-aware streaming API not found on model %s; "
+                "using re-transcribe fallback (higher latency). engine=%s",
+                self.config.model,
+                self.config.engine,
+            )
+            return None
+
+        try:
+            stream = _CacheAwareStream(model, self.config)
+            logger.info("Parakeet STT engine=cache_aware ACTIVE (frame-synchronous streaming)")
+            return stream
+        except Exception:
+            logger.exception("Parakeet STT: cache-aware init failed; using re-transcribe fallback")
+            return None
 
     def accept_samples(self, samples: Iterable[float]) -> None:
         if self._closed:
@@ -210,20 +373,38 @@ class ParakeetStreamingSession:
         self._since_last += len(clamped)
 
     def accept_bytes(self, chunk: bytes) -> str:
-        """Accept a Float32 mic chunk; return a fresh partial transcript or ''.
-
-        A partial is computed at most every ~0.5s of new audio so the helper
-        emits live captions without re-transcribing on every tiny mic frame.
-        """
-        self.accept_samples(np.frombuffer(chunk, dtype=np.float32))
-        if self._closed or self._since_last < self._PARTIAL_INTERVAL_SAMPLES or not self._samples:
+        """Accept a Float32 mic chunk; return a fresh partial transcript or ''."""
+        samples = np.frombuffer(chunk, dtype=np.float32)
+        self.accept_samples(samples)  # retained for finish + fallback
+        if self._closed or not self._samples:
             return ""
         if self._model is None:
             self.start()
 
+        # Fast path: cache-aware streaming.
+        if self._stream is not None:
+            try:
+                pushed = self._stream.push(samples)
+            except Exception:
+                logger.exception("Parakeet cache-aware push failed; switching to re-transcribe fallback")
+                self._stream = None
+                pushed = None
+            if self._stream is not None:
+                if pushed is None:
+                    return ""  # still buffering toward the next chunk
+                text, eou_prob = pushed
+                self.last_eou_prob = eou_prob
+                self.last_eou = eou_prob >= 1.0
+                self._last_partial = text
+                return text
+
+        # Fallback: re-transcribe the whole buffer on an interval.
+        if self._since_last < self._PARTIAL_INTERVAL_SAMPLES:
+            return ""
         self._since_last = 0
         raw = self._transcribe_current()
         self.last_eou = self.config.eou_token.lower() in raw.lower()
+        self.last_eou_prob = 1.0 if self.last_eou else 0.0
         self._last_partial = _strip_eou(raw, self.config.eou_token)
         return self._last_partial
 
@@ -232,6 +413,12 @@ class ParakeetStreamingSession:
 
     def finish(self) -> str:
         self._closed = True
+        if self._stream is not None:
+            try:
+                return self._stream.finish()
+            except Exception:
+                logger.exception("Parakeet cache-aware finish failed; re-transcribing buffer")
+                self._stream = None
         if not self._samples:
             return ""
         if self._model is None:
@@ -271,6 +458,18 @@ def _call_with_stdout_on_stderr(fn: Callable[[], Any]) -> Any:
         return fn()
 
 
+def _configure_logging(debug: bool) -> None:
+    """Send rich helper logs to stderr, which the backend tees into
+    logs/parakeet-stt.log. Set stt.streaming.parakeet.debug=true for per-chunk
+    detail while tuning latency."""
+    root = logging.getLogger()
+    if not any(isinstance(h, logging.StreamHandler) for h in root.handlers):
+        handler = logging.StreamHandler(sys.stderr)
+        handler.setFormatter(logging.Formatter("%(asctime)s parakeet-stt %(levelname)s %(message)s"))
+        root.addHandler(handler)
+    root.setLevel(logging.DEBUG if debug else logging.INFO)
+
+
 def _run_stdio_server() -> int:
     session: ParakeetStreamingSession | None = None
     try:
@@ -282,7 +481,19 @@ def _run_stdio_server() -> int:
             _emit_stdio({"type": "error", "error": "Parakeet helper expected a start message"})
             return 2
 
-        session = ParakeetStreamingSession(first.get("stt_config") if isinstance(first.get("stt_config"), dict) else {})
+        stt_config = first.get("stt_config") if isinstance(first.get("stt_config"), dict) else {}
+        cfg = resolve_parakeet_config(stt_config)
+        _configure_logging(cfg.debug)
+        logger.info(
+            "Parakeet helper starting | model=%s device=%s engine=%s chunk=%.3fs eou_token=%s",
+            cfg.model,
+            cfg.device,
+            cfg.engine,
+            cfg.stream_chunk_seconds,
+            cfg.eou_token,
+        )
+
+        session = ParakeetStreamingSession(stt_config)
         _call_with_stdout_on_stderr(session.start)
         _emit_stdio({"type": "ready"})
 
@@ -294,10 +505,11 @@ def _run_stdio_server() -> int:
             if event_type == "audio":
                 raw = base64.b64decode(str(payload.get("data") or ""))
                 partial = _call_with_stdout_on_stderr(lambda: session.accept_bytes(raw))
+                eou_prob = getattr(session, "last_eou_prob", 1.0 if session.last_eou else 0.0)
                 if partial:
-                    _emit_stdio({"type": "partial", "text": partial, "eou": session.last_eou})
+                    _emit_stdio({"type": "partial", "text": partial, "eou": session.last_eou, "eou_prob": eou_prob})
                 else:
-                    _emit_stdio({"type": "ok", "eou": session.last_eou})
+                    _emit_stdio({"type": "ok", "eou": session.last_eou, "eou_prob": eou_prob})
             elif event_type == "stop":
                 final = _call_with_stdout_on_stderr(session.finish)
                 _emit_stdio({"type": "final", "text": final})

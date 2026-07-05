@@ -178,6 +178,7 @@ class _ParakeetSubprocessSession:
         self._proc: subprocess.Popen | None = None
         self._log_file = None
         self.last_eou = False
+        self.last_eou_prob = 0.0
 
     def start(self) -> None:
         from tools.parakeet_streaming_stt import parakeet_stdio_command, parakeet_venv_python
@@ -211,6 +212,7 @@ class _ParakeetSubprocessSession:
         self._send({"type": "audio", "data": base64.b64encode(chunk).decode("ascii")})
         payload = self._read()
         self.last_eou = bool(payload.get("eou"))
+        self.last_eou_prob = float(payload.get("eou_prob") or (1.0 if self.last_eou else 0.0))
         if payload.get("type") == "partial":
             return str(payload.get("text") or "").strip()
         if payload.get("type") == "ok":
@@ -13205,7 +13207,11 @@ async def transcribe_audio_stream_ws(ws: WebSocket) -> None:
                 if parakeet_session is not None:
                     partial = await asyncio.to_thread(parakeet_session.accept_bytes, chunk)
                     if partial:
-                        await ws.send_json({"type": "partial", "text": partial})
+                        # eou_prob forwarded for future client-side turn/barge-in tuning
+                        # (duplex phase 1/2); harmless extra field for older clients.
+                        await ws.send_json(
+                            {"type": "partial", "text": partial, "eou_prob": parakeet_session.last_eou_prob}
+                        )
                     chunks.append(chunk)
                     continue
                 chunks.append(chunk)

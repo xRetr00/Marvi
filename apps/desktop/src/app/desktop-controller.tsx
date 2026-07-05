@@ -79,6 +79,7 @@ import { onSessionsChanged } from '../store/session-sync'
 import { clearSessionTodos, setSessionTodos, todosForHydration } from '../store/todos'
 import { openUpdatesWindow, startUpdatePoller, stopUpdatePoller } from '../store/updates'
 import { $voicePlayback } from '../store/voice-playback'
+import { $voiceWarmup, startVoiceWarmupPolling } from '../store/voice-warmup'
 import { initVoiceIslandBridge } from '../store/voice-island'
 import { publishWakeStatus } from '../store/voice-presence'
 import { $presenceEnabled, setPresenceEnabled } from '../store/voice-presence-settings'
@@ -875,6 +876,7 @@ export function DesktopController() {
   const presenceEnabled = useStore($presenceEnabled)
   const voiceBusy = useStore($busy)
   const voicePlayback = useStore($voicePlayback)
+  const voiceWarmup = useStore($voiceWarmup)
   const wake = useWakeWord({
     busy: voiceBusy || voicePlayback.status !== 'idle',
     config: wakeWordConfig,
@@ -887,6 +889,12 @@ export function DesktopController() {
     streamingSttEnabled
   })
 
+  // Poll voice-model warmup once on mount; the backend warms TTS/STT/wake in the
+  // background while the app connects and this surfaces progress in the status bar.
+  useEffect(() => {
+    startVoiceWarmupPolling()
+  }, [])
+
   const voicePipelineStatusItem = useMemo<StatusbarItem>(() => {
     const sttActive =
       sttEnabled &&
@@ -897,11 +905,32 @@ export function DesktopController() {
     const ttsActive = ttsProvider === 'pockettts' && voicePlayback.status !== 'idle'
     const streamingLabel = streamingSttEnabled ? streamingSttProvider || 'on' : 'off'
 
+    const pipelineTitle = `STT ${sttProvider || 'off'} · streaming ${streamingLabel} · TTS ${ttsProvider || 'off'} · smart turn ${voiceSemanticTurnEnabled ? 'on' : 'off'} · barge-in ${voiceBargeInEnabled ? 'on' : 'off'}`
+
+    // While the engines warm at startup, show a visible label + per-engine
+    // tooltip. Once done we collapse back to the compact dots-only pipeline item.
+    const engines = ['tts', 'stt', 'wake'] as const
+    const counted = engines.filter(k => voiceWarmup[k] !== 'skipped')
+    const ready = counted.filter(k => voiceWarmup[k] === 'ready').length
+    const warming = voiceWarmup.started && !voiceWarmup.done
+    const failed = engines.filter(k => voiceWarmup[k] === 'failed')
+
+    if (warming) {
+      return {
+        className: 'justify-center gap-1.5 px-2',
+        icon: <VoicePipelineDots sttActive ttsActive />,
+        id: 'voice-pipeline',
+        label: `Warming voice ${ready}/${counted.length || 3}`,
+        title: `Warming voice models — TTS ${voiceWarmup.tts} · STT ${voiceWarmup.stt} · wake ${voiceWarmup.wake}`,
+        variant: 'text'
+      }
+    }
+
     return {
       className: 'w-8 justify-center px-0',
       icon: <VoicePipelineDots sttActive={sttActive} ttsActive={ttsActive} />,
       id: 'voice-pipeline',
-      title: `STT ${sttProvider || 'off'} · streaming ${streamingLabel} · TTS ${ttsProvider || 'off'} · smart turn ${voiceSemanticTurnEnabled ? 'on' : 'off'} · barge-in ${voiceBargeInEnabled ? 'on' : 'off'}`,
+      title: failed.length ? `${pipelineTitle} · warmup failed: ${failed.join(', ')}` : pipelineTitle,
       variant: 'text'
     }
   }, [
@@ -913,6 +942,7 @@ export function DesktopController() {
     voiceBargeInEnabled,
     voicePlayback.status,
     voiceSemanticTurnEnabled,
+    voiceWarmup,
     wake.status
   ])
 

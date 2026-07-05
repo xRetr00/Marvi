@@ -362,6 +362,22 @@ def _take_warm_parakeet_session(stt_config: dict[str, Any]) -> _ParakeetSubproce
 atexit.register(_close_warm_parakeet_session)
 
 
+# Warmup status for the desktop status bar. Each engine: pending -> warming ->
+# ready | skipped | failed. `done` flips true once all have resolved.
+_VOICE_WARMUP_STATUS: dict[str, Any] = {"tts": "pending", "stt": "pending", "wake": "pending", "done": False, "started": False}
+_VOICE_WARMUP_LOCK = threading.Lock()
+
+
+def _set_warmup(**updates: Any) -> None:
+    with _VOICE_WARMUP_LOCK:
+        _VOICE_WARMUP_STATUS.update(updates)
+
+
+def get_voice_warmup_status() -> dict[str, Any]:
+    with _VOICE_WARMUP_LOCK:
+        return dict(_VOICE_WARMUP_STATUS)
+
+
 def _warm_desktop_voice_models() -> None:
     # Warm ALL THREE voice engines once at desktop startup (in this background
     # thread, while the app shows "connecting") so the first use of each is
@@ -369,19 +385,26 @@ def _warm_desktop_voice_models() -> None:
     #   1) PocketTTS  2) Parakeet STT  3) wake word.
     cfg = load_config()
     if not isinstance(cfg, dict):
+        _set_warmup(tts="skipped", stt="skipped", wake="skipped", done=True, started=True)
         return
 
+    _set_warmup(started=True)
     _log.info("Warming desktop voice models (TTS + STT + wake word)…")
 
     tts_cfg = cfg.get("tts") or {}
     if isinstance(tts_cfg, dict) and str(tts_cfg.get("provider") or "").strip().lower() == "pockettts":
+        _set_warmup(tts="warming")
         try:
             from tools.tts_tool import warm_tts_provider
 
             warm_tts_provider(tts_cfg)
+            _set_warmup(tts="ready")
             _log.info("Warmed PocketTTS for desktop streaming")
         except Exception as exc:
+            _set_warmup(tts="failed")
             _log.warning("Could not warm PocketTTS: %s", exc)
+    else:
+        _set_warmup(tts="skipped")
 
     stt_cfg = cfg.get("stt") or {}
     streaming = (stt_cfg.get("streaming") or {}) if isinstance(stt_cfg, dict) else {}
@@ -390,20 +413,31 @@ def _warm_desktop_voice_models() -> None:
         and streaming.get("enabled") is True
         and str(streaming.get("provider") or "").strip().lower() == "parakeet"
     ):
+        _set_warmup(stt="warming")
         try:
             _warm_parakeet_session(stt_cfg)
+            _set_warmup(stt="ready")
         except Exception as exc:
+            _set_warmup(stt="failed")
             _log.warning("Could not warm Parakeet Realtime EOU STT: %s", exc)
+    else:
+        _set_warmup(stt="skipped")
 
     # Wake word: preload its model so the first arm at startup is instant.
+    _set_warmup(wake="warming")
     try:
         from tools.streaming_stt import warm_wake_word
 
         if warm_wake_word(cfg):
+            _set_warmup(wake="ready")
             _log.info("Warmed wake-word model")
+        else:
+            _set_warmup(wake="skipped")
     except Exception as exc:
+        _set_warmup(wake="failed")
         _log.warning("Could not warm wake word: %s", exc)
 
+    _set_warmup(done=True)
     _log.info("Desktop voice models warmed")
 
 
@@ -3842,6 +3876,14 @@ async def speak_text_stream(payload: TTSSpeakRequest):
         headers={"Cache-Control": "no-store"},
         media_type="application/x-ndjson",
     )
+
+
+@app.get("/api/audio/voice-warmup")
+async def voice_warmup_status():
+    """Startup warmup state of the voice engines (TTS/STT/wake) for the desktop
+    status bar. Each is pending|warming|ready|skipped|failed; done flips true
+    once all resolve. Non-sensitive; no gating — warming runs in the background."""
+    return get_voice_warmup_status()
 
 
 @app.get("/api/actions/{name}/status")

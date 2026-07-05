@@ -6,7 +6,7 @@ import { triggerHaptic } from '@/lib/haptics'
 import { resetBrowseState } from '@/store/composer-input-history'
 import { notifyError } from '@/store/notifications'
 import { $messages } from '@/store/session'
-import { publishConversation } from '@/store/voice-presence'
+import { publishBargeInEnabled, publishConversation } from '@/store/voice-presence'
 import { $autoSpeakReplies, setAutoSpeakReplies } from '@/store/voice-prefs'
 
 import { onComposerVoiceToggleRequest } from '../focus'
@@ -135,6 +135,12 @@ export function useComposerVoice({
       caption: conversation.caption
     })
   }, [conversation.caption, conversation.level, conversation.muted, conversation.status, voiceConversationActive])
+
+  // duplex phase 3: one flag drives the island's "interrupt" affordance across
+  // every mode (both speak paths arm barge-in from this same prop).
+  useEffect(() => {
+    publishBargeInEnabled(bargeInEnabled !== false)
+  }, [bargeInEnabled])
 
   // The `composer.voice` hotkey (Ctrl+B) toggles the conversation. Starting
   // with STT unconfigured lets the conversation surface its own "configure

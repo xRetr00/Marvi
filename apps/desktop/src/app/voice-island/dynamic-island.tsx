@@ -253,6 +253,9 @@ export function DynamicIsland({
                   </div>
                 ) : null}
                 {caption ? <Caption text={caption.text} who={caption.who} reducedMotion={Boolean(reducedMotion)} /> : null}
+                {state.phase === 'speaking' && state.bargeable ? (
+                  <InterruptHint reducedMotion={Boolean(reducedMotion)} />
+                ) : null}
               </div>
             )}
           </motion.div>
@@ -353,6 +356,34 @@ function Caption({ text, who, reducedMotion }: { text: string; who: 'you' | 'mar
         </p>
       </motion.div>
     </AnimatePresence>
+  )
+}
+
+// Shown while Marvi is speaking and barge-in is armed (duplex phase 3), in
+// EVERY mode — hands-free, wake-word, and plain read-aloud all route their
+// speaking through the shared playback state that feeds `state.bargeable`. It's
+// a voice affordance: the stage stays click-through, so this tells the user
+// they can just talk to cut in (barge-in listens through playback).
+function InterruptHint({ reducedMotion }: { reducedMotion: boolean }) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 2 }}>
+      <motion.span
+        animate={reducedMotion ? { opacity: 0.7 } : { opacity: [0.3, 0.9, 0.3] }}
+        transition={reducedMotion ? undefined : { duration: 1.4, repeat: Infinity, ease: 'easeInOut' }}
+        style={{ display: 'inline-block', width: 5, height: 5, borderRadius: '50%', background: '#5cd97e', flexShrink: 0 }}
+      />
+      <span
+        style={{
+          fontSize: 10,
+          fontWeight: 500,
+          letterSpacing: '0.06em',
+          textTransform: 'uppercase',
+          color: 'rgba(255,255,255,0.4)'
+        }}
+      >
+        talk to interrupt
+      </span>
+    </div>
   )
 }
 

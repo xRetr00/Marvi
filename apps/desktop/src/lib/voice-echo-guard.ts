@@ -47,3 +47,72 @@ export function isLikelySelfEchoTranscript(transcript: string, at = Date.now()):
 export function clearRecentSpokenText(): void {
   recent = []
 }
+
+// STT models (Parakeet/Whisper family) hallucinate short filler when fed silence
+// or non-speech noise — "you", "okay", "hmm", "thank you", "thanks for watching",
+// "mmhmm", etc. Left home alone, a false wake + these turned the chat into
+// garbage. Reject a transcript that is *entirely* one of these (so real commands
+// that merely contain "you" are unaffected). Pair with a heard-speech gate:
+// no real mic energy -> reject regardless.
+const HALLUCINATION_PHRASES = new Set([
+  'you',
+  'you you',
+  'thank you',
+  'thank you very much',
+  'thanks',
+  'thanks for watching',
+  'thank you for watching',
+  'please subscribe',
+  'subscribe',
+  'okay',
+  'ok',
+  'k',
+  'hmm',
+  'mhm',
+  'mhmm',
+  'mmhmm',
+  'mm hmm',
+  'uh',
+  'um',
+  'uh huh',
+  'yeah',
+  'yep',
+  'so',
+  'oh',
+  'ah',
+  'bye',
+  'bye bye',
+  'music',
+  'applause',
+  'silence',
+  'right',
+  'well',
+  'mm',
+  'and',
+  'the'
+])
+
+export function isLikelyHallucination(transcript: string): boolean {
+  const normalized = transcript
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}\s]/gu, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+
+  if (!normalized) {
+    return true
+  }
+  if (HALLUCINATION_PHRASES.has(normalized)) {
+    return true
+  }
+
+  const tokens = normalized.split(' ')
+  // A single 1-2 char token, or the same word repeated ("you you you").
+  if (tokens.length === 1 && tokens[0].length <= 2) {
+    return true
+  }
+  if (tokens.length >= 2 && new Set(tokens).size === 1) {
+    return true
+  }
+  return false
+}

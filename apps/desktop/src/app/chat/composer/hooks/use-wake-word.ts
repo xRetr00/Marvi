@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { useI18n } from '@/i18n'
-import { isLikelySelfEchoTranscript } from '@/lib/voice-echo-guard'
+import { isLikelyHallucination, isLikelySelfEchoTranscript } from '@/lib/voice-echo-guard'
 import { openStreamingTranscription, type StreamingTranscriptionSession } from '@/lib/streaming-transcription'
 import { vpLog } from '@/lib/voice-presence-log'
 import {
@@ -279,7 +279,8 @@ export function useWakeWord({
     let submittedCommand = false
 
     try {
-      await handleRef.current.stop()
+      const recording = await handleRef.current.stop()
+      const heardSpeech = recording?.heardSpeech ?? false
       const detected = detectedRef.current
       const commandFrames = commandFramesRef.current
       const commandAudio = encodePcmFramesAsWav(commandFrames, wakeConfig.sampleRate)
@@ -336,7 +337,14 @@ export function useWakeWord({
           wakePhraseStripped: command !== transcript
         })
 
-        if (command && isEndPhrase(command)) {
+        if (command && (!heardSpeech || isLikelyHallucination(command))) {
+          // No real mic energy, or an STT hallucination on silence/noise
+          // ("you", "okay", "thank you", ...). Drop it — a false wake while the
+          // room was empty must NOT submit garbage. submittedCommand stays false
+          // -> finally re-arms the wake word (does not continue the conversation).
+          vpLog('wake', 'rejected (no speech / hallucination)', { command, heardSpeech })
+          debugLog('rejected (no speech / hallucination)', { command, heardSpeech })
+        } else if (command && isEndPhrase(command)) {
           // Option C end trigger: an end phrase closes the conversation (don't
           // submit it). submittedCommand stays false -> finally re-arms the wake
           // word.

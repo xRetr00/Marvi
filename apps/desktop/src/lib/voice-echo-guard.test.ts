@@ -1,6 +1,20 @@
 import { afterEach, describe, expect, it } from 'vitest'
 
-import { clearRecentSpokenText, isLikelySelfEchoTranscript, rememberSpokenText } from './voice-echo-guard'
+import { clearRecentSpokenText, isLikelyHallucination, isLikelySelfEchoTranscript, rememberSpokenText } from './voice-echo-guard'
+
+describe('isLikelyHallucination', () => {
+  it('rejects the common silence hallucinations', () => {
+    for (const junk of ['', '   ', 'you', 'okay', 'hmm', 'thank you', 'thanks for watching', 'mmhmm', '.', 'you you you']) {
+      expect(isLikelyHallucination(junk)).toBe(true)
+    }
+  })
+
+  it('keeps real commands', () => {
+    for (const real of ['what time is it', 'open the terminal', 'summarize this file', 'thank you for opening the file']) {
+      expect(isLikelyHallucination(real)).toBe(false)
+    }
+  })
+})
 
 describe('voice echo guard', () => {
   afterEach(() => clearRecentSpokenText())

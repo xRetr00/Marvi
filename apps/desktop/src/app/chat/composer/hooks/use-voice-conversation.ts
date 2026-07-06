@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { useI18n } from '@/i18n'
 import { startBargeInDetector } from '@/lib/barge-in-detector'
-import { isLikelySelfEchoTranscript } from '@/lib/voice-echo-guard'
+import { isLikelyHallucination, isLikelySelfEchoTranscript } from '@/lib/voice-echo-guard'
 import { openStreamingTranscription, type StreamingTranscriptionSession } from '@/lib/streaming-transcription'
 import { enqueueSpeech, finishSpeech, startSpeechSession, stopVoicePlayback } from '@/lib/voice-playback'
 import { vpLog } from '@/lib/voice-presence-log'
@@ -190,8 +190,8 @@ export function useVoiceConversation({
             return
           }
 
-          if (isLikelySelfEchoTranscript(transcript)) {
-            vpLog('voice', 'self echo rejected', { transcript })
+          if (isLikelySelfEchoTranscript(transcript) || isLikelyHallucination(transcript)) {
+            vpLog('voice', 'transcript rejected (echo / hallucination)', { transcript })
 
             if (enabledRef.current && !mutedRef.current && !busyRef.current) {
               pendingStartRef.current = true

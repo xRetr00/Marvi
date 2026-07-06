@@ -71,6 +71,12 @@ class WakeWordConfig:
     debug: bool = False
     command_timeout_ms: int = 8000
     cooldown_ms: int = 1200
+    # Reject wake detections whose audio window is essentially silence. The
+    # LiveKit model scores ~0.79 for "marvi" on a silent room (rms ~0.001), which
+    # caused constant false wakes when the room was empty; real speech is rms
+    # ~0.04 (40x louder), so this cleanly separates them. Tune via
+    # voice.wake_word.min_rms (0 disables).
+    min_rms: float = 0.01
 
 
 class WakeWordUnavailable(RuntimeError):
@@ -131,6 +137,7 @@ def wake_word_config(config: Optional[dict[str, Any]] = None) -> WakeWordConfig:
         phrases=_normalize_phrases(raw.get("phrases")),
         boost=_float_value(raw.get("boost"), 2.0, min_value=0.1, max_value=10.0),
         threshold=_float_value(raw.get("threshold"), 0.35, min_value=0.05, max_value=0.95),
+        min_rms=_float_value(raw.get("min_rms"), 0.01, min_value=0.0, max_value=1.0),
         debug=raw.get("debug") is True,
         command_timeout_ms=_positive_int(raw.get("command_timeout_ms"), 8000, min_value=1000, max_value=30000),
         cooldown_ms=_positive_int(raw.get("cooldown_ms"), 1200, min_value=0, max_value=10000),
@@ -398,17 +405,32 @@ class SherpaOnnxWakeWordSpotter:
         )
         self.stream = self.spotter.create_stream()
         self.sample_rate = cfg.sample_rate
+        self._recent: list[float] = []  # rolling ~1s window for the energy gate
 
     def start(self, sample_rate: int = 16000) -> None:
         self.sample_rate = sample_rate or self.cfg.sample_rate
 
     def accept_waveform(self, samples: list[float]) -> str:
+        if self.cfg.min_rms > 0:
+            self._recent.extend(float(sample) for sample in samples)
+            self._recent = self._recent[-16000:]
+
         self.stream.accept_waveform(self.sample_rate, samples)
         while self.spotter.is_ready(self.stream):
             self.spotter.decode_stream(self.stream)
         result = str(self.spotter.get_result(self.stream) or "").strip()
-        if result:
-            self.spotter.reset_stream(self.stream)
+        if not result:
+            return ""
+
+        self.spotter.reset_stream(self.stream)
+        # Energy gate: drop keyword hits fired on silence/noise (see WakeWordConfig).
+        if self.cfg.min_rms > 0:
+            import numpy as np
+
+            arr = np.asarray(self._recent, dtype=np.float32)
+            rms = float(np.sqrt(np.mean(np.square(arr)))) if arr.size else 0.0
+            if rms < self.cfg.min_rms:
+                return ""
         return result.replace("_", " ")
 
     def stop(self) -> None:
@@ -468,6 +490,16 @@ class LiveKitWakeWordSpotter:
             return ""
 
         window = np.asarray(self._samples, dtype=np.float32)
+
+        # Energy gate: the model hallucinates a ~0.79 "marvi" score on silence, so
+        # reject any detection whose window has no real speech energy. This is the
+        # fix for constant false wakes in an empty room.
+        if self.cfg.min_rms > 0:
+            rms = float(np.sqrt(np.mean(np.square(window)))) if window.size else 0.0
+            if rms < self.cfg.min_rms:
+                self._log_decision("low_energy", samples=samples, window=window)
+                return ""
+
         scores = self.model.predict(window)
         if not isinstance(scores, dict) or not scores:
             self._log_decision("empty_scores", samples=samples, window=window)

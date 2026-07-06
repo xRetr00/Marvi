@@ -80,11 +80,14 @@ def resolve_parakeet_config(stt_config: dict[str, Any] | None) -> ParakeetStream
     except (TypeError, ValueError):
         stream_chunk_seconds = 0.5
 
-    # auto/batch: buffer + transcribe once at end (stable, low GPU). rebuffer:
-    # live partials via re-transcribe. cache_aware: experimental frame streaming.
-    engine = str(pick("engine", "auto")).strip().lower() or "auto"
+    # rebuffer (default): live partials via re-transcribe -- text streams as you
+    # talk. batch: buffer + transcribe once at end (lowest GPU, no live caption).
+    # cache_aware: experimental frame streaming. Now that the helper is persistent
+    # (model loads once), rebuffer no longer thrashes the GPU, so it's the default
+    # again for the streaming feel; switch to batch if you see stutter.
+    engine = str(pick("engine", "rebuffer")).strip().lower() or "rebuffer"
     if engine not in {"auto", "batch", "rebuffer", "cache_aware"}:
-        engine = "auto"
+        engine = "rebuffer"
 
     return ParakeetStreamingConfig(
         model=str(model_value).strip() or DEFAULT_PARAKEET_MODEL,
@@ -460,6 +463,11 @@ class ParakeetStreamingSession:
                 self._stream = None
         if not self._samples:
             return ""
+        # rebuffer: if the last live partial already covered every sample (no new
+        # audio since), reuse it instead of re-transcribing — makes the "finalizing"
+        # step instant when the user stops right after a partial.
+        if self._last_partial and self._since_last == 0:
+            return self._last_partial
         if self._model is None:
             self.start()
         return _strip_eou(self._transcribe_current(), self.config.eou_token)

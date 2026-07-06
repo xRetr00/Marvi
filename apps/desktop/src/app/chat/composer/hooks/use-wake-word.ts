@@ -18,6 +18,11 @@ import { useMicRecorder } from './use-mic-recorder'
 
 export type WakeWordStatus = 'idle' | 'arming' | 'armed' | 'woken' | 'listening' | 'transcribing'
 
+// Ignore wake detections in the first moment after the mic opens — the mic
+// warmup / first buffered frames (e.g. right when presence mode is switched on)
+// can produce a spurious hotword hit. See issue: false positive on presence on.
+const WAKE_STARTUP_GRACE_MS = 900
+
 interface WakeWordOptions {
   busy: boolean
   config?: WakeWordConfig
@@ -113,6 +118,7 @@ export function useWakeWord({
   const startupFailedRef = useRef(false)
   const pendingRestartAfterSubmitRef = useRef(false)
   const commandFramesRef = useRef<Float32Array[]>([])
+  const micOpenedAtRef = useRef(0)
   const restartTimerRef = useRef<number | null>(null)
   const commandTimerRef = useRef<number | null>(null)
   const enabledRef = useRef(enabled)
@@ -400,6 +406,12 @@ export function useWakeWord({
               return
             }
 
+            const sinceOpen = Date.now() - micOpenedAtRef.current
+            if (micOpenedAtRef.current && sinceOpen < WAKE_STARTUP_GRACE_MS) {
+              debugLog('detection ignored (startup grace)', { phrase, sinceOpen })
+              return
+            }
+
             debugLog('detected', { phrase })
             detectedRef.current = true
             stopWakeSession()
@@ -440,6 +452,7 @@ export function useWakeWord({
         }
 
         wakeSessionRef.current = session
+        micOpenedAtRef.current = Date.now()
 
         await handleRef.current.start({
           idleSilenceMs: 12_000,

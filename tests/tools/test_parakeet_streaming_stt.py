@@ -144,11 +144,11 @@ def test_session_falls_back_when_model_lacks_streaming_api(tmp_path):
     assert session._stream is None
 
 
-def test_default_engine_is_batch_no_partials(tmp_path):
-    # Default (auto) engine buffers only during listening and transcribes once at
-    # finish -- keeps the GPU free for the wake word + TTS.
+def test_batch_engine_has_no_partials(tmp_path):
+    # engine=batch buffers only during listening and transcribes once at finish
+    # -- keeps the GPU free for the wake word + TTS (opt-in; rebuffer is default).
     session = ParakeetStreamingSession(
-        {"streaming": {"provider": "parakeet"}},
+        {"streaming": {"provider": "parakeet", "engine": "batch"}},
         loader=lambda _cfg: FakeModel(),
         temp_dir=tmp_path,
     )

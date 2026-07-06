@@ -2061,6 +2061,110 @@ class SkillsShSource(SkillSource):
 
 
 # ---------------------------------------------------------------------------
+# SkillsMP source adapter
+# ---------------------------------------------------------------------------
+
+class SkillsMpSource(SkillSource):
+    """Discover SkillsMP entries and install from their GitHub source URLs."""
+
+    SEARCH_URL = "https://skillsmp.com/api/v1/skills/search"
+
+    def __init__(self, auth: GitHubAuth):
+        self.github = GitHubSource(auth=auth)
+
+    def source_id(self) -> str:
+        return "skillsmp"
+
+    def trust_level_for(self, identifier: str) -> str:
+        return self.github.trust_level_for(self._unwrap_identifier(identifier))
+
+    def search(self, query: str, limit: int = 10) -> List[SkillMeta]:
+        if not query.strip():
+            return []
+
+        cache_key = f"skillsmp_search_{hashlib.md5(f'{query}|{limit}'.encode()).hexdigest()}"
+        cached = _read_index_cache(cache_key)
+        if cached is not None:
+            return [SkillMeta(**item) for item in cached][:limit]
+
+        try:
+            resp = httpx.get(
+                self.SEARCH_URL,
+                params={"q": query, "limit": min(max(limit, 1), 100), "sortBy": "stars"},
+                timeout=15,
+                headers={"User-Agent": "Marvi/skills-hub"},
+            )
+            if resp.status_code != 200:
+                return []
+            data = resp.json()
+        except (httpx.HTTPError, json.JSONDecodeError):
+            return []
+
+        items = (((data or {}).get("data") or {}).get("skills") or [])
+        results = [meta for item in items if (meta := self._meta_from_item(item))]
+        _write_index_cache(cache_key, [_skill_meta_to_dict(item) for item in results])
+        return results[:limit]
+
+    def fetch(self, identifier: str) -> Optional[SkillBundle]:
+        bundle = self.github.fetch(self._unwrap_identifier(identifier))
+        if bundle:
+            bundle.source = "skillsmp"
+            bundle.identifier = identifier
+        return bundle
+
+    def inspect(self, identifier: str) -> Optional[SkillMeta]:
+        meta = self.github.inspect(self._unwrap_identifier(identifier))
+        if meta:
+            meta.source = "skillsmp"
+            meta.identifier = identifier
+            meta.trust_level = self.trust_level_for(identifier)
+        return meta
+
+    def _meta_from_item(self, item: dict) -> Optional[SkillMeta]:
+        if not isinstance(item, dict):
+            return None
+        github_id = self._github_identifier_from_url(str(item.get("githubUrl") or ""))
+        if not github_id:
+            return None
+        parts = github_id.split("/", 2)
+        repo = "/".join(parts[:2])
+        return SkillMeta(
+            name=str(item.get("name") or github_id.rstrip("/").split("/")[-1]),
+            description=str(item.get("description") or ""),
+            source="skillsmp",
+            identifier=self._wrap_identifier(github_id),
+            trust_level=self.github.trust_level_for(github_id),
+            repo=repo,
+            path=parts[2] if len(parts) == 3 else None,
+            extra={
+                "detail_url": item.get("skillUrl"),
+                "stars": item.get("stars"),
+                "provider": "SkillsMP",
+            },
+        )
+
+    @staticmethod
+    def _wrap_identifier(identifier: str) -> str:
+        return identifier if identifier.startswith("skillsmp/") else f"skillsmp/{identifier}"
+
+    @staticmethod
+    def _unwrap_identifier(identifier: str) -> str:
+        return identifier[len("skillsmp/"):] if identifier.startswith("skillsmp/") else identifier
+
+    @staticmethod
+    def _github_identifier_from_url(url: str) -> Optional[str]:
+        parsed = urlparse(url)
+        if parsed.netloc.lower() not in {"github.com", "www.github.com"}:
+            return None
+        parts = [part for part in parsed.path.strip("/").split("/") if part]
+        if len(parts) < 2:
+            return None
+        if len(parts) >= 4 and parts[2] in {"tree", "blob"}:
+            return "/".join([parts[0], parts[1], *parts[4:]])
+        return "/".join(parts[:2])
+
+
+# ---------------------------------------------------------------------------
 # ClawHub source adapter
 # ---------------------------------------------------------------------------
 
@@ -3952,6 +4056,7 @@ def create_source_router(auth: Optional[GitHubAuth] = None) -> List[SkillSource]
         OptionalSkillSource(),        # Official optional skills (highest priority)
         HermesIndexSource(auth=auth), # Centralized index (search + resolved install paths)
         SkillsShSource(auth=auth),
+        SkillsMpSource(auth=auth),
         WellKnownSkillSource(),
         UrlSource(),                  # Direct HTTP(S) URL to a SKILL.md file
         GitHubSource(auth=auth, extra_taps=extra_taps),
@@ -4009,7 +4114,7 @@ def parallel_search_sources(
     # clawhub, etc.) — the index already has their data.  This avoids
     # ~70 GitHub API calls per search for unauthenticated users.
     _index_available = False
-    _api_source_ids = frozenset({"github", "skills-sh", "clawhub",
+    _api_source_ids = frozenset({"github", "skills-sh", "skillsmp", "clawhub",
                                   "claude-marketplace", "lobehub", "well-known"})
     if _effective_filter == "all":
         for src in sources:

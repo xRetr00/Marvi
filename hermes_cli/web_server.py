@@ -11055,6 +11055,7 @@ _SKILL_HUB_SOURCE_LABELS = {
     "official": "Official (Nous)",
     "hermes-index": "Hermes Index",
     "skills-sh": "skills.sh",
+    "skillsmp": "SkillsMP",
     "well-known": "Well-Known",
     "url": "Direct URL",
     "github": "GitHub",

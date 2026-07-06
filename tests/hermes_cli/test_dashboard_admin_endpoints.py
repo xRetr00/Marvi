@@ -567,7 +567,7 @@ class TestSkillsHubSearchEndpoint:
 
         monkeypatch.setattr(
             "tools.skills_hub.create_source_router",
-            lambda: [_Source("hermes-index"), _Source("github"), _Source("skills-sh"), _Source("url")],
+            lambda: [_Source("hermes-index"), _Source("github"), _Source("skills-sh"), _Source("skillsmp"), _Source("url")],
         )
 
         r = self.client.get("/api/skills/hub/sources")
@@ -576,6 +576,7 @@ class TestSkillsHubSearchEndpoint:
         by_id = {s["id"]: s for s in r.json()["sources"]}
         assert by_id["github"]["searchable"] is True
         assert by_id["skills-sh"]["searchable"] is True
+        assert by_id["skillsmp"]["searchable"] is True
         assert by_id["url"]["searchable"] is False
 
     def test_empty_query_returns_empty(self):

@@ -12,6 +12,7 @@ from tools.skills_hub import (
     GitHubAuth,
     GitHubSource,
     LobeHubSource,
+    SkillsMpSource,
     SkillsShSource,
     UrlSource,
     WellKnownSkillSource,
@@ -1282,10 +1283,67 @@ class TestCheckForSkillUpdates:
         assert results[0]["status"] == "up_to_date"
 
 
+class TestSkillsMpSource:
+    def _source(self):
+        return SkillsMpSource(auth=MagicMock(spec=GitHubAuth))
+
+    @patch("tools.skills_hub._write_index_cache")
+    @patch("tools.skills_hub._read_index_cache", return_value=None)
+    @patch("tools.skills_hub.httpx.get")
+    def test_search_maps_github_url_to_installable_identifier(self, mock_get, _mock_read_cache, _mock_write_cache):
+        mock_get.return_value = MagicMock(
+            status_code=200,
+            json=lambda: {
+                "success": True,
+                "data": {
+                    "skills": [
+                        {
+                            "name": "react-patterns",
+                            "description": "React patterns",
+                            "githubUrl": "https://github.com/affaan-m/ECC/tree/main/skills/react-patterns",
+                            "skillUrl": "https://skillsmp.com/creators/affaan-m/ecc/skills-react-patterns",
+                            "stars": 123,
+                        }
+                    ]
+                },
+            },
+        )
+
+        results = self._source().search("react", limit=5)
+
+        assert len(results) == 1
+        assert results[0].source == "skillsmp"
+        assert results[0].identifier == "skillsmp/affaan-m/ECC/skills/react-patterns"
+        assert results[0].repo == "affaan-m/ECC"
+        assert results[0].path == "skills/react-patterns"
+        assert results[0].extra["stars"] == 123
+
+    @patch.object(GitHubSource, "fetch")
+    def test_fetch_delegates_to_github_source_and_relabels_bundle(self, mock_fetch):
+        mock_fetch.return_value = SkillBundle(
+            name="react-patterns",
+            files={"SKILL.md": "# Test"},
+            source="github",
+            identifier="affaan-m/ECC/skills/react-patterns",
+            trust_level="community",
+        )
+
+        bundle = self._source().fetch("skillsmp/affaan-m/ECC/skills/react-patterns")
+
+        assert bundle is not None
+        assert bundle.source == "skillsmp"
+        assert bundle.identifier == "skillsmp/affaan-m/ECC/skills/react-patterns"
+        mock_fetch.assert_called_once_with("affaan-m/ECC/skills/react-patterns")
+
+
 class TestCreateSourceRouter:
     def test_includes_skills_sh_source(self):
         sources = create_source_router(auth=MagicMock(spec=GitHubAuth))
         assert any(isinstance(src, SkillsShSource) for src in sources)
+
+    def test_includes_skillsmp_source(self):
+        sources = create_source_router(auth=MagicMock(spec=GitHubAuth))
+        assert any(isinstance(src, SkillsMpSource) for src in sources)
 
     def test_includes_well_known_source(self):
         sources = create_source_router(auth=MagicMock(spec=GitHubAuth))

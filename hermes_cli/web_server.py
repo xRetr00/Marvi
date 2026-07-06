@@ -11155,6 +11155,15 @@ async def list_skills_hub_sources(profile: Optional[str] = None):
                     except Exception:
                         featured = []
             out.append(entry)
+        if not featured:
+            for src in sources:
+                if src.source_id() != "official":
+                    continue
+                try:
+                    featured = [_skill_meta_to_payload(m) for m in src.search("", limit=12)]
+                except Exception:
+                    featured = []
+                break
         for entry in out:
             # Direct URL installs are supported, but they are not a searchable
             # hub. Every registry/source chip should be searchable in the

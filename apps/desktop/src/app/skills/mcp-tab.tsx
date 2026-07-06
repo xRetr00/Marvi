@@ -11,7 +11,7 @@ import {
   SiVercel
 } from '@icons-pack/react-simple-icons'
 import { useStore } from '@nanostores/react'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { type ComponentType, type SVGProps, useEffect, useMemo, useRef, useState } from 'react'
 
 import { useDebounced } from '@/app/hooks/use-debounced'
@@ -339,7 +339,37 @@ function scanServerBlocks(text: string): ServerBlock[] {
   return blocks
 }
 
-export function McpTab({ gateway, query }: { gateway: HermesGateway | null; query: string }) {
+export function McpStoreTab({ query }: { query: string }) {
+  const activeProfile = useStore($activeGatewayProfile)
+  const term = useDebounced(query.trim(), 350)
+  const queryClient = useQueryClient()
+
+  const catalogQuery = useQuery({
+    queryKey: [...MCP_CATALOG_KEY, normalizeProfileKey(activeProfile), 'store', term],
+    queryFn: () => getMcpCatalog({ online: true, query: term }),
+    staleTime: 5 * 60_000
+  })
+
+  const onInstalled = async () => {
+    await queryClient.invalidateQueries({ queryKey: MCP_CATALOG_KEY })
+  }
+
+  return (
+    <div className="h-full min-h-0 overflow-y-auto px-4 py-3 [scrollbar-gutter:stable]">
+      <McpCatalog entries={catalogQuery.data?.entries ?? []} loading={catalogQuery.isLoading} onInstalled={onInstalled} />
+    </div>
+  )
+}
+
+export function McpTab({
+  gateway,
+  onOpenStore,
+  query
+}: {
+  gateway: HermesGateway | null
+  onOpenStore?: () => void
+  query: string
+}) {
   const { t } = useI18n()
   const m = t.settings.mcp
   const activeSessionId = useStore($activeSessionId)
@@ -411,17 +441,13 @@ export function McpTab({ gateway, query }: { gateway: HermesGateway | null; quer
   // Config/document order, not alphabetical — the list mirrors mcp.json.
   const names = useMemo(() => Object.keys(servers), [servers])
 
-  // Left column view: the configured fleet, or the Nous-approved catalog to
-  // install from. Both share one cached catalog fetch (also feeds description
-  // enrichment below), so switching between them never re-requests.
-  const [leftView, setLeftView] = useState<'catalog' | 'servers'>('servers')
   const catalogTerm = useDebounced(query.trim(), 350)
 
   // Key by active profile — installed/enabled badges are per-profile, so sharing
   // one cache across profiles would flash the previous profile's state on switch.
   const catalogQuery = useQuery({
-    queryKey: [...MCP_CATALOG_KEY, normalizeProfileKey(useStore($activeGatewayProfile)), leftView, catalogTerm],
-    queryFn: () => getMcpCatalog({ online: leftView === 'catalog', query: catalogTerm }),
+    queryKey: [...MCP_CATALOG_KEY, normalizeProfileKey(useStore($activeGatewayProfile)), 'servers', catalogTerm],
+    queryFn: () => getMcpCatalog({ query: catalogTerm }),
     staleTime: 5 * 60_000
   })
 
@@ -662,27 +688,6 @@ export function McpTab({ gateway, query }: { gateway: HermesGateway | null; quer
     return true
   }
 
-  // A catalog install wrote a new server into config.yaml on the backend —
-  // refresh the catalog (installed state) and the config, then RECONCILE THE
-  // EDITOR DRAFT with the fresh servers. Without this a dirty draft (or even a
-  // clean one the seed never refreshes) would omit the new server, and the next
-  // whole-map Save would silently drop it.
-  const onCatalogInstalled = async () => {
-    void catalogQuery.refetch()
-    const { data } = await refetchConfig()
-    const nextServers = getServers(data ?? null)
-
-    if (dirty) {
-      // Keep the user's in-progress edits (doc wins), add any server the install
-      // introduced that the draft doesn't have yet.
-      patchDraft(doc => ({ ...nextServers, ...doc }))
-    } else {
-      resetDraft(nextServers)
-    }
-
-    void silentReload()
-  }
-
   const withEnabled = (server: Record<string, unknown>, enabled: boolean) => {
     const next = { ...server }
 
@@ -885,9 +890,8 @@ export function McpTab({ gateway, query }: { gateway: HermesGateway | null; quer
     return <PageLoader className="min-h-24" label={configLoading ? m.loading : t.skills.loading} />
   }
 
-  // Zero servers and a pristine doc: one centered invitation — with a path into
-  // the catalog (kept out when the user is already browsing it).
-  if (Object.keys(servers).length === 0 && !dirty && leftView === 'servers') {
+  // Zero servers and a pristine doc: one centered invitation.
+  if (Object.keys(servers).length === 0 && !dirty) {
     return (
       <div className="flex h-full min-h-0 flex-1">
         <PanelEmpty
@@ -896,9 +900,11 @@ export function McpTab({ gateway, query }: { gateway: HermesGateway | null; quer
               <Button onClick={addServer} size="sm">
                 {m.newServer}
               </Button>
-              <Button onClick={() => setLeftView('catalog')} size="sm" variant="text">
-                {m.tabCatalog}
-              </Button>
+              {onOpenStore && (
+                <Button onClick={onOpenStore} size="sm" variant="text">
+                  MCP Store
+                </Button>
+              )}
             </span>
           }
           description={m.emptyDesc}
@@ -929,9 +935,9 @@ export function McpTab({ gateway, query }: { gateway: HermesGateway | null; quer
 
   return (
     <div className={cn('grid h-full min-h-0 grid-cols-1', MASTER_DETAIL_WIDE_COLS)}>
-      {/* LEFT: the focused block's server config, or the fleet list / catalog. */}
+      {/* LEFT: the focused block's server config, or the fleet list. */}
       <aside className="flex min-h-0 flex-col overflow-hidden border-r border-(--ui-stroke-quaternary)">
-        {leftView === 'servers' && selected && activeEntry ? (
+        {selected && activeEntry ? (
           <ServerConfig
             authing={authing === selected}
             description={descriptionFor(selected, activeEntry)}
@@ -952,45 +958,34 @@ export function McpTab({ gateway, query }: { gateway: HermesGateway | null; quer
             {/* Geometry mirrors ListStrip (mb-1 h-6 pl-2) so these tabs land on
                 the exact line the sort link occupies in the Skills/Tools views. */}
             <div className="mb-1 flex h-6 shrink-0 items-center gap-3 pl-2 pr-1">
-              {(['servers', 'catalog'] as const).map(view => (
-                <TextTab
-                  active={leftView === view}
-                  className="h-6 px-0 text-[0.72rem]"
-                  key={view}
-                  onClick={() => setLeftView(view)}
-                >
-                  {view === 'servers' ? m.tabServers : m.tabCatalog}
-                </TextTab>
-              ))}
+              <TextTab active className="h-6 px-0 text-[0.72rem]">
+                {m.tabServers}
+              </TextTab>
             </div>
             <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain [scrollbar-gutter:stable]">
-              {leftView === 'catalog' ? (
-                <McpCatalog entries={catalog} loading={catalogQuery.isLoading} onInstalled={onCatalogInstalled} />
-              ) : (
-                <>
-                  {names.map(serverName => {
-                    const server = servers[serverName]
-                    const status = statusOf(server, probes[serverName])
+              <>
+                {names.map(serverName => {
+                  const server = servers[serverName]
+                  const status = statusOf(server, probes[serverName])
 
-                    return (
-                      <McpRow
-                        active={false}
-                        busy={saving}
-                        enabled={serverEnabled(server)}
-                        key={serverName}
-                        name={serverName}
-                        onProbe={() => void runProbe(serverName)}
-                        onRemove={() => void removeServer(serverName)}
-                        onSelect={() => focusServer(serverName)}
-                        onToggle={checked => void toggleServer(serverName, checked)}
-                        status={status}
-                        statusText={statusLine(m, status, probes[serverName], server)}
-                      />
-                    )
-                  })}
-                  <PanelAddButton label={m.newServer} onClick={addServer} />
-                </>
-              )}
+                  return (
+                    <McpRow
+                      active={false}
+                      busy={saving}
+                      enabled={serverEnabled(server)}
+                      key={serverName}
+                      name={serverName}
+                      onProbe={() => void runProbe(serverName)}
+                      onRemove={() => void removeServer(serverName)}
+                      onSelect={() => focusServer(serverName)}
+                      onToggle={checked => void toggleServer(serverName, checked)}
+                      status={status}
+                      statusText={statusLine(m, status, probes[serverName], server)}
+                    />
+                  )
+                })}
+                <PanelAddButton label={m.newServer} onClick={addServer} />
+              </>
             </div>
           </div>
         )}
@@ -1377,7 +1372,7 @@ function McpCatalog({
   }
 
   if (entries.length === 0) {
-    return <PanelEmpty description={m.catalogEmpty} icon="plug" title={m.tabCatalog} />
+    return <PanelEmpty description={m.catalogEmpty} icon="plug" title="MCP Store" />
   }
 
   return (

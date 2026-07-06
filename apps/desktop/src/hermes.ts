@@ -20,6 +20,7 @@ import type {
   HermesConfig,
   HermesConfigRecord,
   LogsResponse,
+  McpCatalogEntry,
   McpCatalogResponse,
   McpServerSummary,
   MemoryProviderConfig,
@@ -1101,22 +1102,35 @@ export function setMcpServerEnabled(name: string, enabled: boolean): Promise<{ o
   })
 }
 
-export function getMcpCatalog(): Promise<McpCatalogResponse> {
+export function getMcpCatalog(opts: { online?: boolean; query?: string } = {}): Promise<McpCatalogResponse> {
+  const params = new URLSearchParams()
+
+  if (opts.online) {
+    params.set('online', '1')
+  }
+
+  if (opts.query?.trim()) {
+    params.set('q', opts.query.trim())
+  }
+
+  const suffix = params.toString()
+
   return window.hermesDesktop.api<McpCatalogResponse>({
     ...profileScoped(),
-    path: '/api/mcp/catalog'
+    path: suffix ? `/api/mcp/catalog?${suffix}` : '/api/mcp/catalog'
   })
 }
 
 export function installMcpCatalogEntry(
   name: string,
-  env: Record<string, string> = {}
+  env: Record<string, string> = {},
+  entry?: Pick<McpCatalogEntry, 'registry_id' | 'source_kind'>
 ): Promise<{ ok: boolean; name?: string; pid?: number; action?: string; background?: boolean }> {
   return window.hermesDesktop.api<{ ok: boolean; name?: string; pid?: number; action?: string; background?: boolean }>({
     ...profileScoped(),
     path: '/api/mcp/catalog/install',
     method: 'POST',
-    body: { name, env, enable: true },
+    body: { name, env, enable: true, registry_id: entry?.registry_id ?? undefined, source_kind: entry?.source_kind },
     timeoutMs: 60_000
   })
 }

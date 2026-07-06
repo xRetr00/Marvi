@@ -124,6 +124,70 @@ class TestMcpEndpoints:
         r = self.client.post("/api/mcp/catalog/install", json={"name": "no-such-mcp-xyz"})
         assert r.status_code == 404
 
+    def test_catalog_can_include_official_registry_results(self, monkeypatch):
+        import hermes_cli.web_server as ws
+
+        monkeypatch.setattr(
+            ws,
+            "_fetch_official_mcp_registry",
+            lambda query="", limit=20: [
+                {
+                    "server": {
+                        "name": "com.example/docs",
+                        "title": "Docs MCP",
+                        "description": "Search docs",
+                        "version": "1.2.3",
+                        "repository": {"url": "https://github.com/example/docs-mcp"},
+                        "remotes": [{"type": "streamable-http", "url": "https://docs.example.com/mcp"}],
+                    },
+                    "_meta": {"io.modelcontextprotocol.registry/official": {"isLatest": True}},
+                }
+            ],
+        )
+
+        r = self.client.get("/api/mcp/catalog?online=1&q=docs")
+
+        assert r.status_code == 200
+        row = [e for e in r.json()["entries"] if e["registry_id"] == "com.example/docs"][0]
+        assert row["name"] == "com-example-docs"
+        assert row["source_kind"] == "official-registry"
+        assert row["transport"] == "http"
+        assert row["url"] == "https://docs.example.com/mcp"
+        assert row["installed"] is False
+
+    def test_catalog_installs_official_registry_remote(self, monkeypatch):
+        import hermes_cli.web_server as ws
+        from hermes_cli.config import load_config
+
+        monkeypatch.setattr(
+            ws,
+            "_fetch_official_mcp_registry",
+            lambda query="", limit=20: [
+                {
+                    "server": {
+                        "name": "com.example/docs",
+                        "description": "Search docs",
+                        "remotes": [{"type": "streamable-http", "url": "https://docs.example.com/mcp"}],
+                    },
+                    "_meta": {"io.modelcontextprotocol.registry/official": {"isLatest": True}},
+                }
+            ],
+        )
+
+        r = self.client.post(
+            "/api/mcp/catalog/install",
+            json={
+                "name": "com-example-docs",
+                "source_kind": "official-registry",
+                "registry_id": "com.example/docs",
+            },
+        )
+
+        assert r.status_code == 200, r.text
+        server = load_config()["mcp_servers"]["com-example-docs"]
+        assert server["url"] == "https://docs.example.com/mcp"
+        assert server["enabled"] is True
+
 
 
 class TestCredentialPoolEndpoints:

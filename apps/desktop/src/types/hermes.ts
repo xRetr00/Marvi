@@ -1019,6 +1019,8 @@ export interface McpServerTestResponse {
 /** One Nous-approved MCP catalog entry from `GET /api/mcp/catalog`. */
 export interface McpCatalogEntry {
   name: string
+  registry_id: string | null
+  source_kind: 'local' | 'official-registry' | string
   description: string
   source: string
   transport: string

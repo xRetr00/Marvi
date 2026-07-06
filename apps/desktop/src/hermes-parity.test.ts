@@ -6,6 +6,7 @@ import {
   getMemoryStatus,
   getSkillHubSources,
   getToolsetModels,
+  installMcpCatalogEntry,
   installSkillFromHub,
   resetMemory,
   runDebugShare,
@@ -86,6 +87,30 @@ describe('Hermes REST parity helpers (hub / mcp / maintenance)', () => {
     await getMcpCatalog()
 
     expect(api).toHaveBeenCalledWith(expect.objectContaining({ path: '/api/mcp/catalog' }))
+  })
+
+  it('reads the online MCP catalog with a query', async () => {
+    await getMcpCatalog({ online: true, query: 'github' })
+
+    expect(api).toHaveBeenCalledWith(expect.objectContaining({ path: '/api/mcp/catalog?online=1&q=github' }))
+  })
+
+  it('installs an online MCP catalog entry with its registry id', async () => {
+    await installMcpCatalogEntry('com-example-docs', {}, { registry_id: 'com.example/docs', source_kind: 'official-registry' })
+
+    expect(api).toHaveBeenCalledWith(
+      expect.objectContaining({
+        path: '/api/mcp/catalog/install',
+        method: 'POST',
+        body: {
+          name: 'com-example-docs',
+          env: {},
+          enable: true,
+          registry_id: 'com.example/docs',
+          source_kind: 'official-registry'
+        }
+      })
+    )
   })
 
   it('reads memory status and resets a specific target', async () => {

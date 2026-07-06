@@ -538,9 +538,7 @@ export function SkillsView({ setStatusbarItemGroup: _setStatusbarItemGroup, ...p
       activeTab={mode}
       onSearchChange={setQuery}
       onTabChange={id => setMode(id as (typeof SKILLS_MODES)[number])}
-      // MCP manages a handful of entries with the editor right there —
-      // searching it is noise.
-      searchHidden={mode === 'mcp'}
+      searchHidden={false}
       searchHints={searchHints}
       searchPlaceholder={
         mode === 'skills'
@@ -560,7 +558,7 @@ export function SkillsView({ setStatusbarItemGroup: _setStatusbarItemGroup, ...p
       {mode === 'hub' ? (
         <SkillsHub query={query} />
       ) : mode === 'mcp' ? (
-        <McpTab gateway={gateway} />
+        <McpTab gateway={gateway} query={query} />
       ) : (skillsFailed || toolsetsFailed) && (!skills || !toolsets) ? (
         <PanelEmpty
           action={

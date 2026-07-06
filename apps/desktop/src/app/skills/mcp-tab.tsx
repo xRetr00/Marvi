@@ -14,6 +14,7 @@ import { useStore } from '@nanostores/react'
 import { useQuery } from '@tanstack/react-query'
 import { type ComponentType, type SVGProps, useEffect, useMemo, useRef, useState } from 'react'
 
+import { useDebounced } from '@/app/hooks/use-debounced'
 import { type CodeEditorApi } from '@/components/chat/code-editor'
 import { JsonDocumentEditor } from '@/components/chat/json-document-editor'
 import { LogTail } from '@/components/chat/log-tail'
@@ -338,7 +339,7 @@ function scanServerBlocks(text: string): ServerBlock[] {
   return blocks
 }
 
-export function McpTab({ gateway }: { gateway: HermesGateway | null }) {
+export function McpTab({ gateway, query }: { gateway: HermesGateway | null; query: string }) {
   const { t } = useI18n()
   const m = t.settings.mcp
   const activeSessionId = useStore($activeSessionId)
@@ -414,12 +415,13 @@ export function McpTab({ gateway }: { gateway: HermesGateway | null }) {
   // install from. Both share one cached catalog fetch (also feeds description
   // enrichment below), so switching between them never re-requests.
   const [leftView, setLeftView] = useState<'catalog' | 'servers'>('servers')
+  const catalogTerm = useDebounced(query.trim(), 350)
 
   // Key by active profile — installed/enabled badges are per-profile, so sharing
   // one cache across profiles would flash the previous profile's state on switch.
   const catalogQuery = useQuery({
-    queryKey: [...MCP_CATALOG_KEY, normalizeProfileKey(useStore($activeGatewayProfile))],
-    queryFn: getMcpCatalog,
+    queryKey: [...MCP_CATALOG_KEY, normalizeProfileKey(useStore($activeGatewayProfile)), leftView, catalogTerm],
+    queryFn: () => getMcpCatalog({ online: leftView === 'catalog', query: catalogTerm }),
     staleTime: 5 * 60_000
   })
 
@@ -1330,7 +1332,7 @@ function McpCatalog({
     setInstalling(entry.name)
 
     try {
-      const res = await installMcpCatalogEntry(entry.name, draft)
+      const res = await installMcpCatalogEntry(entry.name, draft, entry)
 
       // Git-backed entries clone in the background — keep the row busy and poll
       // the action to completion before refetching / re-enabling, so a re-click
@@ -1393,6 +1395,7 @@ function McpCatalog({
                   <CatalogTag>{entry.transport}</CatalogTag>
                   {entry.auth_type === 'oauth' && <CatalogTag>OAuth</CatalogTag>}
                   {entry.auth_type === 'api_key' && <CatalogTag>API key</CatalogTag>}
+                  {entry.source_kind === 'official-registry' && <CatalogTag>Registry</CatalogTag>}
                   {entry.needs_install && !entry.installed && <CatalogTag>{m.catalogNeedsInstall}</CatalogTag>}
                   {entry.installed && (
                     <span className="text-[0.6rem] text-emerald-400">

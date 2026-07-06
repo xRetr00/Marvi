@@ -9653,8 +9653,191 @@ async def set_mcp_server_enabled(
     return {"ok": True, "name": name, "enabled": bool(body.enabled)}
 
 
+_OFFICIAL_MCP_REGISTRY_URL = "https://registry.modelcontextprotocol.io/v0/servers"
+
+
+def _fetch_official_mcp_registry(query: str = "", limit: int = 20) -> list[dict]:
+    """Fetch official MCP Registry rows. Small stdlib client; tests monkeypatch it."""
+    params = {"limit": str(max(1, min(int(limit or 20), 50)))}
+    if query.strip():
+        params["search"] = query.strip()
+    url = _OFFICIAL_MCP_REGISTRY_URL + "?" + urllib.parse.urlencode(params)
+    req = urllib.request.Request(
+        url,
+        headers={
+            "Accept": "application/json",
+            "User-Agent": f"Marvi/{__version__}",
+        },
+    )
+    with urllib.request.urlopen(req, timeout=15) as resp:
+        data = json.loads(resp.read().decode("utf-8"))
+    servers = data.get("servers", [])
+    return servers if isinstance(servers, list) else []
+
+
+def _registry_server_name(server: dict) -> str:
+    raw = str(server.get("name") or server.get("title") or "mcp").lower()
+    slug = re.sub(r"[^a-z0-9]+", "-", raw).strip("-")
+    return slug[:48] or "mcp"
+
+
+def _registry_header_env(header: dict) -> tuple[str, str, bool] | None:
+    name = str(header.get("name") or "").strip()
+    if not name:
+        return None
+    value = str(header.get("value") or "").strip()
+    token = re.search(r"{([A-Za-z_][A-Za-z0-9_]*)}", value)
+    env_name = token.group(1).upper() if token else re.sub(r"[^A-Za-z0-9]+", "_", name).upper()
+    prompt = str(header.get("description") or env_name)
+    return env_name, prompt, bool(header.get("isRequired", False))
+
+
+def _registry_required_env(server: dict) -> list[dict]:
+    out: dict[str, dict] = {}
+    for remote in server.get("remotes") or []:
+        if not isinstance(remote, dict):
+            continue
+        for header in remote.get("headers") or []:
+            if isinstance(header, dict):
+                item = _registry_header_env(header)
+                if item:
+                    name, prompt, required = item
+                    out[name] = {"name": name, "prompt": prompt, "required": required}
+    for pkg in server.get("packages") or []:
+        if not isinstance(pkg, dict):
+            continue
+        for env in pkg.get("environmentVariables") or []:
+            if isinstance(env, dict) and env.get("name"):
+                name = str(env["name"])
+                out[name] = {
+                    "name": name,
+                    "prompt": str(env.get("description") or name),
+                    "required": bool(env.get("isRequired", False)),
+                }
+    return list(out.values())
+
+
+def _registry_remote_config(remote: dict) -> dict:
+    cfg = {"url": str(remote["url"])}
+    headers = {}
+    for header in remote.get("headers") or []:
+        if not isinstance(header, dict):
+            continue
+        name = str(header.get("name") or "").strip()
+        if not name:
+            continue
+        value = str(header.get("value") or "").strip()
+        item = _registry_header_env(header)
+        if item:
+            env_name = item[0]
+            value = re.sub(r"{[A-Za-z_][A-Za-z0-9_]*}", f"${{{env_name}}}", value) or f"${{{env_name}}}"
+        headers[name] = value or f"${{{re.sub(r'[^A-Za-z0-9]+', '_', name).upper()}}}"
+    if headers:
+        cfg["headers"] = headers
+    return cfg
+
+
+def _registry_package_config(pkg: dict) -> dict | None:
+    registry = str(pkg.get("registryType") or "").lower()
+    ident = str(pkg.get("identifier") or "").strip()
+    version = str(pkg.get("version") or "").strip()
+    if not ident:
+        return None
+    if registry == "npm":
+        package = f"{ident}@{version}" if version else ident
+        return {"command": "npx", "args": ["-y", package]}
+    if registry == "pypi":
+        package = f"{ident}=={version}" if version else ident
+        return {"command": "uvx", "args": [package]}
+    return None
+
+
+def _registry_server_config(server: dict) -> dict:
+    for remote in server.get("remotes") or []:
+        if isinstance(remote, dict) and remote.get("url"):
+            return _registry_remote_config(remote)
+    for pkg in server.get("packages") or []:
+        if isinstance(pkg, dict):
+            cfg = _registry_package_config(pkg)
+            if cfg:
+                env = {
+                    str(e["name"]): f"${{{e['name']}}}"
+                    for e in pkg.get("environmentVariables") or []
+                    if isinstance(e, dict) and e.get("name")
+                }
+                if env:
+                    cfg["env"] = env
+                return cfg
+    raise ValueError("Registry entry has no supported remote or npm/pypi package")
+
+
+def _official_registry_servers(query: str = "", limit: int = 20) -> list[dict]:
+    seen: dict[str, dict] = {}
+    for item in _fetch_official_mcp_registry(query, limit):
+        server = item.get("server") if isinstance(item, dict) else None
+        if not isinstance(server, dict):
+            continue
+        meta = (item.get("_meta") or {}).get("io.modelcontextprotocol.registry/official", {})
+        if isinstance(meta, dict) and meta.get("isLatest") is False:
+            continue
+        name = str(server.get("name") or "")
+        if name and name not in seen:
+            seen[name] = server
+    return list(seen.values())
+
+
+def _official_mcp_registry_catalog_entries(query: str, *, profile: Optional[str]) -> list[dict]:
+    with _profile_scope(profile):
+        servers_cfg = load_config().get("mcp_servers") or {}
+    out = []
+    for server in _official_registry_servers(query, 20):
+        try:
+            cfg = _registry_server_config(server)
+        except ValueError:
+            continue
+        name = _registry_server_name(server)
+        is_http = "url" in cfg
+        required_env = _registry_required_env(server)
+        out.append({
+            "name": name,
+            "registry_id": server.get("name"),
+            "source_kind": "official-registry",
+            "description": str(server.get("description") or ""),
+            "source": (server.get("repository") or {}).get("url") or server.get("websiteUrl") or "Official MCP Registry",
+            "transport": "http" if is_http else "stdio",
+            "auth_type": "api_key" if required_env else "none",
+            "required_env": required_env,
+            "command": cfg.get("command"),
+            "args": list(cfg.get("args") or []),
+            "url": cfg.get("url"),
+            "install_url": None,
+            "install_ref": str(server.get("version") or "") or None,
+            "bootstrap": [],
+            "default_enabled": None,
+            "post_install": "Installed from the official MCP Registry. Start a new Hermes session or reload MCP to use it.",
+            "needs_install": bool(cfg.get("command")),
+            "installed": name in servers_cfg,
+            "enabled": bool((servers_cfg.get(name) or {}).get("enabled", True)) if name in servers_cfg else False,
+        })
+    return out
+
+
+def _official_registry_server_config(registry_id: str) -> dict:
+    registry_id = (registry_id or "").strip()
+    if not registry_id:
+        raise ValueError("Missing registry id")
+    matches = [s for s in _official_registry_servers(registry_id, 20) if s.get("name") == registry_id]
+    if not matches:
+        raise ValueError(f"No official registry MCP '{registry_id}'")
+    return _registry_server_config(matches[0])
+
+
 @app.get("/api/mcp/catalog")
-async def list_mcp_catalog(profile: Optional[str] = None):
+async def list_mcp_catalog(
+    profile: Optional[str] = None,
+    q: str = "",
+    online: bool = False,
+):
     """Browse the Nous-approved MCP catalog (the optional-mcps/ manifests).
 
     Each entry reports whether it's already installed and enabled so the UI
@@ -9683,6 +9866,8 @@ async def list_mcp_catalog(profile: Optional[str] = None):
             install = entry.install
             entries.append({
                 "name": entry.name,
+                "registry_id": None,
+                "source_kind": "local",
                 "description": entry.description,
                 "source": entry.source,
                 "transport": transport.type,
@@ -9712,6 +9897,8 @@ async def list_mcp_catalog(profile: Optional[str] = None):
                 "installed": installed_state.get(entry.name, (False, False))[0],
                 "enabled": installed_state.get(entry.name, (False, False))[1],
             })
+        if online:
+            entries.extend(_official_mcp_registry_catalog_entries(q, profile=profile))
     except HTTPException:
         # Unknown/invalid profile → 404, not a silently-empty catalog.
         raise
@@ -9732,6 +9919,8 @@ async def list_mcp_catalog(profile: Optional[str] = None):
 
 class MCPCatalogInstall(BaseModel):
     name: str
+    source_kind: str = "local"
+    registry_id: Optional[str] = None
     # env: KEY=VALUE map for catalog entries that declare required env vars.
     env: Dict[str, str] = {}
     enable: bool = True
@@ -9750,13 +9939,31 @@ async def install_mcp_catalog_entry(body: MCPCatalogInstall, profile: Optional[s
     from hermes_cli import mcp_catalog
 
     name = (body.name or "").strip()
+    effective_profile = body.profile or profile
+    if body.source_kind == "official-registry":
+        try:
+            server_cfg = _official_registry_server_config(body.registry_id or name)
+        except Exception as exc:
+            raise HTTPException(status_code=404, detail=str(exc))
+        if body.env:
+            with _profile_scope(effective_profile):
+                for k, v in body.env.items():
+                    if v:
+                        save_env_value(k, v)
+        from hermes_cli.mcp_config import _save_mcp_server
+
+        server_cfg["enabled"] = bool(body.enable)
+        with _profile_scope(effective_profile):
+            if not _save_mcp_server(name, server_cfg):
+                raise HTTPException(status_code=400, detail="Rejected suspicious MCP configuration")
+        return {"ok": True, "name": name, "background": False}
+
     entry = mcp_catalog.get_entry(name)
     if entry is None:
         raise HTTPException(status_code=404, detail=f"No catalog entry '{name}'")
 
     # Persist any supplied env vars first (catalog entries declare which names
     # they need; we only write the ones the user provided).
-    effective_profile = body.profile or profile
     if body.env:
         with _profile_scope(effective_profile):
             for k, v in body.env.items():

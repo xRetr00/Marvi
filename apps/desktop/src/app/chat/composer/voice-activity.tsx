@@ -7,9 +7,9 @@ import { iconSize, Loader2, Mic, Volume2, VolumeX } from '@/lib/icons'
 import { cn } from '@/lib/utils'
 import { stopVoicePlayback } from '@/lib/voice-playback'
 import { $voicePlayback } from '@/store/voice-playback'
+import { $voiceState } from '@/store/voice-presence'
 
 import type { VoiceActivityState } from './types'
-import type { ConversationStatus } from './hooks/use-voice-conversation'
 
 type BrowserAudioContext = typeof AudioContext
 
@@ -204,26 +204,19 @@ export function VoiceActivity({ state }: { state: VoiceActivityState }) {
   )
 }
 
-export function VoiceConversationActivity({
-  status,
-  transcript
-}: {
-  status: ConversationStatus
-  transcript: string
-}) {
+// Live "what you're saying" transcript in the MAIN window (mirrors the island's
+// user caption from the same $voiceState source, so streaming STT is visible in
+// the GUI too, not only in the Dynamic Island).
+export function VoiceConversationActivity() {
   const { t } = useI18n()
-  const text = transcript.trim()
+  const voice = useStore($voiceState)
+  const text = (voice.userCaption ?? '').trim()
 
-  if (status === 'idle' || !text) {
+  if (voice.phase === 'off' || voice.phase === 'speaking' || !text) {
     return null
   }
 
-  const labels: Record<Exclude<ConversationStatus, 'idle'>, string> = {
-    listening: t.composer.listening,
-    speaking: t.composer.speakingResponse,
-    thinking: t.composer.thinking,
-    transcribing: t.composer.transcribing
-  }
+  const label = voice.phase === 'thinking' ? t.composer.thinking : t.composer.listening
 
   return (
     <div
@@ -235,10 +228,10 @@ export function VoiceConversationActivity({
       role="status"
     >
       <div className="flex size-5 shrink-0 items-center justify-center rounded-full bg-primary/15 text-primary">
-        {status === 'listening' ? <Mic size={12} /> : <Loader2 className="animate-spin" size={12} />}
+        {voice.phase === 'thinking' ? <Loader2 className="animate-spin" size={12} /> : <Mic size={12} />}
       </div>
       <div className="min-w-0 flex-1">
-        <div className="font-medium text-primary">{labels[status]}</div>
+        <div className="font-medium text-primary">{label}</div>
         <div className="line-clamp-2 break-words text-foreground/85">{text}</div>
       </div>
     </div>

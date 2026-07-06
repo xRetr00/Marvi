@@ -17,7 +17,7 @@ interface BargeInGateOptions {
 //     WHILE talking over Marvi — set it between the echo peak and your speech peak).
 //   graceMs: ignore the first N ms of playback (avoids the TTS onset click).
 //   sustainedMs: how long speech must persist before it counts as an interrupt.
-export const BARGE_IN_DEFAULTS = { graceMs: 350, level: 0.06, sustainedMs: 220 }
+export const BARGE_IN_DEFAULTS = { graceMs: 300, level: 0.04, sustainedMs: 180 }
 
 export interface BargeInGate {
   /** Last computed state — read after `update()` for logging/telemetry. */

@@ -123,7 +123,8 @@ export function useComposerVoice({
 
   useReadAloudBargeIn({
     blocked: voiceConversationActive || voiceStatus !== 'idle',
-    enabled: bargeInEnabled !== false
+    enabled: bargeInEnabled !== false,
+    streamingSttEnabled
   })
 
   useEffect(() => {

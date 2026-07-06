@@ -405,13 +405,18 @@ class SherpaOnnxWakeWordSpotter:
         )
         self.stream = self.spotter.create_stream()
         self.sample_rate = cfg.sample_rate
-        self._recent: list[float] = []  # rolling ~1s window for the energy gate
+        self._recent: list[float] = []  # rolling ~1s window for the RMS fallback
+        from tools.vad import make_speech_gate
+
+        self._speech_gate = make_speech_gate()
 
     def start(self, sample_rate: int = 16000) -> None:
         self.sample_rate = sample_rate or self.cfg.sample_rate
 
     def accept_waveform(self, samples: list[float]) -> str:
-        if self.cfg.min_rms > 0:
+        if self._speech_gate is not None:
+            self._speech_gate.accept(samples)
+        elif self.cfg.min_rms > 0:
             self._recent.extend(float(sample) for sample in samples)
             self._recent = self._recent[-16000:]
 
@@ -423,8 +428,12 @@ class SherpaOnnxWakeWordSpotter:
             return ""
 
         self.spotter.reset_stream(self.stream)
-        # Energy gate: drop keyword hits fired on silence/noise (see WakeWordConfig).
-        if self.cfg.min_rms > 0:
+        # Speech gate: drop keyword hits fired on silence/noise. Prefer TEN VAD,
+        # fall back to the RMS energy gate (see WakeWordConfig).
+        if self._speech_gate is not None:
+            if not self._speech_gate.has_recent_speech():
+                return ""
+        elif self.cfg.min_rms > 0:
             import numpy as np
 
             arr = np.asarray(self._recent, dtype=np.float32)
@@ -474,6 +483,10 @@ class LiveKitWakeWordSpotter:
         self.model = WakeWordModel(models=self._model_paths)
         self._samples: list[float] = []
         self._frames_seen = 0
+        # TEN VAD speech gate (falls back to the RMS energy gate if unavailable).
+        from tools.vad import make_speech_gate
+
+        self._speech_gate = make_speech_gate()
 
     def start(self, sample_rate: int = 16000) -> None:
         if sample_rate and sample_rate != 16000:
@@ -483,6 +496,8 @@ class LiveKitWakeWordSpotter:
         import numpy as np
 
         self._frames_seen += 1
+        if self._speech_gate is not None:
+            self._speech_gate.accept(samples)
         self._samples.extend(float(sample) for sample in samples)
         self._samples = self._samples[-32000:]
         if len(self._samples) < 32000:
@@ -491,10 +506,14 @@ class LiveKitWakeWordSpotter:
 
         window = np.asarray(self._samples, dtype=np.float32)
 
-        # Energy gate: the model hallucinates a ~0.79 "marvi" score on silence, so
-        # reject any detection whose window has no real speech energy. This is the
-        # fix for constant false wakes in an empty room.
-        if self.cfg.min_rms > 0:
+        # Speech gate: the model hallucinates a ~0.79 "marvi" score on silence, so
+        # reject detections without real speech. Prefer TEN VAD (rejects noisy-but-
+        # non-speech too); fall back to an RMS energy gate when it's unavailable.
+        if self._speech_gate is not None:
+            if not self._speech_gate.has_recent_speech():
+                self._log_decision("no_speech", samples=samples, window=window)
+                return ""
+        elif self.cfg.min_rms > 0:
             rms = float(np.sqrt(np.mean(np.square(window)))) if window.size else 0.0
             if rms < self.cfg.min_rms:
                 self._log_decision("low_energy", samples=samples, window=window)

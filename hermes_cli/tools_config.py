@@ -1433,23 +1433,24 @@ def _run_post_setup(post_setup_key: str):
     elif post_setup_key == "livekit_wakeword":
         try:
             from livekit.wakeword import WakeWordModel  # noqa: F401
-            _print_success("    livekit-wakeword is already installed")
+            import ten_vad  # noqa: F401  (TEN VAD speech gate — rejects false wakes)
+            _print_success("    livekit-wakeword + ten-vad are already installed")
             return
         except ImportError:
             pass
-        _print_info("    Installing livekit-wakeword...")
+        _print_info("    Installing livekit-wakeword + ten-vad (VAD speech gate)...")
         try:
-            result = _pip_install(["-U", "livekit-wakeword", "matplotlib", "--quiet"], timeout=300)
+            result = _pip_install(["-U", "livekit-wakeword", "ten-vad", "matplotlib", "--quiet"], timeout=300)
             if result.returncode == 0:
-                _print_success("    livekit-wakeword installed")
+                _print_success("    livekit-wakeword + ten-vad installed")
                 _print_info("    Set voice.wake_word.model to a .onnx file or a directory of Marvi variant models.")
             else:
                 _print_warning("    livekit-wakeword install failed:")
                 _print_info(f"      {(result.stderr or '').strip()[:300]}")
-                _print_info("    Run manually: uv pip install -U livekit-wakeword")
+                _print_info("    Run manually: uv pip install -U livekit-wakeword ten-vad")
         except subprocess.TimeoutExpired:
             _print_warning("    livekit-wakeword install timed out (>5min)")
-            _print_info("    Run manually: uv pip install -U livekit-wakeword")
+            _print_info("    Run manually: uv pip install -U livekit-wakeword ten-vad")
 
     elif post_setup_key == "parakeet_stt":
         _print_info("    Installing Parakeet Realtime EOU STT into its venv...")

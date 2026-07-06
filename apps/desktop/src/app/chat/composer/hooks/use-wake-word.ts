@@ -23,6 +23,12 @@ export type WakeWordStatus = 'idle' | 'arming' | 'armed' | 'woken' | 'listening'
 // can produce a spurious hotword hit. See issue: false positive on presence on.
 const WAKE_STARTUP_GRACE_MS = 900
 
+// After a turn, stay in the conversation and capture follow-ups WITHOUT needing
+// the wake phrase again. If the user doesn't start a follow-up within this idle
+// window, the conversation ends and the wake word re-arms. So: not every turn
+// needs the phrase, and it isn't always listening either.
+const CONVERSATION_IDLE_MS = 7_000
+
 interface WakeWordOptions {
   busy: boolean
   config?: WakeWordConfig
@@ -114,6 +120,7 @@ export function useWakeWord({
   const streamingErrorRef = useRef<unknown>(null)
   const streamedCommandFramesRef = useRef(0)
   const detectedRef = useRef(false)
+  const resumeCaptureRef = useRef(false)
   const stoppingRef = useRef(false)
   const startupFailedRef = useRef(false)
   const pendingRestartAfterSubmitRef = useRef(false)
@@ -197,6 +204,7 @@ export function useWakeWord({
     stopStreamingSession()
     handleRef.current.cancel()
     detectedRef.current = false
+    resumeCaptureRef.current = false
     pendingRestartAfterSubmitRef.current = false
     stoppingRef.current = false
     commandFramesRef.current = []
@@ -205,6 +213,9 @@ export function useWakeWord({
   }, [])
 
   const scheduleRestart = useCallback(() => {
+    // A plain restart means the conversation is over — re-arm the wake word.
+    resumeCaptureRef.current = false
+
     if (!enabledRef.current || busyRef.current) {
       debugLog('restart skipped (disabled or busy)')
       setStatus('idle')
@@ -223,6 +234,10 @@ export function useWakeWord({
   }, [debugLog, wakeConfig.cooldownMs])
 
   const scheduleRestartAfterSubmittedTurn = useCallback(() => {
+    // Stay in the conversation: once the agent + TTS finish (!busy), capture the
+    // next turn directly (no wake phrase). The resume happens in the effect below
+    // and via this fallback timer, whichever sees !busy first.
+    resumeCaptureRef.current = true
     pendingRestartAfterSubmitRef.current = true
     setStatus('idle')
     setUserCaption(null)
@@ -235,9 +250,9 @@ export function useWakeWord({
       }
 
       pendingRestartAfterSubmitRef.current = false
-      scheduleRestart()
-    }, Math.max(wakeConfig.cooldownMs, 1500))
-  }, [scheduleRestart, wakeConfig.cooldownMs])
+      setStartTick(tick => tick + 1)
+    }, Math.max(wakeConfig.cooldownMs, 900))
+  }, [wakeConfig.cooldownMs])
 
   const finishCapture = useCallback(async () => {
     if (stoppingRef.current) {
@@ -378,7 +393,11 @@ export function useWakeWord({
     }
 
     pendingRestartAfterSubmitRef.current = false
-    scheduleRestart()
+    if (resumeCaptureRef.current) {
+      setStartTick(tick => tick + 1) // resume the conversation (capture without wake)
+    } else {
+      scheduleRestart()
+    }
   }, [busy, scheduleRestart])
 
   useEffect(() => {
@@ -396,6 +415,51 @@ export function useWakeWord({
 
     const start = async () => {
       try {
+        // Conversation continuity: resume capturing the next turn directly, with
+        // no wake session and no phrase. Ends (falls back to wake) when a capture
+        // yields no command — see finishCapture -> scheduleRestart.
+        if (resumeCaptureRef.current) {
+          debugLog('conversation continue (no wake phrase)')
+          detectedRef.current = true
+          commandFramesRef.current = []
+          streamingErrorRef.current = null
+          streamedCommandFramesRef.current = 0
+
+          if (streamingSttEnabled) {
+            streamingOpenRef.current = openStreamingTranscription({ onPartial: text => setUserCaption(text) })
+              .then(session => {
+                streamingSessionRef.current = session
+                return session
+              })
+              .catch(error => {
+                streamingErrorRef.current = error
+                return null
+              })
+          }
+
+          setStatus('listening')
+          micOpenedAtRef.current = Date.now()
+
+          await handleRef.current.start({
+            idleSilenceMs: CONVERSATION_IDLE_MS,
+            onAudioFrame: samples => {
+              commandFramesRef.current.push(new Float32Array(samples))
+              if (streamingSessionRef.current) {
+                streamingSessionRef.current.sendFrame(samples)
+                streamedCommandFramesRef.current = commandFramesRef.current.length
+              }
+            },
+            onError: error => notifyError(error, voiceCopy.microphoneFailed),
+            onSilence: () => finishIfTurnCompleteRef.current?.(),
+            silenceLevel: 0.075,
+            silenceMs: 1_250
+          })
+
+          commandTimerRef.current = window.setTimeout(() => void finishCaptureRef.current?.(), wakeConfig.commandTimeoutMs)
+
+          return
+        }
+
         setStatus('arming')
         debugLog('arming')
 

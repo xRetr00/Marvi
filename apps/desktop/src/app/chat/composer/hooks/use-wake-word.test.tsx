@@ -1,5 +1,5 @@
 import { act, renderHook, waitFor } from '@testing-library/react'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { useWakeWord } from './use-wake-word'
 
@@ -9,6 +9,8 @@ const notifyError = vi.fn()
 const cancelMic = vi.fn()
 const startMic = vi.fn()
 const stopMic = vi.fn()
+let nowMs = 100_000
+let dateNowSpy: ReturnType<typeof vi.spyOn>
 
 interface RecorderOptionsForTest {
   onAudioFrame?: (samples: Float32Array) => void
@@ -72,9 +74,19 @@ vi.mock('./use-mic-recorder', () => ({
 }))
 
 describe('useWakeWord', () => {
+  beforeEach(() => {
+    nowMs = 100_000
+    dateNowSpy = vi.spyOn(Date, 'now').mockImplementation(() => nowMs)
+  })
+
   afterEach(() => {
+    dateNowSpy.mockRestore()
     vi.clearAllMocks()
   })
+
+  const passStartupGrace = () => {
+    nowMs += 1_000
+  }
 
   it('does not retry wake startup continuously after an unavailable backend error', async () => {
     openWakeWordSession.mockRejectedValue(new Error('sherpa missing'))
@@ -190,6 +202,7 @@ describe('useWakeWord', () => {
 
     expect(wakeSession.sendFrame).toHaveBeenCalledWith(beforeWake)
 
+    passStartupGrace()
     await act(async () => {
       wakeOptions?.onDetected('hey marvi')
       await Promise.resolve()
@@ -247,6 +260,7 @@ describe('useWakeWord', () => {
     )
 
     await waitFor(() => expect(startMic).toHaveBeenCalled())
+    passStartupGrace()
     await act(async () => {
       wakeOptions?.onDetected('hey marvi')
       await Promise.resolve()
@@ -302,6 +316,7 @@ describe('useWakeWord', () => {
     )
 
     await waitFor(() => expect(startMic).toHaveBeenCalled())
+    passStartupGrace()
     await act(async () => {
       wakeOptions?.onDetected('hey marvi')
       await Promise.resolve()
@@ -356,6 +371,7 @@ describe('useWakeWord', () => {
     )
 
     await waitFor(() => expect(startMic).toHaveBeenCalled())
+    passStartupGrace()
     await act(async () => {
       wakeOptions?.onDetected('hey marvi')
       recorderState.options?.onAudioFrame?.(new Float32Array([0.3, 0.4]))
@@ -406,6 +422,7 @@ describe('useWakeWord', () => {
 
     await waitFor(() => expect(startMic).toHaveBeenCalled())
 
+    passStartupGrace()
     await act(async () => {
       wakeOptions?.onDetected('hey marvi')
       await Promise.resolve()

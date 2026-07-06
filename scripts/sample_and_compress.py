@@ -421,11 +421,7 @@ def sample_from_datasets(
         source = entry.get("_source_dataset", "unknown").split("/")[-1]
 
         source_counts[source] = source_counts.get(source, 0) + 1
-
-
-
     print(f"\n📌 Sample distribution by source:")
-
     for source, count in sorted(source_counts.items()):
 
         print(f"      {source}: {count:,}")
@@ -537,11 +533,7 @@ def run_compression(input_dir: Path, output_dir: Path, config_path: str):
     sys.path.insert(0, str(Path(__file__).parent.parent))
 
     from trajectory_compressor import TrajectoryCompressor, CompressionConfig
-
-
-
     print(f"\n🗜️  Running trajectory compression...")
-
     print(f"   Input: {input_dir}")
 
     print(f"   Output: {output_dir}")
@@ -695,11 +687,7 @@ def main(
     else:
 
         dataset_list = DEFAULT_DATASETS
-
-
-
     print(f"\n📋 Configuration:")
-
     print(f"   Total samples: {total_samples:,}")
 
     print(f"   Min tokens filter: {min_tokens:,}")
@@ -803,9 +791,7 @@ def main(
     print(f"📁 Compressed batches: {compressed_dir}")
 
     print(f"📁 Final output:       {final_output}")
-
     print(f"\nTo upload to HuggingFace:")
-
     print(f"   huggingface-cli upload NousResearch/{output_name} {final_output}")
 
 

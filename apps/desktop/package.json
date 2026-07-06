@@ -2,7 +2,7 @@
   "name": "marvi-desktop",
   "productName": "Marvi",
   "private": true,
-  "version": "0.17.0",
+  "version": "0.18.0",
   "description": "Native desktop shell for Marvi Agent.",
   "author": "Nous Research",
   "type": "module",

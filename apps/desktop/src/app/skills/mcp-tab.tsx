@@ -1294,6 +1294,14 @@ function CatalogTag({ children }: { children: string }) {
   )
 }
 
+function catalogTarget(entry: McpCatalogEntry): string {
+  if (entry.url) {
+    return entry.url
+  }
+
+  return [entry.command, ...entry.args].filter(Boolean).join(' ')
+}
+
 // The Nous-approved MCP catalog: one-click installs of curated servers, with an
 // inline prompt for any required credentials (never shows stored values). On
 // install the parent refetches config + catalog and reloads live sessions.
@@ -1376,6 +1384,8 @@ function McpCatalog({
     <div className="flex flex-col">
       {entries.map(entry => {
         const draft = envDrafts[entry.name] ?? {}
+        const title = entry.display_name || prettyName(entry.name)
+        const target = catalogTarget(entry)
 
         return (
           <div className="rounded-md px-2 py-2" key={entry.name}>
@@ -1390,9 +1400,10 @@ function McpCatalog({
               <div className="min-w-0 flex-1">
                 <div className="flex flex-wrap items-center gap-1.5">
                   <span className="truncate text-[0.78rem] font-medium text-foreground/85">
-                    {prettyName(entry.name)}
+                    {title}
                   </span>
                   <CatalogTag>{entry.transport}</CatalogTag>
+                  {entry.install_ref && <CatalogTag>{entry.install_ref}</CatalogTag>}
                   {entry.auth_type === 'oauth' && <CatalogTag>OAuth</CatalogTag>}
                   {entry.auth_type === 'api_key' && <CatalogTag>API key</CatalogTag>}
                   {entry.source_kind === 'official-registry' && <CatalogTag>Registry</CatalogTag>}
@@ -1404,6 +1415,8 @@ function McpCatalog({
                   )}
                 </div>
                 <p className="mt-0.5 line-clamp-2 text-[0.68rem] text-muted-foreground/70">{entry.description}</p>
+                {target && <p className="mt-0.5 truncate font-mono text-[0.62rem] text-muted-foreground/45">{target}</p>}
+                {entry.source && <p className="mt-0.5 truncate text-[0.62rem] text-muted-foreground/45">{entry.source}</p>}
                 {envOpenFor === entry.name && entry.required_env.length > 0 && (
                   <div className="mt-2 grid gap-2">
                     {entry.required_env.map(env => (
@@ -1433,7 +1446,7 @@ function McpCatalog({
                 disabled={entry.installed || installing !== null}
                 onClick={() => void install(entry)}
                 size="xs"
-                variant="text"
+                variant={entry.installed ? 'text' : 'textStrong'}
               >
                 {installing === entry.name
                   ? m.catalogInstalling

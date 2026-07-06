@@ -9723,6 +9723,8 @@ def _registry_remote_config(remote: dict) -> dict:
     for header in remote.get("headers") or []:
         if not isinstance(header, dict):
             continue
+        if not header.get("isRequired", False):
+            continue
         name = str(header.get("name") or "").strip()
         if not name:
             continue
@@ -9763,7 +9765,7 @@ def _registry_server_config(server: dict) -> dict:
                 env = {
                     str(e["name"]): f"${{{e['name']}}}"
                     for e in pkg.get("environmentVariables") or []
-                    if isinstance(e, dict) and e.get("name")
+                    if isinstance(e, dict) and e.get("name") and e.get("isRequired", False)
                 }
                 if env:
                     cfg["env"] = env
@@ -9800,6 +9802,7 @@ def _official_mcp_registry_catalog_entries(query: str, *, profile: Optional[str]
         required_env = _registry_required_env(server)
         out.append({
             "name": name,
+            "display_name": str(server.get("title") or server.get("name") or name),
             "registry_id": server.get("name"),
             "source_kind": "official-registry",
             "description": str(server.get("description") or ""),
@@ -9866,6 +9869,7 @@ async def list_mcp_catalog(
             install = entry.install
             entries.append({
                 "name": entry.name,
+                "display_name": entry.name,
                 "registry_id": None,
                 "source_kind": "local",
                 "description": entry.description,
@@ -11150,17 +11154,11 @@ async def list_skills_hub_sources(profile: Optional[str] = None):
                     except Exception:
                         featured = []
             out.append(entry)
-        # Tell the UI which sources are worth searching individually (for its
-        # progressive per-source fan-out). Mirror parallel_search_sources: when
-        # the centralized index is available it already subsumes the external
-        # API sources, so they're redundant — skipping them avoids ~70 GitHub
-        # calls per keystroke. Keep this set in sync with that function's
-        # ``_api_source_ids``.
-        _api_source_ids = frozenset(
-            {"github", "skills-sh", "clawhub", "claude-marketplace", "lobehub", "well-known"}
-        )
         for entry in out:
-            entry["searchable"] = not (index_available and entry["id"] in _api_source_ids)
+            # Direct URL installs are supported, but they are not a searchable
+            # hub. Every registry/source chip should be searchable in the
+            # desktop Browse Hub, even when Hermes Index is also connected.
+            entry["searchable"] = entry["id"] != "url"
         return {
             "sources": out,
             "index_available": index_available,

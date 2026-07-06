@@ -150,6 +150,7 @@ class TestMcpEndpoints:
         assert r.status_code == 200
         row = [e for e in r.json()["entries"] if e["registry_id"] == "com.example/docs"][0]
         assert row["name"] == "com-example-docs"
+        assert row["display_name"] == "Docs MCP"
         assert row["source_kind"] == "official-registry"
         assert row["transport"] == "http"
         assert row["url"] == "https://docs.example.com/mcp"
@@ -551,6 +552,31 @@ class TestSkillsHubSearchEndpoint:
     @pytest.fixture(autouse=True)
     def _setup(self, _isolate_hermes_home):
         self.client, _ = _client()
+
+    def test_sources_keep_all_hubs_searchable_when_index_available(self, monkeypatch):
+        class _Source:
+            def __init__(self, sid):
+                self._sid = sid
+                self.is_available = sid == "hermes-index"
+
+            def source_id(self):
+                return self._sid
+
+            def search(self, *_args, **_kwargs):
+                return []
+
+        monkeypatch.setattr(
+            "tools.skills_hub.create_source_router",
+            lambda: [_Source("hermes-index"), _Source("github"), _Source("skills-sh"), _Source("url")],
+        )
+
+        r = self.client.get("/api/skills/hub/sources")
+
+        assert r.status_code == 200
+        by_id = {s["id"]: s for s in r.json()["sources"]}
+        assert by_id["github"]["searchable"] is True
+        assert by_id["skills-sh"]["searchable"] is True
+        assert by_id["url"]["searchable"] is False
 
     def test_empty_query_returns_empty(self):
         # Empty query short-circuits (no network) and returns the enriched

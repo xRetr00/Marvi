@@ -156,11 +156,9 @@ export function SkillsHub({ query }: SkillsHubProps) {
   // term and abandons stale terms for us (no hand-rolled sequence guard).
   const term = useDebounced(query.trim(), 350)
 
-  // Progressive per-source search: one query per source the backend says is
-  // worth hitting individually (it marks index-covered API sources unsearchable
-  // so we don't re-hammer ~70 GitHub calls). Each resolves independently, so the
-  // list fills in as sources return instead of blocking on the slowest one, and
-  // each source shows its own spinner. Stale terms key out and are abandoned.
+  // Progressive per-source search: one query per connected hub. Direct URL is
+  // installable but not searchable, so the backend marks only that one false.
+  // Each hub resolves independently so the list fills in as sources return.
   const searchableSources = useMemo(
     () => (sourcesQuery.data?.sources ?? []).filter(source => source.searchable !== false),
     [sourcesQuery.data]

@@ -99,6 +99,10 @@ def _index_cache_dir() -> Path:
     return Path(forced) if forced is not None else _hub_dir() / "index-cache"
 
 
+def _hermes_index_cache_file() -> Path:
+    return _index_cache_dir() / "hermes-index.json"
+
+
 _DYNAMIC_PATH_RESOLVERS = {
     "HERMES_HOME": _hermes_home,
     "SKILLS_DIR": _skills_dir,
@@ -108,6 +112,7 @@ _DYNAMIC_PATH_RESOLVERS = {
     "AUDIT_LOG": _audit_log,
     "TAPS_FILE": _taps_file,
     "INDEX_CACHE_DIR": _index_cache_dir,
+    "HERMES_INDEX_CACHE_FILE": _hermes_index_cache_file,
 }
 
 
@@ -3655,12 +3660,7 @@ def check_for_skill_updates(
 # ---------------------------------------------------------------------------
 
 HERMES_INDEX_URL = "https://raw.githubusercontent.com/xRetr00/Marvi/main/website/static/api/skills-index.json"
-HERMES_INDEX_CACHE_FILE = INDEX_CACHE_DIR / "hermes-index.json"
 HERMES_INDEX_TTL = 6 * 3600  # 6 hours
-
-
-def _hermes_index_cache_file() -> Path:
-    return _index_cache_dir() / "hermes-index.json"
 
 
 def _load_hermes_index() -> Optional[dict]:

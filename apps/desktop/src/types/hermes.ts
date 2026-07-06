@@ -928,8 +928,7 @@ export interface SkillHubSource {
   label: string
   available?: boolean
   rate_limited?: boolean
-  // False when the centralized index already covers this source, so the UI's
-  // per-source search fan-out skips it (avoids redundant external API calls).
+  // False for install-only sources such as direct URL, which are not searchable.
   searchable?: boolean
 }
 
@@ -1019,6 +1018,7 @@ export interface McpServerTestResponse {
 /** One Nous-approved MCP catalog entry from `GET /api/mcp/catalog`. */
 export interface McpCatalogEntry {
   name: string
+  display_name?: string
   registry_id: string | null
   source_kind: 'local' | 'official-registry' | string
   description: string

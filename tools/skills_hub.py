@@ -54,10 +54,35 @@ logger = logging.getLogger(__name__)
 INDEX_CACHE_TTL = 3600  # 1 hour
 
 
+class _DynamicPath:
+    def __init__(self, name: str, resolver):
+        self.name = name
+        self._resolver = resolver
+
+    def _path(self) -> Path:
+        return self._resolver()
+
+    def __fspath__(self) -> str:
+        return os.fspath(self._path())
+
+    def __str__(self) -> str:
+        return str(self._path())
+
+    def __repr__(self) -> str:
+        return repr(self._path())
+
+    def __truediv__(self, other):
+        return self._path() / other
+
+    def __getattr__(self, name: str):
+        return getattr(self._path(), name)
+
+
 # _override lets a test-injected real module attribute (patch.object/monkeypatch
 # on SKILLS_DIR etc.) win over dynamic resolution; None means resolve live.
 def _override(name: str):
-    return globals().get(name)
+    value = globals().get(name)
+    return None if isinstance(value, _DynamicPath) else value
 
 
 def _hermes_home() -> Path:
@@ -114,6 +139,16 @@ _DYNAMIC_PATH_RESOLVERS = {
     "INDEX_CACHE_DIR": _index_cache_dir,
     "HERMES_INDEX_CACHE_FILE": _hermes_index_cache_file,
 }
+
+HERMES_HOME = _DynamicPath("HERMES_HOME", _hermes_home)
+SKILLS_DIR = _DynamicPath("SKILLS_DIR", _skills_dir)
+HUB_DIR = _DynamicPath("HUB_DIR", _hub_dir)
+LOCK_FILE = _DynamicPath("LOCK_FILE", _lock_file)
+QUARANTINE_DIR = _DynamicPath("QUARANTINE_DIR", _quarantine_dir)
+AUDIT_LOG = _DynamicPath("AUDIT_LOG", _audit_log)
+TAPS_FILE = _DynamicPath("TAPS_FILE", _taps_file)
+INDEX_CACHE_DIR = _DynamicPath("INDEX_CACHE_DIR", _index_cache_dir)
+HERMES_INDEX_CACHE_FILE = _DynamicPath("HERMES_INDEX_CACHE_FILE", _hermes_index_cache_file)
 
 
 def __getattr__(name: str):

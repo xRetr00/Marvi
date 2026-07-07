@@ -1,0 +1,6 @@
+[2026-07-07/ 13:21:25.475:INFO:browser_app_win.cc(328)] filePath to delete: NVIDIA App\UpdateFramework\status\nvapp\nvAppUpdate.json
+[2026-07-07/ 13:21:25.478:INFO:cefmain_win.cc(409)] Invoking CefInitialize
+[2026-07-07/ 13:22:35.462:INFO:selfupdate_helper_win.cc(214)] Current user isNon-Admin
+[2026-07-07/ 13:22:35.470:INFO:selfupdate_helper_win.cc(365)] Self Update Task Started Event Handle= 000000000000035C
+[2026-07-07/ 13:22:35.473:INFO:selfupdate_helper_win.cc(490)] Triggering Application Event hEventLog = 000002949BE509B0
+[2026-07-07/ 13:22:35.534:INFO:selfupdate_helper_win.cc(511)] RunSelfUpdateTask: foundTask = 1 succeded = 1

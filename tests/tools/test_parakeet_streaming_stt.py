@@ -1,8 +1,13 @@
+import sys
+import types
+
 import numpy as np
 
 from tools.parakeet_streaming_stt import (
     DEFAULT_PARAKEET_MODEL,
+    ParakeetStreamingConfig,
     ParakeetStreamingSession,
+    _load_parakeet_model,
     _run_stdio_server,
     resolve_parakeet_config,
 )
@@ -60,6 +65,51 @@ def test_resolve_parakeet_config_ignores_whisper_model_name():
     )
 
     assert cfg.model == DEFAULT_PARAKEET_MODEL
+
+
+def test_load_parakeet_model_requires_driver_update_on_cuda_driver_error(monkeypatch):
+    import tools.parakeet_streaming_stt as mod
+    import pytest
+
+    devices = []
+
+    class FakeCuda:
+        @staticmethod
+        def is_available():
+            return True
+
+    class FakeParakeetModel:
+        def to(self, device):
+            devices.append(device)
+            if device == "cuda":
+                raise RuntimeError("cudaErrorInsufficientDriver: CUDA driver version is insufficient")
+            return self
+
+        def eval(self):
+            return None
+
+    class FakeASRModel:
+        @staticmethod
+        def from_pretrained(model_name):
+            return FakeParakeetModel()
+
+    nemo_pkg = types.ModuleType("nemo")
+    collections_pkg = types.ModuleType("nemo.collections")
+    asr_pkg = types.ModuleType("nemo.collections.asr")
+    asr_pkg.models = types.SimpleNamespace(ASRModel=FakeASRModel)
+    nemo_pkg.collections = collections_pkg
+    collections_pkg.asr = asr_pkg
+
+    mod._MODEL_CACHE.clear()
+    monkeypatch.setitem(sys.modules, "torch", types.SimpleNamespace(cuda=FakeCuda()))
+    monkeypatch.setitem(sys.modules, "nemo", nemo_pkg)
+    monkeypatch.setitem(sys.modules, "nemo.collections", collections_pkg)
+    monkeypatch.setitem(sys.modules, "nemo.collections.asr", asr_pkg)
+
+    with pytest.raises(RuntimeError, match="Update the NVIDIA GPU driver"):
+        _load_parakeet_model(ParakeetStreamingConfig(device="cuda", cpu_fallback=True))
+
+    assert devices == ["cuda"]
 
 
 def test_parakeet_streaming_session_transcribes_buffered_chunks(tmp_path):

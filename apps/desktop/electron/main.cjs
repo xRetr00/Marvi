@@ -226,6 +226,10 @@ ipcMain.handle('hermes:get-remote-display-reason', () => REMOTE_DISPLAY_REASON)
 app.commandLine.appendSwitch('disable-renderer-backgrounding')
 app.commandLine.appendSwitch('disable-backgrounding-occluded-windows')
 app.commandLine.appendSwitch('disable-background-timer-throttling')
+const rendererOldSpaceMb = Number.parseInt(String(process.env.HERMES_DESKTOP_RENDERER_OLD_SPACE_MB || '4096'), 10)
+if (Number.isFinite(rendererOldSpaceMb) && rendererOldSpaceMb > 0) {
+  app.commandLine.appendSwitch('js-flags', `--max-old-space-size=${rendererOldSpaceMb}`)
+}
 
 const SOURCE_REPO_ROOT = path.resolve(APP_ROOT, '../..')
 
@@ -967,6 +971,25 @@ function rememberLog(chunk) {
   }
 
   scheduleDesktopLogFlush()
+}
+
+function rendererMemorySummary(webContents) {
+  try {
+    const pid = webContents?.getOSProcessId?.()
+    const metric = app.getAppMetrics().find(item => item.pid === pid)
+    const memory = metric?.memory
+    if (!memory) return pid ? `pid=${pid}` : 'pid=?'
+
+    const mb = value => (Number(value || 0) / 1024).toFixed(1)
+    return [
+      `pid=${pid}`,
+      `workingSet=${mb(memory.workingSetSize)}MiB`,
+      `private=${mb(memory.privateBytes)}MiB`,
+      `peak=${mb(memory.peakWorkingSetSize)}MiB`
+    ].join(' ')
+  } catch (err) {
+    return `memory=? (${err?.message || err})`
+  }
 }
 
 function openExternalUrl(rawUrl) {
@@ -6263,6 +6286,7 @@ function createWindow() {
 
   mainWindow.webContents.on('render-process-gone', (_event, details) => {
     rememberLog(`[renderer] render-process-gone reason=${details?.reason} exitCode=${details?.exitCode}`)
+    rememberLog(`[renderer] memory at exit: ${rendererMemorySummary(mainWindow?.webContents)}`)
 
     if (details?.reason === 'crashed' || details?.reason === 'oom') {
       const now = Date.now()

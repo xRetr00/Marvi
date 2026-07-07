@@ -115,6 +115,20 @@ def _is_memory_load_error(exc: BaseException) -> bool:
     )
 
 
+def _is_cuda_driver_error(exc: BaseException) -> bool:
+    text = f"{type(exc).__name__}: {exc}".lower()
+    return any(
+        marker in text
+        for marker in (
+            "cudacudaerrorinsufficientdriver",
+            "cudaerrorinsufficientdriver",
+            "cuda driver version is insufficient",
+            "nvidia driver on your system is too old",
+            "cuda driver initialization failed",
+        )
+    )
+
+
 def _load_parakeet_model(config: ParakeetStreamingConfig) -> Any:
     key = (
         config.model,
@@ -159,9 +173,15 @@ def _load_parakeet_model(config: ParakeetStreamingConfig) -> Any:
         if hasattr(model, "to"):
             model = model.to(requested_device)
     except Exception as exc:
-        if not config.cpu_fallback or requested_device == "cpu" or not _is_memory_load_error(exc):
+        if _is_cuda_driver_error(exc):
+            raise RuntimeError(
+                "Parakeet CUDA failed because the NVIDIA driver is too old for the installed CUDA runtime. "
+                "Update the NVIDIA GPU driver."
+            ) from exc
+        elif not config.cpu_fallback or requested_device == "cpu" or not _is_memory_load_error(exc):
             raise
-        logger.warning("Parakeet CUDA load failed from memory pressure; retrying on CPU: %s", exc)
+        else:
+            logger.warning("Parakeet CUDA load failed from memory pressure; retrying on CPU: %s", exc)
         model = nemo_asr.models.ASRModel.from_pretrained(model_name=config.model)
         if hasattr(model, "to"):
             model = model.to("cpu")

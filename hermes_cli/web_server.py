@@ -37,6 +37,7 @@ import sys
 import tempfile
 import threading
 import time
+import traceback
 import urllib.error
 import urllib.parse
 import wave
@@ -16122,13 +16123,30 @@ def start_server(
             _hb_stall_threshold = 5.0
             _hb_loop = asyncio.get_running_loop()
 
+            def _thread_stack_summary(limit: int = 6) -> str:
+                frames = sys._current_frames()
+                names = {thread.ident: thread.name for thread in threading.enumerate()}
+                rows = []
+                for ident, frame in frames.items():
+                    stack = traceback.extract_stack(frame, limit=4)
+                    if not stack:
+                        continue
+                    leaf = stack[-1]
+                    rows.append(
+                        f"{names.get(ident, ident)}: {leaf.filename}:{leaf.lineno} in {leaf.name}"
+                    )
+                    if len(rows) >= limit:
+                        break
+                return " | ".join(rows)
+
             def _loop_heartbeat(expected: float) -> None:
                 now = _hb_loop.time()
                 drift = now - expected
                 if drift > _hb_stall_threshold:
                     _log.warning(
-                        "event loop stalled %.1fs (GIL pressure suspected)",
+                        "event loop stalled %.1fs (GIL pressure suspected); threads=%s",
                         drift,
+                        _thread_stack_summary(),
                     )
                 _hb_loop.call_later(
                     _hb_interval, _loop_heartbeat, now + _hb_interval

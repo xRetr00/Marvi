@@ -76,12 +76,6 @@ cd ~/.hermes/hermes-agent && uv pip install -e ".[messaging]"
 cd ~/.hermes/hermes-agent && uv pip install -e ".[tts-premium]"
 ```
 
-### Local NeuTTS (optional)
-
-```bash
-python -m pip install -U neutts[all]
-```
-
 ### Everything
 
 ```bash
@@ -94,21 +88,18 @@ cd ~/.hermes/hermes-agent && uv pip install -e ".[all]"
 
 ```bash
 brew install portaudio ffmpeg opus
-brew install espeak-ng
 ```
 
 ### Ubuntu / Debian
 
 ```bash
 sudo apt install portaudio19-dev ffmpeg libopus0
-sudo apt install espeak-ng
 ```
 
 Why these matter:
 - `portaudio` → microphone input / playback for CLI voice mode
 - `ffmpeg` → audio conversion for TTS and messaging delivery
 - `opus` → Discord voice codec support
-- `espeak-ng` → phonemizer backend for NeuTTS
 
 ## Step 4: choose STT and TTS providers
 
@@ -146,20 +137,15 @@ ELEVENLABS_API_KEY=***
 #### Text-to-speech
 
 - `edge` → free and good enough for most users
-- `neutts` → free local/on-device TTS
+- `pockettts` → free local/on-device streaming TTS
+- `piper` → free lightweight local TTS
 - `elevenlabs` → best quality
 - `openai` → good middle ground
 - `mistral` → multilingual, native Opus
 
 ### If you use `hermes setup`
 
-If you choose NeuTTS in the setup wizard, Hermes checks whether `neutts` is already installed. If it is missing, the wizard tells you NeuTTS needs the Python package `neutts` and the system package `espeak-ng`, offers to install them for you, installs `espeak-ng` with your platform package manager, and then runs:
-
-```bash
-python -m pip install -U neutts[all]
-```
-
-If you skip that install or it fails, the wizard falls back to Edge TTS.
+NeuTTS and KittenTTS are blocked in Marvi and do not appear in the setup wizard. Choose PocketTTS or Piper for local TTS.
 
 ## Step 5: recommended config
 
@@ -189,11 +175,10 @@ If you want local TTS instead, switch the `tts` block to:
 
 ```yaml
 tts:
-  provider: "neutts"
-  neutts:
-    ref_audio: ''
-    ref_text: ''
-    model: neuphonic/neutts-air-q4-gguf
+  provider: "pockettts"
+  pockettts:
+    model: kyutai/tts-1.6b-en_fr
+    voice: default
     device: cpu
 ```
 

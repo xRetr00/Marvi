@@ -48,9 +48,6 @@ cd ~/.hermes/hermes-agent && uv pip install -e ".[messaging]"
 # Premium TTS (ElevenLabs)
 cd ~/.hermes/hermes-agent && uv pip install -e ".[tts-premium]"
 
-# Local TTS (NeuTTS, optional)
-python -m pip install -U neutts[all]
-
 # Everything at once
 cd ~/.hermes/hermes-agent && uv pip install -e ".[all]"
 ```
@@ -61,7 +58,11 @@ cd ~/.hermes/hermes-agent && uv pip install -e ".[all]"
 | `messaging` | `discord.py[voice]`, `python-telegram-bot`, `aiohttp` | Discord & Telegram bots |
 | `tts-premium` | `elevenlabs` | ElevenLabs TTS provider |
 
-Optional local TTS provider: install `neutts` separately with `python -m pip install -U neutts[all]`. On first use it downloads the model automatically.
+Optional local TTS providers: use PocketTTS or Piper from `hermes setup tts`.
+
+:::caution Blocked local providers
+NeuTTS and KittenTTS are intentionally blocked in Marvi. Do not install or configure them for Marvi voice mode.
+:::
 
 :::info
 `discord.py[voice]` installs **PyNaCl** (for voice encryption) and **opus bindings** automatically. This is required for Discord voice channel support.
@@ -72,11 +73,9 @@ Optional local TTS provider: install `neutts` separately with `python -m pip ins
 ```bash
 # macOS
 brew install portaudio ffmpeg opus
-brew install espeak-ng   # for NeuTTS
 
 # Ubuntu/Debian
 sudo apt install portaudio19-dev ffmpeg libopus0
-sudo apt install espeak-ng   # for NeuTTS
 ```
 
 | Dependency | Purpose | Required For |
@@ -84,7 +83,6 @@ sudo apt install espeak-ng   # for NeuTTS
 | **PortAudio** | Microphone input and audio playback | CLI voice mode |
 | **ffmpeg** | Audio format conversion (MP3 → Opus, PCM → WAV) | All platforms |
 | **Opus** | Discord voice codec | Discord voice channels |
-| **espeak-ng** | Phonemizer backend | Local NeuTTS provider |
 
 ### API Keys
 
@@ -96,7 +94,7 @@ Add to `~/.hermes/.env`:
 GROQ_API_KEY=your-key                 # Groq Whisper — fast, free tier (cloud)
 VOICE_TOOLS_OPENAI_KEY=your-key       # OpenAI Whisper — paid (cloud)
 
-# Text-to-Speech (optional — Edge TTS and NeuTTS work without any key)
+# Text-to-Speech (optional — Edge TTS, PocketTTS, and Piper work without any key)
 ELEVENLABS_API_KEY=***           # ElevenLabs — premium quality
 # VOICE_TOOLS_OPENAI_KEY above also enables OpenAI TTS
 ```
@@ -318,7 +316,7 @@ DISCORD_ALLOWED_USERS=your-user-id
 # STT — local provider needs no key (pip install faster-whisper)
 # GROQ_API_KEY=your-key            # Alternative: cloud-based, fast, free tier
 
-# TTS — optional. Edge TTS and NeuTTS need no key.
+# TTS — optional. Edge TTS, PocketTTS, and Piper need no key.
 # ELEVENLABS_API_KEY=***      # Premium quality
 # VOICE_TOOLS_OPENAI_KEY=***  # OpenAI TTS / Whisper
 ```
@@ -407,7 +405,7 @@ stt:
 
 # Text-to-Speech
 tts:
-  provider: "edge"                 # "edge" (free) | "elevenlabs" | "openai" | "neutts" | "minimax" | "mistral" | "gemini" | "xai" | "kittentts" | "piper"
+  provider: "edge"                 # "edge" (free) | "elevenlabs" | "openai" | "minimax" | "mistral" | "gemini" | "xai" | "pockettts" | "piper"
   edge:
     voice: "en-US-AriaNeural"      # 322 voices, 74 languages
   elevenlabs:
@@ -417,10 +415,9 @@ tts:
     model: "gpt-4o-mini-tts"
     voice: "alloy"                 # alloy, echo, fable, onyx, nova, shimmer
     base_url: "https://api.openai.com/v1"  # optional: override for self-hosted or OpenAI-compatible endpoints
-  neutts:
-    ref_audio: ''
-    ref_text: ''
-    model: neuphonic/neutts-air-q4-gguf
+  pockettts:
+    model: kyutai/tts-1.6b-en_fr
+    voice: default
     device: cpu
 ```
 
@@ -438,7 +435,7 @@ STT_OPENAI_MODEL=whisper-1               # Override default OpenAI STT model
 GROQ_BASE_URL=https://api.groq.com/openai/v1     # Custom Groq endpoint
 STT_OPENAI_BASE_URL=https://api.openai.com/v1    # Custom OpenAI STT endpoint
 
-# Text-to-Speech providers (Edge TTS and NeuTTS need no key)
+# Text-to-Speech providers (Edge TTS, PocketTTS, and Piper need no key)
 ELEVENLABS_API_KEY=***             # ElevenLabs (premium quality)
 # VOICE_TOOLS_OPENAI_KEY above also enables OpenAI TTS
 
@@ -470,9 +467,10 @@ Provider priority (automatic fallback): **local** > **groq** > **openai**
 | **Edge TTS** | Good | Free | ~1s | No |
 | **ElevenLabs** | Excellent | Paid | ~2s | Yes |
 | **OpenAI TTS** | Good | Paid | ~1.5s | Yes |
-| **NeuTTS** | Good | Free | Depends on CPU/GPU | No |
+| **PocketTTS** | Good | Free | Local model dependent | No |
+| **Piper** | Good | Free | Fast | No |
 
-NeuTTS uses the `tts.neutts` config block above.
+NeuTTS and KittenTTS are blocked in Marvi; use PocketTTS or Piper for local TTS.
 
 ---
 

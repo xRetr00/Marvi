@@ -382,7 +382,7 @@ Edit with `hermes config edit` or `hermes config set section.key value`.
 | `compression` | `enabled`, `threshold` (0.50), `target_ratio` (0.20) |
 | `display` | `skin`, `tool_progress`, `show_reasoning`, `show_cost` |
 | `stt` | `enabled`, `provider` (local/groq/openai/mistral) |
-| `tts` | `provider` (edge/elevenlabs/openai/minimax/mistral/neutts) |
+| `tts` | `provider` (edge/elevenlabs/openai/minimax/mistral/gemini/xai/pockettts/piper) |
 | `memory` | `memory_enabled`, `user_profile_enabled`, `provider` |
 | `security` | `tirith_enabled`, `website_blocklist` |
 | `delegation` | `model`, `provider`, `base_url`, `api_key`, `max_iterations` (50), `reasoning_effort` |
@@ -549,7 +549,10 @@ stt:
 | OpenAI | `VOICE_TOOLS_OPENAI_KEY` | Paid |
 | MiniMax | `MINIMAX_API_KEY` | Paid |
 | Mistral (Voxtral) | `MISTRAL_API_KEY` | Paid |
-| NeuTTS (local) | None (`pip install neutts[all]` + `espeak-ng`) | Free |
+| PocketTTS (local) | None | Free |
+| Piper (local) | None | Free |
+
+NeuTTS and KittenTTS are blocked in Marvi; do not configure or restore them from upstream.
 
 Voice commands: `/voice on` (voice-to-voice), `/voice tts` (always voice), `/voice off`.
 

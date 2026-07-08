@@ -70,7 +70,10 @@ Text-to-speech and speech-to-text across all messaging platforms:
 | **OpenAI TTS** | Good | Paid | `VOICE_TOOLS_OPENAI_KEY` |
 | **MiniMax** | Good | Paid | `MINIMAX_API_KEY` |
 | **xAI TTS** | Good | Paid | `XAI_API_KEY` |
-| **NeuTTS** | Good | Free | None needed |
+| **PocketTTS** | Good | Free | None needed |
+| **Piper** | Good | Free | None needed |
+
+NeuTTS and KittenTTS are intentionally blocked in Marvi. Use PocketTTS or Piper for local TTS.
 
 Speech-to-text supports six providers: local faster-whisper (free, runs on-device), a local command wrapper, Groq, OpenAI Whisper API, Mistral, and xAI. Voice message transcription works across Telegram, Discord, WhatsApp, and other messaging platforms. See [Voice & TTS](/user-guide/features/tts) and [Voice Mode](/user-guide/features/voice-mode) for details.
 

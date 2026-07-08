@@ -14,7 +14,7 @@ If you have a paid [Nous Portal](https://portal.nousresearch.com) subscription, 
 
 ## Text-to-Speech
 
-Convert text to speech with ten providers:
+Convert text to speech with supported providers:
 
 | Provider | Quality | Cost | API Key |
 |----------|---------|------|---------|
@@ -25,9 +25,12 @@ Convert text to speech with ten providers:
 | **Mistral (Voxtral TTS)** | Excellent | Paid | `MISTRAL_API_KEY` |
 | **Google Gemini TTS** | Excellent | Free tier | `GEMINI_API_KEY` |
 | **xAI TTS** | Excellent | Paid | `XAI_API_KEY` |
-| **NeuTTS** | Good | Free (local) | None needed |
-| **KittenTTS** | Good | Free (local) | None needed |
+| **PocketTTS** | Good | Free (local) | None needed |
 | **Piper** | Good | Free (local) | None needed |
+
+:::caution Blocked local providers
+NeuTTS and KittenTTS are intentionally blocked in Marvi. Use PocketTTS for local streaming TTS, or Piper for lightweight local TTS.
+:::
 
 ### Platform Delivery
 
@@ -43,7 +46,7 @@ Convert text to speech with ten providers:
 ```yaml
 # In ~/.hermes/config.yaml
 tts:
-  provider: "edge"              # "edge" | "elevenlabs" | "openai" | "minimax" | "mistral" | "gemini" | "xai" | "neutts" | "kittentts" | "piper"
+  provider: "edge"              # "edge" | "elevenlabs" | "openai" | "minimax" | "mistral" | "gemini" | "xai" | "pockettts" | "piper"
   speed: 1.0                    # Global speed multiplier (provider-specific settings override this)
   edge:
     voice: "en-US-AriaNeural"   # 322 voices, 74 languages
@@ -76,16 +79,10 @@ tts:
     sample_rate: 24000          # 22050 / 24000 (default) / 44100 / 48000
     bit_rate: 128000            # MP3 bitrate; only applies when codec=mp3
     # base_url: "https://api.x.ai/v1"   # Override via XAI_BASE_URL env var
-  neutts:
-    ref_audio: ''
-    ref_text: ''
-    model: neuphonic/neutts-air-q4-gguf
+  pockettts:
+    model: kyutai/tts-1.6b-en_fr               # local Kyutai PocketTTS model
+    voice: default
     device: cpu
-  kittentts:
-    model: KittenML/kitten-tts-nano-0.8-int8   # 25MB int8; also: kitten-tts-micro-0.8 (41MB), kitten-tts-mini-0.8 (80MB)
-    voice: Jasper                               # Jasper, Bella, Luna, Bruno, Rosie, Hugo, Kiki, Leo
-    speed: 1.0                                  # 0.5 - 2.0
-    clean_text: true                            # Expand numbers, currencies, units
   piper:
     voice: en_US-lessac-medium                  # voice name (auto-downloaded) OR absolute path to .onnx
     # voices_dir: ''                            # default: ~/.hermes/cache/piper-voices/
@@ -141,8 +138,7 @@ Each provider has a documented per-request input-character cap. Hermes truncates
 | Mistral | 4000 |
 | Google Gemini | 32000 |
 | ElevenLabs | Model-aware (see below) |
-| NeuTTS | 2000 |
-| KittenTTS | 2000 |
+| PocketTTS | 2000 |
 | Piper | 5000 |
 
 **ElevenLabs** picks a cap from the configured `model_id`:
@@ -174,8 +170,7 @@ Telegram voice bubbles require Opus/OGG audio format:
 - **MiniMax TTS** outputs MP3 and needs **ffmpeg** to convert for Telegram voice bubbles
 - **Google Gemini TTS** outputs raw PCM and uses **ffmpeg** to encode Opus directly for Telegram voice bubbles
 - **xAI TTS** outputs MP3 and needs **ffmpeg** to convert for Telegram voice bubbles
-- **NeuTTS** outputs WAV and also needs **ffmpeg** to convert for Telegram voice bubbles
-- **KittenTTS** outputs WAV and also needs **ffmpeg** to convert for Telegram voice bubbles
+- **PocketTTS** outputs WAV and also needs **ffmpeg** to convert for Telegram voice bubbles
 - **Piper** outputs WAV and also needs **ffmpeg** to convert for Telegram voice bubbles
 
 ```bash
@@ -189,7 +184,7 @@ brew install ffmpeg
 sudo dnf install ffmpeg
 ```
 
-Without ffmpeg, Edge TTS, MiniMax TTS, NeuTTS, KittenTTS, and Piper audio are sent as regular audio files (playable, but shown as a rectangular player instead of a voice bubble).
+Without ffmpeg, Edge TTS, MiniMax TTS, PocketTTS, and Piper audio are sent as regular audio files (playable, but shown as a rectangular player instead of a voice bubble).
 
 :::tip
 If you want voice bubbles without installing ffmpeg, switch to the OpenAI, ElevenLabs, or Mistral provider.

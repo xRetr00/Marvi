@@ -1325,7 +1325,7 @@ tool_loop_guardrails:
 
 ```yaml
 tts:
-  provider: "edge"              # "edge" | "elevenlabs" | "openai" | "minimax" | "mistral" | "gemini" | "xai" | "neutts"
+  provider: "edge"              # "edge" | "elevenlabs" | "openai" | "minimax" | "mistral" | "gemini" | "xai" | "pockettts" | "piper"
   speed: 1.0                    # Global speed multiplier (fallback for all providers)
   edge:
     voice: "en-US-AriaNeural"   # 322 voices, 74 languages
@@ -1355,12 +1355,13 @@ tts:
     sample_rate: 24000
     bit_rate: 128000            # MP3 bitrate
     # base_url: "https://api.x.ai/v1"
-  neutts:
-    ref_audio: ''
-    ref_text: ''
-    model: neuphonic/neutts-air-q4-gguf
+  pockettts:
+    model: kyutai/tts-1.6b-en_fr
+    voice: default
     device: cpu
 ```
+
+NeuTTS and KittenTTS are intentionally blocked in Marvi. Use PocketTTS or Piper for local TTS.
 
 This controls both the `text_to_speech` tool and spoken replies in voice mode (`/voice tts` in the CLI or messaging gateway).
 

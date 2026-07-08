@@ -779,6 +779,62 @@ def setup_model_provider(config: dict, *, quick: bool = False):
 # =============================================================================
 
 
+def _check_espeak_ng() -> bool:
+    """Check if espeak-ng is installed."""
+    return shutil.which("espeak-ng") is not None or shutil.which("espeak") is not None
+
+
+def _install_neutts_deps() -> bool:
+    """Install NeuTTS dependencies with user approval. Returns True on success."""
+    print()
+    print_info("Installing neutts Python package...")
+    print_info("This will also download the TTS model (~300MB) on first use.")
+    print()
+
+    from hermes_cli.tools_config import _pip_install
+
+    try:
+        result = _pip_install(["-U", "neutts[all]", "--quiet"], timeout=300)
+    except Exception as e:
+        print_error(f"Failed to install neutts: {e}")
+        print_info("Try manually: uv pip install -U 'neutts[all]'")
+        return False
+    if result.returncode == 0:
+        print_success("neutts installed successfully")
+        return True
+    err = (result.stderr or "").strip()
+    print_error(f"Failed to install neutts: {err[:300] if err else 'install failed'}")
+    print_info("Try manually: uv pip install -U 'neutts[all]'")
+    return False
+
+
+def _install_kittentts_deps() -> bool:
+    """Install KittenTTS dependencies with user approval. Returns True on success."""
+    wheel_url = (
+        "https://github.com/KittenML/KittenTTS/releases/download/"
+        "0.8.1/kittentts-0.8.1-py3-none-any.whl"
+    )
+    print()
+    print_info("Installing kittentts Python package (~25-80MB model downloaded on first use)...")
+    print()
+
+    from hermes_cli.tools_config import _pip_install
+
+    try:
+        result = _pip_install(["-U", wheel_url, "soundfile", "--quiet"], timeout=300)
+    except Exception as e:
+        print_error(f"Failed to install kittentts: {e}")
+        print_info(f"Try manually: uv pip install -U '{wheel_url}' soundfile")
+        return False
+    if result.returncode == 0:
+        print_success("kittentts installed successfully")
+        return True
+    err = (result.stderr or "").strip()
+    print_error(f"Failed to install kittentts: {err[:300] if err else 'install failed'}")
+    print_info(f"Try manually: uv pip install -U '{wheel_url}' soundfile")
+    return False
+
+
 def _install_pockettts_deps() -> bool:
     """Install PocketTTS dependencies with user approval. Returns True on success."""
     import subprocess
@@ -787,6 +843,7 @@ def _install_pockettts_deps() -> bool:
     print()
     print_info("Installing pocket-tts Python package (model downloaded on first use)...")
     print()
+
     try:
         subprocess.run(
             [sys.executable, "-m", "pip", "install", "-U", "pocket-tts", "scipy", "--quiet"],
@@ -808,6 +865,7 @@ def _install_parakeet_stt_deps() -> bool:
     print()
     print_info("Installing Parakeet Realtime EOU STT...")
     print()
+
     try:
         from hermes_cli.tools_config import _run_post_setup
 
@@ -913,6 +971,8 @@ def _setup_tts_provider(config: dict):
         "minimax": "MiniMax TTS",
         "mistral": "Mistral Voxtral TTS",
         "gemini": "Google Gemini TTS",
+        "neutts": "NeuTTS",
+        "kittentts": "KittenTTS",
         "pockettts": "PocketTTS",
     }
     current_label = provider_labels.get(current_provider, current_provider)
@@ -936,10 +996,12 @@ def _setup_tts_provider(config: dict):
             "MiniMax TTS (high quality with voice cloning, needs API key)",
             "Mistral Voxtral TTS (multilingual, native Opus, needs API key)",
             "Google Gemini TTS (30 prebuilt voices, prompt-controllable, needs API key)",
+            "NeuTTS (local on-device, free, ~300MB model download)",
+            "KittenTTS (local on-device, free, lightweight ~25-80MB ONNX)",
             "PocketTTS (local, fast streaming, Kyutai preset/custom voices)",
         ]
     )
-    providers.extend(["edge", "elevenlabs", "openai", "xai", "minimax", "mistral", "gemini", "pockettts"])
+    providers.extend(["edge", "elevenlabs", "openai", "xai", "minimax", "mistral", "gemini", "neutts", "kittentts", "pockettts"])
     choices.append(f"Keep current ({current_label})")
     keep_current_idx = len(choices) - 1
     idx = prompt_choice("Select TTS provider:", choices, keep_current_idx)
@@ -957,7 +1019,50 @@ def _setup_tts_provider(config: dict):
                 "Direct OpenAI credentials are still configured and may take precedence until removed from ~/.hermes/.env."
             )
 
-    if selected == "elevenlabs":
+    if selected == "neutts":
+        try:
+            already_installed = importlib.util.find_spec("neutts") is not None
+        except Exception:
+            already_installed = False
+
+        if already_installed:
+            print_success("NeuTTS is already installed")
+        else:
+            print()
+            print_info("NeuTTS requires:")
+            print_info("  • Python package: neutts (~50MB install + ~300MB model on first use)")
+            print_info("  • System package: espeak-ng (phonemizer)")
+            print()
+            if prompt_yes_no("Install NeuTTS dependencies now?", True):
+                if not _install_neutts_deps():
+                    print_warning("NeuTTS installation incomplete. Falling back to Edge TTS.")
+                    selected = "edge"
+            else:
+                print_info("Skipping install. Set tts.provider to 'neutts' after installing manually.")
+                selected = "edge"
+
+    elif selected == "kittentts":
+        try:
+            already_installed = importlib.util.find_spec("kittentts") is not None
+        except Exception:
+            already_installed = False
+
+        if already_installed:
+            print_success("KittenTTS is already installed")
+        else:
+            print()
+            print_info("KittenTTS is lightweight (~25-80MB, CPU-only, no API key required).")
+            print_info("Voices: Jasper, Bella, Luna, Bruno, Rosie, Hugo, Kiki, Leo")
+            print()
+            if prompt_yes_no("Install KittenTTS now?", True):
+                if not _install_kittentts_deps():
+                    print_warning("KittenTTS installation incomplete. Falling back to Edge TTS.")
+                    selected = "edge"
+            else:
+                print_info("Skipping install. Set tts.provider to 'kittentts' after installing manually.")
+                selected = "edge"
+
+    elif selected == "elevenlabs":
         existing = get_env_value("ELEVENLABS_API_KEY")
         if not existing:
             print()
@@ -1292,32 +1397,13 @@ def setup_terminal_backend(config: dict):
                 __import__("modal")
             except ImportError:
                 print_info("Installing modal SDK...")
-                import subprocess
+                from hermes_cli.tools_config import _pip_install
 
-                uv_bin = shutil.which("uv")
-                if uv_bin:
-                    result = subprocess.run(
-                        [
-                            uv_bin,
-                            "pip",
-                            "install",
-                            "--python",
-                            sys.executable,
-                            "modal",
-                        ],
-                        capture_output=True,
-                        text=True,
-                    )
-                else:
-                    result = subprocess.run(
-                        [sys.executable, "-m", "pip", "install", "modal"],
-                        capture_output=True,
-                        text=True,
-                    )
+                result = _pip_install(["modal"])
                 if result.returncode == 0:
                     print_success("modal SDK installed")
                 else:
-                    print_warning("Install failed — run manually: pip install modal")
+                    print_warning("Install failed — run manually: uv pip install modal")
 
             # Modal token
             print()
@@ -1352,25 +1438,13 @@ def setup_terminal_backend(config: dict):
             __import__("daytona")
         except ImportError:
             print_info("Installing daytona SDK...")
-            import subprocess
+            from hermes_cli.tools_config import _pip_install
 
-            uv_bin = shutil.which("uv")
-            if uv_bin:
-                result = subprocess.run(
-                    [uv_bin, "pip", "install", "--python", sys.executable, "daytona"],
-                    capture_output=True,
-                    text=True,
-                )
-            else:
-                result = subprocess.run(
-                    [sys.executable, "-m", "pip", "install", "daytona"],
-                    capture_output=True,
-                    text=True,
-                )
+            result = _pip_install(["daytona"])
             if result.returncode == 0:
                 print_success("daytona SDK installed")
             else:
-                print_warning("Install failed — run manually: pip install daytona")
+                print_warning("Install failed — run manually: uv pip install daytona")
                 if result.stderr:
                     print_info(f"  Error: {result.stderr.strip().splitlines()[-1]}")
 
@@ -1472,9 +1546,9 @@ def _apply_default_agent_settings(config: dict):
     config.setdefault("compression", {})["enabled"] = True
     config["compression"]["threshold"] = 0.50
 
-    # Default to never auto-resetting sessions. The gateway treats absent
-    # session_reset as "both", so we must write "none" explicitly to make
-    # the no-auto-reset default actually take effect.
+    # Default: never auto-reset sessions. This matches the gateway's own
+    # default (SessionResetPolicy.mode = "none"); we still write it
+    # explicitly so the choice is visible/editable in config.yaml.
     config.setdefault("session_reset", {})["mode"] = "none"
 
     save_config(config)
@@ -1585,19 +1659,19 @@ def setup_agent_settings(config: dict):
     print_info("")
 
     reset_choices = [
-        "Inactivity + daily reset (recommended - reset whichever comes first)",
+        "Inactivity + daily reset (reset whichever comes first)",
         "Inactivity only (reset after N minutes of no messages)",
         "Daily only (reset at a fixed hour each day)",
-        "Never auto-reset (context lives until /reset or context compression)",
+        "Never auto-reset (recommended - context lives until /reset or context compression)",
         "Keep current settings",
     ]
 
     current_policy = config.get("session_reset", {})
-    current_mode = current_policy.get("mode", "both")
+    current_mode = current_policy.get("mode", "none")
     current_idle = current_policy.get("idle_minutes", 1440)
     current_hour = current_policy.get("at_hour", 4)
 
-    default_reset = {"both": 0, "idle": 1, "daily": 2, "none": 3}.get(current_mode, 0)
+    default_reset = {"both": 0, "idle": 1, "daily": 2, "none": 3}.get(current_mode, 3)
 
     reset_idx = prompt_choice("Session reset mode:", reset_choices, default_reset)
 

@@ -1045,8 +1045,16 @@ class TestWebServerEndpoints:
 
     def test_audio_transcription_endpoint(self, monkeypatch):
         import tools.transcription_tools as transcription_tools
+        import hermes_cli.web_server as web_server
 
         captured = {}
+
+        class FakeLock:
+            async def __aenter__(self):
+                captured["locked"] = True
+
+            async def __aexit__(self, exc_type, exc, tb):
+                captured["unlocked"] = True
 
         def fake_transcribe_audio(path):
             captured["path"] = path
@@ -1057,6 +1065,7 @@ class TestWebServerEndpoints:
             }
 
         monkeypatch.setattr(transcription_tools, "transcribe_audio", fake_transcribe_audio)
+        monkeypatch.setattr(web_server, "_get_audio_transcribe_lock", lambda _app: FakeLock())
 
         resp = self.client.post(
             "/api/audio/transcribe",
@@ -1074,6 +1083,8 @@ class TestWebServerEndpoints:
         }
         assert captured["path"].endswith(".webm")
         assert not Path(captured["path"]).exists()
+        assert captured["locked"] is True
+        assert captured["unlocked"] is True
 
     def test_audio_transcription_rejects_invalid_base64(self):
         resp = self.client.post(

@@ -456,6 +456,7 @@ async def _lifespan(app: "FastAPI"):
     app.state.event_channels = {}  # dict[str, set]
     app.state.event_lock = asyncio.Lock()
     app.state.pty_active_session_files = {}  # dict[str, Path]
+    app.state.audio_transcribe_lock = asyncio.Lock()
     # Serializes chat-argv resolution so concurrent /api/pty connections
     # don't trigger overlapping ``npm install`` / ``npm run build`` work.
     # On app.state (not a module global) so the Lock binds to the running
@@ -522,6 +523,14 @@ def _get_chat_argv_lock(app: "FastAPI") -> asyncio.Lock:
     except AttributeError:
         app.state.chat_argv_lock = asyncio.Lock()
         return app.state.chat_argv_lock
+
+
+def _get_audio_transcribe_lock(app: "FastAPI") -> asyncio.Lock:
+    try:
+        return app.state.audio_transcribe_lock
+    except AttributeError:
+        app.state.audio_transcribe_lock = asyncio.Lock()
+        return app.state.audio_transcribe_lock
 
 
 def _get_pty_active_session_files(app: "FastAPI") -> dict[str, Path]:
@@ -3662,8 +3671,9 @@ async def transcribe_audio_upload(payload: AudioTranscriptionRequest):
 
         from tools.transcription_tools import transcribe_audio
 
-        loop = asyncio.get_running_loop()
-        result = await loop.run_in_executor(None, transcribe_audio, temp_path)
+        async with _get_audio_transcribe_lock(app):
+            loop = asyncio.get_running_loop()
+            result = await loop.run_in_executor(None, transcribe_audio, temp_path)
     except HTTPException:
         raise
     except Exception as exc:
@@ -13612,6 +13622,8 @@ async def transcribe_audio_stream_ws(ws: WebSocket) -> None:
     chunks: list[bytes] = []
     sample_rate = 16000
     total_bytes = 0
+    transcribe_lock = _get_audio_transcribe_lock(app)
+    await transcribe_lock.acquire()
 
     try:
         while True:
@@ -13724,6 +13736,8 @@ async def transcribe_audio_stream_ws(ws: WebSocket) -> None:
             await ws.send_json({"type": "error", "error": f"Streaming transcription failed: {exc}"})
         except Exception:
             pass
+    finally:
+        transcribe_lock.release()
 
 
 @app.websocket("/api/audio/wake-word/stream")

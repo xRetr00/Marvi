@@ -337,11 +337,10 @@ export function useWakeWord({
           wakePhraseStripped: command !== transcript
         })
 
-        if (command && (!heardSpeech || isLikelyHallucination(command))) {
-          // No real mic energy, or an STT hallucination on silence/noise
-          // ("you", "okay", "thank you", ...). Drop it — a false wake while the
-          // room was empty must NOT submit garbage. submittedCommand stays false
-          // -> finally re-arms the wake word (does not continue the conversation).
+        if (command && isLikelyHallucination(command)) {
+          // Drop known STT hallucinations on silence/noise ("you", "okay",
+          // "thank you", ...). submittedCommand stays false -> finally
+          // re-arms the wake word (does not continue the conversation).
           vpLog('wake', 'rejected (no speech / hallucination)', { command, heardSpeech })
           debugLog('rejected (no speech / hallucination)', { command, heardSpeech })
         } else if (command && isEndPhrase(command)) {

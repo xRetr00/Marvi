@@ -6,7 +6,21 @@ import { Tip } from '@/components/ui/tooltip'
 import { getHermesConfigDefaults, getHermesConfigRecord, saveHermesConfig } from '@/hermes'
 import { useI18n } from '@/i18n'
 import { triggerHaptic } from '@/lib/haptics'
-import { Archive, Bell, Download, Globe, Info, KeyRound, Mic, RefreshCw, Settings2, Upload, Wrench, Zap } from '@/lib/icons'
+import {
+  Archive,
+  Bell,
+  Brain,
+  Download,
+  Globe,
+  Info,
+  KeyRound,
+  Mic,
+  RefreshCw,
+  Settings2,
+  Upload,
+  Wrench,
+  Zap
+} from '@/lib/icons'
 import { notifyError } from '@/store/notifications'
 
 import { useRouteEnumParam } from '../hooks/use-route-enum-param'
@@ -24,6 +38,7 @@ import { KEYS_VIEWS, KeysSettings, type KeysView } from './keys-settings'
 import { NotificationsSettings } from './notifications-settings'
 import { PROVIDER_VIEWS, ProvidersSettings, type ProviderView } from './providers-settings'
 import { SessionsSettings } from './sessions-settings'
+import { SubconsciousSettings } from './subconscious'
 import type { SettingsPageProps, SettingsView as SettingsViewId } from './types'
 import { VoicePresenceSettings } from './voice-presence-settings'
 
@@ -34,6 +49,7 @@ const SETTINGS_VIEWS: readonly SettingsViewId[] = [
   'keys',
   'notifications',
   'voice-presence',
+  'subconscious',
   'sessions',
   'about'
 ]
@@ -140,6 +156,13 @@ export function SettingsView({ onClose, onConfigSaved, onMainModelChanged }: Set
       id: 'voice-presence',
       label: 'Voice presence',
       onSelect: () => setActiveView('voice-presence')
+    },
+    {
+      active: activeView === 'subconscious',
+      icon: Brain,
+      id: 'subconscious',
+      label: 'Subconscious',
+      onSelect: () => setActiveView('subconscious')
     },
     {
       active: activeView === 'providers',
@@ -270,6 +293,8 @@ export function SettingsView({ onClose, onConfigSaved, onMainModelChanged }: Set
             <NotificationsSettings />
           ) : activeView === 'voice-presence' ? (
             <VoicePresenceSettings onOpenVoiceConfig={() => setActiveView('config:voice')} />
+          ) : activeView === 'subconscious' ? (
+            <SubconsciousSettings />
           ) : (
             <SessionsSettings />
           )}

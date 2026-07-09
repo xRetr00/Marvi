@@ -7374,6 +7374,18 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
         except Exception:  # noqa: BLE001 - arming must never block startup
             logger.debug("scale-to-zero: arm check failed at startup", exc_info=True)
 
+        # Start the subconscious idle-trigger watcher — best-effort, always
+        # started; it no-ops every iteration unless subconscious.enabled is
+        # true (checked inside the watcher itself, config.yaml Contract 3).
+        # Fires one subconscious tick after idle_trigger_minutes of user
+        # silence, reusing the same gateway-scoped "last inbound" clock the
+        # scale-to-zero watcher above uses. See gateway/idle_trigger.py.
+        try:
+            from gateway.idle_trigger import watch as _idle_trigger_watch
+            asyncio.create_task(_idle_trigger_watch(self))
+        except Exception:  # noqa: BLE001 - must never block startup
+            logger.debug("idle-trigger: failed to start watcher", exc_info=True)
+
         # Start background drain-control watcher — reconciles the gateway's
         # new-turn accept-state with the external ``.drain_request.json`` marker
         # the dashboard begin/cancel-drain endpoint writes (Phase 2). A marker
@@ -10864,7 +10876,21 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
 
         # Build the context prompt to inject
         context_prompt = build_session_context_prompt(context, redact_pii=_redact_pii)
-        
+
+        # Goblin session priming (opt-in): open new sessions already knowing
+        # what the user was just doing on the desktop. Config-gated inside
+        # session_priming_summary(); no-op unless presence.goblin.session_priming.
+        if _is_new_session:
+            try:
+                from tools.presence.goblin import session_priming_summary
+                _priming = session_priming_summary()
+                if _priming:
+                    context_prompt = context_prompt + "\n\n" + _priming
+            except ImportError:
+                pass
+            except Exception:
+                logger.debug("Session priming skipped", exc_info=True)
+
         # If the previous session expired and was auto-reset, prepend a notice
         # so the agent knows this is a fresh conversation (not an intentional /reset).
         if _was_auto_reset:

@@ -3088,7 +3088,7 @@ function resolveHermesBackend(backendArgs) {
       const shellForProbe = isCommandScript(hermesCommand)
       if (verifyHermesCli(hermesCommand, { shell: shellForProbe })) {
         return (
-          unwrapWindowsVenvMarviCommand(hermesCommand, backendArgs) || {
+          unwrapWindowsVenvHermesCommand(hermesCommand, backendArgs) || {
             label: `existing Marvi CLI at ${hermesCommand}`,
             command: hermesCommand,
             args: backendArgs,
@@ -3692,6 +3692,43 @@ function fetchHtmlTitleWithRenderer(rawUrl) {
 // Strips known error/captcha titles (e.g. "GetYourGuide – Error", "Just a
 // moment...") so they don't get cached as the resolved title.
 const usableTitle = value => (value && !TITLE_ERROR_RE.test(value) ? value : '')
+
+// ActivityWatch (Marvi's desktop presence collector) reachability probe. Runs
+// from the main process — not a renderer `fetch` — so a down/absent AW server
+// never trips a CORS/mixed-content error in the renderer console; it just
+// resolves `{ reachable: false }`. Short timeout: this backs a settings-page
+// status dot, not a critical path, and AW is either up on localhost or not.
+const ACTIVITYWATCH_STATUS_URL = 'http://127.0.0.1:5600/api/0/info'
+const ACTIVITYWATCH_PROBE_TIMEOUT_MS = 1500
+
+function probeActivityWatchStatus() {
+  return new Promise(resolve => {
+    let settled = false
+    const finish = reachable => {
+      if (settled) return
+      settled = true
+      resolve({ reachable })
+    }
+
+    let req
+    try {
+      req = http.get(ACTIVITYWATCH_STATUS_URL, res => {
+        const ok = (res.statusCode || 0) >= 200 && (res.statusCode || 0) < 300
+        res.resume()
+        finish(ok)
+      })
+    } catch {
+      finish(false)
+      return
+    }
+
+    req.setTimeout(ACTIVITYWATCH_PROBE_TIMEOUT_MS, () => {
+      req.destroy()
+      finish(false)
+    })
+    req.on('error', () => finish(false))
+  })
+}
 
 function fetchLinkTitle(rawUrl) {
   const url = String(rawUrl || '').trim()
@@ -7068,6 +7105,8 @@ ipcMain.handle('hermes:setting:defaultProjectDir:pick', async () => {
 })
 
 ipcMain.handle('hermes:fetchLinkTitle', (_event, url) => fetchLinkTitle(url))
+
+ipcMain.handle('hermes:presence:awStatus', async () => probeActivityWatchStatus())
 
 ipcMain.handle('hermes:logs:reveal', async () => {
   try {

@@ -44,16 +44,23 @@ CATALOG: List[CatalogEntry] = [
     CatalogEntry(
         key="catalog:daily-briefing",
         title="Daily briefing",
-        description="Every morning at 8am, a short briefing: today's calendar, "
-        "weather, and anything urgent waiting on you.",
+        description="Every morning at 8am, a short briefing: your active goals, "
+        "what changed overnight, today's calendar, weather, and anything "
+        "urgent waiting on you.",
         job_spec={
             "prompt": (
-                "Produce a concise morning briefing for the user: today's "
-                "calendar events, the local weather, and any urgent items "
-                "(unread important email, due tasks). Keep it short and "
-                "scannable. If you have no connected data sources, give a brief "
-                "general good-morning with the date and offer to connect "
-                "calendar/email."
+                "Produce a concise morning briefing for the user, combining "
+                "whatever of these you have: (1) their active goals — call "
+                "goal_list(status='active') and note anything that's stalled "
+                "or ready for a next step; (2) an overnight world diff — if "
+                "the subconscious tick has been running, mention anything it "
+                "surfaced since last night; (3) today's calendar events; "
+                "(4) the local weather; (5) any urgent items (unread "
+                "important email, due tasks). Keep it short and scannable — "
+                "lead with goals and urgent items, not a wall of text. If you "
+                "have no connected data sources beyond goals, give a brief "
+                "general good-morning with the date, the active goals if any, "
+                "and offer to connect calendar/email."
             ),
             "schedule": "0 8 * * *",
             "name": "Daily briefing",

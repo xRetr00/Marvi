@@ -269,6 +269,7 @@ from typing import Optional
 
 from hermes_cli.subcommands._shared import add_accept_hooks_flag as _add_accept_hooks_flag
 from hermes_cli.subcommands.cron import build_cron_parser
+from hermes_cli.subcommands.subconscious import build_subconscious_parser
 from hermes_cli.subcommands.gateway import build_gateway_parser
 from hermes_cli.subcommands.profile import build_profile_parser
 from hermes_cli.subcommands.model import build_model_parser
@@ -306,6 +307,7 @@ from hermes_cli.subcommands.pairing import build_pairing_parser
 from hermes_cli.subcommands.plugins import build_plugins_parser
 from hermes_cli.subcommands.mcp import build_mcp_parser
 from hermes_cli.subcommands.claw import build_claw_parser
+from hermes_cli.subcommands.composio import build_composio_parser
 
 
 def _require_tty(command_name: str) -> None:
@@ -4209,6 +4211,13 @@ def cmd_cron(args):
     from hermes_cli.cron import cron_command
 
     cron_command(args)
+
+
+def cmd_subconscious(args):
+    """Proactive world-diff + goal-aware background reasoning."""
+    from hermes_cli.subconscious import subconscious_command
+
+    return subconscious_command(args)
 
 
 def cmd_webhook(args):
@@ -12731,6 +12740,12 @@ def cmd_claw(args):
     claw_command(args)
 
 
+def cmd_composio(args):
+    from hermes_cli.composio_cmd import composio_command
+
+    composio_command(args)
+
+
 def main():
     """Main entry point for hermes CLI."""
     # Cosmetic: make the process show up as 'hermes' instead of 'python3.11'
@@ -13004,6 +13019,11 @@ def main():
     build_cron_parser(subparsers, cmd_cron=cmd_cron)
 
     # =========================================================================
+    # subconscious command  (parser built in hermes_cli/subcommands/subconscious.py)
+    # =========================================================================
+    build_subconscious_parser(subparsers, cmd_subconscious=cmd_subconscious)
+
+    # =========================================================================
     # webhook command  (parser built in hermes_cli/subcommands/webhook.py)
     # =========================================================================
     build_webhook_parser(subparsers, cmd_webhook=cmd_webhook)
@@ -13013,6 +13033,12 @@ def main():
     # =========================================================================
     from hermes_cli.portal_cli import add_parser as _add_portal_parser
     _add_portal_parser(subparsers)
+
+    # =========================================================================
+    # presence command — Marvi desktop presence (ActivityWatch + media watcher)
+    # =========================================================================
+    from hermes_cli.presence_cmd import add_parser as _add_presence_parser
+    _add_presence_parser(subparsers)
 
     # =========================================================================
     # kanban command — multi-profile collaboration board
@@ -13445,6 +13471,11 @@ def main():
     # mcp command  (parser built in hermes_cli/subcommands/mcp.py)
     # =========================================================================
     build_mcp_parser(subparsers, cmd_mcp=cmd_mcp)
+
+    # =========================================================================
+    # composio command  (parser built in hermes_cli/subcommands/composio.py)
+    # =========================================================================
+    build_composio_parser(subparsers, cmd_composio=cmd_composio)
 
     # =========================================================================
     # sessions command

@@ -14,12 +14,28 @@ flows through, regardless of where it came from:
                    ask that a scheduled job would serve.
   * ``integration`` — the user connected an account (Gmail, GitHub, ...) and
                    the obvious automations for that surface are offered.
+  * ``subconscious`` — the subconscious tick (``cron/subconscious.py``)
+                   noticed something during its diff+goals+memory reasoning
+                   pass that's worth proposing as an automation instead of
+                   interrupting the user (Contract 2, design spec
+                   2026-07-09-marvi-subconscious-presence).
 
 Accepting a suggestion just calls the existing ``cron.jobs.create_job`` with
 the stored ``job_spec`` — there is NO second job engine. Suggestions never
 auto-create jobs; acceptance is always explicit (consent-first). Dismissed
 suggestions latch by a stable ``dedup_key`` so the same proposal is not
 re-offered after the user says no.
+
+Every suggestion also carries a ``category`` (default ``"general"``) used to
+look up a *proactivity tier* — ``notify`` (surface only), ``propose``
+(one-tap accept, the default), or ``auto`` (pre-approved categories may be
+acted on without the user tapping accept). Tiers are user-configured per
+category in ``subconscious.tiers`` (config.yaml, Contract 3); see
+``resolve_tier`` / ``is_auto_tier``. The tier system does not change how THIS
+module behaves — even an ``auto`` category still goes through
+``add_suggestion`` unless the caller explicitly checks ``is_auto_tier`` and
+chooses to act immediately instead. Consent-first stays the default in every
+case where the caller doesn't opt into acting on ``auto`` itself.
 
 Storage mirrors ``cron/jobs.py``: ``~/.hermes/cron/suggestions.json``, atomic
 writes, an in-process lock, and 0600 perms.
@@ -56,10 +72,19 @@ _suggestions_lock = threading.Lock()
 # new suggestions are dropped (the user should clear the backlog first).
 MAX_PENDING = 5
 
-VALID_SOURCES = frozenset({"catalog", "blueprint", "usage", "integration"})
+VALID_SOURCES = frozenset({"catalog", "blueprint", "usage", "integration", "subconscious"})
 _STATUS_PENDING = "pending"
 _STATUS_ACCEPTED = "accepted"
 _STATUS_DISMISSED = "dismissed"
+
+# Proactivity tiers (Contract 2). "notify" and "auto" are reserved for future
+# delivery-path wiring (D/UI); this module only distinguishes "auto" so
+# callers can decide whether a pre-approved category may act without an
+# explicit accept tap. Everything not configured defaults to "propose" —
+# the safe, consent-first default.
+VALID_TIERS = frozenset({"notify", "propose", "auto"})
+DEFAULT_TIER = "propose"
+DEFAULT_CATEGORY = "general"
 
 
 def _secure_file(path: Path) -> None:
@@ -129,6 +154,7 @@ def add_suggestion(
     source: str,
     job_spec: Dict[str, Any],
     dedup_key: str,
+    category: str = DEFAULT_CATEGORY,
 ) -> Optional[Dict[str, Any]]:
     """Register a pending suggestion. Returns the record, or None if skipped.
 
@@ -139,11 +165,17 @@ def add_suggestion(
     ``job_spec`` is a dict of kwargs for ``cron.jobs.create_job`` — accepting
     the suggestion passes it straight through, so there is no second schema to
     keep in sync.
+
+    ``category`` (default ``"general"``) is the key used to look up the
+    user's proactivity tier for this proposal (``resolve_tier``); it is
+    stored on the record purely for display/filtering — this call always
+    creates a *pending* suggestion regardless of the resolved tier.
     """
     if source not in VALID_SOURCES:
         raise ValueError(f"unknown suggestion source: {source!r}")
     if not title.strip() or not dedup_key.strip():
         raise ValueError("title and dedup_key are required")
+    category = (category or DEFAULT_CATEGORY).strip() or DEFAULT_CATEGORY
 
     with _suggestions_lock:
         suggestions = _load_raw().get("suggestions", [])
@@ -167,6 +199,7 @@ def add_suggestion(
             "title": title.strip(),
             "description": description.strip(),
             "source": source,
+            "category": category,
             "job_spec": job_spec,
             "dedup_key": dedup_key.strip(),
             "status": _STATUS_PENDING,
@@ -258,3 +291,47 @@ def clear_resolved() -> int:
         if removed:
             _save_raw(kept)
         return removed
+
+
+# ---------------------------------------------------------------------------
+# Proactivity tiers (Contract 2)
+# ---------------------------------------------------------------------------
+
+def get_tiers_config() -> Dict[str, str]:
+    """Return the user-configured ``subconscious.tiers`` category->tier map.
+
+    Best-effort: config errors resolve to ``{}`` (everything falls back to
+    ``DEFAULT_TIER``) rather than raising, so a malformed config never blocks
+    the suggestion pipeline.
+    """
+    try:
+        from hermes_cli.config import cfg_get, load_config
+
+        cfg = load_config()
+        tiers = cfg_get(cfg, "subconscious", "tiers", default={}) or {}
+        if not isinstance(tiers, dict):
+            return {}
+        return {str(k): str(v) for k, v in tiers.items()}
+    except Exception as e:
+        logger.debug("get_tiers_config failed (%s); defaulting to no overrides", e)
+        return {}
+
+
+def resolve_tier(category: str, *, tiers: Optional[Dict[str, str]] = None) -> str:
+    """Resolve a category to its proactivity tier.
+
+    ``tiers`` is injectable for tests; defaults to ``get_tiers_config()``.
+    An unrecognized or unconfigured category resolves to ``DEFAULT_TIER``
+    ("propose") — the safe, consent-first default. An invalid configured
+    value (typo, wrong type) also falls back to the default rather than
+    ever silently granting "auto".
+    """
+    category = (category or DEFAULT_CATEGORY).strip() or DEFAULT_CATEGORY
+    source = tiers if tiers is not None else get_tiers_config()
+    tier = str(source.get(category, DEFAULT_TIER)).strip().lower()
+    return tier if tier in VALID_TIERS else DEFAULT_TIER
+
+
+def is_auto_tier(category: str, *, tiers: Optional[Dict[str, str]] = None) -> bool:
+    """True iff ``category`` is configured as a pre-approved "auto" tier."""
+    return resolve_tier(category, tiers=tiers) == "auto"

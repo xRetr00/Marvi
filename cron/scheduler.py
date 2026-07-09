@@ -2143,6 +2143,12 @@ def _parse_wake_gate(script_output: str) -> bool:
     LLM run, no delivery. Any other output (non-JSON, missing flag, gate
     absent, or ``wakeAgent: true``) means wake the agent normally.
 
+    Also recognizes the literal line ``NO_CHANGE`` as an equivalent
+    wakeAgent=false signal (Contract 1 of the subconscious tick — see
+    ``cron/subconscious.py`` and ``cron/scripts/subconscious_snapshot.py``):
+    a mechanical diff script prints exactly that token when nothing in the
+    user's world changed, at zero LLM cost.
+
     Returns True if the agent should wake, False to skip.
     """
     if not script_output:
@@ -2151,6 +2157,8 @@ def _parse_wake_gate(script_output: str) -> bool:
     if not stripped_lines:
         return True
     last_line = stripped_lines[-1].strip()
+    if last_line == "NO_CHANGE":
+        return False
     try:
         gate = json.loads(last_line)
     except (json.JSONDecodeError, ValueError):

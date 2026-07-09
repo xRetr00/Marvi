@@ -52,6 +52,9 @@ _HERMES_CORE_TOOLS = [
     "text_to_speech",
     # Planning & memory
     "todo", "memory",
+    # Standing goals — cross-session steering input, injected into every
+    # system prompt (agent/goal_store.py). Gated via tools/goal_tools.py.
+    "goal_add", "goal_update", "goal_list",
     # NOTE: the desktop Project tools (project_list/create/switch) are
     # deliberately NOT here. They only make sense where a GUI can follow the
     # move, so they live in the `project` toolset and are enabled solely by the
@@ -209,6 +212,22 @@ TOOLSETS = {
     "memory": {
         "description": "Persistent memory across sessions (personal notes + user profile)",
         "tools": ["memory"],
+        "includes": []
+    },
+
+    "goals": {
+        "description": "Standing cross-session goals — steering input injected into every system prompt",
+        "tools": ["goal_add", "goal_update", "goal_list"],
+        "includes": []
+    },
+
+    "subconscious": {
+        "description": (
+            "Consent-first automation proposals from the subconscious tick "
+            "(only active during the tick's own cron job run; see "
+            "cron/subconscious.py)."
+        ),
+        "tools": ["suggest_automation"],
         "includes": []
     },
 

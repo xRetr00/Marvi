@@ -1,3 +1,4 @@
+import type { IslandCard } from './lib/island-queue'
 import type {
   PetOverlayBounds,
   PetOverlayControl,
@@ -5,7 +6,6 @@ import type {
   PetOverlayStatePayload
 } from './store/pet-overlay'
 import type { VoiceState } from './store/voice-presence'
-import type { IslandCard } from './lib/island-queue'
 
 export {}
 
@@ -104,6 +104,10 @@ declare global {
       openExternal: (url: string) => Promise<void>
       openPreviewInBrowser?: (url: string) => Promise<void>
       fetchLinkTitle: (url: string) => Promise<string>
+      // ActivityWatch (localhost:5600) reachability probe for Presence settings.
+      presence?: {
+        awStatus: () => Promise<{ reachable: boolean }>
+      }
       sanitizeWorkspaceCwd: (cwd?: null | string) => Promise<{ cwd: string; sanitized: boolean }>
       settings: {
         getDefaultProjectDir: () => Promise<{ defaultLabel: string; dir: null | string; resolvedCwd: string }>

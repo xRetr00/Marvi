@@ -122,6 +122,11 @@ contextBridge.exposeInMainWorld('hermesDesktop', {
   openExternal: url => ipcRenderer.invoke('hermes:openExternal', url),
   openPreviewInBrowser: url => ipcRenderer.invoke('hermes:openPreviewInBrowser', url),
   fetchLinkTitle: url => ipcRenderer.invoke('hermes:fetchLinkTitle', url),
+  presence: {
+    // ActivityWatch (localhost:5600) reachability, probed from the main
+    // process to sidestep renderer CORS. Backs the Presence settings status dot.
+    awStatus: () => ipcRenderer.invoke('hermes:presence:awStatus')
+  },
   sanitizeWorkspaceCwd: cwd => ipcRenderer.invoke('hermes:workspace:sanitize', cwd),
   settings: {
     getDefaultProjectDir: () => ipcRenderer.invoke('hermes:setting:defaultProjectDir:get'),

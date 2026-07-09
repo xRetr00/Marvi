@@ -1,0 +1,290 @@
+"""Thin, lazily-imported wrapper over the Composio Python SDK.
+
+Composio (https://composio.dev) is how Marvi gets account awareness (Gmail,
+GitHub, ...). It is an OPTIONAL dependency -- nothing in this module, or
+anything that imports it, pulls in the ``composio`` package at import time.
+That mirrors the lazy-dependency convention used throughout the codebase
+(see ``tools/lazy_deps.py``'s module docstring for the rationale): a user who
+never touches Composio should never pay for it, and a broken/unavailable
+Composio install must never take down anything else.
+
+This module intentionally does NOT register itself in ``tools/lazy_deps.py``'s
+allowlist (that file is owned by another part of the codebase) -- it does its
+own plain ``try/except ImportError`` with a clear remediation hint instead,
+which gets the "lazy, no hard dependency" property without touching shared
+infrastructure. If/when Composio graduates to a first-class lazy backend,
+wiring it into ``tools/lazy_deps.py`` (for auto-install support) is a small
+follow-up, not a design change here.
+
+Everything fetchers/CLI need from Composio goes through :class:`ComposioClient`
+so the actual SDK call surface (which has shifted across Composio SDK major
+versions) is isolated to one seam.
+"""
+
+from __future__ import annotations
+
+import logging
+import os
+from typing import Any, Dict, Optional
+
+logger = logging.getLogger(__name__)
+
+# Pin used only for the remediation hint printed when the SDK is missing --
+# NOT a project dependency pin (Composio ships no dependency file entry here
+# by design; see module docstring).
+COMPOSIO_PACKAGE_SPEC = "composio==0.17.1"
+
+
+class ComposioUnavailable(RuntimeError):
+    """The Composio SDK isn't installed. Optional dependency; Marvi degrades
+    gracefully without it -- surfaces just report themselves unavailable."""
+
+
+class ComposioAuthError(RuntimeError):
+    """No API key configured, or Composio rejected it (401/403)."""
+
+
+class ComposioRateLimited(RuntimeError):
+    """Composio returned 429. Callers should back off, not treat as fatal."""
+
+    def __init__(self, message: str = "Composio rate limited (429)", *, retry_after: Optional[float] = None):
+        super().__init__(message)
+        self.retry_after = retry_after
+
+
+class ComposioTransientError(RuntimeError):
+    """5xx / network-ish failure. Worth a backoff+retry, not a hard failure."""
+
+
+def install_hint() -> str:
+    """Public remediation text for "Composio SDK not installed" -- used both
+    internally (`ComposioUnavailable`) and by the CLI (`hermes composio
+    connect`) so the two never drift."""
+    return _install_hint()
+
+
+def _install_hint() -> str:
+    return (
+        "Composio SDK not installed. Install it with:\n"
+        f"  uv pip install {COMPOSIO_PACKAGE_SPEC}\n"
+        f"  (or: pip install {COMPOSIO_PACKAGE_SPEC})\n"
+        "Composio powers Marvi's account-awareness sync (Gmail, GitHub, etc.) "
+        "and is entirely optional -- Marvi runs fine without it until you "
+        "run `hermes composio connect <app>`."
+    )
+
+
+def _import_composio_sdk():
+    """Lazy import of the ``composio`` package. Raises :class:`ComposioUnavailable`
+    with a clear remediation hint on failure -- never a bare ``ImportError``."""
+    try:
+        import composio  # type: ignore
+    except ImportError as e:
+        raise ComposioUnavailable(_install_hint()) from e
+    return composio
+
+
+def is_sdk_installed() -> bool:
+    """Cheap presence check that never raises -- used by CLI status output."""
+    try:
+        _import_composio_sdk()
+        return True
+    except ComposioUnavailable:
+        return False
+
+
+def get_api_key(config: Optional[Dict[str, Any]] = None) -> Optional[str]:
+    """Resolve the Composio API key per Contract 3: config ``composio.api_key``
+    wins, then the ``COMPOSIO_API_KEY`` env var."""
+    if config is None:
+        try:
+            from hermes_cli.config import load_config
+
+            config = load_config()
+        except Exception:
+            config = {}
+    composio_cfg = (config or {}).get("composio") if isinstance(config, dict) else None
+    key = composio_cfg.get("api_key") if isinstance(composio_cfg, dict) else None
+    if isinstance(key, str) and key.strip():
+        return key.strip()
+    env_key = os.environ.get("COMPOSIO_API_KEY", "").strip()
+    return env_key or None
+
+
+class ComposioClient:
+    """Thin wrapper isolating callers from the Composio SDK's exact call
+    surface, with SDK exceptions normalized into the module's error types
+    so fetchers can react (retry/backoff/skip) without knowing SDK internals.
+    """
+
+    def __init__(self, api_key: str):
+        if not api_key:
+            raise ComposioAuthError(
+                "No Composio API key configured. Set `composio.api_key` in "
+                "config.yaml (via `hermes composio connect`) or export "
+                "COMPOSIO_API_KEY."
+            )
+        self._api_key = api_key
+        self._sdk_client = None
+
+    def _client(self):
+        if self._sdk_client is None:
+            composio = _import_composio_sdk()
+            self._sdk_client = composio.Composio(api_key=self._api_key)
+        return self._sdk_client
+
+    @staticmethod
+    def _classify_and_raise(exc: Exception) -> None:
+        """Re-raise ``exc`` as one of the module's typed errors when it looks
+        like an HTTP rate-limit/auth/server error. Different Composio SDK
+        versions surface the status code in different places (httpx response,
+        a bare ``status_code`` attribute, ...); check the common spots rather
+        than depending on one exact exception class. No-op (returns
+        normally) if the exception doesn't look HTTP-shaped -- caller wraps
+        it as a generic :class:`ComposioTransientError`.
+        """
+        status = getattr(exc, "status_code", None) or getattr(
+            getattr(exc, "response", None), "status_code", None
+        )
+        if status == 429:
+            retry_after = None
+            headers = getattr(getattr(exc, "response", None), "headers", None)
+            if headers:
+                try:
+                    retry_after = float(headers.get("Retry-After"))
+                except (TypeError, ValueError):
+                    retry_after = None
+            raise ComposioRateLimited(retry_after=retry_after) from exc
+        if status in (401, 403):
+            raise ComposioAuthError(f"Composio rejected the API key ({status}).") from exc
+        if isinstance(status, int) and status >= 500:
+            raise ComposioTransientError(f"Composio server error ({status}).") from exc
+
+    @staticmethod
+    def _to_dict(result: Any) -> Dict[str, Any]:
+        if isinstance(result, dict):
+            return result
+        to_dict = getattr(result, "model_dump", None) or getattr(result, "dict", None)
+        if callable(to_dict):
+            try:
+                return to_dict()
+            except Exception:
+                pass
+        return {"data": result}
+
+    def execute_action(
+        self,
+        action: str,
+        params: Optional[Dict[str, Any]] = None,
+        *,
+        user_id: str = "default",
+    ) -> Dict[str, Any]:
+        """Execute a single Composio tool/action (e.g. ``GMAIL_LIST_MESSAGES``,
+        ``GITHUB_LIST_NOTIFICATIONS_FOR_THE_AUTHENTICATED_USER``) and return its
+        result payload as a dict.
+
+        Raises :class:`ComposioRateLimited` / :class:`ComposioAuthError` /
+        :class:`ComposioTransientError` on failure so fetchers can decide
+        whether to back off and retry later, rather than crash the tick.
+        """
+        client = self._client()
+        try:
+            tools = getattr(client, "tools", None)
+            if tools is not None and hasattr(tools, "execute"):
+                result = tools.execute(slug=action, arguments=params or {}, user_id=user_id)
+            else:
+                actions = getattr(client, "actions")
+                result = actions.execute(action=action, params=params or {}, user_id=user_id)
+        except (ComposioRateLimited, ComposioAuthError, ComposioTransientError):
+            raise
+        except Exception as e:
+            self._classify_and_raise(e)
+            raise ComposioTransientError(f"Composio action {action!r} failed: {e}") from e
+        return self._to_dict(result)
+
+    def initiate_connection(self, app: str, *, user_id: str = "default") -> Dict[str, Any]:
+        """Start (or resume) a connected-account auth flow for ``app``.
+
+        Returns a dict with at minimum a ``status`` key
+        (``"active"``/``"pending"``/``"failed"``) and, when a manual
+        authorization step is needed, a ``redirect_url``.
+        """
+        client = self._client()
+        try:
+            connect = getattr(client, "connected_accounts", None) or getattr(client, "connections", None)
+            result = connect.initiate(app=app, user_id=user_id)
+        except (ComposioRateLimited, ComposioAuthError, ComposioTransientError):
+            raise
+        except Exception as e:
+            self._classify_and_raise(e)
+            raise ComposioTransientError(
+                f"Could not initiate Composio connection for {app!r}: {e}"
+            ) from e
+        return self._to_dict(result)
+
+    def get_connection_status(self, app: str, *, user_id: str = "default") -> Dict[str, Any]:
+        """Return ``{"connected": bool, "status": str}`` for ``app``."""
+        client = self._client()
+        try:
+            connect = getattr(client, "connected_accounts", None) or getattr(client, "connections", None)
+            result = connect.get(app=app, user_id=user_id)
+        except (ComposioRateLimited, ComposioAuthError, ComposioTransientError):
+            raise
+        except Exception as e:
+            self._classify_and_raise(e)
+            raise ComposioTransientError(
+                f"Could not fetch Composio connection status for {app!r}: {e}"
+            ) from e
+        payload = self._to_dict(result)
+        status = payload.get("status") or payload.get("connectionStatus") or "unknown"
+        connected = str(status).lower() in {"active", "connected", "success"}
+        return {"connected": connected, "status": str(status)}
+
+    def verify_auth(self) -> bool:
+        """Cheap sanity check that the configured API key actually works.
+
+        Raises :class:`ComposioAuthError` on rejection so callers can show a
+        clear "your API key doesn't work" message rather than a stack trace.
+        """
+        client = self._client()
+        try:
+            connect = getattr(client, "connected_accounts", None) or getattr(client, "connections", None)
+            if connect is not None and hasattr(connect, "list"):
+                connect.list(user_id="default")
+            return True
+        except (ComposioRateLimited, ComposioAuthError, ComposioTransientError):
+            raise
+        except Exception as e:
+            self._classify_and_raise(e)
+            raise ComposioAuthError(f"Composio auth check failed: {e}") from e
+
+
+def unwrap_payload(payload: Any) -> Any:
+    """Peel Composio's outer action-result envelope off a raw action result.
+
+    Composio action results have been wrapped under a ``response_data`` or
+    ``data`` key depending on SDK version; fetchers call this once instead of
+    each hand-rolling the same peel, and get back whatever's inside -- the
+    actual provider API shape (Gmail/GitHub/...).
+    """
+    if isinstance(payload, dict):
+        for key in ("response_data", "data"):
+            inner = payload.get(key)
+            if isinstance(inner, (dict, list)):
+                return inner
+    return payload
+
+
+def get_client(api_key: Optional[str] = None) -> ComposioClient:
+    """Build a :class:`ComposioClient`, resolving the API key from config/env
+    (Contract 3) when not given explicitly.
+
+    Raises :class:`ComposioAuthError` if no key is configured anywhere.
+    """
+    key = api_key or get_api_key()
+    if not key:
+        raise ComposioAuthError(
+            "No Composio API key configured. Run `hermes composio connect <app>` "
+            "or set `composio.api_key` in config.yaml / the COMPOSIO_API_KEY env var."
+        )
+    return ComposioClient(key)

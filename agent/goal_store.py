@@ -1,0 +1,263 @@
+"""Persistent goal store — the steering input for Marvi's subconscious.
+
+A *goal* here is a standing, cross-session objective the user wants Marvi to
+keep in mind (e.g. "ship the Q3 report", "learn Spanish this year") — NOT the
+per-session ``/goal`` Ralph loop in ``hermes_cli/goals.py`` (that's a
+turn-by-turn judge loop scoped to one conversation). Goals stored here are
+injected into every session's system prompt (see
+``agent/system_prompt.py``) and read by the subconscious tick
+(``cron/subconscious.py``) so proactive reasoning has something to steer by.
+
+Storage: ``~/.hermes/goals.json``. Mirrors ``cron/jobs.py``'s storage style —
+atomic writes (tempfile + ``atomic_replace``), an in-process lock, and 0600
+file permissions.
+
+Fields per goal record: ``id``, ``title``, ``detail``, ``status``
+(active/paused/done), ``horizon`` (short/long), ``created``, ``updated``.
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+import os
+import tempfile
+import threading
+import uuid
+from pathlib import Path
+from typing import Any, Dict, List, Optional
+
+from hermes_constants import get_hermes_home
+from hermes_time import now as _hermes_now
+from utils import atomic_replace
+
+logger = logging.getLogger(__name__)
+
+GOALS_FILE = get_hermes_home().resolve() / "goals.json"
+
+# In-process lock protecting load->modify->save cycles.
+_goals_lock = threading.Lock()
+
+VALID_STATUSES = frozenset({"active", "paused", "done"})
+VALID_HORIZONS = frozenset({"short", "long"})
+DEFAULT_STATUS = "active"
+DEFAULT_HORIZON = "short"
+
+
+def _secure_file(path: Path) -> None:
+    try:
+        os.chmod(path, 0o600)
+    except OSError:
+        pass
+
+
+def _ensure_dir() -> None:
+    GOALS_FILE.parent.mkdir(parents=True, exist_ok=True)
+
+
+def _load_raw() -> Dict[str, Any]:
+    if not GOALS_FILE.exists():
+        return {"goals": []}
+    try:
+        with open(GOALS_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except (json.JSONDecodeError, OSError) as e:
+        logger.warning("goals.json unreadable (%s); starting empty", e)
+        return {"goals": []}
+    if isinstance(data, dict) and isinstance(data.get("goals"), list):
+        return data
+    if isinstance(data, list):
+        return {"goals": data}
+    logger.warning("goals.json malformed; starting empty")
+    return {"goals": []}
+
+
+def _save_raw(goals: List[Dict[str, Any]]) -> None:
+    _ensure_dir()
+    fd, tmp_path = tempfile.mkstemp(dir=str(GOALS_FILE.parent), suffix=".tmp", prefix=".goals_")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(
+                {"goals": goals, "updated_at": _hermes_now().isoformat()},
+                f,
+                indent=2,
+            )
+            f.flush()
+            os.fsync(f.fileno())
+        atomic_replace(tmp_path, GOALS_FILE)
+        _secure_file(GOALS_FILE)
+    except BaseException:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        raise
+
+
+def load_goals() -> List[Dict[str, Any]]:
+    """Return all goal records (any status)."""
+    return _load_raw().get("goals", [])
+
+
+def list_goals(*, status: Optional[str] = None, horizon: Optional[str] = None) -> List[Dict[str, Any]]:
+    """List goals, optionally filtered by status and/or horizon."""
+    goals = load_goals()
+    if status:
+        goals = [g for g in goals if g.get("status") == status]
+    if horizon:
+        goals = [g for g in goals if g.get("horizon") == horizon]
+    return goals
+
+
+def active_goals() -> List[Dict[str, Any]]:
+    """Convenience: goals with status "active" — what the system prompt injects."""
+    return list_goals(status="active")
+
+
+def get_goal(ref: str) -> Optional[Dict[str, Any]]:
+    """Resolve a goal by id, 1-based index (in load order), or exact title."""
+    goals = load_goals()
+    for g in goals:
+        if g.get("id") == ref:
+            return g
+    if ref.isdigit():
+        idx = int(ref) - 1
+        if 0 <= idx < len(goals):
+            return goals[idx]
+    for g in goals:
+        if str(g.get("title", "")).lower() == ref.lower():
+            return g
+    return None
+
+
+def add_goal(
+    *,
+    title: str,
+    detail: str = "",
+    horizon: str = DEFAULT_HORIZON,
+    status: str = DEFAULT_STATUS,
+) -> Dict[str, Any]:
+    """Create and persist a new goal. Returns the created record.
+
+    Raises ``ValueError`` for an empty title or an invalid status/horizon.
+    """
+    title = (title or "").strip()
+    if not title:
+        raise ValueError("title is required")
+    if status not in VALID_STATUSES:
+        raise ValueError(f"status must be one of {sorted(VALID_STATUSES)}, got {status!r}")
+    if horizon not in VALID_HORIZONS:
+        raise ValueError(f"horizon must be one of {sorted(VALID_HORIZONS)}, got {horizon!r}")
+
+    now = _hermes_now().isoformat()
+    record = {
+        "id": uuid.uuid4().hex[:12],
+        "title": title,
+        "detail": (detail or "").strip(),
+        "status": status,
+        "horizon": horizon,
+        "created": now,
+        "updated": now,
+    }
+    with _goals_lock:
+        goals = _load_raw().get("goals", [])
+        goals.append(record)
+        _save_raw(goals)
+    return record
+
+
+def update_goal(ref: str, **updates: Any) -> Optional[Dict[str, Any]]:
+    """Update a goal's mutable fields (title/detail/status/horizon).
+
+    Returns the updated record, or ``None`` if ``ref`` doesn't resolve.
+    Raises ``ValueError`` for an invalid status/horizon value.
+    """
+    if "status" in updates and updates["status"] not in VALID_STATUSES:
+        raise ValueError(f"status must be one of {sorted(VALID_STATUSES)}, got {updates['status']!r}")
+    if "horizon" in updates and updates["horizon"] not in VALID_HORIZONS:
+        raise ValueError(f"horizon must be one of {sorted(VALID_HORIZONS)}, got {updates['horizon']!r}")
+
+    with _goals_lock:
+        goals = _load_raw().get("goals", [])
+        target = None
+        for g in goals:
+            if g.get("id") == ref:
+                target = g
+                break
+        if target is None and ref.isdigit():
+            idx = int(ref) - 1
+            if 0 <= idx < len(goals):
+                target = goals[idx]
+        if target is None:
+            ref_lower = ref.lower()
+            for g in goals:
+                if str(g.get("title", "")).lower() == ref_lower:
+                    target = g
+                    break
+        if target is None:
+            return None
+
+        for field in ("title", "detail", "status", "horizon"):
+            if field in updates and updates[field] is not None:
+                value = updates[field]
+                if field in ("title", "detail"):
+                    value = str(value).strip()
+                target[field] = value
+        target["updated"] = _hermes_now().isoformat()
+        _save_raw(goals)
+        return target
+
+
+def remove_goal(ref: str) -> bool:
+    """Delete a goal by id/index/title. Returns True if one was removed."""
+    with _goals_lock:
+        goals = _load_raw().get("goals", [])
+        goal = None
+        for g in goals:
+            if g.get("id") == ref:
+                goal = g
+                break
+        if goal is None and ref.isdigit():
+            idx = int(ref) - 1
+            if 0 <= idx < len(goals):
+                goal = goals[idx]
+        if goal is None:
+            ref_lower = ref.lower()
+            for g in goals:
+                if str(g.get("title", "")).lower() == ref_lower:
+                    goal = g
+                    break
+        if goal is None:
+            return False
+        goals = [g for g in goals if g.get("id") != goal.get("id")]
+        _save_raw(goals)
+        return True
+
+
+def format_active_goals_for_prompt(*, max_goals: int = 10) -> str:
+    """Render active goals as a compact system-prompt block.
+
+    Returns "" when there are no active goals so callers can skip the
+    section entirely. Each goal is one line: "- <title>: <detail>" (detail
+    omitted when empty). Capped to ``max_goals`` so a long-lived goal list
+    doesn't blow up prompt size; the cap keeps the most recently updated
+    goals.
+    """
+    goals = active_goals()
+    if not goals:
+        return ""
+    goals = sorted(goals, key=lambda g: g.get("updated") or "", reverse=True)[:max_goals]
+    lines = ["## Active goals (steering input, not a task list)"]
+    for g in goals:
+        title = str(g.get("title") or "").strip()
+        if not title:
+            continue
+        detail = str(g.get("detail") or "").strip()
+        horizon = g.get("horizon") or DEFAULT_HORIZON
+        line = f"- [{horizon}] {title}"
+        if detail:
+            line += f" — {detail}"
+        lines.append(line)
+    if len(lines) == 1:
+        return ""
+    return "\n".join(lines)

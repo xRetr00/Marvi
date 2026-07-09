@@ -477,6 +477,18 @@ def build_system_prompt_parts(agent: Any, system_message: Optional[str] = None) 
         except Exception:
             pass
 
+    # Standing goals (agent/goal_store.py) — steering input for the
+    # subconscious tick and for the agent's own proactive reasoning. Best
+    # effort: an unavailable/corrupt goal store must never block the
+    # system prompt from being built.
+    try:
+        from agent.goal_store import format_active_goals_for_prompt
+        _goals_block = format_active_goals_for_prompt()
+        if _goals_block:
+            volatile_parts.append(_goals_block)
+    except Exception:
+        pass
+
     from hermes_time import now as _hermes_now
     now = _hermes_now()
     # Date-only (not minute-precision) so the system prompt is byte-stable

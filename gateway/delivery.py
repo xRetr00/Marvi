@@ -392,6 +392,14 @@ class DeliveryRouter:
         metadata: Optional[Dict[str, Any]]
     ) -> Dict[str, Any]:
         """Deliver content to a messaging platform."""
+        # Presence flow gate (Workstream B): hold cron/proactive deliveries
+        # while the user is heads-down in a focus app, per presence.flow_gating.
+        # No-op for direct conversational replies (they never reach this
+        # method) and for anything without a "job_id" in metadata. See
+        # gateway/flow_gate.py for the full contract.
+        from gateway.flow_gate import wait_if_gated
+        await wait_if_gated(metadata)
+
         adapter = self.adapters.get(target.platform)
         
         if not adapter:

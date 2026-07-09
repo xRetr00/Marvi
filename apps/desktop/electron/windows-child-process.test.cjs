@@ -92,7 +92,10 @@ test('desktop backend teardown tree-kills Windows backend descendants', () => {
 
   const quitIndex = source.indexOf("app.on('before-quit'")
   assert.notEqual(quitIndex, -1, 'missing before-quit handler')
-  const quitSnippet = source.slice(quitIndex, quitIndex + 900)
+  // Window sized generously: the handler has grown (island/pet teardown) and
+  // the assertion only cares that the backend stop still goes through
+  // stopBackendChild rather than a bare SIGTERM.
+  const quitSnippet = source.slice(quitIndex, quitIndex + 1500)
   assert.match(quitSnippet, /stopBackendChild\(hermesProcess\)/)
   assert.doesNotMatch(quitSnippet, /hermesProcess\.kill\('SIGTERM'\)/)
 })

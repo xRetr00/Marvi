@@ -1,10 +1,12 @@
 """Tests for the subconscious idle-trigger debounce logic (gateway/idle_trigger.py).
 
 ``should_fire`` is pure (no gateway/event loop needed), so these are plain
-unit tests over the predicate.
+unit tests over the predicate. ``_should_defer_for_resource_policy`` is the
+guarded presence resource-policy hook (heavy foreground app => hold the
+tick) -- tested with a monkeypatched ``should_defer_background_work``.
 """
 
-from gateway.idle_trigger import should_fire
+from gateway.idle_trigger import _should_defer_for_resource_policy, should_fire
 
 
 class TestShouldFire:
@@ -63,3 +65,36 @@ class TestShouldFire:
             last_inbound_at=1000.0,
             last_fired_for_inbound_at=None,
         ) is True
+
+
+class TestResourcePolicyDefer:
+    """The heavy-foreground-app defer hook consulted just before firing."""
+
+    def test_defers_when_policy_says_busy(self, monkeypatch):
+        import tools.presence.resource_policy as rp
+
+        monkeypatch.setattr(rp, "should_defer_background_work", lambda: True)
+        assert _should_defer_for_resource_policy() is True
+
+    def test_does_not_defer_when_policy_says_not_busy(self, monkeypatch):
+        import tools.presence.resource_policy as rp
+
+        monkeypatch.setattr(rp, "should_defer_background_work", lambda: False)
+        assert _should_defer_for_resource_policy() is False
+
+    def test_policy_exception_means_no_defer(self, monkeypatch):
+        import tools.presence.resource_policy as rp
+
+        def _boom():
+            raise RuntimeError("policy blew up")
+
+        monkeypatch.setattr(rp, "should_defer_background_work", _boom)
+        assert _should_defer_for_resource_policy() is False
+
+    def test_missing_policy_module_means_no_defer(self, monkeypatch):
+        import sys
+
+        # None entry forces the guarded import to raise ImportError --
+        # simulates the presence workstream's module not being installed.
+        monkeypatch.setitem(sys.modules, "tools.presence.resource_policy", None)
+        assert _should_defer_for_resource_policy() is False

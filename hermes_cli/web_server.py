@@ -214,6 +214,11 @@ class _ParakeetSubprocessSession:
     def begin(self) -> None:
         """Start a new utterance on the (persistent) helper process."""
         self._ensure_process()
+        try:
+            from tools.voice_residency import note_voice_activity
+            note_voice_activity()
+        except Exception:
+            pass
         self.last_eou = False
         self.last_eou_prob = 0.0
         self._send({"type": "start", "stt_config": self._stt_config})
@@ -266,6 +271,13 @@ class _ParakeetSubprocessSession:
                 pass
         self._proc = None
 
+    def shutdown(self) -> None:
+        """Alias for close(): terminate the subprocess, close the log file
+        handle, and null out ``_proc``. Named for the tools.voice_residency
+        demote-hook contract; ``_ensure_process()`` respawns lazily on the
+        next utterance so this is safe to call any time the helper is idle."""
+        self.close()
+
     def running(self) -> bool:
         return self._proc is not None and self._proc.poll() is None
 
@@ -301,13 +313,16 @@ def _parakeet_config_signature(stt_config: dict[str, Any]) -> str:
 
 
 def _close_warm_parakeet_session() -> None:
+    """Drop the warm Parakeet helper singleton. Also used as the
+    tools.voice_residency demote hook — ``_ensure_process()`` respawns the
+    helper lazily on the next utterance, so this is safe to call any time."""
     global _WARM_PARAKEET_SESSION, _WARM_PARAKEET_SIGNATURE
     with _WARM_PARAKEET_LOCK:
         session = _WARM_PARAKEET_SESSION
         _WARM_PARAKEET_SESSION = None
         _WARM_PARAKEET_SIGNATURE = ""
     if session is not None:
-        session.close()
+        session.shutdown()
 
 
 def _warm_parakeet_session(stt_config: dict[str, Any]) -> None:
@@ -379,6 +394,17 @@ def get_voice_warmup_status() -> dict[str, Any]:
         return dict(_VOICE_WARMUP_STATUS)
 
 
+def _demote_voice_residency_for_memory_pressure() -> None:
+    """gateway.memory_monitor pressure callback: demote the voice stack.
+
+    Named function (not a lambda) so tools.voice_residency's per-function
+    idempotency check dedupes it if _warm_desktop_voice_models ever runs
+    more than once in a process.
+    """
+    from tools.voice_residency import demote
+    demote("memory-pressure")
+
+
 def _warm_desktop_voice_models() -> None:
     # Warm ALL THREE voice engines once at desktop startup (in this background
     # thread, while the app shows "connecting") so the first use of each is
@@ -391,6 +417,30 @@ def _warm_desktop_voice_models() -> None:
 
     _set_warmup(started=True)
     _log.info("Warming desktop voice models (TTS + STT + wake word)…")
+
+    # Register the tiered-residency demote hooks once, up front — they only
+    # drop caches/kill the helper subprocess, so it's harmless to register
+    # them even if the corresponding engine below ends up skipped/failed.
+    # Each subsystem's existing lazy loader re-warms on next use.
+    try:
+        from tools.voice_residency import register_demote_hook
+
+        register_demote_hook(_close_warm_parakeet_session)
+
+        from tools.tts_tool import unload_tts_provider
+        register_demote_hook(unload_tts_provider)
+    except Exception:
+        _log.debug("Could not register voice residency demote hooks", exc_info=True)
+
+    try:
+        from gateway.memory_monitor import register_pressure_callback, start_memory_monitoring
+
+        register_pressure_callback(_demote_voice_residency_for_memory_pressure)
+        # The desktop backend is the long-lived resident process — start the
+        # RSS monitor here so the max_rss_mb soft ceiling is live, not inert.
+        start_memory_monitoring()
+    except Exception:
+        _log.debug("Could not register voice residency memory-pressure callback", exc_info=True)
 
     tts_cfg = cfg.get("tts") or {}
     if isinstance(tts_cfg, dict) and str(tts_cfg.get("provider") or "").strip().lower() == "pockettts":
@@ -437,6 +487,14 @@ def _warm_desktop_voice_models() -> None:
     except Exception as exc:
         _set_warmup(wake="failed")
         _log.warning("Could not warm wake word: %s", exc)
+
+    try:
+        from tools.voice_residency import start_idle_watch
+
+        idle_minutes = cfg_get(cfg, "voice", "idle_unload_minutes", default=30)
+        start_idle_watch(float(idle_minutes))
+    except Exception:
+        _log.debug("Could not start voice residency idle watch", exc_info=True)
 
     _set_warmup(done=True)
     _log.info("Desktop voice models warmed")
@@ -4063,6 +4121,12 @@ async def speak_text(payload: TTSSpeakRequest):
         raise HTTPException(status_code=400, detail="Text is required")
 
     try:
+        from tools.voice_residency import note_voice_activity
+        note_voice_activity()
+    except Exception:
+        pass
+
+    try:
         from tools.tts_tool import text_to_speech_tool
         loop = asyncio.get_running_loop()
         result_json = await loop.run_in_executor(None, text_to_speech_tool, text)
@@ -4120,6 +4184,12 @@ async def speak_text_stream(payload: TTSSpeakRequest):
     text = (payload.text or "").strip()
     if not text:
         raise HTTPException(status_code=400, detail="Text is required")
+
+    try:
+        from tools.voice_residency import note_voice_activity
+        note_voice_activity()
+    except Exception:
+        pass
 
     def event_stream():
         try:
@@ -15454,6 +15524,11 @@ async def wake_word_stream_ws(ws: WebSocket) -> None:
 
             phrase = await asyncio.to_thread(spotter.accept_waveform, _float32_samples_from_bytes(chunk))
             if phrase:
+                try:
+                    from tools.voice_residency import note_voice_activity
+                    note_voice_activity()
+                except Exception:
+                    pass
                 await ws.send_json({"type": "detected", "phrase": phrase})
     except WebSocketDisconnect:
         return

@@ -2161,6 +2161,25 @@ def _resolve_piper_voice(tts_config: Dict[str, Any]) -> Any:
         return _piper_voice_cache[cache_key]
 
 
+def unload_tts_provider() -> None:
+    """Drop cached PocketTTS/Piper model + voice state (voice_residency demote hook).
+
+    ``_resolve_pockettts_model_and_voice`` / ``_resolve_piper_voice`` reload
+    lazily on next use, so this is safe to call at any time — the next TTS
+    request just pays the one-time load cost again.
+    """
+    with _pockettts_cache_lock:
+        _pockettts_model_cache.clear()
+        _pockettts_voice_cache.clear()
+    with _piper_voice_cache_lock:
+        _piper_voice_cache.clear()
+
+    import gc
+    gc.collect()
+
+    logger.info("[TTS] Unloaded cached PocketTTS/Piper model + voice state (voice residency demote)")
+
+
 def _generate_piper_tts(text: str, output_path: str, tts_config: Dict[str, Any]) -> str:
     """Generate speech using the local Piper engine.
 

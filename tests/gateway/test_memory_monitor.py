@@ -120,3 +120,120 @@ def test_unavailable_rss_warns_and_does_not_start(caplog, monkeypatch):
     assert started is False
     assert mm.is_running() is False
     assert any("Memory monitoring unavailable" in r.getMessage() for r in caplog.records)
+
+
+# ---------------------------------------------------------------------------
+# Soft ceiling (logging.memory_monitor.max_rss_mb) — pressure callbacks.
+# All tests fake the RSS reading and the ceiling; no real config or models.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture()
+def _clean_pressure_state(monkeypatch):
+    """Isolate the pressure-callback registry + debounce timestamp per test."""
+    monkeypatch.setattr(mm, "_pressure_callbacks", [])
+    monkeypatch.setattr(mm, "_last_pressure_fire", None)
+    yield
+
+
+def test_pressure_callback_fires_above_ceiling(caplog, monkeypatch, _clean_pressure_state):
+    caplog.set_level(logging.INFO, logger="gateway.memory_monitor")
+    monkeypatch.setattr(mm, "_max_rss_ceiling_mb", lambda: 1000)
+    calls = []
+    mm.register_pressure_callback(lambda: calls.append(1))
+
+    mm._maybe_handle_memory_pressure(1500)
+
+    assert calls == [1]
+    messages = [r.getMessage() for r in caplog.records]
+    assert any(m.startswith("[MEMORY] pressure ") for m in messages), messages
+
+
+def test_pressure_does_not_fire_below_ceiling(_clean_pressure_state, monkeypatch):
+    monkeypatch.setattr(mm, "_max_rss_ceiling_mb", lambda: 1000)
+    calls = []
+    mm.register_pressure_callback(lambda: calls.append(1))
+
+    mm._maybe_handle_memory_pressure(500)
+
+    assert calls == []
+
+
+def test_pressure_disabled_when_ceiling_is_zero(_clean_pressure_state, monkeypatch):
+    monkeypatch.setattr(mm, "_max_rss_ceiling_mb", lambda: 0)
+    calls = []
+    mm.register_pressure_callback(lambda: calls.append(1))
+
+    mm._maybe_handle_memory_pressure(999999)
+
+    assert calls == []
+
+
+def test_pressure_ignores_unavailable_rss(_clean_pressure_state, monkeypatch):
+    monkeypatch.setattr(mm, "_max_rss_ceiling_mb", lambda: 1000)
+    calls = []
+    mm.register_pressure_callback(lambda: calls.append(1))
+
+    mm._maybe_handle_memory_pressure(None)
+
+    assert calls == []
+
+
+def test_pressure_debounces_within_window(_clean_pressure_state, monkeypatch):
+    monkeypatch.setattr(mm, "_max_rss_ceiling_mb", lambda: 1000)
+    calls = []
+    mm.register_pressure_callback(lambda: calls.append(1))
+
+    mm._maybe_handle_memory_pressure(1500)
+    mm._maybe_handle_memory_pressure(1500)
+    mm._maybe_handle_memory_pressure(2000)
+
+    # Only the first over-ceiling sample within the 10-minute window fires.
+    assert calls == [1]
+
+
+def test_pressure_fires_again_after_debounce_window(_clean_pressure_state, monkeypatch):
+    monkeypatch.setattr(mm, "_max_rss_ceiling_mb", lambda: 1000)
+    calls = []
+    mm.register_pressure_callback(lambda: calls.append(1))
+
+    mm._maybe_handle_memory_pressure(1500)
+    assert calls == [1]
+
+    # Simulate the debounce window having elapsed.
+    monkeypatch.setattr(
+        mm, "_last_pressure_fire", mm._last_pressure_fire - mm._PRESSURE_DEBOUNCE_SECONDS - 1
+    )
+    mm._maybe_handle_memory_pressure(1500)
+    assert calls == [1, 1]
+
+
+def test_pressure_callback_registration_is_idempotent(_clean_pressure_state, monkeypatch):
+    monkeypatch.setattr(mm, "_max_rss_ceiling_mb", lambda: 1000)
+    calls = []
+
+    def cb():
+        calls.append(1)
+
+    mm.register_pressure_callback(cb)
+    mm.register_pressure_callback(cb)
+    mm._maybe_handle_memory_pressure(1500)
+
+    assert calls == [1]
+
+
+def test_failing_pressure_callback_does_not_block_others(_clean_pressure_state, monkeypatch, caplog):
+    caplog.set_level(logging.INFO, logger="gateway.memory_monitor")
+    monkeypatch.setattr(mm, "_max_rss_ceiling_mb", lambda: 1000)
+    calls = []
+
+    def bad():
+        raise RuntimeError("boom")
+
+    mm.register_pressure_callback(bad)
+    mm.register_pressure_callback(lambda: calls.append("ok"))
+    mm._maybe_handle_memory_pressure(1500)
+
+    assert calls == ["ok"]
+    # The pressure line still logs after a callback failure.
+    assert any(r.getMessage().startswith("[MEMORY] pressure ") for r in caplog.records)

@@ -7386,6 +7386,17 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
         except Exception:  # noqa: BLE001 - must never block startup
             logger.debug("idle-trigger: failed to start watcher", exc_info=True)
 
+        # Start the presence resource-policy watcher — best-effort, polls
+        # every 60s and demotes the voice stack to cold (+ defers the
+        # subconscious tick, checked at its own call sites) whenever the
+        # user is running a heavy foreground app (fullscreen game, video
+        # editor, 3D tool). See tools/presence/resource_policy.py.
+        try:
+            from tools.presence.resource_policy import watch as _resource_policy_watch
+            asyncio.create_task(_resource_policy_watch(self))
+        except Exception:  # noqa: BLE001 - must never block startup
+            logger.debug("resource-policy: failed to start watcher", exc_info=True)
+
         # Start background drain-control watcher — reconciles the gateway's
         # new-turn accept-state with the external ``.drain_request.json`` marker
         # the dashboard begin/cancel-drain endpoint writes (Phase 2). A marker

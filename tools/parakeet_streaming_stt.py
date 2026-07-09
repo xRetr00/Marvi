@@ -30,6 +30,7 @@ class ParakeetStreamingConfig:
     dtype: str = "auto"
     max_gpu_memory_gb: float | None = None
     cpu_fallback: bool = True
+    min_free_vram_mb: int = 2048
     eou_token: str = "<EOU>"
     # NOTE(duplex-phase1): STT engine selection + tuning knobs. See
     # docs/design/2026-07-05-voice-duplex-design.md (Tunables).
@@ -68,6 +69,11 @@ def resolve_parakeet_config(stt_config: dict[str, Any] | None) -> ParakeetStream
     except (TypeError, ValueError):
         max_gpu_memory = 0
 
+    try:
+        min_free_vram_mb = int(pick("min_free_vram_mb", 2048) or 2048)
+    except (TypeError, ValueError):
+        min_free_vram_mb = 2048
+
     nested_model = nested.get("model")
     legacy_model = streaming.get("model")
     model_value = nested_model
@@ -95,6 +101,7 @@ def resolve_parakeet_config(stt_config: dict[str, Any] | None) -> ParakeetStream
         dtype=str(pick("dtype", "auto")).strip().lower() or "auto",
         max_gpu_memory_gb=max_gpu_memory if max_gpu_memory > 0 else None,
         cpu_fallback=pick_bool("cpu_fallback", True),
+        min_free_vram_mb=min_free_vram_mb if min_free_vram_mb > 0 else 2048,
         eou_token=str(pick("eou_token", "<EOU>")).strip() or "<EOU>",
         engine=engine,
         stream_chunk_seconds=stream_chunk_seconds if stream_chunk_seconds > 0 else 0.5,
@@ -129,6 +136,23 @@ def _is_cuda_driver_error(exc: BaseException) -> bool:
     )
 
 
+def _free_vram_mb() -> int | None:
+    """Return free CUDA VRAM in MB, or ``None`` when it can't be determined.
+
+    Any failure (no torch, no CUDA, driver quirk, etc.) is treated as
+    "unknown, proceed as today" — callers must not let this raise.
+    """
+    try:
+        import torch
+
+        if not torch.cuda.is_available():
+            return None
+        free_bytes, _total_bytes = torch.cuda.mem_get_info()
+        return int(free_bytes / (1024 * 1024))
+    except Exception:
+        return None
+
+
 def _load_parakeet_model(config: ParakeetStreamingConfig) -> Any:
     key = (
         config.model,
@@ -156,6 +180,29 @@ def _load_parakeet_model(config: ParakeetStreamingConfig) -> Any:
         requested_device = "cuda" if torch.cuda.is_available() else "cpu"
     if requested_device == "cuda" and not torch.cuda.is_available():
         requested_device = "cpu"
+
+    # VRAM preflight: if there isn't enough free VRAM to even attempt the
+    # load, go straight to the existing CPU fallback path instead of
+    # provoking a CUDA OOM (and the driver hiccups that can follow one).
+    # Free VRAM is treated as "unknown" (proceed as today) on any failure.
+    if requested_device == "cuda":
+        free_mb = _free_vram_mb()
+        if free_mb is not None and free_mb < config.min_free_vram_mb:
+            if config.cpu_fallback:
+                logger.warning(
+                    "Parakeet: only %dMB free VRAM (below %dMB threshold); "
+                    "using CPU fallback directly instead of attempting CUDA load",
+                    free_mb,
+                    config.min_free_vram_mb,
+                )
+                requested_device = "cpu"
+            else:
+                logger.warning(
+                    "Parakeet: only %dMB free VRAM (below %dMB threshold) but "
+                    "cpu_fallback is disabled; attempting CUDA load anyway",
+                    free_mb,
+                    config.min_free_vram_mb,
+                )
 
     if requested_device == "cuda" and config.max_gpu_memory_gb:
         total_bytes = int(config.max_gpu_memory_gb * 1024**3)

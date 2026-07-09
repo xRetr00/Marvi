@@ -2207,6 +2207,10 @@ async function releaseBackendLock(updateRoot, tag) {
   }
 
   // Graceful first (lets Python flush), then tree-kill to catch grandchildren.
+  // This teardown is intentional (update/uninstall hand-off) and happens
+  // BEFORE isQuittingForHandoff is set — mark the child so the crash
+  // supervisor doesn't respawn the backend mid-handoff and re-lock the venv.
+  if (hermesProcess) hermesProcess.__intentionalStop = true
   if (hermesProcess && !hermesProcess.killed) {
     try {
       hermesProcess.kill('SIGTERM')
@@ -5260,7 +5264,11 @@ function resetBootProgressForReconnect() {
 }
 
 function stopBackendChild(child) {
-  if (!child || child.killed) return
+  if (!child) return
+  // Mark intentional stops (re-home, quit, pool eviction) so the crash
+  // supervisor's exit hook doesn't treat this teardown as a crash.
+  child.__intentionalStop = true
+  if (child.killed) return
   try {
     if (IS_WINDOWS && Number.isInteger(child.pid)) {
       forceKillProcessTree(child.pid)
@@ -5275,6 +5283,8 @@ function stopBackendChild(child) {
 function resetHermesConnection() {
   connectionPromise = null
   backendStartFailure = null
+  // Manual re-home: cancel pending supervised respawns, re-arm the supervisor.
+  resetBackendSupervision()
 
   stopBackendChild(hermesProcess)
 
@@ -5320,6 +5330,140 @@ async function waitForBackendExit(child, timeoutMs = 5000) {
       resolve()
     })
   })
+}
+
+// --- Backend crash supervision ---------------------------------------------
+// If the LOCAL primary backend dies unexpectedly — not an app quit
+// (isQuitting / isQuittingForHandoff) and not a user-initiated stop (those
+// mark the child with __intentionalStop via stopBackendChild /
+// releaseBackendLock) — respawn it with exponential backoff so a Marvi hidden
+// in the tray doesn't silently stop working. After
+// BACKEND_RESTART_MAX_FAILURES consecutive failed cycles we give up, surface
+// ONE OS notification, and wait for a manual restart (any re-home through
+// resetHermesConnection() re-arms the supervisor). A backend that stays
+// healthy for BACKEND_HEALTHY_AFTER_MS resets the backoff counter.
+const BACKEND_RESTART_BASE_MS = 2_000
+const BACKEND_RESTART_CAP_MS = 60_000
+const BACKEND_RESTART_MAX_FAILURES = 5
+const BACKEND_HEALTHY_AFTER_MS = 5 * 60_000
+let backendRestartAttempts = 0
+let backendRestartTimer = null
+let backendHealthyTimer = null
+let backendSupervisionHalted = false
+let backendCrashLoopNotified = false
+
+// Manual-restart hook (called from resetHermesConnection): cancel any pending
+// supervised respawn and re-arm a halted supervisor.
+function resetBackendSupervision() {
+  if (backendRestartTimer) {
+    clearTimeout(backendRestartTimer)
+    backendRestartTimer = null
+  }
+  if (backendHealthyTimer) {
+    clearTimeout(backendHealthyTimer)
+    backendHealthyTimer = null
+  }
+  backendRestartAttempts = 0
+  backendSupervisionHalted = false
+  backendCrashLoopNotified = false
+}
+
+// Wired into the primary backend's 'exit' handler in startHermes().
+function noteBackendUnexpectedExit(child, { code, signal, wasReady }) {
+  if (isQuitting || isQuittingForHandoff || backendSupervisionHalted) return
+  if (child && child.__intentionalStop) return
+  // Pre-ready exits belong to the existing boot-failure recovery flow (the
+  // latched backendStartFailure + recovery overlay). Supervised respawn
+  // attempts that die before ready still count as failures because
+  // attemptBackendRestart() catches the rejected boot promise below.
+  if (!wasReady) return
+  // Died before the 5-minute healthy window elapsed: keep the streak.
+  if (backendHealthyTimer) {
+    clearTimeout(backendHealthyTimer)
+    backendHealthyTimer = null
+  }
+  scheduleBackendRestart(`backend exited unexpectedly (${signal || code})`)
+}
+
+function scheduleBackendRestart(reason) {
+  if (isQuitting || isQuittingForHandoff || backendSupervisionHalted || backendRestartTimer) return
+  if (backendRestartAttempts >= BACKEND_RESTART_MAX_FAILURES) {
+    backendSupervisionHalted = true
+    rememberLog(
+      `[supervise] backend failed ${backendRestartAttempts} consecutive restart cycles (${reason}); ` +
+        'giving up until a manual restart'
+    )
+    notifyBackendCrashLoop()
+    return
+  }
+  const delay = Math.min(BACKEND_RESTART_CAP_MS, BACKEND_RESTART_BASE_MS * 2 ** backendRestartAttempts)
+  backendRestartAttempts += 1
+  rememberLog(
+    `[supervise] ${reason}; restarting backend in ${Math.round(delay / 1000)}s ` +
+      `(attempt ${backendRestartAttempts}/${BACKEND_RESTART_MAX_FAILURES})`
+  )
+  backendRestartTimer = setTimeout(() => {
+    backendRestartTimer = null
+    void attemptBackendRestart()
+  }, delay)
+}
+
+async function attemptBackendRestart() {
+  if (isQuitting || isQuittingForHandoff || backendSupervisionHalted) return
+  // Clear the latched spawn failure so startHermes() actually retries instead
+  // of re-throwing the previous attempt's error. (The latch exists to stop
+  // the renderer's tight retry loop; the supervisor owns pacing here.)
+  backendStartFailure = null
+  try {
+    // startHermes() dedupes via connectionPromise, so if the renderer's own
+    // reconnect loop already respawned the backend we simply await that boot.
+    await startHermes()
+    rememberLog(
+      `[supervise] backend restarted (attempt ${backendRestartAttempts}/${BACKEND_RESTART_MAX_FAILURES})`
+    )
+    if (backendHealthyTimer) clearTimeout(backendHealthyTimer)
+    backendHealthyTimer = setTimeout(() => {
+      backendHealthyTimer = null
+      if (backendRestartAttempts > 0) {
+        rememberLog(
+          `[supervise] backend healthy for ${Math.round(BACKEND_HEALTHY_AFTER_MS / 60_000)} minutes; resetting restart backoff`
+        )
+        backendRestartAttempts = 0
+      }
+    }, BACKEND_HEALTHY_AFTER_MS)
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    rememberLog(
+      `[supervise] backend restart attempt ${backendRestartAttempts}/${BACKEND_RESTART_MAX_FAILURES} failed: ${message}`
+    )
+    scheduleBackendRestart('restart attempt failed')
+  }
+}
+
+// One user-facing alert per crash-loop episode. Uses the app's existing
+// Notification pattern (see the hermes:notify handler); a click brings the
+// hidden-in-tray window back and reveals the desktop log file.
+function notifyBackendCrashLoop() {
+  if (backendCrashLoopNotified) return
+  backendCrashLoopNotified = true
+  if (!Notification.isSupported()) return
+  try {
+    const notification = new Notification({
+      title: 'Marvi backend keeps crashing',
+      body: 'Automatic restarts failed. Click to open Marvi and view the logs.'
+    })
+    notification.on('click', () => {
+      focusWindow(mainWindow)
+      try {
+        shell.showItemInFolder(DESKTOP_LOG_PATH)
+      } catch {
+        // Best effort — the log file may not exist yet.
+      }
+    })
+    notification.show()
+  } catch (error) {
+    rememberLog(`[supervise] crash-loop notification failed: ${error.message}`)
+  }
 }
 
 // The profile the primary (window) backend runs as. readActiveDesktopProfile()
@@ -5687,6 +5831,10 @@ async function startHermes() {
 
     hermesProcess.stdout.on('data', rememberLog)
     hermesProcess.stderr.on('data', rememberLog)
+    // Capture this spawn's child for the supervisor: by the time 'exit' fires
+    // the module-level hermesProcess may already point at a newer child (or
+    // null), and the __intentionalStop marker lives on the instance.
+    const supervisedChild = hermesProcess
     let backendReady = false
     let rejectBackendStart = null
     const backendStartFailed = new Promise((_resolve, reject) => {
@@ -5713,6 +5861,9 @@ async function startHermes() {
       hermesProcess = null
       connectionPromise = null
       sendBackendExit({ code, signal })
+      // Auto-restart on unexpected death (no-op for intentional stops, app
+      // quit, or pre-ready boot failures — see noteBackendUnexpectedExit).
+      noteBackendUnexpectedExit(supervisedChild, { code, signal, wasReady: backendReady })
       if (!backendReady) {
         const message = `Hermes backend exited before it became ready (${signal || code}).`
         updateBootProgress(

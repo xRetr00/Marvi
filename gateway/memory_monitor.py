@@ -26,6 +26,13 @@ Design notes (parity with the Cline port):
 
 Config: ``logging.memory_monitor`` in ``config.yaml`` — see
 ``hermes_cli/config.py`` for the defaults block.
+
+Soft ceiling: ``logging.memory_monitor.max_rss_mb`` (default 0 = disabled).
+When set, each periodic sample that exceeds the ceiling runs registered
+*pressure callbacks* (see :func:`register_pressure_callback`), forces a
+``gc.collect()``, and logs a single ``[MEMORY] pressure ...`` line. Firing
+is debounced to at most once per ``_PRESSURE_DEBOUNCE_SECONDS`` so a
+sustained high-RSS period doesn't spam callbacks every tick.
 """
 
 from __future__ import annotations
@@ -36,7 +43,7 @@ import os
 import sys
 import threading
 import time
-from typing import Optional
+from typing import Callable, List, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +54,11 @@ _stop_event: Optional[threading.Event] = None
 _start_time: Optional[float] = None
 _interval_seconds: float = 300.0  # 5 minutes
 _lock = threading.Lock()
+
+_pressure_callbacks: List[Callable[[], None]] = []
+_pressure_lock = threading.Lock()
+_last_pressure_fire: Optional[float] = None
+_PRESSURE_DEBOUNCE_SECONDS = 600.0  # 10 minutes
 
 
 def _get_rss_mb() -> Optional[int]:
@@ -126,11 +138,76 @@ def log_memory_usage(prefix: str = "") -> None:
         )
 
 
+def register_pressure_callback(fn: Callable[[], None]) -> None:
+    """Register a callable to run when RSS exceeds the configured soft ceiling.
+
+    Mirrors ``tools.voice_residency.register_demote_hook`` — idempotent per
+    function, each callback runs in its own try/except at fire time.
+    """
+    with _pressure_lock:
+        if fn not in _pressure_callbacks:
+            _pressure_callbacks.append(fn)
+
+
+def _max_rss_ceiling_mb() -> int:
+    """Read ``logging.memory_monitor.max_rss_mb`` (default 0 = disabled).
+
+    Not added to ``DEFAULT_CONFIG`` — read with an explicit default like the
+    rest of the codebase's ``cfg_get`` call sites.
+    """
+    try:
+        from hermes_cli.config import cfg_get, load_config_readonly
+
+        cfg = load_config_readonly()
+        value = cfg_get(cfg, "logging", "memory_monitor", "max_rss_mb", default=0)
+        return int(value or 0)
+    except Exception:
+        return 0
+
+
+def _maybe_handle_memory_pressure(rss_mb: Optional[int]) -> None:
+    """If ``rss_mb`` exceeds the configured ceiling, fire pressure callbacks.
+
+    Debounced to at most once per ``_PRESSURE_DEBOUNCE_SECONDS`` so callbacks
+    don't run on every single tick while RSS stays above the ceiling.
+    """
+    global _last_pressure_fire
+
+    if rss_mb is None:
+        return
+
+    ceiling = _max_rss_ceiling_mb()
+    if ceiling <= 0 or rss_mb < ceiling:
+        return
+
+    now = time.monotonic()
+    with _pressure_lock:
+        if _last_pressure_fire is not None and (now - _last_pressure_fire) < _PRESSURE_DEBOUNCE_SECONDS:
+            return
+        _last_pressure_fire = now
+        callbacks = list(_pressure_callbacks)
+
+    for callback in callbacks:
+        try:
+            callback()
+        except Exception:
+            logger.exception("[MEMORY] pressure callback failed: %r", callback)
+
+    gc.collect()
+    logger.info(
+        "[MEMORY] pressure rss=%dMB ceiling=%dMB callbacks=%d",
+        rss_mb,
+        ceiling,
+        len(callbacks),
+    )
+
+
 def _monitor_loop(stop_event: threading.Event, interval: float) -> None:
     """Background thread body — log every ``interval`` seconds until stopped."""
     while not stop_event.wait(interval):
         try:
             log_memory_usage()
+            _maybe_handle_memory_pressure(_get_rss_mb())
         except Exception as e:
             # Never let the monitor crash the gateway; just log and carry on.
             logger.debug("Memory monitor iteration failed: %s", e)

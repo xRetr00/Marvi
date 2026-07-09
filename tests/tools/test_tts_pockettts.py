@@ -178,6 +178,25 @@ class TestGeneratePocketTts:
         fake_cls.load_model.assert_called_once()
         fake_model.get_state_for_audio_prompt.assert_called_once_with("cosette")
 
+    def test_unload_tts_provider_drops_cache_and_reloads_on_next_use(self, mock_pockettts_modules):
+        from tools import tts_tool
+
+        fake_model, fake_cls, _ = mock_pockettts_modules
+
+        tts_tool.warm_tts_provider({"provider": "pockettts", "pockettts": {"voice": "alba"}})
+        fake_cls.load_model.assert_called_once()
+        assert tts_tool._pockettts_model_cache
+        assert tts_tool._pockettts_voice_cache
+
+        tts_tool.unload_tts_provider()
+
+        assert not tts_tool._pockettts_model_cache
+        assert not tts_tool._pockettts_voice_cache
+
+        # Next warm re-loads lazily (promotion is free).
+        tts_tool.warm_tts_provider({"provider": "pockettts", "pockettts": {"voice": "alba"}})
+        assert fake_cls.load_model.call_count == 2
+
     def test_streaming_chunks_start_audio_and_end(self, monkeypatch, mock_pockettts_modules):
         from tools import tts_tool
 

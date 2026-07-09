@@ -244,6 +244,25 @@ def status() -> Dict[str, Any]:
     }
 
 
+def _should_defer_for_resource_policy() -> bool:
+    """True when the presence resource policy says to hold off the tick
+    (heavy foreground app -- fullscreen game, video editor, 3D tool).
+
+    Guarded import: ``tools/presence/resource_policy.py`` is a sibling
+    workstream's module and any failure to import/evaluate it must never
+    block the subconscious tick -- it resolves to "don't defer". Only the
+    subconscious tick job is affected; other scheduled cron jobs go through
+    the normal ticker untouched.
+    """
+    try:
+        from tools.presence.resource_policy import should_defer_background_work
+
+        return bool(should_defer_background_work())
+    except Exception:
+        logger.debug("subconscious: resource-policy check failed; not deferring", exc_info=True)
+        return False
+
+
 def trigger_tick(reason: str = "idle") -> bool:
     """Fire the subconscious tick job once, immediately.
 
@@ -255,6 +274,9 @@ def trigger_tick(reason: str = "idle") -> bool:
     """
     section = _subconscious_cfg()
     if not section["enabled"] or not section.get("job_id"):
+        return False
+    if _should_defer_for_resource_policy():
+        logger.info("subconscious: deferring tick (reason=%s) -- heavy foreground app", reason)
         return False
     from cron.jobs import trigger_job
 

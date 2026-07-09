@@ -112,6 +112,124 @@ def test_load_parakeet_model_requires_driver_update_on_cuda_driver_error(monkeyp
     assert devices == ["cuda"]
 
 
+def test_resolve_parakeet_config_min_free_vram_default_and_override():
+    cfg = resolve_parakeet_config({"streaming": {"provider": "parakeet"}})
+    assert cfg.min_free_vram_mb == 2048
+
+    cfg = resolve_parakeet_config(
+        {"streaming": {"provider": "parakeet", "parakeet": {"min_free_vram_mb": "512"}}}
+    )
+    assert cfg.min_free_vram_mb == 512
+
+
+def _install_fake_nemo(monkeypatch, devices):
+    import types as _types
+
+    class FakeParakeetModel:
+        def to(self, device):
+            devices.append(device)
+            return self
+
+        def eval(self):
+            return None
+
+    class FakeASRModel:
+        @staticmethod
+        def from_pretrained(model_name):
+            return FakeParakeetModel()
+
+    nemo_pkg = _types.ModuleType("nemo")
+    collections_pkg = _types.ModuleType("nemo.collections")
+    asr_pkg = _types.ModuleType("nemo.collections.asr")
+    asr_pkg.models = types.SimpleNamespace(ASRModel=FakeASRModel)
+    nemo_pkg.collections = collections_pkg
+    collections_pkg.asr = asr_pkg
+
+    monkeypatch.setitem(sys.modules, "nemo", nemo_pkg)
+    monkeypatch.setitem(sys.modules, "nemo.collections", collections_pkg)
+    monkeypatch.setitem(sys.modules, "nemo.collections.asr", asr_pkg)
+
+
+def test_vram_preflight_falls_back_to_cpu_when_free_vram_low(monkeypatch, caplog):
+    import logging
+    import tools.parakeet_streaming_stt as mod
+
+    devices = []
+    _install_fake_nemo(monkeypatch, devices)
+
+    class FakeCuda:
+        @staticmethod
+        def is_available():
+            return True
+
+        @staticmethod
+        def mem_get_info():
+            # 100MB free — well below the 2048MB default threshold.
+            return (100 * 1024 * 1024, 8 * 1024 * 1024 * 1024)
+
+    mod._MODEL_CACHE.clear()
+    monkeypatch.setitem(sys.modules, "torch", types.SimpleNamespace(cuda=FakeCuda()))
+
+    caplog.set_level(logging.WARNING, logger="tools.parakeet_streaming_stt")
+    _load_parakeet_model(ParakeetStreamingConfig(device="cuda", cpu_fallback=True))
+
+    # Preflight rerouted the load to CPU without ever attempting CUDA.
+    assert devices == ["cpu"]
+    assert any("free VRAM" in r.getMessage() for r in caplog.records)
+    mod._MODEL_CACHE.clear()
+
+
+def test_vram_preflight_proceeds_on_cuda_when_free_vram_sufficient(monkeypatch):
+    import tools.parakeet_streaming_stt as mod
+
+    devices = []
+    _install_fake_nemo(monkeypatch, devices)
+
+    class FakeCuda:
+        @staticmethod
+        def is_available():
+            return True
+
+        @staticmethod
+        def mem_get_info():
+            # 6GB free — comfortably above the threshold.
+            return (6 * 1024 * 1024 * 1024, 8 * 1024 * 1024 * 1024)
+
+    mod._MODEL_CACHE.clear()
+    monkeypatch.setitem(sys.modules, "torch", types.SimpleNamespace(cuda=FakeCuda()))
+
+    _load_parakeet_model(ParakeetStreamingConfig(device="cuda", cpu_fallback=True))
+
+    assert devices == ["cuda"]
+    mod._MODEL_CACHE.clear()
+
+
+def test_vram_preflight_unknown_free_vram_proceeds_as_today(monkeypatch):
+    # mem_get_info raising means "unknown" — the load proceeds on CUDA
+    # exactly as it did before the preflight existed.
+    import tools.parakeet_streaming_stt as mod
+
+    devices = []
+    _install_fake_nemo(monkeypatch, devices)
+
+    class FakeCuda:
+        @staticmethod
+        def is_available():
+            return True
+
+        @staticmethod
+        def mem_get_info():
+            raise RuntimeError("driver hiccup")
+
+    mod._MODEL_CACHE.clear()
+    monkeypatch.setitem(sys.modules, "torch", types.SimpleNamespace(cuda=FakeCuda()))
+
+    _load_parakeet_model(ParakeetStreamingConfig(device="cuda", cpu_fallback=True))
+
+    assert devices == ["cuda"]
+    mod._MODEL_CACHE.clear()
+
+
 def test_parakeet_streaming_session_transcribes_buffered_chunks(tmp_path):
     fake_model = FakeModel()
 

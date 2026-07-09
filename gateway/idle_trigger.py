@@ -59,6 +59,27 @@ def should_fire(
     return True
 
 
+def _should_defer_for_resource_policy() -> bool:
+    """True when the presence resource policy says to hold off (heavy
+    foreground app -- fullscreen game, video editor, 3D tool).
+
+    Guarded import: ``tools/presence/resource_policy.py`` is a sibling
+    workstream's module. Any failure to import or evaluate it means
+    "don't defer" -- a detection problem here must never silently suppress
+    the idle trigger. The idle-window debounce state (``last_fired_for_inbound_at``)
+    is left untouched by a deferred iteration, so the trigger fires on the
+    next poll once the heavy app is gone (or immediately re-evaluates,
+    since we don't advance the debounce marker here).
+    """
+    try:
+        from tools.presence.resource_policy import should_defer_background_work
+
+        return bool(should_defer_background_work())
+    except Exception:
+        logger.debug("idle-trigger: resource-policy check failed; not deferring", exc_info=True)
+        return False
+
+
 async def watch(gateway, *, interval: float = DEFAULT_WATCH_INTERVAL_SECONDS) -> None:
     """Background watcher: poll for idle silence and fire the subconscious tick.
 
@@ -97,6 +118,11 @@ async def watch(gateway, *, interval: float = DEFAULT_WATCH_INTERVAL_SECONDS) ->
                 last_fired_for_inbound_at=last_fired_for_inbound_at,
             )
             if not fire:
+                continue
+            if _should_defer_for_resource_policy():
+                logger.debug(
+                    "idle-trigger: idle window elapsed but deferring (heavy foreground app)"
+                )
                 continue
             if trigger_tick(reason="idle"):
                 last_fired_for_inbound_at = last_inbound_at

@@ -6,6 +6,7 @@ import pytest
 
 from hermes_cli.auth import (
     PROVIDER_REGISTRY,
+    LLAMACPP_NOAUTH_PLACEHOLDER,
     resolve_provider,
     get_api_key_provider_status,
     resolve_api_key_provider_credentials,
@@ -41,6 +42,7 @@ class TestProviderRegistry:
         ("minimax-cn", "MiniMax (China)", "api_key"),
         ("kilocode", "Kilo Code", "api_key"),
         ("gmi", "GMI Cloud", "api_key"),
+        ("llamacpp", "llama.cpp", "api_key"),
     ])
     def test_provider_registered(self, provider_id, name, auth_type):
         assert provider_id in PROVIDER_REGISTRY
@@ -109,6 +111,12 @@ class TestProviderRegistry:
         pconfig = PROVIDER_REGISTRY["huggingface"]
         assert pconfig.api_key_env_vars == ("HF_TOKEN",)
         assert pconfig.base_url_env_var == "HF_BASE_URL"
+
+    def test_llamacpp_env_vars(self):
+        pconfig = PROVIDER_REGISTRY["llamacpp"]
+        assert pconfig.api_key_env_vars == ("LLAMACPP_API_KEY",)
+        assert pconfig.base_url_env_var == "LLAMACPP_BASE_URL"
+        assert pconfig.inference_base_url == "http://127.0.0.1:8080/v1"
 
     def test_base_urls(self):
         assert PROVIDER_REGISTRY["copilot"].inference_base_url == "https://api.githubcopilot.com"
@@ -448,6 +456,12 @@ class TestResolveApiKeyProviderCredentials:
         assert creds["provider"] == "lmstudio"
         assert creds["api_key"] == "dummy-lm-api-key"
         assert creds["base_url"] == "http://127.0.0.1:1234/v1"
+
+    def test_resolve_llamacpp_no_api_key_substitutes_placeholder(self):
+        creds = resolve_api_key_provider_credentials("llamacpp")
+        assert creds["provider"] == "llamacpp"
+        assert creds["api_key"] == LLAMACPP_NOAUTH_PLACEHOLDER
+        assert creds["base_url"] == "http://127.0.0.1:8080/v1"
 
     def test_try_gh_cli_token_uses_homebrew_path_when_not_on_path(self, monkeypatch):
         monkeypatch.setattr("hermes_cli.copilot_auth.shutil.which", lambda command: None)

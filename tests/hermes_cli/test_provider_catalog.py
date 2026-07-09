@@ -62,6 +62,7 @@ def test_api_key_providers_route_to_keys_oauth_to_accounts():
     # api_key → keys
     assert by["kilocode"].tab == "keys"
     assert by["openai-api"].tab == "keys"
+    assert by["llamacpp"].tab == "keys"
     assert by["copilot-acp"].tab == "accounts"
 
 
@@ -88,6 +89,14 @@ def test_bedrock_routes_to_keys():
     """Bedrock is aws_sdk (AWS_REGION/AWS_PROFILE), configured on the keys tab."""
     by = provider_catalog_by_slug()
     assert by["bedrock"].tab == "keys"
+
+
+def test_llamacpp_catalog_exposes_desktop_keys_fields():
+    by = provider_catalog_by_slug()
+    d = by["llamacpp"]
+    assert d.label == "llama.cpp"
+    assert d.api_key_env_vars == ("LLAMACPP_API_KEY",)
+    assert d.base_url_env_var == "LLAMACPP_BASE_URL"
 
 
 def test_api_key_providers_expose_a_credential_env_var():

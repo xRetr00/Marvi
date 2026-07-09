@@ -88,6 +88,13 @@ HERMES_OVERLAYS: Dict[str, HermesOverlay] = {
         base_url_override="http://127.0.0.1:1234/v1",
         base_url_env_var="LM_BASE_URL",
     ),
+    "llamacpp": HermesOverlay(
+        transport="openai_chat",
+        auth_type="api_key",
+        extra_env_vars=("LLAMACPP_API_KEY",),
+        base_url_override="http://127.0.0.1:8080/v1",
+        base_url_env_var="LLAMACPP_BASE_URL",
+    ),
     "copilot-acp": HermesOverlay(
         transport="codex_responses",
         auth_type="external_process",
@@ -343,15 +350,15 @@ ALIASES: Dict[str, str] = {
     "gmi-cloud": "gmi",
     "gmicloud": "gmi",
 
-    # Local server aliases → virtual "local" concept (resolved via user config)
+    # Local server aliases
     "lmstudio": "lmstudio",
     "lm-studio": "lmstudio",
     "lm_studio": "lmstudio",
     "ollama": "custom",  # bare "ollama" = local; use "ollama-cloud" for cloud
     "vllm": "local",
-    "llamacpp": "local",
-    "llama.cpp": "local",
-    "llama-cpp": "local",
+    "llamacpp": "llamacpp",
+    "llama.cpp": "llamacpp",
+    "llama-cpp": "llamacpp",
 }
 
 
@@ -369,6 +376,7 @@ _LABEL_OVERRIDES: Dict[str, str] = {
     "gmi": "GMI Cloud",
     "tencent-tokenhub": "Tencent TokenHub",
     "lmstudio": "LM Studio",
+    "llamacpp": "llama.cpp",
     "local": "Local endpoint",
     "bedrock": "AWS Bedrock",
     "ollama-cloud": "Ollama Cloud",

@@ -146,11 +146,11 @@ SERVICE_PROVIDER_NAMES: Dict[str, str] = {
     "spotify": "Spotify",
 }
 
-# LM Studio's default no-auth mode still requires *some* non-empty bearer for
-# the API-key code paths (auxiliary_client, runtime resolver) to treat the
-# provider as configured. This sentinel is sent only to LM Studio, never to
-# any remote service.
+# Local no-auth servers still require *some* non-empty bearer for the API-key
+# code paths (auxiliary_client, runtime resolver) to treat them as configured.
+# These sentinels are sent only to local defaults, never to any remote service.
 LMSTUDIO_NOAUTH_PLACEHOLDER = "dummy-lm-api-key"
+LLAMACPP_NOAUTH_PLACEHOLDER = "dummy-llamacpp-api-key"
 
 
 # =============================================================================
@@ -217,6 +217,14 @@ PROVIDER_REGISTRY: Dict[str, ProviderConfig] = {
         inference_base_url="http://127.0.0.1:1234/v1",
         api_key_env_vars=("LM_API_KEY",),
         base_url_env_var="LM_BASE_URL",
+    ),
+    "llamacpp": ProviderConfig(
+        id="llamacpp",
+        name="llama.cpp",
+        auth_type="api_key",
+        inference_base_url="http://127.0.0.1:8080/v1",
+        api_key_env_vars=("LLAMACPP_API_KEY",),
+        base_url_env_var="LLAMACPP_BASE_URL",
     ),
     "copilot": ProviderConfig(
         id="copilot",
@@ -1675,10 +1683,10 @@ def resolve_provider(
         "go": "opencode-go", "opencode-go-sub": "opencode-go",
         "kilo": "kilocode", "kilo-code": "kilocode", "kilo-gateway": "kilocode",
         "lmstudio": "lmstudio", "lm-studio": "lmstudio", "lm_studio": "lmstudio",
-        # Local server aliases — route through the generic custom provider
+        # Local server aliases
         "ollama": "custom", "ollama_cloud": "ollama-cloud",
-        "vllm": "custom", "llamacpp": "custom",
-        "llama.cpp": "custom", "llama-cpp": "custom",
+        "vllm": "custom", "llamacpp": "llamacpp",
+        "llama.cpp": "llamacpp", "llama-cpp": "llamacpp",
     }
     # Extend with aliases declared in plugins/model-providers/<name>/ that aren't already mapped.
     # This keeps providers/ as the single source for new aliases while the
@@ -6380,11 +6388,14 @@ def resolve_api_key_provider_credentials(provider_id: str) -> Dict[str, Any]:
     key_source = ""
     api_key, key_source = _resolve_api_key_provider_secret(provider_id, pconfig)
 
-    # No-auth LM Studio: substitute a placeholder so runtime / auxiliary_client
+    # No-auth local servers: substitute a placeholder so runtime / auxiliary_client
     # see the local server as configured. doctor still reports unconfigured
     # because get_api_key_provider_status uses the raw secret resolver.
     if not api_key and provider_id == "lmstudio":
         api_key = LMSTUDIO_NOAUTH_PLACEHOLDER
+        key_source = key_source or "default"
+    elif not api_key and provider_id == "llamacpp":
+        api_key = LLAMACPP_NOAUTH_PLACEHOLDER
         key_source = key_source or "default"
 
     env_url = ""

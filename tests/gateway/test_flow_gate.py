@@ -14,6 +14,7 @@ import pytest
 import gateway.flow_gate as flow_gate
 import tools.presence.aw_client as aw_client_mod
 import tools.presence.common as common_mod
+import tools.presence.rhythm as rhythm_mod
 
 
 class FakeAWClient:
@@ -91,6 +92,86 @@ class TestShouldGate:
     def test_active_in_focus_app_gates(self, monkeypatch):
         _install_presence_cfg(monkeypatch, enabled=True, flow_gating=True)
         _install_client(monkeypatch, FakeAWClient(available=True, afk="not-afk", app="Code.exe"))
+        assert flow_gate.should_gate({"job_id": "j1"}) is True
+
+
+class TestRhythmStandDown:
+    """The rhythm-model early return: outside the user's typical active
+    hours for today, the gate stands down entirely (deliver freely) even if
+    they happen to be in a focus app right now."""
+
+    def _gateable(self, monkeypatch):
+        """Set up a scenario that would definitely gate absent a rhythm."""
+        _install_presence_cfg(monkeypatch, enabled=True, flow_gating=True)
+        _install_client(monkeypatch, FakeAWClient(available=True, afk="not-afk", app="Code.exe"))
+
+    def test_outside_active_hours_skips_gating(self, monkeypatch):
+        self._gateable(monkeypatch)
+        monkeypatch.setattr(rhythm_mod, "is_outside_active_hours", lambda now=None: True)
+        assert flow_gate.should_gate({"job_id": "j1"}) is False
+
+    def test_inside_active_hours_gates_normally(self, monkeypatch):
+        self._gateable(monkeypatch)
+        monkeypatch.setattr(rhythm_mod, "is_outside_active_hours", lambda now=None: False)
+        assert flow_gate.should_gate({"job_id": "j1"}) is True
+
+    def test_rhythm_check_error_falls_back_to_gating(self, monkeypatch):
+        self._gateable(monkeypatch)
+
+        def _boom(now=None):
+            raise RuntimeError("rhythm exploded")
+
+        monkeypatch.setattr(rhythm_mod, "is_outside_active_hours", _boom)
+        assert flow_gate.should_gate({"job_id": "j1"}) is True
+
+    def test_no_rhythm_file_gates_normally(self, monkeypatch):
+        # Real is_outside_active_hours against the isolated HERMES_HOME
+        # (no rhythm.json written) -- behavior identical to pre-rhythm code.
+        self._gateable(monkeypatch)
+        assert flow_gate.should_gate({"job_id": "j1"}) is True
+
+    def _write_rhythm_file(self, weekdays):
+        import json
+        from datetime import datetime
+
+        path = rhythm_mod._rhythm_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({
+            "schema_version": rhythm_mod.RHYTHM_SCHEMA_VERSION,
+            "generated_at": datetime.now().isoformat(),
+            "days_analyzed": 5,
+            "weekdays": weekdays,
+        }), encoding="utf-8")
+
+    def test_fake_rhythm_file_outside_hours_skips_gating(self, monkeypatch):
+        # End-to-end through the real rhythm module: write a rhythm file
+        # whose active window for *today* clearly excludes the current time.
+        from hermes_time import now as hermes_now
+
+        self._gateable(monkeypatch)
+        now = hermes_now()
+        window = ("22:00", "23:00") if now.hour < 12 else ("01:00", "02:00")
+        self._write_rhythm_file({
+            str(now.weekday()): {
+                "active_start": window[0],
+                "active_end": window[1],
+                "deep_work_windows": [],
+            }
+        })
+        assert flow_gate.should_gate({"job_id": "j1"}) is False
+
+    def test_fake_rhythm_file_inside_hours_gates_normally(self, monkeypatch):
+        from hermes_time import now as hermes_now
+
+        self._gateable(monkeypatch)
+        now = hermes_now()
+        self._write_rhythm_file({
+            str(now.weekday()): {
+                "active_start": "00:00",
+                "active_end": "23:59",
+                "deep_work_windows": [],
+            }
+        })
         assert flow_gate.should_gate({"job_id": "j1"}) is True
 
 

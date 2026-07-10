@@ -7,7 +7,12 @@ Two independent pieces:
     window-event history that flags "the user has probably been stuck for
     a while". :func:`check_stuck_and_notify` wraps it with the AW query,
     the config gate, and a debounced (>= 2h) proactive nudge delivered via
-    the existing cron delivery path.
+    the existing cron delivery path. By default (``presence.goblin.
+    investigation``) the nudge job investigates first -- reading the
+    identified file/workspace and/or searching the web for the error text --
+    before sending a short diagnosis + suggestion, replying ``[SILENT]``
+    when it finds nothing useful; set ``investigation: false`` to fall back
+    to the old message-only "want help?" offer.
   - **Session priming**: :func:`session_priming_summary` renders a
     one-paragraph plain-English summary of the last hour of presence, for
     injection at the start of a new conversation session (zero-cold-start).
@@ -184,30 +189,60 @@ def _pick_delivery_target() -> Optional[str]:
     return None
 
 
-def notify_stuck(finding: Dict[str, Any]) -> bool:
-    """Best-effort: schedule a one-shot cron job that gently offers to help.
+# Fixed job name: a repeated shoulder tap re-uses this name, and
+# ``_has_pending_shoulder_tap_job`` uses it to detect an in-flight job (one
+# that hasn't fired -- and self-deleted, per the one-shot repeat=1 semantics
+# in cron/jobs.py -- yet) so repeated taps skip rather than pile up on top of
+# each other. Shared by both the investigation and static-offer prompt paths.
+SHOULDER_TAP_JOB_NAME = "presence-goblin-shoulder-tap"
 
-    Delivered through the existing cron delivery path (gateway/delivery.py),
-    so it automatically passes through the flow gate like any other
-    proactive/cron-originated message. Debounced to once per
-    :data:`DEBOUNCE_SECONDS`. Returns True iff a notification job was
-    created.
+# Toolsets handed to the investigation job: file (read the identified
+# workspace/file), web (search + fetch pages for the error text). Deliberately
+# NOT "cronjob" (the scheduler force-disables it for every cron-spawned agent
+# anyway, see cron/scheduler.py::_resolve_cron_disabled_toolsets) and not
+# "terminal" (investigation should read, not execute).
+INVESTIGATION_TOOLSETS = ["file", "web"]
+
+
+def _has_pending_shoulder_tap_job() -> bool:
+    """True when a previously-created shoulder-tap job hasn't fired yet.
+
+    One-shot jobs (repeat=1) are removed from storage the moment they
+    complete (cron/jobs.py's mark_job_run pops the job once its repeat limit
+    is hit), so "a job with this name still exists and is enabled" is
+    exactly "still pending". Fails open (False) on any lookup error so a
+    transient cron-storage hiccup doesn't wedge the shoulder tap forever --
+    the 2h debounce is the backstop against pile-up either way.
     """
-    if not should_notify_now():
-        return False
-    target = _pick_delivery_target()
-    if not target:
-        logger.debug("goblin: no configured delivery target; skipping shoulder tap")
+    try:
+        from cron.jobs import list_jobs
+
+        return any(
+            job.get("name") == SHOULDER_TAP_JOB_NAME and job.get("enabled", True)
+            for job in list_jobs()
+        )
+    except Exception:
+        logger.debug("goblin: could not check for a pending shoulder-tap job", exc_info=True)
         return False
 
-    minutes = round(finding.get("duration_seconds", 0) / 60)
-    signal = finding.get("signal")
-    signal_desc = (
+
+def _signal_description(finding: Dict[str, Any]) -> str:
+    return (
         "there's error-looking text in the window title"
-        if signal == "error_keyword"
+        if finding.get("signal") == "error_keyword"
         else "they keep bouncing between search / Stack Overflow tabs"
     )
-    prompt = (
+
+
+def _build_static_prompt(finding: Dict[str, Any]) -> str:
+    """The original message-only prompt -- offer to help, no investigation.
+
+    Kept byte-for-byte as the fallback for ``presence.goblin.investigation:
+    false``.
+    """
+    minutes = round(finding.get("duration_seconds", 0) / 60)
+    signal_desc = _signal_description(finding)
+    return (
         "You are Marvi, keeping half an eye on the user's desktop presence "
         "(local ActivityWatch data only). The user appears to have been "
         f"stuck: \"{finding.get('title')}\" ({finding.get('app')}) has been "
@@ -216,15 +251,123 @@ def notify_stuck(finding: Dict[str, Any]) -> bool:
         "to ignore, no guilt-tripping. If reaching out doesn't actually seem "
         "appropriate right now, reply exactly [SILENT] and nothing else."
     )
+
+
+def _build_investigation_prompt(finding: Dict[str, Any]) -> str:
+    """"Investigate first, then message findings" prompt.
+
+    Hands the agent everything :func:`check_stuck` already knows (window
+    title, app, duration, error/search signal) plus a best-effort VS
+    Code/terminal parse of the title (workspace, file, cwd), and instructs it
+    to actually look before it sends anything -- reading the identified
+    file/workspace and/or searching the web for the error text -- then send a
+    SHORT diagnosis + one concrete suggestion + an offer to go deeper.
+    Explicitly directs a silent [SILENT] reply over a vague "you seem stuck"
+    message when investigation turns up nothing useful.
+    """
+    minutes = round(finding.get("duration_seconds", 0) / 60)
+    signal = finding.get("signal")
+    signal_desc = _signal_description(finding)
+    title = finding.get("title")
+    app = finding.get("app")
+
+    context_lines = [
+        f'- Window title: "{title}" (app: {app})',
+        f"- Same window in the foreground for about {minutes} minute(s)",
+        f"- Why this looks stuck: {signal_desc}",
+    ]
+
+    try:
+        from tools.presence.title_parsing import parse_window
+
+        parsed = parse_window(app, title)
+    except Exception:
+        logger.debug("goblin: title parsing failed while building investigation prompt", exc_info=True)
+        parsed = {}
+
+    if parsed.get("workspace"):
+        context_lines.append(f"- VS Code workspace: {parsed['workspace']}")
+    if parsed.get("file"):
+        context_lines.append(f"- VS Code file open: {parsed['file']}")
+    if parsed.get("cwd"):
+        context_lines.append(f"- Terminal working directory: {parsed['cwd']}")
+
+    if signal == "error_keyword":
+        context_lines.append(
+            f'- The error-looking text is in the window title itself: "{title}"'
+        )
+
+    context_block = "\n".join(context_lines)
+
+    return (
+        "You are Marvi, keeping half an eye on the user's desktop presence "
+        "(local ActivityWatch data only). The user appears to have been "
+        "stuck on this:\n\n"
+        f"{context_block}\n\n"
+        "Before saying anything, INVESTIGATE using your available tools:\n"
+        "- If a workspace and/or file is identifiable above, read it (and "
+        "any obviously-related file nearby) to see what's actually going on.\n"
+        "- If the window title (or anything you read) contains error-looking "
+        "text, search the web for that error text to find the likely cause "
+        "or fix.\n"
+        "- Keep this brief -- a couple of targeted tool calls, not a full "
+        "debugging session.\n\n"
+        "Then send AT MOST ONE short, warm, low-pressure message: briefly say "
+        "what you think the problem is, give ONE concrete suggestion to try, "
+        "and offer to go deeper if they want help. Easy to ignore, no "
+        "guilt-tripping.\n\n"
+        "If after investigating you don't have anything useful to say -- "
+        "nothing identifiable to read, no clear error, nothing the web "
+        "search turns up -- reply exactly [SILENT] and nothing else. Do NOT "
+        "send a vague \"you seem stuck\" message when you found nothing."
+    )
+
+
+def notify_stuck(finding: Dict[str, Any]) -> bool:
+    """Best-effort: schedule a one-shot cron job that investigates the stuck
+    signature and messages the user with what it found (or gently offers to
+    help, if ``presence.goblin.investigation`` is off).
+
+    Delivered through the existing cron delivery path (gateway/delivery.py),
+    so it automatically passes through the flow gate like any other
+    proactive/cron-originated message. Debounced to once per
+    :data:`DEBOUNCE_SECONDS`, and skipped outright if a previously-created
+    shoulder-tap job is still pending (hasn't fired/self-deleted yet) -- see
+    :func:`_has_pending_shoulder_tap_job`. Returns True iff a notification
+    job was created.
+    """
+    if not should_notify_now():
+        return False
+    if _has_pending_shoulder_tap_job():
+        logger.debug("goblin: a shoulder-tap job is already pending; skipping")
+        return False
+    target = _pick_delivery_target()
+    if not target:
+        logger.debug("goblin: no configured delivery target; skipping shoulder tap")
+        return False
+
+    from tools.presence.common import get_presence_config
+
+    cfg = get_presence_config()
+    investigate = cfg.get("goblin", {}).get("investigation", True)
+
+    if investigate:
+        prompt = _build_investigation_prompt(finding)
+        enabled_toolsets = INVESTIGATION_TOOLSETS
+    else:
+        prompt = _build_static_prompt(finding)
+        enabled_toolsets = None
+
     try:
         from cron.jobs import create_job
 
         create_job(
             prompt=prompt,
             schedule="1m",
-            name="presence-goblin-shoulder-tap",
+            name=SHOULDER_TAP_JOB_NAME,
             repeat=1,
             deliver=target,
+            enabled_toolsets=enabled_toolsets,
         )
     except Exception:
         logger.warning("goblin: failed to create shoulder-tap job", exc_info=True)

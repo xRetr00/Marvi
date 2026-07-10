@@ -12,10 +12,15 @@ Each configured surface (``gmail``, ``github``, ...) gets one JSON file under
   notification ids already surfaced), used so a diff never repeats an item
   the user has already been told about.
 * throttle/backoff bookkeeping -- ``last_fetch_at``, ``consecutive_failures``,
-  ``next_retry_at`` -- so a surface that starts erroring backs off
-  exponentially instead of hammering the API (or the local disk) every tick,
-  and so a surface simply never gets fetched more often than its configured
-  minimum interval even when the cron tick runs more frequently.
+  ``next_retry_at``, ``quiet_streak`` -- so a surface that starts erroring
+  backs off exponentially instead of hammering the API (or the local disk)
+  every tick, and so a surface simply never gets fetched more often than its
+  configured minimum interval even when the cron tick runs more frequently.
+  On top of that floor, ``quiet_streak`` counts consecutive no-change fetches
+  and scales the effective interval up (doubling per quiet tick, capped by
+  ``composio.quiet_backoff_max``) so a surface that's been quiet for a while
+  gets checked less often -- any detected change resets it to 0 and snaps
+  the cadence back to the base interval immediately.
 
 Storage style mirrors ``cron/jobs.py``: atomic tempfile + ``os.replace`` via
 ``utils.atomic_replace``, owner-only permissions (0600 file / 0700 dir,
@@ -63,6 +68,16 @@ BACKOFF_MAX_SECONDS = 3600
 # After this many consecutive failures we stop bumping the exponent (it's
 # already at the cap) but keep the surface alive -- never permanently give up.
 BACKOFF_MAX_FAILURES_FOR_DISPLAY = 6
+
+# Quiet-streak cadence scaling: every consecutive no-change fetch doubles a
+# surface's effective min-fetch-interval (see ``SurfaceStore.
+# effective_min_interval_seconds``), up to this multiplier. A surface that's
+# been quiet for a while (e.g. a Gmail with no new mail in hours) gets
+# checked less and less often for zero extra API spend -- and any detected
+# change resets the streak immediately, snapping back to the base cadence
+# on the very next tick. Configurable via ``composio.quiet_backoff_max``;
+# a value of 1 disables scaling entirely (multiplier pinned at 1x).
+DEFAULT_QUIET_BACKOFF_MAX = 8
 
 _SURFACE_NAME_RE = re.compile(r"^[a-z][a-z0-9_-]{0,63}$")
 
@@ -131,6 +146,11 @@ class SurfaceSnapshot:
     last_error: Optional[str] = None
     consecutive_failures: int = 0
     next_retry_at: Optional[str] = None
+    # Consecutive successful fetches in a row that found nothing new. Drives
+    # the quiet-streak cadence multiplier in ``SurfaceStore``; reset to 0 the
+    # instant a fetch reports a change. Independent of ``consecutive_failures``
+    # -- a failure never touches this counter, and vice versa.
+    quiet_streak: int = 0
     schema_version: int = SNAPSHOT_SCHEMA_VERSION
 
     def to_dict(self) -> Dict[str, Any]:
@@ -144,6 +164,7 @@ class SurfaceSnapshot:
             "last_error": self.last_error,
             "consecutive_failures": self.consecutive_failures,
             "next_retry_at": self.next_retry_at,
+            "quiet_streak": self.quiet_streak,
         }
 
     @classmethod
@@ -166,6 +187,7 @@ class SurfaceSnapshot:
             last_error=data.get("last_error"),
             consecutive_failures=int(data.get("consecutive_failures") or 0),
             next_retry_at=data.get("next_retry_at"),
+            quiet_streak=max(0, int(data.get("quiet_streak") or 0)),
             schema_version=int(data.get("schema_version") or SNAPSHOT_SCHEMA_VERSION),
         )
 
@@ -255,9 +277,14 @@ class SurfaceStore:
         surface: str,
         *,
         min_interval_seconds: int = DEFAULT_MIN_INTERVAL_SECONDS,
+        quiet_backoff_max: int = DEFAULT_QUIET_BACKOFF_MAX,
     ) -> None:
         self.surface = _validate_surface_name(surface)
         self.min_interval_seconds = min_interval_seconds
+        # >=1 always -- a cap below 1x would make the effective interval
+        # *shrink* below the base, which isn't a thing; 1 is the "disabled"
+        # value (multiplier pinned at 1x, no scaling).
+        self.quiet_backoff_max = max(1, int(quiet_backoff_max or 1))
         self._snapshot = load_snapshot(self.surface)
         self._dirty = False
 
@@ -303,12 +330,31 @@ class SurfaceStore:
     def seconds_since_last_fetch(self) -> Optional[float]:
         return _seconds_since(self._snapshot.last_fetch_at)
 
+    @property
+    def quiet_streak(self) -> int:
+        """Consecutive successful fetches in a row that found nothing new."""
+        return self._snapshot.quiet_streak
+
+    def effective_min_interval_seconds(self) -> int:
+        """Base min-interval scaled up by the quiet-streak multiplier.
+
+        Every consecutive no-change fetch doubles the effective interval
+        (``base * 2**quiet_streak``), capped at ``quiet_backoff_max`` times
+        the base. A surface that's been quiet for a while (e.g. a Gmail with
+        no new mail in hours) gets polled less and less often for zero extra
+        API spend. ``record_success(changed=True)`` resets the streak to 0,
+        so any detected change snaps the cadence back to the base interval
+        on the very next tick.
+        """
+        multiplier = min(2 ** self._snapshot.quiet_streak, self.quiet_backoff_max)
+        return int(self.min_interval_seconds * multiplier)
+
     def is_throttled(self) -> bool:
         """True if this surface was fetched too recently to fetch again."""
         elapsed = self.seconds_since_last_fetch()
         if elapsed is None:
             return False
-        return elapsed < self.min_interval_seconds
+        return elapsed < self.effective_min_interval_seconds()
 
     def is_backoff_active(self) -> bool:
         """True if a previous failure put this surface into a cooldown window."""
@@ -333,9 +379,15 @@ class SurfaceStore:
             return f"backing off until {self._snapshot.next_retry_at}"
         if self.is_throttled():
             elapsed = self.seconds_since_last_fetch() or 0.0
+            effective = self.effective_min_interval_seconds()
+            suffix = (
+                f" (quiet streak {self._snapshot.quiet_streak}, base {self.min_interval_seconds}s)"
+                if effective != self.min_interval_seconds
+                else ""
+            )
             return (
                 f"throttled ({elapsed:.0f}s since last fetch, "
-                f"min interval {self.min_interval_seconds}s)"
+                f"min interval {effective}s{suffix})"
             )
         return None
 
@@ -344,13 +396,26 @@ class SurfaceStore:
         self._snapshot.last_fetch_at = _now_iso()
         self._dirty = True
 
-    def record_success(self) -> None:
-        """Clear failure/backoff state after a successful fetch (even a
-        successful fetch that found nothing changed)."""
+    def record_success(self, changed: bool = True) -> None:
+        """Clear failure/backoff state after a successful fetch, and update
+        the quiet-streak counter that drives cadence scaling.
+
+        ``changed`` should be True whenever the fetch surfaced a diff (or the
+        caller can't tell) and False when it positively confirmed nothing
+        new happened. Defaulting to True is the conservative choice: a
+        caller that doesn't pass it never silently drifts into a slower
+        cadence it didn't ask for. A quiet (``changed=False``) fetch bumps
+        the streak by one; any changed fetch resets it to 0 immediately, so
+        the very next tick is back to the base interval.
+        """
         self._snapshot.consecutive_failures = 0
         self._snapshot.next_retry_at = None
         self._snapshot.last_error = None
         self._snapshot.last_success_at = _now_iso()
+        if changed:
+            self._snapshot.quiet_streak = 0
+        else:
+            self._snapshot.quiet_streak += 1
         self._dirty = True
 
     def record_failure(self, error: str) -> None:
@@ -388,9 +453,20 @@ class SurfaceStore:
             "consecutive_failures": self._snapshot.consecutive_failures,
             "next_retry_at": self._snapshot.next_retry_at,
             "seconds_since_last_fetch": self.seconds_since_last_fetch(),
+            "quiet_streak": self._snapshot.quiet_streak,
+            "effective_min_interval_seconds": self.effective_min_interval_seconds(),
         }
 
 
-def open_store(surface: str, *, min_interval_seconds: int = DEFAULT_MIN_INTERVAL_SECONDS) -> SurfaceStore:
+def open_store(
+    surface: str,
+    *,
+    min_interval_seconds: int = DEFAULT_MIN_INTERVAL_SECONDS,
+    quiet_backoff_max: int = DEFAULT_QUIET_BACKOFF_MAX,
+) -> SurfaceStore:
     """Convenience constructor -- what most callers should use."""
-    return SurfaceStore(surface, min_interval_seconds=min_interval_seconds)
+    return SurfaceStore(
+        surface,
+        min_interval_seconds=min_interval_seconds,
+        quiet_backoff_max=quiet_backoff_max,
+    )

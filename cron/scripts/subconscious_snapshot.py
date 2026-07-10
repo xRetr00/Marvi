@@ -89,6 +89,15 @@ def _min_interval_seconds(composio_cfg: Dict[str, Any]) -> int:
     return DEFAULT_MIN_INTERVAL_SECONDS
 
 
+def _quiet_backoff_max(composio_cfg: Dict[str, Any]) -> int:
+    from cron.scripts.subconscious.snapshot_store import DEFAULT_QUIET_BACKOFF_MAX
+
+    value = composio_cfg.get("quiet_backoff_max")
+    if isinstance(value, (int, float)) and value >= 1:
+        return int(value)
+    return DEFAULT_QUIET_BACKOFF_MAX
+
+
 def run() -> str:
     """Run one subconscious-tick sync pass over every configured surface.
 
@@ -106,6 +115,7 @@ def run() -> str:
         return NO_CHANGE_MARKER
 
     min_interval = _min_interval_seconds(composio_cfg)
+    quiet_backoff_max = _quiet_backoff_max(composio_cfg)
     sections: List[str] = []
 
     for surface in surfaces:
@@ -118,7 +128,11 @@ def run() -> str:
             continue
 
         try:
-            store = open_store(surface, min_interval_seconds=min_interval)
+            store = open_store(
+                surface,
+                min_interval_seconds=min_interval,
+                quiet_backoff_max=quiet_backoff_max,
+            )
         except Exception as e:
             _eprint(f"subconscious_snapshot: surface {surface!r} has an invalid snapshot store ({e}); skipping")
             continue
@@ -132,7 +146,7 @@ def run() -> str:
         diff: Optional[str] = None
         try:
             diff = fetcher(store)
-            store.record_success()
+            store.record_success(changed=bool(diff))
         except Exception as e:
             # A failing surface must NEVER crash the tick or block the other
             # surfaces (design spec error-handling section: "Composio auth

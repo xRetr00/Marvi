@@ -286,15 +286,81 @@ def _print_line(ok: bool, message: str) -> None:
     print(f"  {mark} {message}")
 
 
+def setup_presence() -> Dict[str, Any]:
+    """Probe ActivityWatch, start the media watcher, ensure the presence
+    distiller cron job, and set ``presence.enabled: true``.
+
+    Single source of truth for both ``hermes presence setup`` and
+    ``POST /api/presence/setup`` (hermes_cli/web_server.py) -- the CLI
+    handler below only formats this dict for terminal output.
+    """
+    from tools.presence.aw_client import aw_client
+
+    aw_ok = aw_client.is_available()
+    watcher_ok, watcher_msg = start_watcher()
+    schedule = _distill_schedule()
+    job_ok, job_msg = ensure_distill_job(schedule)
+    _set_presence_enabled(True)
+
+    return {
+        "activitywatch_available": aw_ok,
+        "watcher_ok": watcher_ok,
+        "watcher_message": watcher_msg,
+        "job_ok": job_ok,
+        "job_message": job_msg,
+        "enabled": True,
+    }
+
+
+def get_presence_status() -> Dict[str, Any]:
+    """Return presence config, ActivityWatch reachability, media-watcher
+    state, and the distiller cron job's live state.
+
+    Single source of truth for both ``hermes presence status`` and
+    ``GET /api/presence/status``.
+    """
+    from tools.presence.common import get_presence_config
+    from tools.presence.aw_client import aw_client
+
+    return {
+        "config": get_presence_config(),
+        "activitywatch_reachable": aw_client.is_available(),
+        "is_windows": platform.system() == "Windows",
+        "watcher_pid": watcher_pid_if_running(),
+        "distill_job": _find_distill_job(),
+    }
+
+
+def pause_presence() -> Dict[str, Any]:
+    """Stop the media watcher and set ``presence.enabled: false``.
+
+    Single source of truth for both ``hermes presence pause`` and
+    ``POST /api/presence/pause``.
+    """
+    ok, msg = stop_watcher()
+    _set_presence_enabled(False)
+    return {"ok": ok, "message": msg, "enabled": False}
+
+
+def resume_presence() -> Dict[str, Any]:
+    """Start the media watcher and set ``presence.enabled: true``.
+
+    Single source of truth for both ``hermes presence resume`` and
+    ``POST /api/presence/resume``.
+    """
+    ok, msg = start_watcher()
+    _set_presence_enabled(True)
+    return {"ok": ok, "message": msg, "enabled": True}
+
+
 def _cmd_setup(args) -> int:
     print()
     print(color("  Marvi Presence Setup", Colors.MAGENTA))
     print(color("  ─────────────────────", Colors.MAGENTA))
 
-    from tools.presence.aw_client import aw_client
+    result = setup_presence()
 
-    aw_ok = aw_client.is_available()
-    if aw_ok:
+    if result["activitywatch_available"]:
         _print_line(True, "ActivityWatch is running (http://localhost:5600)")
     else:
         _print_line(False, "ActivityWatch not detected at http://localhost:5600")
@@ -306,14 +372,9 @@ def _cmd_setup(args) -> int:
             "on it succeeding right now."
         )
 
-    watcher_ok, watcher_msg = start_watcher()
-    _print_line(watcher_ok, watcher_msg)
+    _print_line(result["watcher_ok"], result["watcher_message"])
+    _print_line(result["job_ok"], result["job_message"])
 
-    schedule = _distill_schedule()
-    job_ok, job_msg = ensure_distill_job(schedule)
-    _print_line(job_ok, job_msg)
-
-    _set_presence_enabled(True)
     _print_line(True, "presence.enabled set to true")
 
     print()
@@ -325,10 +386,9 @@ def _cmd_status(args) -> int:
     print(color("  Marvi Presence Status", Colors.MAGENTA))
     print(color("  ──────────────────────", Colors.MAGENTA))
 
-    from tools.presence.common import get_presence_config
-    from tools.presence.aw_client import aw_client
+    status = get_presence_status()
+    cfg = status["config"]
 
-    cfg = get_presence_config()
     print(f"  presence.enabled:      {cfg.get('enabled')}")
     print(f"  presence.flow_gating:  {cfg.get('flow_gating')}")
     goblin = cfg.get("goblin", {})
@@ -338,18 +398,18 @@ def _cmd_status(args) -> int:
     print(f"  denylist entries:      {len(denylist)}")
     print()
 
-    aw_ok = aw_client.is_available()
+    aw_ok = status["activitywatch_reachable"]
     _print_line(aw_ok, "ActivityWatch reachable" if aw_ok else "ActivityWatch not reachable")
 
-    pid = watcher_pid_if_running()
-    if platform.system() != "Windows":
+    pid = status["watcher_pid"]
+    if not status["is_windows"]:
         _print_line(True, "media watcher: n/a (Windows-only feature)")
     elif pid:
         _print_line(True, f"media watcher running (pid {pid})")
     else:
         _print_line(False, "media watcher not running")
 
-    job = _find_distill_job()
+    job = status["distill_job"]
     if job:
         _print_line(
             job.get("enabled", True),
@@ -364,19 +424,17 @@ def _cmd_status(args) -> int:
 
 
 def _cmd_pause(args) -> int:
-    ok, msg = stop_watcher()
-    _set_presence_enabled(False)
-    _print_line(ok, msg)
+    result = pause_presence()
+    _print_line(result["ok"], result["message"])
     _print_line(True, "presence.enabled set to false")
-    return 0 if ok else 1
+    return 0 if result["ok"] else 1
 
 
 def _cmd_resume(args) -> int:
-    ok, msg = start_watcher()
-    _set_presence_enabled(True)
-    _print_line(ok, msg)
+    result = resume_presence()
+    _print_line(result["ok"], result["message"])
     _print_line(True, "presence.enabled set to true")
-    return 0 if ok else 1
+    return 0 if result["ok"] else 1
 
 
 def presence_command(args) -> int:

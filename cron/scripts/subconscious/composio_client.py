@@ -56,6 +56,16 @@ class ComposioTransientError(RuntimeError):
     """5xx / network-ish failure. Worth a backoff+retry, not a hard failure."""
 
 
+class ComposioSyncTokenExpired(RuntimeError):
+    """410 GONE -- a delta cursor (Calendar ``syncToken`` and friends) is no
+    longer valid server-side and the surface must reset its cursor and
+    re-baseline, exactly like a first run. This is a distinct case from
+    :class:`ComposioTransientError`: it is NOT "retry the same request
+    later", it is "the incremental-sync window is gone, start a new one" --
+    so fetchers that use a sync-token-style cursor catch this specifically
+    instead of letting it fall into the generic backoff path."""
+
+
 def install_hint() -> str:
     """Public remediation text for "Composio SDK not installed" -- used both
     internally (`ComposioUnavailable`) and by the CLI (`hermes composio
@@ -157,6 +167,10 @@ class ComposioClient:
             raise ComposioRateLimited(retry_after=retry_after) from exc
         if status in (401, 403):
             raise ComposioAuthError(f"Composio rejected the API key ({status}).") from exc
+        if status == 410:
+            raise ComposioSyncTokenExpired(
+                "Composio reported the delta cursor as gone (410); it must be reset and re-baselined."
+            ) from exc
         if isinstance(status, int) and status >= 500:
             raise ComposioTransientError(f"Composio server error ({status}).") from exc
 
@@ -184,8 +198,10 @@ class ComposioClient:
         result payload as a dict.
 
         Raises :class:`ComposioRateLimited` / :class:`ComposioAuthError` /
-        :class:`ComposioTransientError` on failure so fetchers can decide
-        whether to back off and retry later, rather than crash the tick.
+        :class:`ComposioTransientError` / :class:`ComposioSyncTokenExpired`
+        on failure so fetchers can decide whether to back off and retry
+        later (or, for the sync-token case, reset their cursor and
+        re-baseline) rather than crash the tick.
         """
         client = self._client()
         try:
@@ -195,7 +211,12 @@ class ComposioClient:
             else:
                 actions = getattr(client, "actions")
                 result = actions.execute(action=action, params=params or {}, user_id=user_id)
-        except (ComposioRateLimited, ComposioAuthError, ComposioTransientError):
+        except (
+            ComposioRateLimited,
+            ComposioAuthError,
+            ComposioTransientError,
+            ComposioSyncTokenExpired,
+        ):
             raise
         except Exception as e:
             self._classify_and_raise(e)

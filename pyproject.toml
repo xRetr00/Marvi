@@ -151,11 +151,17 @@ firecrawl = ["firecrawl-py==4.17.0"]
 parallel-web = ["parallel-web==0.4.2"]
 # Image generation backends
 fal = ["fal-client==0.13.1"]
-# Presence: Windows SMTC now-playing media watcher (Workstream B). Optional
-# and Windows-only -- desktop_context / the flow gate / the distiller all
-# work without it, just without now-playing data. Lazy-installed via
-# tools/lazy_deps.py's "presence.media_watcher" entry; this extra exists so
+# Presence: now-playing media watcher (Workstream B). Optional everywhere --
+# desktop_context / the flow gate / the distiller all work without it, just
+# without now-playing data. Windows uses SMTC via the optional `winsdk`
+# package below, lazy-installed via tools/lazy_deps.py's
+# "presence.media_watcher" entry; this extra exists so
 # `pip install "marvi-agent[presence]"` also works as an eager opt-in.
+# Linux (MPRIS over D-Bus via `busctl`) and macOS (AppleScript via
+# `osascript`) use system binaries, not PyPI packages, so they need no
+# entry here or in LAZY_DEPS -- see tools/presence/media_watcher.py's
+# module docstring for why `busctl` was chosen over a pure-Python D-Bus
+# dependency.
 presence = ["winsdk==1.0.0b10; sys_platform == 'win32'"]
 # Edge TTS — default TTS provider but still optional (users can pick
 # ElevenLabs / OpenAI / MiniMax instead).

@@ -177,6 +177,18 @@ def build_digest(*, since_iso: Optional[str] = None) -> str:
     if not lines:
         return ""
 
+    # One-line rhythm summary (when a rhythm model exists) so the user's
+    # typical schedule enters distilled memory alongside the activity digest.
+    # Guarded: a rhythm read failure must never break digest building.
+    try:
+        from tools.presence.rhythm import rhythm_summary_line
+
+        rhythm_line = rhythm_summary_line()
+        if rhythm_line:
+            lines.append(rhythm_line)
+    except Exception:
+        logger.debug("distill: rhythm summary failed", exc_info=True)
+
     return f"Presence digest since {since}:\n" + "\n".join(lines)
 
 
@@ -189,6 +201,16 @@ def print_digest_for_cron() -> None:
     lets the agent's [SILENT] instinct (from DISTILL_SYSTEM_NOTE / the
     cron system prompt's built-in SILENT instruction) suppress delivery.
     """
+    # Refresh the rhythm model first so tonight's digest (and tomorrow's
+    # flow gating) see today's data. Guarded: a rhythm failure must never
+    # break distillation.
+    try:
+        from tools.presence.rhythm import update_rhythm
+
+        update_rhythm()
+    except Exception:
+        logger.debug("distill: rhythm update failed", exc_info=True)
+
     try:
         digest = build_digest()
     except Exception as exc:  # never let the cron script itself crash the job

@@ -12125,6 +12125,232 @@ async def reset_memory(body: MemoryReset):
 
 
 # ---------------------------------------------------------------------------
+# Marvi subconscious + presence — desktop toggle activation.
+#
+# The Subconscious settings UI (apps/desktop/src/app/settings/subconscious/)
+# previously only wrote `subconscious.*` / `presence.*` config keys via
+# PUT /api/config, which does nothing on its own: the subconscious tick's
+# cron job is only created by cron.subconscious.enable(), and presence's
+# ActivityWatch probe / media watcher / distiller cron job are only wired up
+# by hermes_cli.presence_cmd's setup/pause/resume functions (the same code
+# `hermes presence <cmd>` runs). These endpoints expose those activation
+# paths over REST so the desktop toggles actually do something.
+#
+# Both underlying layers do blocking I/O (cron job read/write, subprocess
+# spawn for the media watcher) so calls run off the event loop via
+# run_in_threadpool, same as the cron dashboard endpoints above.
+# ---------------------------------------------------------------------------
+
+
+class SubconsciousEnableRequest(BaseModel):
+    interval: Optional[str] = None
+
+
+def _subconscious_enable_sync(interval: Optional[str]) -> Dict[str, Any]:
+    from cron.subconscious import enable
+
+    return enable(interval)
+
+
+def _subconscious_disable_sync() -> Dict[str, Any]:
+    from cron.subconscious import disable
+
+    return disable()
+
+
+def _subconscious_status_sync() -> Dict[str, Any]:
+    from cron.subconscious import status
+
+    return status()
+
+
+@app.post("/api/subconscious/enable")
+async def enable_subconscious(body: SubconsciousEnableRequest):
+    try:
+        result = await run_in_threadpool(_subconscious_enable_sync, body.interval)
+        return {"ok": True, **result}
+    except Exception:
+        _log.exception("POST /api/subconscious/enable failed")
+        raise HTTPException(status_code=500, detail="Failed to enable the subconscious tick")
+
+
+@app.post("/api/subconscious/disable")
+async def disable_subconscious():
+    try:
+        result = await run_in_threadpool(_subconscious_disable_sync)
+        return {"ok": True, **result}
+    except Exception:
+        _log.exception("POST /api/subconscious/disable failed")
+        raise HTTPException(status_code=500, detail="Failed to disable the subconscious tick")
+
+
+@app.get("/api/subconscious/status")
+async def get_subconscious_status():
+    try:
+        result = await run_in_threadpool(_subconscious_status_sync)
+        return {"ok": True, **result}
+    except Exception:
+        _log.exception("GET /api/subconscious/status failed")
+        raise HTTPException(status_code=500, detail="Failed to read subconscious status")
+
+
+def _presence_setup_sync() -> Dict[str, Any]:
+    from hermes_cli.presence_cmd import setup_presence
+
+    return setup_presence()
+
+
+def _presence_pause_sync() -> Dict[str, Any]:
+    from hermes_cli.presence_cmd import pause_presence
+
+    return pause_presence()
+
+
+def _presence_resume_sync() -> Dict[str, Any]:
+    from hermes_cli.presence_cmd import resume_presence
+
+    return resume_presence()
+
+
+def _presence_status_sync() -> Dict[str, Any]:
+    from hermes_cli.presence_cmd import get_presence_status
+
+    return get_presence_status()
+
+
+@app.post("/api/presence/setup")
+async def setup_presence_endpoint():
+    try:
+        result = await run_in_threadpool(_presence_setup_sync)
+        # Mirrors `hermes presence setup`'s own exit-code logic (always 0):
+        # ActivityWatch being unreachable or the watcher being skipped
+        # (non-Windows) are expected, non-fatal degradations. The one step
+        # that actually "activates" the toggle is the distiller cron job, so
+        # that's what determines `ok` — the rest of the detail is still
+        # returned for the UI to surface as a secondary warning.
+        return {"ok": bool(result.get("job_ok")), **result}
+    except Exception:
+        _log.exception("POST /api/presence/setup failed")
+        raise HTTPException(status_code=500, detail="Failed to set up presence")
+
+
+@app.post("/api/presence/pause")
+async def pause_presence_endpoint():
+    try:
+        result = await run_in_threadpool(_presence_pause_sync)
+        return {"ok": bool(result.get("ok")), **result}
+    except Exception:
+        _log.exception("POST /api/presence/pause failed")
+        raise HTTPException(status_code=500, detail="Failed to pause presence")
+
+
+@app.post("/api/presence/resume")
+async def resume_presence_endpoint():
+    try:
+        result = await run_in_threadpool(_presence_resume_sync)
+        return {"ok": bool(result.get("ok")), **result}
+    except Exception:
+        _log.exception("POST /api/presence/resume failed")
+        raise HTTPException(status_code=500, detail="Failed to resume presence")
+
+
+@app.get("/api/presence/status")
+async def presence_status_endpoint():
+    try:
+        result = await run_in_threadpool(_presence_status_sync)
+        return {"ok": True, **result}
+    except Exception:
+        _log.exception("GET /api/presence/status failed")
+        raise HTTPException(status_code=500, detail="Failed to read presence status")
+
+
+# ---------------------------------------------------------------------------
+# "What Marvi knows" — read-only distilled-memory viewer.
+#
+# The presence distiller and the subconscious tick both write durable
+# observations through the standard `memory` tool (tools/memory_tool.py),
+# which persists to flat, §-delimited MEMORY.md / USER.md files under
+# HERMES_HOME/memories — see DISTILL_SYSTEM_NOTE in tools/presence/distill.py
+# ("Use the memory tool (target='user')") for the presence side, and the
+# subconscious tick's `memory` toolset (cron/subconscious.py) for the other.
+#
+# That on-disk format has no per-entry timestamp or source tag, so this
+# endpoint approximates provenance from which file an entry lives in (user
+# profile vs. general notes) and uses each file's mtime as a per-file
+# timestamp proxy. This is a heuristic, not a guarantee — regular chat
+# sessions write into the same two files — so the response carries a `note`
+# field documenting the approximation for API consumers/UI.
+# ---------------------------------------------------------------------------
+
+_KNOWLEDGE_ENTRY_LIMIT = 100
+
+_KNOWLEDGE_NOTE = (
+    "The on-disk memory store has no per-entry timestamp or source tag: "
+    "'timestamp' is the owning file's last-modified time and 'source' is "
+    "inferred from which store (user profile vs. general notes) the entry "
+    "lives in, not a guaranteed attribution — regular chat sessions can "
+    "write to the same files."
+)
+
+
+def _read_marvi_knowledge_entries() -> Dict[str, Any]:
+    from tools.memory_tool import ENTRY_DELIMITER, get_memory_dir
+
+    mem_dir = get_memory_dir()
+    entries: List[Dict[str, Any]] = []
+
+    # (filename, store target, best-effort source label)
+    for filename, source in (("USER.md", "presence"), ("MEMORY.md", "subconscious")):
+        path = mem_dir / filename
+        if not path.exists():
+            continue
+        try:
+            raw = path.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        if not raw.strip():
+            continue
+        try:
+            mtime = path.stat().st_mtime
+        except OSError:
+            mtime = 0.0
+        timestamp = (
+            datetime.fromtimestamp(mtime, tz=timezone.utc).isoformat() if mtime else None
+        )
+
+        parsed = [e.strip() for e in raw.split(ENTRY_DELIMITER) if e.strip()]
+        for idx, text in enumerate(parsed):
+            entries.append(
+                {
+                    "id": f"{filename}:{idx}",
+                    "text": text,
+                    "source": source,
+                    "timestamp": timestamp,
+                    "_sort_key": (mtime, idx),
+                }
+            )
+
+    # Newest first: by file mtime, then by in-file position (last-appended
+    # entry in a file is the most recently added one).
+    entries.sort(key=lambda e: e["_sort_key"], reverse=True)
+    capped = entries[:_KNOWLEDGE_ENTRY_LIMIT]
+    for entry in capped:
+        entry.pop("_sort_key", None)
+
+    return {"entries": capped, "note": _KNOWLEDGE_NOTE}
+
+
+@app.get("/api/marvi/knowledge")
+async def get_marvi_knowledge():
+    try:
+        result = await run_in_threadpool(_read_marvi_knowledge_entries)
+        return {"ok": True, **result}
+    except Exception:
+        _log.exception("GET /api/marvi/knowledge failed")
+        raise HTTPException(status_code=500, detail="Failed to read Marvi's memory")
+
+
+# ---------------------------------------------------------------------------
 # Operations endpoints — doctor / security audit / backup / import /
 # checkpoints / hooks.
 #

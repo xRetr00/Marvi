@@ -11,13 +11,13 @@ afterEach(() => {
 })
 
 describe('KnowledgeViewer', () => {
-  it('shows a "coming soon" state when no backend surface is wired up yet — never fabricated entries', async () => {
+  it('shows a load-failure state when the backend surface is unreachable — never fabricated entries', async () => {
     const { useMarviKnowledge } = await import('./use-marvi-knowledge')
     vi.mocked(useMarviKnowledge).mockReturnValue({ entries: [], isAvailable: false, isLoading: false })
 
     render(<KnowledgeViewer />)
 
-    expect(screen.getByText(/Coming soon/)).toBeTruthy()
+    expect(screen.getByText(/Couldn't load what Marvi knows/)).toBeTruthy()
   })
 
   it('shows a distilled-nothing-yet state once available but empty', async () => {

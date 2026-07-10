@@ -5,10 +5,12 @@ import { Switch } from '@/components/ui/switch'
 import { triggerHaptic } from '@/lib/haptics'
 import { Activity, Brain } from '@/lib/icons'
 import { cn } from '@/lib/utils'
+import { notifyError } from '@/store/notifications'
 
 import { CONTROL_TEXT } from '../constants'
 import { ListRow, Pill, SectionHeading } from '../primitives'
 
+import { disableSubconscious, enableSubconscious, pausePresence, setupPresence } from './activation-service'
 import { StringListEditor } from './string-list-editor'
 import { TierMatrix } from './tier-matrix'
 import type { TierMap } from './types'
@@ -91,7 +93,17 @@ export function SubconsciousCoreSettings({ marvi }: { marvi: ReturnType<typeof u
         checked={enabled}
         description="Run a periodic tick that reasons over what changed and proactively messages or suggests."
         label="Enable subconscious"
-        onChange={value => void marvi.patch('subconscious.enabled', value)}
+        // Not a raw config patch: the tick's cron job only exists via the
+        // enable/disable endpoints (cron/subconscious.py), which flip
+        // `subconscious.enabled` themselves as part of creating/pausing it.
+        onChange={value =>
+          void marvi.activate(
+            'subconscious.enabled',
+            value,
+            () => (value ? enableSubconscious(String(interval).trim() || undefined) : disableSubconscious()),
+            value ? 'Failed to enable the subconscious tick' : 'Failed to disable the subconscious tick'
+          )
+        }
       />
 
       <ListRow
@@ -170,7 +182,27 @@ export function PresenceSettings({ marvi }: { marvi: ReturnType<typeof useMarviC
         checked={enabled}
         description="Let Marvi read local desktop activity for context and distillation."
         label="Enable presence"
-        onChange={value => void marvi.patch('presence.enabled', value)}
+        // Not a raw config patch: presence activation (media watcher,
+        // distiller cron job) only happens via the setup/pause endpoints
+        // (hermes_cli/presence_cmd.py), which flip `presence.enabled`
+        // themselves. A resolved-but-not-ok result means the backend still
+        // flipped the config but one step degraded (e.g. distiller job
+        // creation failed) — keep the toggle, surface the detail.
+        onChange={value =>
+          void marvi.activate(
+            'presence.enabled',
+            value,
+            async () => {
+              const result = value ? await setupPresence() : await pausePresence()
+
+              if (!result.ok) {
+                const detail = ('job_message' in result ? result.job_message : result.message) || 'Unknown error'
+                notifyError(new Error(detail), value ? 'Presence setup reported a problem' : 'Failed to stop the presence watcher')
+              }
+            },
+            value ? 'Failed to set up presence' : 'Failed to pause presence'
+          )
+        }
       />
 
       <ToggleRow

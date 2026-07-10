@@ -54,6 +54,41 @@ export function useMarviConfig() {
     }
   }
 
+  /**
+   * Like `patch`, but instead of PUTting the raw config it runs `action` — a
+   * backend activation call (e.g. `POST /api/subconscious/enable`) that flips
+   * the config key itself server-side as part of doing the real work
+   * (creating/pausing the cron job, starting/stopping the media watcher).
+   * The optimistic cache update + rollback-on-throw behavior matches `patch`,
+   * so toggles stay snappy and revert when the backend call fails.
+   */
+  async function activate(path: string, value: unknown, action: () => Promise<unknown>, errorLabel: string): Promise<void> {
+    if (!data) {
+      return
+    }
+
+    const previous = data
+    const next = setNested(data, path, value)
+    const version = ++versionRef.current
+
+    setHermesConfigCache(next)
+    setSavingPath(path)
+
+    try {
+      await action()
+    } catch (err) {
+      if (versionRef.current === version) {
+        setHermesConfigCache(previous)
+      }
+
+      notifyError(err, errorLabel)
+    } finally {
+      if (versionRef.current === version) {
+        setSavingPath(null)
+      }
+    }
+  }
+
   function get<T>(path: string, fallback: T): T {
     if (!data) {
       return fallback
@@ -64,5 +99,5 @@ export function useMarviConfig() {
     return value === undefined ? fallback : (value as T)
   }
 
-  return { config: data as HermesConfigRecord | undefined, get, isError, isLoading, patch, refetch, savingPath }
+  return { activate, config: data as HermesConfigRecord | undefined, get, isError, isLoading, patch, refetch, savingPath }
 }

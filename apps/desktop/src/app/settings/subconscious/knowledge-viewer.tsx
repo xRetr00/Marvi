@@ -18,8 +18,7 @@ export function KnowledgeViewer() {
   if (!isAvailable) {
     return (
       <div className="rounded-md border border-dashed border-(--ui-stroke-secondary) px-3 py-6 text-center text-xs text-muted-foreground">
-        Coming soon — once Marvi's presence and subconscious distillers write summaries into memory, they'll show up
-        here.
+        Couldn't load what Marvi knows — the backend may be offline. It retries automatically.
       </div>
     )
   }

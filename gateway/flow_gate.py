@@ -117,6 +117,18 @@ def should_gate(metadata: Optional[Dict[str, Any]]) -> bool:
         return False
     if not cfg.get("enabled") or not cfg.get("flow_gating"):
         return False
+    # Rhythm-model stand-down: when the user's own 14-day activity history
+    # says this hour is outside their typical active window for today, they
+    # aren't in deep work by definition -- deliver freely without gating.
+    # Guarded import + fail-back-to-old-behavior: no rhythm file, no data
+    # for today's weekday, or any error makes this check a no-op.
+    try:
+        from tools.presence.rhythm import is_outside_active_hours
+
+        if is_outside_active_hours():
+            return False
+    except Exception:
+        logger.debug("flow_gate: rhythm check failed; ignoring", exc_info=True)
     return _focus_app_active()
 
 

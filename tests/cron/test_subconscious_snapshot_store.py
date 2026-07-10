@@ -14,6 +14,7 @@ import pytest
 
 from cron.scripts.subconscious.snapshot_store import (
     DEFAULT_MIN_INTERVAL_SECONDS,
+    DEFAULT_QUIET_BACKOFF_MAX,
     InvalidSurfaceName,
     SurfaceSnapshot,
     load_snapshot,
@@ -201,3 +202,153 @@ class TestSurfaceStore:
         assert status["consecutive_failures"] == 1
         assert status["last_error"] == "nope"
         assert status["next_retry_at"] is not None
+
+
+class TestQuietStreakCadence:
+    """Coverage for the adaptive quiet-streak cadence scaling: a surface
+    that keeps reporting "nothing changed" gets its effective min-fetch
+    interval doubled per quiet tick (capped at ``quiet_backoff_max``x the
+    base), and any detected change snaps it back to the base interval on
+    the very next tick."""
+
+    def test_quiet_streak_starts_at_zero(self):
+        store = open_store("gmail")
+        assert store.quiet_streak == 0
+        assert store.effective_min_interval_seconds() == store.min_interval_seconds
+
+    def test_no_change_success_increments_streak(self):
+        store = open_store("gmail", min_interval_seconds=100)
+        store.record_success(changed=False)
+        assert store.quiet_streak == 1
+        store.record_success(changed=False)
+        assert store.quiet_streak == 2
+        store.record_success(changed=False)
+        assert store.quiet_streak == 3
+        # 100 * min(2**3, DEFAULT_QUIET_BACKOFF_MAX=8) == 100 * 8 == 800
+        assert store.effective_min_interval_seconds() == 800
+
+    def test_changed_success_resets_streak_immediately(self):
+        store = open_store("gmail", min_interval_seconds=100)
+        for _ in range(5):
+            store.record_success(changed=False)
+        assert store.quiet_streak == 5
+
+        store.record_success(changed=True)
+        assert store.quiet_streak == 0
+        assert store.effective_min_interval_seconds() == 100
+
+    def test_record_success_defaults_to_changed_true(self):
+        # Backward-compat / safety default: a caller that doesn't pass
+        # `changed` must never silently drift into a slower cadence.
+        store = open_store("gmail", min_interval_seconds=100)
+        store.record_success(changed=False)
+        assert store.quiet_streak == 1
+        store.record_success()  # no changed= kwarg
+        assert store.quiet_streak == 0
+
+    def test_multiplier_caps_at_default_quiet_backoff_max(self):
+        store = open_store("gmail", min_interval_seconds=10)
+        for _ in range(10):  # 2**10 would be 1024x without a cap
+            store.record_success(changed=False)
+        assert store.quiet_streak == 10
+        assert store.effective_min_interval_seconds() == 10 * DEFAULT_QUIET_BACKOFF_MAX
+
+    def test_multiplier_caps_at_custom_quiet_backoff_max(self):
+        store = open_store("gmail", min_interval_seconds=10, quiet_backoff_max=4)
+        for _ in range(6):
+            store.record_success(changed=False)
+        # 2**6 == 64, capped at 4x -> 40
+        assert store.effective_min_interval_seconds() == 40
+
+    def test_quiet_backoff_max_of_one_disables_scaling(self):
+        store = open_store("gmail", min_interval_seconds=100, quiet_backoff_max=1)
+        for _ in range(8):
+            store.record_success(changed=False)
+        assert store.quiet_streak == 8
+        assert store.effective_min_interval_seconds() == 100
+
+    def test_quiet_backoff_max_non_positive_is_clamped_to_one(self):
+        # Config-supplied garbage (0, negative) must never invert the
+        # scaling direction; treat as "disabled" (1x), not "shrink below base".
+        store = open_store("gmail", min_interval_seconds=100, quiet_backoff_max=0)
+        assert store.quiet_backoff_max == 1
+        store.record_success(changed=False)
+        assert store.effective_min_interval_seconds() == 100
+
+    def test_is_throttled_uses_effective_scaled_interval(self):
+        store = open_store("gmail", min_interval_seconds=1, quiet_backoff_max=8)
+        for _ in range(3):  # streak=3 -> multiplier 8 -> effective interval 8s
+            store.record_success(changed=False)
+        snap = store._snapshot
+        snap.last_fetch_at = (hermes_now() - timedelta(seconds=5)).isoformat()
+        store._dirty = True
+        store.save()
+
+        reopened = open_store("gmail", min_interval_seconds=1, quiet_backoff_max=8)
+        # 5s elapsed < 1s base would normally clear throttling, but the
+        # quiet-scaled 8s interval means it's still too soon.
+        assert reopened.is_throttled()
+
+        # Once elapsed time clears even the scaled interval, throttling lifts.
+        snap.last_fetch_at = (hermes_now() - timedelta(seconds=10)).isoformat()
+        store._dirty = True
+        store.save()
+        reopened2 = open_store("gmail", min_interval_seconds=1, quiet_backoff_max=8)
+        assert not reopened2.is_throttled()
+
+    def test_quiet_streak_persists_across_reload(self):
+        store = open_store("github", min_interval_seconds=50)
+        store.record_success(changed=False)
+        store.record_success(changed=False)
+        store.save()
+
+        reopened = open_store("github", min_interval_seconds=50)
+        assert reopened.quiet_streak == 2
+        assert reopened.effective_min_interval_seconds() == 200
+
+    def test_record_failure_does_not_touch_quiet_streak(self):
+        store = open_store("gmail", min_interval_seconds=100)
+        store.record_success(changed=False)
+        store.record_success(changed=False)
+        assert store.quiet_streak == 2
+
+        store.record_failure("boom")
+        assert store.quiet_streak == 2  # untouched by failure bookkeeping
+
+    def test_failure_backoff_takes_precedence_over_quiet_throttle_reason(self):
+        # Even when a surface is *also* quiet-throttled, an active failure
+        # backoff must be reported as the skip reason -- backoff wins.
+        store = open_store("gmail", min_interval_seconds=100)
+        for _ in range(3):
+            store.record_success(changed=False)
+        store.record_failure("rate limited")
+        store.save()
+
+        reopened = open_store("gmail", min_interval_seconds=100)
+        assert reopened.is_backoff_active()
+        assert reopened.should_skip()
+        reason = reopened.skip_reason() or ""
+        assert "backing off" in reason
+        assert "throttled" not in reason
+
+    def test_status_dict_reports_quiet_streak_and_effective_interval(self):
+        store = open_store("gmail", min_interval_seconds=100)
+        store.record_success(changed=False)
+        store.record_success(changed=False)
+        status = store.status_dict()
+        assert status["quiet_streak"] == 2
+        assert status["effective_min_interval_seconds"] == 400
+
+    def test_quiet_streak_round_trips_through_snapshot_dict(self):
+        snap = SurfaceSnapshot.fresh("gmail")
+        snap.quiet_streak = 4
+        save_snapshot(snap)
+
+        reloaded = load_snapshot("gmail")
+        assert reloaded.quiet_streak == 4
+
+    def test_negative_quiet_streak_in_stored_data_is_clamped(self):
+        data = SurfaceSnapshot.fresh("gmail").to_dict()
+        data["quiet_streak"] = -3
+        snap = SurfaceSnapshot.from_dict("gmail", data)
+        assert snap.quiet_streak == 0

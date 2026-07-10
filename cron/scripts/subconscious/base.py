@@ -27,7 +27,7 @@ from __future__ import annotations
 
 from typing import Callable, Dict, List, Optional
 
-from cron.scripts.subconscious import github, gmail
+from cron.scripts.subconscious import calendar, github, gmail, slack
 from cron.scripts.subconscious.snapshot_store import SurfaceStore
 
 FetchDeltaFn = Callable[[SurfaceStore], Optional[str]]
@@ -38,6 +38,8 @@ FetchDeltaFn = Callable[[SurfaceStore], Optional[str]]
 FETCHERS: Dict[str, FetchDeltaFn] = {
     gmail.APP: gmail.fetch_delta,
     github.APP: github.fetch_delta,
+    calendar.APP: calendar.fetch_delta,
+    slack.APP: slack.fetch_delta,
 }
 
 

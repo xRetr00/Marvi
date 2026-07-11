@@ -82,6 +82,17 @@ class TestEscalationStream:
         assert result.escalate is True
         assert result.ack_text == "On it, one sec."
         assert result.reply_text is None
+        assert result.mode == "thinking"
+
+    def test_delegate_marker_routes_work_to_subagent(self):
+        parser = vil.EscalationStream()
+        parser.feed("[DELEGATE] I'll hand this to a sub-agent.")
+
+        result = parser.finish()
+
+        assert result.escalate is True
+        assert result.mode == "delegating"
+        assert result.ack_text == "I'll hand this to a sub-agent."
 
     def test_marker_split_across_many_deltas(self):
         parser = vil.EscalationStream()
@@ -265,7 +276,27 @@ class TestConfig:
         assert runtime["provider"] == "openrouter"
         assert runtime["model"] == "some/fast-model"
         assert runtime["api_key"] == "resolved-key"
-        assert runtime["reasoning_config"] is None
+        assert runtime["reasoning_config"] == {"enabled": False, "effort": "none"}
+
+    def test_instant_reasoning_can_be_enabled_independently(self, monkeypatch):
+        from hermes_cli import runtime_provider
+
+        monkeypatch.setattr(
+            runtime_provider,
+            "resolve_runtime_provider",
+            lambda **_kwargs: {
+                "provider": "openrouter", "api_key": "key", "base_url": "https://x", "api_mode": None,
+            },
+        )
+        cfg = {
+            "auxiliary": {
+                "voice_instant": {
+                    "provider": "openrouter", "model": "some/fast-model", "reasoning_effort": "low",
+                }
+            }
+        }
+
+        assert vil.resolve_instant_runtime(cfg)["reasoning_config"] == {"enabled": True, "effort": "low"}
 
     def test_resolve_instant_runtime_treats_auto_as_unconfigured(self, monkeypatch):
         # provider="auto" is treated the same as "unset" -> falls back to a
@@ -403,6 +434,9 @@ class TestResolveInstantRuntimeThinkingGuard:
 
 
 class TestCuratedInstantModel:
+    def test_opencode_go_uses_voice_latency_override(self):
+        assert vil._curated_instant_model("opencode-go") == "minimax-m2.5"
+
     def test_anthropic_resolves_via_aux_client_table(self):
         assert vil._curated_instant_model("anthropic") == "claude-haiku-4-5-20251001"
 
@@ -524,7 +558,7 @@ class TestStreamInstantReply:
         call = fake_agent_cls.last_instance.calls[0]
         assert call["utterance"] == "hi there"
         assert call["conversation_history"] == [{"role": "user", "content": "earlier turn"}]
-        assert "speaking out loud" in call["system_message"]
+        assert "speaking out loud" in fake_agent_cls.last_instance.ephemeral_system_prompt
 
     def test_constructs_agent_with_capped_toolsets_and_iterations(self, fake_agent_cls):
         list(vil.stream_instant_reply(vil.RollingTranscript(), "hi", cfg={}))
@@ -533,6 +567,21 @@ class TestStreamInstantReply:
         assert kwargs["enabled_toolsets"] == vil.INSTANT_LANE_TOOLSETS
         assert kwargs["max_iterations"] == vil.INSTANT_LANE_MAX_ITERATIONS
         assert kwargs.get("ephemeral_system_prompt") in (None, "")
+        assert kwargs["skip_context_files"] is True
+        assert kwargs["load_soul_identity"] is True
+        assert kwargs["skip_memory"] is True
+
+    def test_reuses_warm_agent_and_adds_deferred_context(self, fake_agent_cls):
+        transcript = vil.RollingTranscript()
+        list(vil.stream_instant_reply(transcript, "hi", cfg={}))
+        agent = fake_agent_cls.last_instance
+        transcript._deferred_context = "User likes concise voice replies."
+
+        list(vil.stream_instant_reply(transcript, "again", cfg={}))
+
+        assert fake_agent_cls.last_instance is agent
+        assert len(agent.calls) == 2
+        assert "User likes concise voice replies." in agent.ephemeral_system_prompt
 
     def test_no_conversation_history_when_transcript_empty(self, fake_agent_cls):
         list(vil.stream_instant_reply(vil.RollingTranscript(), "hi", cfg={}))
@@ -602,8 +651,41 @@ class TestStreamInstantReply:
 
         assert seen["allowed"] == set(vil.INSTANT_LANE_TOOL_WHITELIST)
         assert "write_file" not in seen["allowed"]
-        assert "memory" not in seen["allowed"]
+        assert "session_search" in seen["allowed"]
+        assert "memory" in seen["allowed"]
+        assert "web_extract" not in seen["allowed"]
+        assert "search_files" not in seen["allowed"]
         assert "terminal" not in seen["allowed"]
+
+    def test_reports_tool_activity_for_voice_cues(self, monkeypatch):
+        import run_agent
+
+        class ToolAgent:
+            def __init__(self, **_kwargs):
+                pass
+
+            def run_conversation(self, _utterance, *, conversation_history=None, stream_callback=None):
+                self.tool_start_callback("call-1", "web_search", {"query": "weather"})
+                self.tool_complete_callback("call-1", "web_search", {}, "sunny")
+                stream_callback("It is sunny.")
+
+        monkeypatch.setattr(run_agent, "AIAgent", ToolAgent)
+        activity = []
+
+        list(vil.stream_instant_reply(vil.RollingTranscript(), "weather", cfg={}, activity_callback=activity.append))
+
+        assert activity == [
+            {"status": "started", "kind": "web", "label": "Searching the web", "tool": "web_search"},
+            {"status": "completed", "kind": "web", "label": "Searching the web", "tool": "web_search"},
+        ]
+
+    def test_memory_store_stays_lazy_until_memory_is_used(self):
+        store = vil._LazyMemoryStore()
+        store.reset_consolidation_failures()
+        assert store._store is None
+
+        _ = store.memory_entries
+        assert store._store is not None
 
     def test_clears_tool_whitelist_after_the_turn(self, monkeypatch):
         import run_agent

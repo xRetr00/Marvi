@@ -3,21 +3,18 @@
 Every finalized utterance in the ``/api/voice/duplex`` loop (see
 ``hermes_cli/web_server.py`` and
 ``docs/superpowers/specs/2026-07-10-marvi-duplex-voice-splitbrain-design.md``)
-goes to a small, fast model first: the "instant lane". It gets the SAME full
-system prompt the real agent gets (persona/SOUL.md, memory, skills,
-environment -- the normal ``agent/prompt_builder.py`` pipeline, via a real
-``run_agent.AIAgent``), with a voice-mode addendum appended at the end (never
-interleaved into the stable/cacheable identity block -- see
-``build_voice_mode_addendum``). That addendum instructs short spoken replies,
+goes to a small, fast model first: the "instant lane". It keeps the normal
+SOUL.md identity but deliberately skips project context and the heavyweight
+general agent prompt. Bounded memory/profile/skill metadata loads in the
+background after first audio begins and is cached for later turns. A voice-mode
+addendum instructs short spoken replies,
 or -- when the ask needs more than a quick read/search or a tool outside its
 whitelist -- to emit an ``[ESCALATE]`` marker instead, handing the turn to a
 separate, fully tool-armed deep-task agent in the background
 (``hermes_cli.web_server._duplex_run_deep_task``).
 
-The instant lane is intentionally NOT a bare chat completion: it's a real,
-tool-capable agent turn (``agent/background_review.py``'s fork pattern is the
-closest existing model -- forks with a runtime, replays context, routes to an
-auxiliary model), just capped hard for voice latency:
+The instant lane is a real, tool-capable agent turn, capped hard for voice
+latency and kept separate from the full deep-task agent:
 
 - **Runtime**: ``auxiliary.voice_instant.{provider,model,base_url,api_key,
   max_tokens}`` -- this repo's established auxiliary-model convention, same
@@ -75,35 +72,34 @@ import queue
 import re
 import threading
 from dataclasses import dataclass, field
-from typing import Any, Dict, Iterator, List, Optional, Tuple
+from typing import Any, Callable, Dict, Iterator, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
 ESCALATE_MARKER = "[ESCALATE]"
+DELEGATE_MARKER = "[DELEGATE]"
 
 DEFAULT_ROLLING_TURNS = 20
 DEFAULT_MAX_TOKENS = 200
 
-# Runtime-enforced tool whitelist for the instant lane -- fast reads only.
+# Runtime-enforced tool whitelist for the instant lane -- bounded foreground actions only.
 # Checked via hermes_cli.plugins.set_thread_tool_whitelist (the same
 # mechanism agent/background_review.py's review fork uses), NOT just
 # enabled_toolsets -- defense in depth regardless of what toolset-level tool
-# definitions the model can see. Explicitly excludes write_file/patch (the
-# rest of the "file" toolset) and the "memory" tool (read+write in one
-# call) -- session_search is the read-only recall path instead.
+# definitions the model can see. Explicitly excludes write_file/patch,
+# filesystem search, page extraction, terminal, and delegation.
 INSTANT_LANE_TOOL_WHITELIST = frozenset(
     {
         "read_file",
-        "search_files",  # file toolset, reads only -- no write_file/patch
         "web_search",
-        "web_extract",  # web toolset -- search + light page fetch
-        "session_search",  # read-only session/memory recall
+        "memory",
+        "session_search",
     }
 )
 # Toolset-level gate for tool-definition generation (cache-prefix parity,
 # mirrors background_review.py's enabled_toolsets usage). The whitelist
 # above is the real enforcement boundary.
-INSTANT_LANE_TOOLSETS = ["file", "web", "session_search"]
+INSTANT_LANE_TOOLSETS = ["file", "web", "memory", "session_search"]
 # ~2 tool calls (tool call -> result -> tool call -> result) then an answer.
 INSTANT_LANE_MAX_ITERATIONS = 4
 INSTANT_LANE_MAX_TOOL_CALLS = 2
@@ -126,6 +122,12 @@ class RollingTranscript:
 
     max_turns: int = DEFAULT_ROLLING_TURNS
     turns: List[Dict[str, str]] = field(default_factory=list)
+    _instant_agent: Any = field(default=None, init=False, repr=False)
+    _instant_agent_key: Optional[Tuple[Any, ...]] = field(default=None, init=False, repr=False)
+    _instant_agent_lock: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)
+    _deferred_context: str = field(default="", init=False, repr=False)
+    _deferred_context_loading: bool = field(default=False, init=False, repr=False)
+    _deferred_context_lock: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)
 
     def add(self, role: str, text: str) -> None:
         text = (text or "").strip()
@@ -146,6 +148,37 @@ class RollingTranscript:
         return len(self.turns)
 
 
+class _LazyMemoryStore:
+    """Load the writable memory store only if the instant model calls it."""
+
+    def __init__(self) -> None:
+        self._store = None
+        self._lock = threading.Lock()
+
+    def reset_consolidation_failures(self) -> None:
+        if self._store is not None:
+            self._store.reset_consolidation_failures()
+
+    def _load(self):
+        if self._store is None:
+            with self._lock:
+                if self._store is None:
+                    from hermes_cli.config import load_config
+                    from tools.memory_tool import MemoryStore
+
+                    memory_cfg = load_config().get("memory", {}) or {}
+                    store = MemoryStore(
+                        memory_char_limit=int(memory_cfg.get("memory_char_limit", 2200) or 2200),
+                        user_char_limit=int(memory_cfg.get("user_char_limit", 1375) or 1375),
+                    )
+                    store.load_from_disk()
+                    self._store = store
+        return self._store
+
+    def __getattr__(self, name: str):
+        return getattr(self._load(), name)
+
+
 # ---------------------------------------------------------------------------
 # Voice-mode addendum (appended to the real system prompt, not a replacement)
 # ---------------------------------------------------------------------------
@@ -162,23 +195,29 @@ _VOICE_MODE_ADDENDUM = (
     "- Say numbers and abbreviations the way a person would say them out "
     "loud (e.g. \"twenty-three\" not \"23\", \"as soon as possible\" not "
     "\"ASAP\"), not their written form.\n"
-    "- You may use at most two quick tool calls (a file read, a web search, "
-    "a memory recall) before answering. Only fast-read tools are available "
-    "to you here -- no writing, no code execution, nothing heavy."
+    "- Available quick tools are web_search, read_file, memory, and session_search. "
+    "Use read_file only for one simple file. Never inspect, search, "
+    "compare, or analyze multiple files in this lane.\n"
+    "- web_search is only for a simple search whose snippets answer the question. "
+    "Fetching/extracting pages, multi-source research, or complex browsing must run in the background.\n"
+    "- memory is only for saving an explicit durable preference/fact; your cached memory is already visible. "
+    "session_search may recall one simple past detail.\n"
+    "- Use at most two quick tool calls before answering. There is no code execution, delegation, or heavy browsing here."
 )
 
 _ESCALATION_CONTRACT = (
     "\n\n"
-    "Some asks need more than that -- more than two quick tool calls, a "
-    "write/edit, code execution, or any tool you don't have access to here, "
-    "multiple steps, or careful reasoning. When that's the case, do NOT "
-    "attempt the answer yourself and do NOT keep trying tools. Instead "
-    "reply with EXACTLY this and nothing else, on one line:\n\n"
+    "Some asks need background work. Do NOT attempt them here and do NOT keep trying tools.\n"
+    "For a complex question, deep reasoning, page fetching, or multi-source research, reply with "
+    "EXACTLY this and nothing else, on one line:\n\n"
     f"{ESCALATE_MARKER} <a short spoken acknowledgment, e.g. \"On it -- give "
-    "me a minute to dig into that.\">\n\n"
+    "me a moment to think about that.\">\n\n"
+    "For a task that requires actual work -- edits, code execution, multiple files, several steps, "
+    "or a specialist worker -- reply with EXACTLY this and nothing else, on one line:\n\n"
+    f"{DELEGATE_MARKER} <a short spoken acknowledgment, e.g. \"I'll hand this to a sub-agent and keep you posted.\">\n\n"
     "The acknowledgment must be one short sentence, in your voice, said as "
     "if you're about to go look into it. Never write "
-    f"{ESCALATE_MARKER} for anything you can actually answer in 1 to 3 "
+    f"either marker for anything you can actually answer in 1 to 3 "
     "sentences (with at most two quick tool calls) right now."
 )
 
@@ -222,6 +261,21 @@ def _resolve_instant_max_tokens(cfg: Optional[Dict[str, Any]]) -> int:
         return DEFAULT_MAX_TOKENS
 
 
+def _resolve_instant_reasoning(
+    cfg: Optional[Dict[str, Any]], provider: str,
+) -> Optional[Dict[str, Any]]:
+    """Resolve the instant lane's independent reasoning setting (default off)."""
+    from hermes_cli.config import cfg_get
+
+    raw = cfg_get(cfg, "auxiliary", "voice_instant", "reasoning_effort", default="none")
+    effort = str(raw if raw is not False else "none").strip().lower()
+    if effort in {"", "none", "off", "false", "disabled"}:
+        return thinking_off_params(provider, "").get("reasoning_config")
+    if effort not in {"minimal", "low", "medium", "high", "xhigh"}:
+        return thinking_off_params(provider, "").get("reasoning_config")
+    return {"enabled": True, "effort": effort}
+
+
 class InstantLaneUnavailable(RuntimeError):
     """Raised by :func:`resolve_instant_runtime` when no instant-capable
     model can be resolved at all -- ``auxiliary.voice_instant.*`` is unset
@@ -262,6 +316,11 @@ _INSTANT_DEFAULT_MODELS_SUPPLEMENTAL: Dict[str, str] = {
     "openrouter": "openai/gpt-4o-mini",
     "groq": "llama-3.1-8b-instant",
 }
+
+# Generic auxiliary tasks favor quality; live voice favors first-token speed.
+# OpenCode Go's generic auxiliary default is GLM-5, which measured materially
+# slower than MiniMax M2.5 on the same voice prompt.
+_VOICE_INSTANT_MODEL_OVERRIDES: Dict[str, str] = {"opencode-go": "minimax-m2.5"}
 
 # Provider names (and base_url substrings) that indicate a locally-hosted
 # endpoint (Ollama, llama.cpp, vLLM, LM Studio, ...). Local inference has no
@@ -381,6 +440,8 @@ def _curated_instant_model(provider: str) -> str:
     provider = (provider or "").strip().lower()
     if not provider:
         return ""
+    if provider in _VOICE_INSTANT_MODEL_OVERRIDES:
+        return _VOICE_INSTANT_MODEL_OVERRIDES[provider]
     try:
         from agent.auxiliary_client import _get_aux_model_for_provider
 
@@ -533,6 +594,12 @@ def resolve_instant_runtime(cfg: Optional[Dict[str, Any]] = None) -> Dict[str, A
             "non-thinking model to enable it"
         )
 
+    # Hybrid models often reason by default without advertising it in their
+    # name. Apply the voice-specific setting to every instant request.
+    configured_reasoning = _resolve_instant_reasoning(cfg, provider)
+    if configured_reasoning is not None:
+        reasoning_config = configured_reasoning
+
     try:
         from hermes_cli.runtime_provider import resolve_runtime_provider
 
@@ -570,22 +637,137 @@ def resolve_instant_runtime(cfg: Optional[Dict[str, Any]] = None) -> Dict[str, A
 # ---------------------------------------------------------------------------
 
 
+def _build_deferred_context(cfg: Optional[Dict[str, Any]]) -> str:
+    """Load bounded personal context after first audio starts."""
+    from hermes_cli.config import cfg_get, load_config
+    from tools.memory_tool import MemoryStore
+
+    cfg = cfg if cfg is not None else load_config()
+    blocks: List[str] = []
+    durable_memory = ""
+    memory_cfg = cfg.get("memory", {}) if isinstance(cfg, dict) else {}
+    if not isinstance(memory_cfg, dict):
+        memory_cfg = {}
+    memory_enabled = bool(memory_cfg.get("memory_enabled", True))
+    user_enabled = bool(memory_cfg.get("user_profile_enabled", True))
+    if memory_enabled or user_enabled:
+        store = MemoryStore(
+            memory_char_limit=int(memory_cfg.get("memory_char_limit", 2200) or 2200),
+            user_char_limit=int(memory_cfg.get("user_char_limit", 1375) or 1375),
+        )
+        store.load_from_disk()
+        if user_enabled:
+            user = store.format_for_system_prompt("user")
+            if user:
+                blocks.append(user)
+        if memory_enabled:
+            memory = store.format_for_system_prompt("memory")
+            if memory:
+                durable_memory = memory
+
+    # Metadata only: skill procedures require the deep lane, but names and
+    # descriptions keep the instant model from feeling like a cold stranger.
+    if bool(cfg_get(cfg, "skills", "enabled", default=True)):
+        try:
+            from agent.skill_commands import get_skill_commands
+
+            lines: List[str] = []
+            size = 0
+            for item in get_skill_commands().values():
+                name = str(item.get("name") or "").strip()
+                description = str(item.get("description") or "").strip().replace("\n", " ")
+                if not name:
+                    continue
+                line = f"- {name}: {description}" if description else f"- {name}"
+                if size + len(line) + 1 > 800:
+                    break
+                lines.append(line)
+                size += len(line) + 1
+            if lines:
+                blocks.append(
+                    "Relevant skill index (awareness only; escalate when a skill procedure is needed):\n"
+                    + "\n".join(lines)
+                )
+        except Exception:
+            logger.debug("voice_instant_lane: deferred skill index failed", exc_info=True)
+    if durable_memory:
+        blocks.append(durable_memory)
+    return "\n\n".join(blocks)[:4500]
+
+
+def _start_deferred_context_load(
+    transcript: RollingTranscript, cfg: Optional[Dict[str, Any]],
+) -> None:
+    with transcript._deferred_context_lock:
+        if transcript._deferred_context or transcript._deferred_context_loading:
+            return
+        transcript._deferred_context_loading = True
+
+    def _load() -> None:
+        try:
+            transcript._deferred_context = _build_deferred_context(cfg)
+        except Exception:
+            logger.debug("voice_instant_lane: deferred personal context failed", exc_info=True)
+        finally:
+            transcript._deferred_context_loading = False
+
+    threading.Thread(target=_load, name="voice-instant-context", daemon=True).start()
+
+
+def _runtime_key(runtime: Dict[str, Any], max_tokens: int) -> Tuple[Any, ...]:
+    reasoning = runtime.get("reasoning_config") or {}
+    return (
+        runtime.get("provider"), runtime.get("model"), runtime.get("base_url"),
+        runtime.get("api_mode"), max_tokens, reasoning.get("enabled"), reasoning.get("effort"),
+    )
+
+
+def _new_instant_agent(runtime: Dict[str, Any], max_tokens: int):
+    from agent.prompt_builder import DEFAULT_AGENT_IDENTITY
+    from run_agent import AIAgent
+    from run_agent import load_soul_md
+
+    agent = AIAgent(
+        provider=runtime["provider"],
+        model=runtime["model"] or "",
+        base_url=runtime["base_url"],
+        api_key=runtime["api_key"],
+        api_mode=runtime["api_mode"],
+        max_tokens=max_tokens,
+        max_iterations=INSTANT_LANE_MAX_ITERATIONS,
+        enabled_toolsets=INSTANT_LANE_TOOLSETS,
+        reasoning_config=runtime.get("reasoning_config"),
+        quiet_mode=True,
+        platform="voice",
+        skip_context_files=True,
+        load_soul_identity=True,
+        skip_memory=True,
+    )
+    agent._persist_disabled = True
+    agent._memory_store = _LazyMemoryStore()
+    agent._memory_enabled = True
+    agent._user_profile_enabled = True
+    # The normal prompt builder adds project/coding/environment guidance even
+    # when context files are skipped. Voice needs the identity, not that bulk.
+    agent._cached_system_prompt = load_soul_md(None) or DEFAULT_AGENT_IDENTITY
+    return agent
+
+
 def stream_instant_reply(
     transcript: RollingTranscript,
     utterance: str,
     *,
     allow_escalation: bool = True,
     cfg: Optional[Dict[str, Any]] = None,
+    activity_callback: Optional[Callable[[Dict[str, str]], None]] = None,
 ) -> Iterator[str]:
     """Run one capped, tool-armed instant-lane agent turn and stream its text
     deltas.
 
-    Builds a fresh ``run_agent.AIAgent`` (no ``ephemeral_system_prompt``, so
-    the NORMAL full system-prompt pipeline runs -- persona/SOUL.md, memory,
-    skills, environment hints, tool definitions, exactly like an ordinary
-    top-level turn) routed to ``auxiliary.voice_instant.*`` (see
-    :func:`resolve_instant_runtime`), with the voice-mode addendum appended
-    via ``run_conversation``'s ``system_message`` and a runtime tool
+    Reuses a per-duplex ``run_agent.AIAgent`` routed to
+    ``auxiliary.voice_instant.*`` (see :func:`resolve_instant_runtime`). Its
+    stable prompt is only SOUL.md identity; the voice addendum and the bounded,
+    deferred personal context are ephemeral suffixes. A runtime tool
     whitelist enforced via ``hermes_cli.plugins.set_thread_tool_whitelist``
     (:data:`INSTANT_LANE_TOOL_WHITELIST`) -- the same mechanism
     ``agent/background_review.py``'s review fork uses.
@@ -608,33 +790,57 @@ def stream_instant_reply(
     the duplex spec. A failure AFTER at least one delta streamed is logged
     and swallowed -- the caller already has a partial answer to work with.
     """
+    from agent.iteration_budget import IterationBudget
     from hermes_cli.plugins import clear_thread_tool_whitelist, set_thread_tool_whitelist
-    from run_agent import AIAgent
 
     runtime = resolve_instant_runtime(cfg)
     max_tokens = _resolve_instant_max_tokens(cfg)
     history = transcript.as_messages()
     system_message = build_voice_mode_addendum(allow_escalation=allow_escalation)
 
-    agent = AIAgent(
-        provider=runtime["provider"],
-        model=runtime["model"] or "",
-        base_url=runtime["base_url"],
-        api_key=runtime["api_key"],
-        api_mode=runtime["api_mode"],
-        max_tokens=max_tokens,
-        max_iterations=INSTANT_LANE_MAX_ITERATIONS,
-        enabled_toolsets=INSTANT_LANE_TOOLSETS,
-        reasoning_config=runtime.get("reasoning_config"),
-        quiet_mode=True,
-        platform="voice",
-    )
+    key = _runtime_key(runtime, max_tokens)
+    cached_agent = transcript._instant_agent
+    if cached_agent is None or transcript._instant_agent_key != key:
+        cached_agent = _new_instant_agent(runtime, max_tokens)
+        transcript._instant_agent = cached_agent
+        transcript._instant_agent_key = key
+
+    # Barge-in can leave a cancelled provider call finishing in its worker.
+    # Never share an AIAgent concurrently or make the new utterance wait.
+    owns_cached_agent = transcript._instant_agent_lock.acquire(blocking=False)
+    agent = cached_agent if owns_cached_agent else _new_instant_agent(runtime, max_tokens)
+    agent.ephemeral_system_prompt = system_message
+    if transcript._deferred_context:
+        agent.ephemeral_system_prompt += "\n\n" + transcript._deferred_context
+    agent.iteration_budget = IterationBudget(INSTANT_LANE_MAX_ITERATIONS)
+
+    def _tool_activity(tool_name: str) -> Tuple[str, str]:
+        return {
+            "web_search": ("web", "Searching the web"),
+            "read_file": ("file", "Reading a file"),
+            "memory": ("memory", "Updating memory"),
+            "session_search": ("session", "Searching past conversations"),
+        }.get(tool_name, ("thinking", "Working on it"))
+
+    def _tool_started(_call_id: str, tool_name: str, _args: Any) -> None:
+        if activity_callback:
+            kind, label = _tool_activity(tool_name)
+            activity_callback({"status": "started", "kind": kind, "label": label, "tool": tool_name})
+
+    def _tool_completed(_call_id: str, tool_name: str, _args: Any, _result: Any) -> None:
+        if activity_callback:
+            kind, label = _tool_activity(tool_name)
+            activity_callback({"status": "completed", "kind": kind, "label": label, "tool": tool_name})
+
+    agent.tool_start_callback = _tool_started
+    agent.tool_complete_callback = _tool_completed
 
     delta_queue: "queue.Queue[Optional[str]]" = queue.Queue()
     error_box: Dict[str, BaseException] = {}
 
     def _on_delta(text: str) -> None:
         if text:
+            _start_deferred_context_load(transcript, cfg)
             delta_queue.put(text)
 
     def _worker() -> None:
@@ -648,7 +854,6 @@ def stream_instant_reply(
         try:
             agent.run_conversation(
                 utterance,
-                system_message=system_message,
                 conversation_history=history or None,
                 stream_callback=_on_delta,
             )
@@ -656,6 +861,8 @@ def stream_instant_reply(
             error_box["error"] = exc
         finally:
             clear_thread_tool_whitelist()
+            if owns_cached_agent:
+                transcript._instant_agent_lock.release()
             delta_queue.put(None)
 
     worker = threading.Thread(target=_worker, name="voice-instant-lane", daemon=True)
@@ -686,6 +893,7 @@ def stream_instant_reply(
 class EscalationResult:
     escalate: bool
     text: str  # ack_text when escalate else the full reply text
+    mode: Optional[str] = None  # "thinking" | "delegating"
 
     @property
     def ack_text(self) -> Optional[str]:
@@ -719,6 +927,7 @@ class EscalationStream:
         self._buffer = ""
         self._resolved = False
         self._escalate = False
+        self._mode: Optional[str] = None
         self.full_text = ""
 
     def feed(self, delta: str) -> Optional[str]:
@@ -738,9 +947,9 @@ class EscalationStream:
             return None if self._escalate else delta
 
         self._buffer += delta
-        marker_len = len(ESCALATE_MARKER)
-        prefix_len = min(len(self._buffer), marker_len)
-        if self._buffer[:prefix_len] != ESCALATE_MARKER[:prefix_len]:
+        markers = ((ESCALATE_MARKER, "thinking"), (DELEGATE_MARKER, "delegating"))
+        possible = [item for item in markers if item[0].startswith(self._buffer) or self._buffer.startswith(item[0])]
+        if not possible:
             # Diverged from the marker -- definitely an ordinary reply.
             self._resolved = True
             self._escalate = False
@@ -748,13 +957,15 @@ class EscalationStream:
             self._buffer = ""
             return out
 
-        if len(self._buffer) < marker_len:
+        matched = next((item for item in possible if self._buffer.startswith(item[0])), None)
+        if matched is None:
             # Still an exact prefix match, but not enough characters yet.
             return None
 
         # Buffer length >= marker length and matches exactly -> escalation.
         self._resolved = True
         self._escalate = True
+        self._mode = matched[1]
         self._buffer = ""
         return None
 
@@ -766,10 +977,16 @@ class EscalationStream:
         reply is exactly ``"[ESCALATE]"`` with nothing streamed after it.
         """
         if not self._resolved:
-            self._escalate = self._buffer == ESCALATE_MARKER
+            if self._buffer == ESCALATE_MARKER:
+                self._escalate = True
+                self._mode = "thinking"
+            elif self._buffer == DELEGATE_MARKER:
+                self._escalate = True
+                self._mode = "delegating"
             self._resolved = True
 
         if self._escalate:
-            ack = self.full_text[len(ESCALATE_MARKER):].strip()
-            return EscalationResult(escalate=True, text=ack)
+            marker = DELEGATE_MARKER if self._mode == "delegating" else ESCALATE_MARKER
+            ack = self.full_text[len(marker):].strip()
+            return EscalationResult(escalate=True, text=ack, mode=self._mode)
         return EscalationResult(escalate=False, text=self.full_text.strip())

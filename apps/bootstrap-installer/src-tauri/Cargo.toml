@@ -2,8 +2,8 @@
 name = "marvi-bootstrap"
 version = "0.0.1"
 description = "Marvi Setup — signed installer that drives scripts/install.ps1"
-authors = ["xRetro Labs Research <contact@xretro.dev>"]
-edition = "2021"
+authors = ["NeuRetro Labs Research"]
+edition = "2026"
 rust-version = "1.77"
 
 # Rename the output binary so the distributed artifact is literally

@@ -3488,10 +3488,10 @@ def _build_compact_banner() -> str:
     dim_color = _skin.get_color("banner_dim", "#B8860B") if _skin else "#B8860B"
 
     if skin_name == "default":
-        line1 = "⚕ NOUS HERMES - AI Agent Framework"
-        tiny_line = "⚕ NOUS HERMES"
+        line1 = "⚕ NeuRetro MARVI - AI Agent Framework"
+        tiny_line = "⚕ NeuRetro MARVI"
     else:
-        agent_name = _skin.get_branding("agent_name", "Hermes Agent") if _skin else "Hermes Agent"
+        agent_name = _skin.get_branding("agent_name", "Marvi Agent") if _skin else "Marvi Agent"
         line1 = f"{agent_name} - AI Agent Framework"
         tiny_line = agent_name
 
@@ -3505,7 +3505,7 @@ def _build_compact_banner() -> str:
 
     w = min(shutil.get_terminal_size().columns - 2, 88)
     if w < 30:
-        return f"\n[{title_color}]{tiny_line}[/] [dim {dim_color}]- Nous Research[/]\n"
+        return f"\n[{title_color}]{tiny_line}[/] [dim {dim_color}]- NeuRetro Labs Research[/]\n"
 
     inner = w - 2  # inside the box border
     bar = "═" * w

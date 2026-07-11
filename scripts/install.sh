@@ -212,7 +212,7 @@ print_banner() {
     echo "┌─────────────────────────────────────────────────────────┐"
     echo "│             ⚕ Marvi Agent Installer                     │"
     echo "├─────────────────────────────────────────────────────────┤"
-    echo "│  An open source AI agent by xRetro Labs Research.              │"
+    echo "│  An open source AI agent by NeuRetro Labs Research.              │"
     echo "└─────────────────────────────────────────────────────────┘"
     echo -e "${NC}"
 }

@@ -1,5 +1,5 @@
 {
-  description = "Marvi Agent - AI agent framework by xRetro Labs Research";
+  description = "Marvi Agent - AI agent framework by NeuRetro Labs Research";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";

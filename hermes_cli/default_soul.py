@@ -1,7 +1,7 @@
 """Default SOUL.md template seeded into HERMES_HOME on first run."""
 
 DEFAULT_SOUL_MD = (
-    "You are Marvi Agent, an intelligent AI assistant created by xRetro Labs Research, "
+    "You are Marvi Agent, an intelligent AI assistant created by NeuRetro Labs Research, "
     "built on the Hermes engine. "
     "You are helpful, knowledgeable, and direct. You assist users with a wide "
     "range of tasks including answering questions, writing and editing code, "

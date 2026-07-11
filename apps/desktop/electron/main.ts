@@ -446,7 +446,7 @@ const BOOT_FAKE_STEP_MS = (() => {
   return Math.max(120, raw)
 })()
 const APP_NAME = process.env.HERMES_DESKTOP_APP_NAME || 'Marvi'
-const WINDOW_TITLE = 'Marvi by Marvex'
+const WINDOW_TITLE = 'Marvi'
 const START_HIDDEN = process.argv.includes('--hidden')
 const TITLEBAR_HEIGHT = 34
 const MACOS_TRAFFIC_LIGHTS_HEIGHT = 14
@@ -742,12 +742,12 @@ app.setName(APP_NAME)
 // Windows toast notifications silently no-op unless an AppUserModelID is set:
 // `new Notification().show()` returns without error and nothing appears. The
 // AUMID must match the installed Start Menu shortcut's AUMID, which
-// electron-builder derives from the build `appId` (com.xretro.marvi) —
+// electron-builder derives from the build `appId` (com.neuretro.marvi) —
 // keep this string in sync with package.json `build.appId`. macOS/Linux don't
 // need this, so gate it on Windows. (Fixes: desktop approval/turn notifications
 // never firing on Windows.)
 if (IS_WINDOWS) {
-  app.setAppUserModelId('com.xretro.marvi')
+  app.setAppUserModelId('com.neuretro.marvi')
 }
 // Seed the native About panel with the live Marvi version. This is refreshed
 // on every open via the explicit "About" menu handler (refreshAboutPanel), so
@@ -756,7 +756,7 @@ if (IS_WINDOWS) {
 app.setAboutPanelOptions({
   applicationName: WINDOW_TITLE,
   applicationVersion: resolveHermesVersion(),
-  copyright: 'Copyright © 2026 xRetro Labs Research'
+  copyright: 'Copyright © 2026 NeuRetro Labs Research'
 })
 
 // Custom scheme for streaming local media (video/audio) into the renderer.
@@ -5068,7 +5068,7 @@ function installMediaPermissions() {
 // OAuth remote-gateway auth.
 //
 // Hosted Hermes gateways gate the dashboard behind an OAuth provider (e.g.
-// xRetro Labs Research) instead of a static session token. The auth model is
+// NeuRetro Labs Research) instead of a static session token. The auth model is
 // fundamentally different from the token path:
 //
 //   * REST is authed by HttpOnly session cookies (``hermes_session_at``),
@@ -6291,7 +6291,7 @@ async function probeRemoteAuthMode(rawUrl) {
 
   if (authRequired) {
     // Best-effort: a gated gateway exposes the registered providers so the
-    // button can read "Sign in with xRetro Labs Research" instead of a generic
+    // button can read "Sign in with NeuRetro Labs Research" instead of a generic
     // label, and so a username/password provider can be distinguished from
     // an OAuth-redirect one (``supports_password``). A failure here doesn't
     // change the auth mode, so swallow it.
@@ -9088,7 +9088,7 @@ function showAboutPanelFresh() {
   app.setAboutPanelOptions({
     applicationName: WINDOW_TITLE,
     applicationVersion: resolveHermesVersion(),
-    copyright: 'Copyright © 2026 xRetro Labs Research'
+    copyright: 'Copyright © 2026 NeuRetro Labs Research'
   })
   app.showAboutPanel()
 }

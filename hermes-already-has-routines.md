@@ -157,4 +157,4 @@ GitHub: [github.com/xRetr00/Marvi](https://github.com/xRetr00/Marvi)
 
 ---
 
-*Marvi is built by [xRetro Labs Research](https://github.com/xRetr00/Marvi). Open source, model-agnostic, runs on your infrastructure.*
+*Marvi is built by [NeuRetro Labs Research](https://github.com/xRetr00/Marvi). Open source, model-agnostic, runs on your infrastructure.*

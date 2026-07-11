@@ -2,7 +2,7 @@
 name: telephony
 description: Give Marvi phone capabilities without core tool changes. Provision and persist a Twilio number, send and receive SMS/MMS, make direct calls, and place AI-driven outbound calls through Bland.ai or Vapi.
 version: 1.0.0
-author: xRetro Labs Research
+author: NeuRetro Labs Research
 license: MIT
 platforms: [linux, macos, windows]
 metadata:

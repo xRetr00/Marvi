@@ -209,7 +209,7 @@ function Write-Banner {
     Write-Host "+---------------------------------------------------------+" -ForegroundColor Magenta
     Write-Host "|              * Marvi Agent Installer                    |" -ForegroundColor Magenta
     Write-Host "+---------------------------------------------------------+" -ForegroundColor Magenta
-    Write-Host "|  An open source AI agent by xRetro Labs Research.       |" -ForegroundColor Magenta
+    Write-Host "|  An open source AI agent by NeuRetro Labs Research.       |" -ForegroundColor Magenta
     Write-Host "+---------------------------------------------------------+" -ForegroundColor Magenta
     Write-Host ""
 }
@@ -2244,7 +2244,7 @@ This file is loaded fresh each message -- no restart needed.
 Delete the contents (or this file) to use the default personality.
 -->
 
-You are Marvi Agent, an intelligent AI assistant created by xRetro Labs Research.
+You are Marvi Agent, an intelligent AI assistant created by NeuRetro Labs Research.
 "@
         $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
         [System.IO.File]::WriteAllText($soulPath, $soulContent, $utf8NoBom)

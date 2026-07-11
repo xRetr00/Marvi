@@ -605,7 +605,7 @@ export default function UserStoriesCollage(): JSX.Element {
 
         <a href="https://github.com/xRetr00/Marvi" target="_blank" rel="noopener noreferrer">
 
-          xRetro Labs Research community
+          NeuRetro Labs Research community
 
         </a>{' '}
 

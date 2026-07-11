@@ -301,7 +301,7 @@ _LOGIN_HTML_TEMPLATE = """\
 </head>
 <body>
 <main>
-  <div class="brand">xRetro<span class="dot"></span>Labs</div>
+  <div class="brand">NeuRetro<span class="dot"></span>Labs</div>
   <div class="card">
     <h1>Sign in</h1>
     <p class="subtitle">Choose a sign-in method to continue to the Marvi dashboard.</p>

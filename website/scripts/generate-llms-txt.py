@@ -197,10 +197,10 @@ def resolve_desc(slug: str, provided: str | None) -> str:
 def emit_llms_index() -> str:
     """Build the short llms.txt index."""
     lines: list[str] = []
-    lines.append("# Hermes Agent")
+    lines.append("# Marvi Agent")
     lines.append("")
     lines.append(
-        "> The self-improving AI agent built by xRetro Labs Research. A terminal-native "
+        "> The self-improving AI agent built by NeuRetro Labs Research. A terminal-native "
         "autonomous coding and task agent with persistent memory, agent-created skills, "
         "and a messaging gateway that lives on 21+ messaging platforms — 19 native to "
         "the gateway plus IRC and Microsoft Teams via plugins (Telegram, Discord, Slack, "
@@ -210,8 +210,7 @@ def emit_llms_index() -> str:
     )
     lines.append("")
     lines.append(
-        "Install: `curl -fsSL https://raw.githubusercontent.com/NousResearch/"
-        "hermes-agent/main/scripts/install.sh | bash`  "
+        "Install: `curl -fsSL https://raw.githubusercontent.com/xRetr00/Marvi/main/scripts/install.sh | bash`  "
         "(Linux, macOS, WSL2, Termux)"
     )
     lines.append("")
@@ -241,11 +240,11 @@ def emit_llms_full() -> str:
     """
     seen: set[Path] = set()
     chunks: list[str] = [
-        "# Hermes Agent — Full Documentation\n",
+        "# Marvi Agent — Full Documentation\n",
         (
-            "This file is the entire Hermes Agent documentation concatenated for LLM "
+            "This file is the entire Marvi Agent documentation concatenated for LLM "
             "context ingestion. Section order reflects docs-site navigation: Getting "
-            "Started, Using Hermes, Features, Messaging, Integrations, Guides, "
+            "Started, Using Marvi, Features, Messaging, Integrations, Guides, "
             "Developer Guide, Reference, then everything else.\n"
         ),
         "Canonical site: https://github.com/xRetr00/Marvi\n",

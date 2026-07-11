@@ -128,7 +128,7 @@ Examples:
 - `apps/bootstrap-installer/src-tauri/src/install_script.rs`: keep the raw URL
   on `xRetr00/Marvi`.
 - `hermes_cli/dashboard_auth/login_page.py`: visible title, wordmark, and
-  subtitle must say Marvi or xRetro Labs.
+  subtitle must say Marvi or NeuRetro Labs.
 - `gateway/`, `agent/`, `tools/`, and most tests: usually take upstream logic
   unless it changes user-visible Marvi identity or update paths.
 - `package-lock.json`: after conflict resolution, run

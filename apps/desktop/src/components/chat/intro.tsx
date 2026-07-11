@@ -145,7 +145,7 @@ function pickCopy(copies: IntroCopy[], seed = 0): IntroCopy {
 }
 
 const WORDMARK = 'MARVI'
-const BRAND_BYLINE = 'by Marvex'
+const BRAND_BYLINE = 'by NeuRetro Labs'
 
 function resolveCopy(personality?: string, seed?: number): IntroCopy {
   const personalityKey = normalizeKey(personality)

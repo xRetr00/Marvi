@@ -55,7 +55,7 @@ export const ja: Translations = {
     closeNavigation: "ナビゲーションを閉じる",
     closeModelTools: "モデルとツールを閉じる",
     footer: {
-      org: "xRetro Labs Research",
+      org: "NeuRetro Labs Research",
     },
     activeSessionsLabel: "アクティブなセッション:",
     gatewayStatusLabel: "ゲートウェイの状態:",

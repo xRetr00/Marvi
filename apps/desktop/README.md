@@ -7,7 +7,7 @@
   <a href="https://github.com/xRetr00/Marvi/blob/main/LICENSE"><img src="https://img.shields.io/badge/License-MIT-green?style=for-the-badge" alt="License: MIT"></a>
 </p>
 
-**The native desktop app for [Marvi Agent](../../README.md) — the self-improving AI agent from [xRetro Labs Research](https://github.com/xRetr00/Marvi).** Same agent, same skills, same memory as the CLI and gateway, in a polished native window — chat with streaming tool output, side-by-side previews, a file browser, voice, and settings, no terminal required. Available for **macOS, Windows, and Linux**.
+**The native desktop app for [Marvi Agent](../../README.md) — the self-improving AI agent from [NeuRetro Labs Research](https://github.com/xRetr00/Marvi).** Same agent, same skills, same memory as the CLI and gateway, in a polished native window — chat with streaming tool output, side-by-side previews, a file browser, voice, and settings, no terminal required. Available for **macOS, Windows, and Linux**.
 
 <table>
 <tr><td><b>Chat with the full agent</b></td><td>Streaming responses, live tool activity, structured tool summaries, and the same conversation history as every other Marvi surface.</td></tr>
@@ -112,7 +112,7 @@ rm "$HOME/.hermes/hermes-agent/.hermes-bootstrap-complete"
 # Rebuild a broken Python venv
 rm -rf "$HOME/.hermes/hermes-agent/venv"
 # Reset a stuck macOS microphone prompt (macOS only)
-tccutil reset Microphone com.xretro.marvi
+tccutil reset Microphone com.neuretro.marvi
 ```
 
 **Windows (PowerShell):**
@@ -140,4 +140,4 @@ Remove-Item -Recurse -Force "$env:LOCALAPPDATA\hermes\hermes-agent\venv"
 
 MIT — see [LICENSE](../../LICENSE).
 
-Built by [xRetro Labs Research](https://github.com/xRetr00/Marvi).
+Built by [NeuRetro Labs Research](https://github.com/xRetr00/Marvi).

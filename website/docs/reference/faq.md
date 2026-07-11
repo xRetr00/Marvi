@@ -1670,6 +1670,4 @@ If your issue isn't covered here:
 
 1. **Search existing issues:** [GitHub Issues](https://github.com/xRetr00/Marvi/issues)
 
-2. **Ask the community:** [xRetro Labs Research community](https://discord.gg/nousresearch)
-
-3. **File a bug report:** Include your OS, Python version (`python3 --version`), Hermes version (`hermes --version`), and the full error message
+2. **File a bug report:** Include your OS, Python version (`python3 --version`), Hermes version (`hermes --version`), and the full error message

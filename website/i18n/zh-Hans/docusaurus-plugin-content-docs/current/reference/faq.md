@@ -1709,6 +1709,6 @@ hermes chat -q "hello" --model anthropic/claude-opus-4.7
 
 1. **搜索现有 issue：** [GitHub Issues](https://github.com/xRetr00/Marvi/issues)
 
-2. **向社区提问：** [xRetro Labs Research community](https://discord.gg/nousresearch)
+2. **向社区提问：** [NeuRetro Labs Research community]
 
 3. **提交 bug 报告：** 请包含您的操作系统、Python 版本（`python3 --version`）、Hermes 版本（`hermes --version`）以及完整的错误信息

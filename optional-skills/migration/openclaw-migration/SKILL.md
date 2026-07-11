@@ -2,7 +2,7 @@
 name: openclaw-migration
 description: Migrate a user's OpenClaw customization footprint into Marvi Agent. Imports Marvi-compatible memories, SOUL.md, command allowlists, user skills, and selected workspace assets from ~/.openclaw, then reports exactly what could not be migrated and why.
 version: 1.0.0
-author: Marvi Agent (xRetro Labs Research)
+author: Marvi Agent (NeuRetro Labs Research)
 license: MIT
 platforms: [linux, macos, windows]
 metadata:

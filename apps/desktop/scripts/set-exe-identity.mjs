@@ -64,8 +64,8 @@ async function stampExeIdentity(exe, desktopRoot = resolve(import.meta.dirname, 
     'version-string': {
       ProductName: 'Marvi',
       FileDescription: 'Marvi',
-      CompanyName: 'xRetro Labs Research',
-      LegalCopyright: 'Copyright (c) 2026 xRetro Labs Research'
+      CompanyName: 'NeuRetro Labs Research',
+      LegalCopyright: 'Copyright (c) 2026 NeuRetro Labs Research'
     }
   })
 

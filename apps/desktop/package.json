@@ -152,7 +152,7 @@
   },
   "build": {
     "electronVersion": "40.10.2",
-    "appId": "com.xretro.marvi",
+    "appId": "com.neuretro.marvi",
     "productName": "Marvi",
     "executableName": "Marvi",
     "protocols": [

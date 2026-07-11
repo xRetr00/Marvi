@@ -187,11 +187,11 @@ const config: Config = {
           items: [
             { label: 'Desktop Download', href: 'https://github.com/xRetr00/Marvi' },
             { label: 'GitHub', href: 'https://github.com/xRetr00/Marvi' },
-            { label: 'xRetro Labs Research', href: 'https://github.com/xRetr00/Marvi' },
+            { label: 'NeuRetro Labs Research', href: 'https://github.com/xRetr00/Marvi' },
           ],
         },
       ],
-      copyright: `Built by <a href="https://github.com/xRetr00/Marvi">xRetro Labs Research</a> · MIT License · ${new Date().getFullYear()}`,
+      copyright: `Built by <a href="https://github.com/xRetr00/Marvi">NeuRetro Labs Research</a> · MIT License · ${new Date().getFullYear()}`,
     },
     prism: {
       theme: prismThemes.github,

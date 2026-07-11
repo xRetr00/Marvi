@@ -14,7 +14,7 @@ metadata:
 
 # Marvi Agent
 
-Marvi Agent is an open-source AI agent framework by xRetro Labs Research that runs in your terminal, a native desktop app, messaging platforms, and IDEs. It's in the same category as Claude Code (Anthropic), Codex (OpenAI), and OpenClaw — autonomous coding and task-execution agents that use tool calling to interact with your system. Marvi works with any LLM provider (OpenRouter, Anthropic, OpenAI, Google, DeepSeek, xAI, local models, and 20+ others) and runs on Linux, macOS, Windows, and WSL.
+Marvi Agent is an open-source AI agent framework by NeuRetro Labs Research that runs in your terminal, a native desktop app, messaging platforms, and IDEs. It's in the same category as Claude Code (Anthropic), Codex (OpenAI), and OpenClaw — autonomous coding and task-execution agents that use tool calling to interact with your system. Marvi works with any LLM provider (OpenRouter, Anthropic, OpenAI, Google, DeepSeek, xAI, local models, and 20+ others) and runs on Linux, macOS, Windows, and WSL.
 
 This skill keeps the legacy `hermes-agent` ID so older prompts, profiles, and commands can still load it. Treat `hermes`, `HERMES_*`, and `~/.hermes` as compatibility names for Marvi unless the user is explicitly asking about old branding.
 

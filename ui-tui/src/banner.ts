@@ -67,7 +67,7 @@ const CADUCEUS_ART = [
   '⠀⠀⠀⠀⠀⠘⣿⣿⣄⢸⣿⡇⣠⣿⣿⠃⠀⠀⠀⠀⠀⠀',
   '⠀⠀⠀⠀⠀⠀⠈⠻⣿⣿⣿⣿⣿⠟⠁⠀⠀⠀⠀⠀⠀⠀',
   '⠀⠀⠀⠀⠀⠀⠀⠀⠀⠈⠉⠁⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-  '⠀⠀⠀⠀⠀⠀⠀⠀xRetro Labs⠀⠀⠀⠀⠀⠀⠀⠀'
+  '⠀⠀⠀⠀⠀⠀⠀⠀NeuRetro Labs⠀⠀⠀'
 ]
 
 const LOGO_GRADIENT = [0, 0, 1, 1, 2, 2] as const

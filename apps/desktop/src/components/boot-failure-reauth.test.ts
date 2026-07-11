@@ -69,20 +69,20 @@ describe('deriveProviderShape', () => {
   })
 
   it('OAuth shape when the provider is a redirect IDP', () => {
-    expect(deriveProviderShape([{ name: 'nous', displayName: 'xRetro Labs Research', supportsPassword: false }])).toEqual({
+    expect(deriveProviderShape([{ name: 'nous', displayName: 'NeuRetro Labs Research', supportsPassword: false }])).toEqual({
       isPassword: false,
-      providerLabel: 'xRetro Labs Research'
+      providerLabel: 'NeuRetro Labs Research'
     })
   })
 
   it('mixed deployment keeps generic OAuth copy (not every provider is password)', () => {
     const shape = deriveProviderShape([
       { name: 'basic', displayName: 'Username & Password', supportsPassword: true },
-      { name: 'nous', displayName: 'xRetro Labs Research', supportsPassword: false }
+      { name: 'nous', displayName: 'NeuRetro Labs Research', supportsPassword: false }
     ])
 
     expect(shape.isPassword).toBe(false)
-    expect(shape.providerLabel).toBe('Username & Password / xRetro Labs Research')
+    expect(shape.providerLabel).toBe('Username & Password / NeuRetro Labs Research')
   })
 
   it('falls back to name when displayName is empty', () => {
@@ -100,8 +100,8 @@ describe('signInLabel', () => {
   })
 
   it('OAuth gateway names the provider', () => {
-    expect(signInLabel({ url: 'x', isPassword: false, providerLabel: 'xRetro Labs Research' })).toBe(
-      'Sign in with xRetro Labs Research'
+    expect(signInLabel({ url: 'x', isPassword: false, providerLabel: 'NeuRetro Labs Research' })).toBe(
+      'Sign in with NeuRetro Labs Research'
     )
   })
 

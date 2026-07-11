@@ -55,7 +55,7 @@ export const ga: Translations = {
     closeNavigation: "Dún an nascleanúint",
     closeModelTools: "Dún an samhail agus na huirlisí",
     footer: {
-      org: "xRetro Labs Research",
+      org: "NeuRetro Labs Research",
     },
     activeSessionsLabel: "Seisiúin gníomhacha:",
     gatewayStatusLabel: "Stádas an gateway:",

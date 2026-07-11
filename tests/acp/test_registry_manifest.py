@@ -34,7 +34,7 @@ def test_agent_json_matches_official_registry_required_fields():
     assert data["description"]
     assert data["repository"] == "https://github.com/xRetr00/Marvi"
     assert data["website"] == "https://github.com/xRetr00/Marvi"
-    assert data["authors"] == ["xRetro Labs Research"]
+    assert data["authors"] == ["NeuRetro Labs Research"]
     assert data["license"] == "MIT"
     assert set(data["distribution"]) <= ALLOWED_DISTRIBUTIONS
 

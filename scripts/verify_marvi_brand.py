@@ -140,10 +140,10 @@ REQUIRED_TEXT = {
     "apps/bootstrap-installer/src/routes/welcome.tsx": [">MARVI<", "Install Marvi"],
     "apps/bootstrap-installer/src-tauri/tauri.conf.json": [
         "\"productName\": \"Marvi\"",
-        "\"identifier\": \"com.xretro.marvi.setup\"",
-        "\"publisher\": \"xRetro Labs Research\"",
+        "\"identifier\": \"com.neuretro.marvi.setup\"",
+        "\"publisher\": \"NeuRetro Labs Research\"",
     ],
-    "ui-tui/src/banner.ts": ["███╗   ███╗", "xRetro Labs"],
+    "ui-tui/src/banner.ts": ["███╗   ███╗", "NeuRetro Labs"],
     "scripts/install.ps1": ["https://github.com/xRetr00/Marvi.git"],
     "scripts/install.sh": ["https://github.com/xRetr00/Marvi.git"],
     "apps/bootstrap-installer/src-tauri/src/install_script.rs": [
@@ -154,7 +154,7 @@ REQUIRED_TEXT = {
     ],
     "hermes_cli/dashboard_auth/login_page.py": [
         "<title>Sign in - Marvi</title>",
-        "xRetro<span class=\"dot\"></span>Labs",
+        "NeuRetro<span class=\"dot\"></span>Labs",
         "continue to the Marvi dashboard",
     ],
 }

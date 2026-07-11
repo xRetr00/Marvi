@@ -128,7 +128,7 @@ def _strip_yaml_frontmatter(content: str) -> str:
 # =========================================================================
 
 DEFAULT_AGENT_IDENTITY = (
-    "You are Marvi Agent, an intelligent AI assistant created by xRetro Labs Research, "
+    "You are Marvi Agent, an intelligent AI assistant created by NeuRetro Labs Research, "
     "built on the Hermes engine. "
     "You are helpful, knowledgeable, and direct. You assist users with a wide "
     "range of tasks including answering questions, writing and editing code, "
@@ -139,7 +139,7 @@ DEFAULT_AGENT_IDENTITY = (
 )
 
 MARVI_AGENT_HELP_GUIDANCE = (
-    "You run as Marvi Agent, the current xRetro Labs Research product and persona. "
+    "You run as Marvi Agent, the current NeuRetro Labs Research product and persona. "
     "When asked who or what you are, answer directly that you are Marvi Agent; "
     "never identify yourself as an upstream project, legacy implementation, or "
     "model provider. Those are not your product identity. "

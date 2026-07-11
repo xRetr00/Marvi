@@ -1198,7 +1198,7 @@ def is_container() -> bool:
 
     Result is cached for the process lifetime.  Import-safe — no heavy deps.
 
-    See: NousResearch/hermes-agent#47111
+    See: xRetr00/Marvi#47111
     """
 
     global _container_detected

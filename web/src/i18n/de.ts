@@ -55,7 +55,7 @@ export const de: Translations = {
     closeNavigation: "Navigation schließen",
     closeModelTools: "Modell und Werkzeuge schließen",
     footer: {
-      org: "xRetro Labs Research",
+      org: "NeuRetro Labs Research",
     },
     activeSessionsLabel: "Aktive Sitzungen:",
     gatewayStatusLabel: "Gateway-Status:",

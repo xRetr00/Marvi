@@ -174,6 +174,24 @@ describe('ModelSettings', () => {
 
     expect(await screen.findByText('Vision')).toBeTruthy()
     expect(screen.getAllByText('auto · use main model').length).toBeGreaterThan(0)
+    expect(screen.getByRole('combobox', { name: 'Instant voice reasoning' }).textContent).toContain('Off')
+  })
+
+  it('saves a separate instant voice reasoning level', async () => {
+    await renderModelSettings()
+    const reasoning = await screen.findByRole('combobox', { name: 'Instant voice reasoning' })
+    fireEvent.click(reasoning)
+    fireEvent.click(await screen.findByText('Low'))
+
+    await waitFor(() =>
+      expect(saveHermesConfig).toHaveBeenCalledWith(
+        expect.objectContaining({
+          auxiliary: expect.objectContaining({
+            voice_instant: expect.objectContaining({ reasoning_effort: 'low' })
+          })
+        })
+      )
+    )
   })
 
   it('assigns an auxiliary task to the main model via setModelAssignment', async () => {

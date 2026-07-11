@@ -367,6 +367,15 @@ class TestChatCompletionsBuildKwargs:
         )
         assert kw["extra_body"]["reasoning"] == {"enabled": True, "effort": "medium"}
 
+    def test_reasoning_can_be_disabled(self, transport):
+        kw = transport.build_kwargs(
+            model="hybrid-model",
+            messages=[{"role": "user", "content": "Hi"}],
+            supports_reasoning=True,
+            reasoning_config={"enabled": False, "effort": "none"},
+        )
+        assert kw["extra_body"]["reasoning"] == {"enabled": False, "effort": "none"}
+
     def test_nous_omits_disabled_reasoning(self, transport):
         from providers import get_provider_profile
         profile = get_provider_profile("nous")

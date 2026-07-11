@@ -1734,6 +1734,7 @@ DEFAULT_CONFIG = {
             "base_url": "",
             "api_key": "",
             "max_tokens": 200,
+            "reasoning_effort": "none",  # independent from main; live voice defaults to no thinking
         },
         "moa_reference": {
             "provider": "auto",
@@ -2143,11 +2144,15 @@ DEFAULT_CONFIG = {
             "vad_filter": True,
         },
         "streaming": {
-            "provider": "",  # "" = off, "parakeet" = local NVIDIA Parakeet Realtime EOU STT
+            "provider": "",  # "" = off; "parakeet" or "moonshine" = local streaming STT
             "host": "127.0.0.1",
             "port": 9090,
             "backend": "faster_whisper",  # faster_whisper, tensorrt, openvino
-            "model": "small",  # tiny, base, small, medium, large-v3, large-v3-turbo, nvidia/parakeet_realtime_eou_120m-v1
+            "model": "small",  # Parakeet model id, or Moonshine tiny/base/small/medium-streaming
+            "moonshine": {
+                "language": "en",
+                "model": "small-streaming",
+            },
             "eou_token": "<EOU>",
             "max_clients": 1,
             "max_connection_time": 900,
@@ -2177,7 +2182,7 @@ DEFAULT_CONFIG = {
             "enabled": True,
         },
         "speaker_id": {
-            "threshold": 0.45,
+            "threshold": 0.60,
             "require_owner_for_escalation": True,
         },
         "beep_enabled": True,         # Play record start/stop beeps in CLI voice mode
@@ -2185,8 +2190,8 @@ DEFAULT_CONFIG = {
         "silence_duration": 3.0,      # Seconds of silence before auto-stop
         "wake_word": {
             "enabled": False,
-            "provider": "sherpa_onnx",
-            "model": "kws-en-3.3m",
+            "provider": "livekit",
+            "model": "livekit-marvi",
             "phrases": ["hey marvi", "marvi", "marve", "marvy", "marvie", "marfi", "marfe", "marvey"],
             "threshold": 0.5,
             "boost": 4,

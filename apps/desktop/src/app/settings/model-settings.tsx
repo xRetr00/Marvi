@@ -392,6 +392,10 @@ export function ModelSettings({ onMainModelChanged }: ModelSettingsProps) {
     .toLowerCase()
 
   const effortValue = rawEffort === 'false' || rawEffort === 'disabled' ? 'none' : rawEffort || 'medium'
+  const rawInstantEffort = String(getNested(config ?? {}, 'auxiliary.voice_instant.reasoning_effort') ?? 'none')
+    .trim()
+    .toLowerCase()
+  const instantEffortValue = rawInstantEffort === 'false' || rawInstantEffort === 'disabled' ? 'none' : rawInstantEffort
 
   const fastOn = isFastTier(getNested(config ?? {}, 'agent.service_tier'))
 
@@ -763,6 +767,28 @@ export function ModelSettings({ onMainModelChanged }: ModelSettingsProps) {
                 action={
                   !isEditing && (
                     <div className="flex shrink-0 items-center gap-1.5">
+                      {meta.key === 'voice_instant' && config ? (
+                        <label className="mr-1 flex items-center gap-2 text-xs text-muted-foreground">
+                          {m.reasoning}
+                          <Select
+                            onValueChange={value =>
+                              void writeAgentDefault('auxiliary.voice_instant.reasoning_effort', value)
+                            }
+                            value={instantEffortValue}
+                          >
+                            <SelectTrigger aria-label="Instant voice reasoning" className={cn('min-w-24', CONTROL_TEXT)}>
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {EFFORT_VALUES.map(value => (
+                                <SelectItem key={value} value={value}>
+                                  {value === 'none' ? m.reasoningOff : t.shell.modelOptions[effortLabelKey(value)]}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </label>
+                      ) : null}
                       <Button
                         disabled={!mainModel || applying}
                         onClick={() => void setAuxiliaryToMain(meta.key)}

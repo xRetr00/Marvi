@@ -84,13 +84,13 @@ def build_tools_parser(subparsers, *, cmd_tools: Callable) -> None:
             "PocketTTS/Piper, wake word, ddgs, Spotify, Langfuse, xAI). Stable,\n"
             "non-interactive target the dashboard spawns to drive backend\n"
             "setup. Keys: agent_browser, camofox, cua_driver, pockettts,\n"
-            "piper, sherpa_onnx, livekit_wakeword, parakeet_stt,\n"
+            "piper, livekit_wakeword, parakeet_stt, moonshine_stt, speaker_id,\n"
             "ddgs, spotify, langfuse, xai_grok."
         ),
     )
     tools_postsetup_p.add_argument(
         "post_setup_key",
         metavar="KEY",
-        help="Post-setup hook key (e.g. agent_browser, camofox, pockettts, parakeet_stt)",
+        help="Post-setup hook key (e.g. pockettts, parakeet_stt, moonshine_stt, speaker_id)",
     )
     tools_parser.set_defaults(func=cmd_tools)

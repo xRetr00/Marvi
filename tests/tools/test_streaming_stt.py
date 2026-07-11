@@ -11,7 +11,8 @@ def test_wake_word_config_defaults_include_marvi_variants():
     cfg = wake_word_config({"voice": {}})
 
     assert cfg.enabled is False
-    assert cfg.provider == "sherpa_onnx"
+    assert cfg.provider == "livekit"
+    assert cfg.model == "livekit-marvi"
     assert "hey marvi" in cfg.phrases
     assert "marvi" in cfg.phrases
     assert "marve" in cfg.phrases
@@ -56,6 +57,16 @@ def test_wake_word_config_defaults_livekit_model_for_livekit_provider():
     assert cfg.model == DEFAULT_LIVEKIT_WAKE_WORD_MODEL_ID
 
 
+def test_wake_word_config_migrates_legacy_sherpa_values_to_livekit():
+    from tools.streaming_stt import DEFAULT_LIVEKIT_WAKE_WORD_MODEL_ID, wake_word_config
+
+    cfg = wake_word_config(
+        {"voice": {"wake_word": {"enabled": True, "provider": "sherpa_onnx", "model": "kws-en-3.3m"}}}
+    )
+
+    assert (cfg.provider, cfg.model) == ("livekit", DEFAULT_LIVEKIT_WAKE_WORD_MODEL_ID)
+
+
 def test_missing_sherpa_error_points_to_setup(monkeypatch):
     from tools import streaming_stt
     from tools.streaming_stt import WakeWordUnavailable
@@ -73,14 +84,14 @@ def test_missing_sherpa_error_points_to_setup(monkeypatch):
         streaming_stt._import_sherpa_onnx()
 
 
-def test_wake_word_factory_returns_fake_spotter_for_tests():
+def test_wake_word_factory_returns_livekit_spotter():
     from tools.streaming_stt import WakeWordFactory
 
     class FakeSpotter:
         pass
 
     spotter = FakeSpotter()
-    factory = WakeWordFactory(create_spotter=lambda _cfg: spotter, native_self_test=lambda _cfg: None)
+    factory = WakeWordFactory(create_livekit_spotter=lambda _cfg: spotter)
 
     assert factory.create({"voice": {"wake_word": {"enabled": True}}}) is spotter
 
@@ -92,11 +103,7 @@ def test_wake_word_factory_dispatches_livekit_provider():
         pass
 
     spotter = FakeSpotter()
-    factory = WakeWordFactory(
-        create_spotter=lambda _cfg: pytest.fail("sherpa spotter should not be used"),
-        create_livekit_spotter=lambda cfg: spotter if cfg.provider == "livekit" else None,
-        native_self_test=lambda _cfg: pytest.fail("livekit should not run sherpa self-test"),
-    )
+    factory = WakeWordFactory(create_livekit_spotter=lambda cfg: spotter if cfg.provider == "livekit" else None)
 
     assert factory.create({"voice": {"wake_word": {"enabled": True, "provider": "livekit"}}}) is spotter
 
@@ -162,7 +169,7 @@ def test_livekit_spotter_writes_debug_score_telemetry(monkeypatch, tmp_path):
 def test_wake_word_factory_rejects_disabled_config():
     from tools.streaming_stt import WakeWordUnavailable, WakeWordFactory
 
-    factory = WakeWordFactory(create_spotter=lambda _cfg: object(), native_self_test=lambda _cfg: None)
+    factory = WakeWordFactory(create_livekit_spotter=lambda _cfg: object())
 
     with pytest.raises(WakeWordUnavailable, match="disabled"):
         factory.create({"voice": {"wake_word": {"enabled": False}}})
@@ -171,22 +178,10 @@ def test_wake_word_factory_rejects_disabled_config():
 def test_wake_word_factory_accepts_resolved_config():
     from tools.streaming_stt import WakeWordConfig, WakeWordFactory
 
-    factory = WakeWordFactory(create_spotter=lambda cfg: cfg, native_self_test=lambda _cfg: None)
+    factory = WakeWordFactory(create_livekit_spotter=lambda cfg: cfg)
     cfg = WakeWordConfig(enabled=True)
 
     assert factory.create(cfg) is cfg
-
-
-def test_wake_word_factory_rejects_native_probe_failure():
-    from tools.streaming_stt import WakeWordUnavailable, WakeWordFactory
-
-    def fail_native_self_test(_cfg):
-        raise WakeWordUnavailable("sherpa-onnx native self-test failed: ORT mismatch")
-
-    factory = WakeWordFactory(create_spotter=lambda _cfg: object(), native_self_test=fail_native_self_test)
-
-    with pytest.raises(WakeWordUnavailable, match="native self-test failed"):
-        factory.create({"voice": {"wake_word": {"enabled": True}}})
 
 
 def test_sherpa_native_self_test_reports_child_process_failure(monkeypatch):
@@ -206,33 +201,6 @@ def test_sherpa_native_self_test_reports_child_process_failure(monkeypatch):
 
     with pytest.raises(WakeWordUnavailable, match="Current ORT Version is: 1.17.1"):
         streaming_stt._run_sherpa_native_self_test(WakeWordConfig(enabled=True))
-
-
-def test_prepare_wake_word_assets_resolves_model_and_keywords(monkeypatch):
-    from tools import streaming_stt
-
-    calls = []
-
-    monkeypatch.setattr(
-        streaming_stt,
-        "resolve_sherpa_kws_model_files",
-        lambda cfg: calls.append(("resolve", cfg.enabled, cfg.provider, cfg.phrases)) or {"tokens": "tokens", "bpe_model": "bpe"},
-    )
-    monkeypatch.setattr(
-        streaming_stt,
-        "_write_wake_keywords_file",
-        lambda cfg, files: calls.append(("keywords", cfg.enabled, files["tokens"])) or "keywords.txt",
-    )
-
-    keywords = streaming_stt.prepare_wake_word_assets(
-        {"voice": {"wake_word": {"enabled": False, "phrases": ["Hey Marvi"], "threshold": 0.33}}}
-    )
-
-    assert keywords == "keywords.txt"
-    assert calls == [
-        ("resolve", True, "sherpa_onnx", ("hey marvi",)),
-        ("keywords", True, "tokens"),
-    ]
 
 
 def test_kws_model_resolution_prefers_full_precision_files(tmp_path):

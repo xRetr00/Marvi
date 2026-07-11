@@ -15759,7 +15759,7 @@ async def transcribe_audio_stream_ws(ws: WebSocket) -> None:
     stt_cfg = (cfg.get("stt") or {}) if isinstance(cfg, dict) else {}
     streaming_cfg = (stt_cfg.get("streaming") or {}) if isinstance(stt_cfg, dict) else {}
     streaming_provider = str(streaming_cfg.get("provider") or "").strip().lower() if isinstance(streaming_cfg, dict) else ""
-    parakeet_session = None
+    streaming_session = None
     chunks: list[bytes] = []
     sample_rate = 16000
     total_bytes = 0
@@ -15796,16 +15796,16 @@ async def transcribe_audio_stream_ws(ws: WebSocket) -> None:
                 if total_bytes > _MAX_TRANSCRIPTION_UPLOAD_BYTES:
                     await ws.send_json({"type": "error", "error": "Audio recording is too large"})
                     await ws.close(code=1009)
-                    if parakeet_session is not None:
-                        await asyncio.to_thread(parakeet_session.close)
+                    if streaming_session is not None:
+                        await asyncio.to_thread(streaming_session.close)
                     return
-                if parakeet_session is not None:
-                    partial = await asyncio.to_thread(parakeet_session.accept_bytes, chunk)
+                if streaming_session is not None:
+                    partial = await asyncio.to_thread(streaming_session.accept_bytes, chunk)
                     if partial:
                         # eou_prob forwarded for future client-side turn/barge-in tuning
                         # (duplex phase 1/2); harmless extra field for older clients.
                         await ws.send_json(
-                            {"type": "partial", "text": partial, "eou_prob": parakeet_session.last_eou_prob}
+                            {"type": "partial", "text": partial, "eou_prob": streaming_session.last_eou_prob}
                         )
                     chunks.append(chunk)
                     continue
@@ -15819,31 +15819,27 @@ async def transcribe_audio_stream_ws(ws: WebSocket) -> None:
             event_type = payload.get("type")
             if event_type == "start":
                 sample_rate = int(payload.get("sample_rate") or 16000)
-                if streaming_provider == "parakeet":
+                if streaming_provider in {"parakeet", "moonshine"}:
                     if sample_rate != 16000:
-                        await ws.send_json({"type": "error", "error": "Parakeet Realtime EOU STT requires 16 kHz mic audio"})
-                        if parakeet_session is not None:
-                            await asyncio.to_thread(parakeet_session.close)
+                        await ws.send_json({"type": "error", "error": "Local streaming STT requires 16 kHz mic audio"})
+                        if streaming_session is not None:
+                            await asyncio.to_thread(streaming_session.close)
                         return
                     try:
-                        parakeet_session = await asyncio.to_thread(_take_warm_parakeet_session, stt_cfg)
-                        if parakeet_session is None:
-                            parakeet_session = _ParakeetSubprocessSession(stt_cfg)
-                        # begin() reuses the warm process's loaded model (instant)
-                        # or spawns+loads on the very first cold start.
-                        await asyncio.to_thread(parakeet_session.begin)
+                        streaming_session = await asyncio.to_thread(_duplex_stt_session, stt_cfg)
+                        await asyncio.to_thread(streaming_session.begin)
                     except Exception as exc:
-                        _log.warning("Parakeet Realtime EOU STT unavailable; falling back to buffered STT: %s", exc)
-                        if parakeet_session is not None:
-                            await asyncio.to_thread(parakeet_session.close)
-                        parakeet_session = None
+                        _log.warning("%s streaming STT unavailable; falling back to buffered STT: %s", streaming_provider, exc)
+                        if streaming_session is not None:
+                            await asyncio.to_thread(streaming_session.close)
+                        streaming_session = None
                 await ws.send_json({"type": "ready"})
             elif event_type == "turn":
                 # Parakeet Realtime EOU reports end-of-utterance itself; use its
                 # signal when active and fall back to the pipecat smart-turn
                 # model for the buffered/whisper paths.
-                if parakeet_session is not None:
-                    complete = parakeet_session.last_eou
+                if streaming_session is not None:
+                    complete = streaming_session.last_eou
                 else:
                     from tools.semantic_turn import pipecat_smart_turn_complete
 
@@ -15852,11 +15848,13 @@ async def transcribe_audio_stream_ws(ws: WebSocket) -> None:
             elif event_type == "stop":
                 break
 
-        if parakeet_session is not None:
-            text = await asyncio.to_thread(parakeet_session.finish)
+        if streaming_session is not None:
+            text = await asyncio.to_thread(streaming_session.finish)
             await ws.send_json({"type": "final", "text": text})
-            # Keep the loaded model warm for the next turn instead of killing it.
-            await asyncio.to_thread(_return_warm_parakeet_session, parakeet_session, stt_cfg)
+            if streaming_provider == "parakeet":
+                await asyncio.to_thread(_return_warm_parakeet_session, streaming_session, stt_cfg)
+            else:
+                await asyncio.to_thread(streaming_session.close)
             return
 
         if not chunks:
@@ -15883,12 +15881,12 @@ async def transcribe_audio_stream_ws(ws: WebSocket) -> None:
                 except OSError:
                     pass
     except WebSocketDisconnect:
-        if parakeet_session is not None:
-            await asyncio.to_thread(parakeet_session.close)
+        if streaming_session is not None:
+            await asyncio.to_thread(streaming_session.close)
         return
     except Exception as exc:
-        if parakeet_session is not None:
-            await asyncio.to_thread(parakeet_session.close)
+        if streaming_session is not None:
+            await asyncio.to_thread(streaming_session.close)
         _log.exception("Desktop streaming transcription failed")
         try:
             await ws.send_json({"type": "error", "error": f"Streaming transcription failed: {exc}"})
@@ -15990,9 +15988,19 @@ _DUPLEX_UTTERANCE_AUDIO_CAP_CHUNKS = 1000
 # forgets to). Matches PocketTTS's own fallback default (tools/tts_tool.py)
 # and the desktop GaplessPlayer's prior hardcoded assumption.
 _DUPLEX_DEFAULT_TTS_SAMPLE_RATE = 24000
+_DUPLEX_DEEP_CUE_INTERVAL_SECONDS = 15.0
 # Sentinel telling _pump_deep_tasks to stop -- distinct from None, which
 # _get_deep_task_item also returns on a plain poll timeout (no item yet).
 _DUPLEX_DEEP_TASK_STOP = object()
+
+_DUPLEX_ACTIVITY_CUES = {
+    "web": "Let me search for that.",
+    "file": "Wait a second, let me read that.",
+    "memory": "I'll remember that.",
+    "session": "Let me look through our past conversations.",
+    "thinking": "Let me think about that.",
+    "delegation": "The sub-agent is working on it.",
+}
 
 _SENTENCE_END_CHARS = ".!?\n"
 
@@ -16030,21 +16038,41 @@ def _duplex_pcm16_to_float32(chunk: bytes) -> list[float]:
     return [max(-1.0, min(1.0, sample / 32768.0)) for sample in pcm]
 
 
+def _duplex_pcm16_to_float32_bytes(chunk: bytes) -> bytes:
+    """Convert renderer PCM16 frames to the Float32 byte protocol used by
+    streaming STT helpers."""
+    samples = array("f", _duplex_pcm16_to_float32(chunk))
+    if sys.byteorder != "little":
+        samples.byteswap()
+    return samples.tobytes()
+
+
 class _InstantLaneUnavailable(RuntimeError):
     """Raised when the instant-lane model can't be reached at all (as opposed
     to failing mid-reply, which is treated as a partial answer)."""
 
 
-def _duplex_stt_session(stt_cfg: dict[str, Any]) -> "_ParakeetSubprocessSession":
-    """Acquire a Parakeet streaming session, preferring the warm pool.
+def _duplex_stt_session(stt_cfg: dict[str, Any]):
+    """Acquire the configured local streaming STT session.
 
     Thin seam: tests monkeypatch this instead of spawning the real
     subprocess helper.
     """
+    streaming = stt_cfg.get("streaming", {}) if isinstance(stt_cfg, dict) else {}
+    provider = str(streaming.get("provider") or "parakeet").strip().lower()
+    if provider == "moonshine":
+        from tools.moonshine_streaming_stt import MoonshineStreamingSession
+
+        return MoonshineStreamingSession(stt_cfg)
     session = _take_warm_parakeet_session(stt_cfg)
     if session is None:
         session = _ParakeetSubprocessSession(stt_cfg)
     return session
+
+
+def _streaming_stt_provider(stt_cfg: dict[str, Any]) -> str:
+    streaming = stt_cfg.get("streaming", {}) if isinstance(stt_cfg, dict) else {}
+    return str(streaming.get("provider") or "parakeet").strip().lower()
 
 
 def _duplex_identify_speaker(pcm16_bytes: bytes) -> Tuple[str, float]:
@@ -16053,10 +16081,17 @@ def _duplex_identify_speaker(pcm16_bytes: bytes) -> Tuple[str, float]:
     return identify(pcm16_bytes)
 
 
-def _duplex_stream_instant_reply(transcript, utterance: str, *, allow_escalation: bool):
+def _duplex_stream_instant_reply(
+    transcript, utterance: str, *, allow_escalation: bool, activity_callback=None,
+):
     from tools.voice_instant_lane import stream_instant_reply
 
-    return stream_instant_reply(transcript, utterance, allow_escalation=allow_escalation)
+    return stream_instant_reply(
+        transcript,
+        utterance,
+        allow_escalation=allow_escalation,
+        activity_callback=activity_callback,
+    )
 
 
 def _duplex_stream_tts_chunks(text: str):
@@ -16112,15 +16147,20 @@ def voice_speakers_remove(name: str):
     return {"speakers": list_speakers()}
 
 
-# Toolsets granted to the escalated deep-task agent. Deliberately excludes
-# "terminal"/"delegation": a voice-triggered background task runs unattended
-# off a (possibly misheard) spoken ask, so it gets a capable-but-bounded
-# surface (file/search/web/memory, per the design review) rather than full
-# shell access or the ability to spawn further subagents.
-_DUPLEX_DEEP_TASK_TOOLSETS = ["file", "search", "web", "memory"]
+# Owner-gated background worker. This is the delegated sub-agent itself; it
+# gets execution tools so a work request can be completed and verified rather
+# than merely analyzed. It cannot recursively delegate or ask unattended
+# clarification questions.
+_DUPLEX_DEEP_TASK_TOOLSETS = ["file", "search", "web", "memory", "terminal", "code_execution"]
 
 
-def _duplex_run_deep_task(transcript_messages: List[Dict[str, str]], task_text: str) -> str:
+def _duplex_run_deep_task(
+    transcript_messages: List[Dict[str, str]],
+    task_text: str,
+    *,
+    mode: str = "thinking",
+    activity_callback=None,
+) -> str:
     """Run the escalated ask on a REAL tool-armed agent turn.
 
     Deliberately NOT the desktop chat WS's machinery: that runs through
@@ -16151,11 +16191,48 @@ def _duplex_run_deep_task(transcript_messages: List[Dict[str, str]], task_text: 
 
     history = [dict(m) for m in transcript_messages if isinstance(m, dict) and m.get("content")]
 
+    worker_prompt = (
+        "You are Marvi's background voice worker. Complete the requested work now, use tools as needed, "
+        "and verify the result before reporting success. Your final response will be spoken aloud: summarize "
+        "what you did, whether verification passed, and any remaining problem in a few conversational sentences. "
+        "Do not return a plan or progress update as the final answer."
+        if mode == "delegating"
+        else
+        "You are Marvi's background reasoning lane. Research or reason through the request fully, verify factual "
+        "claims with tools when needed, and return a concise conversational answer that can be spoken aloud."
+    )
+
+    def _activity(tool_name: str) -> Tuple[str, str]:
+        if tool_name in {"web_search", "web_extract"}:
+            return "web", "Researching on the web"
+        if tool_name in {"read_file", "search_files"}:
+            return "file", "Reviewing files"
+        if tool_name == "session_search":
+            return "session", "Searching past conversations"
+        if tool_name == "memory":
+            return "memory", "Updating memory"
+        if tool_name in {"terminal", "process", "execute_code"}:
+            return "delegation", "Sub-agent is working"
+        return ("delegation", "Sub-agent is working") if mode == "delegating" else ("thinking", "Thinking deeper")
+
+    def _tool_start(_call_id, tool_name, _args):
+        if activity_callback:
+            kind, label = _activity(tool_name)
+            activity_callback({"status": "started", "kind": kind, "label": label, "tool": tool_name})
+
+    def _tool_complete(_call_id, tool_name, _args, _result):
+        if activity_callback:
+            kind, label = _activity(tool_name)
+            activity_callback({"status": "completed", "kind": kind, "label": label, "tool": tool_name})
+
     agent = AIAgent(
         quiet_mode=True,
         verbose_logging=False,
         enabled_toolsets=_DUPLEX_DEEP_TASK_TOOLSETS,
-        platform="voice",
+        ephemeral_system_prompt=worker_prompt,
+        tool_start_callback=_tool_start,
+        tool_complete_callback=_tool_complete,
+        platform="voice-subagent" if mode == "delegating" else "voice",
     )
     result = agent.run_conversation(task_text, conversation_history=history or None)
     if isinstance(result, dict):
@@ -16277,6 +16354,9 @@ class _DuplexSession:
         self._cancel_speaking = threading.Event()
         self._deep_task_queue: "queue.Queue[Optional[dict]]" = queue.Queue()
         self._deep_task_pump: Optional[asyncio.Task] = None
+        self._deep_tasks: Dict[str, Dict[str, Any]] = {}
+        self._deep_tasks_lock = threading.Lock()
+        self._background_speech_lock = asyncio.Lock()
         self._task_counter = 0
         self._closed = False
         self._stt_slot_acquired = False
@@ -16383,7 +16463,7 @@ class _DuplexSession:
         return
 
     def _accept_stt_chunk(self, chunk: bytes) -> Tuple[str, bool, float]:
-        partial = self.stt_session.accept_bytes(chunk)
+        partial = self.stt_session.accept_bytes(_duplex_pcm16_to_float32_bytes(chunk))
         eou = bool(getattr(self.stt_session, "last_eou", False))
         eou_prob = float(getattr(self.stt_session, "last_eou_prob", 0.0) or 0.0)
         return partial, eou, eou_prob
@@ -16527,9 +16607,20 @@ class _DuplexSession:
         full_reply = ""
         got_any_delta = False
 
+        def _activity(event: Dict[str, str]) -> None:
+            payload = {"type": "activity", **event}
+            self._emit_sync(payload)
+            if event.get("status") == "started":
+                cue = _DUPLEX_ACTIVITY_CUES.get(event.get("kind", ""))
+                if cue:
+                    self._speak_full_sync(cue, cancel_event)
+
         try:
             deltas = _duplex_stream_instant_reply(
-                self.transcript, utterance_text, allow_escalation=allow_escalation,
+                self.transcript,
+                utterance_text,
+                allow_escalation=allow_escalation,
+                activity_callback=_activity,
             )
             for delta in deltas:
                 if cancel_event.is_set():
@@ -16561,11 +16652,12 @@ class _DuplexSession:
             self._task_counter += 1
             task_id = f"voice-{self._task_counter}"
             self._emit_sync({"type": "instant_done", "text": ""})
-            self._emit_sync({"type": "escalated", "task_id": task_id, "ack_text": result.text})
+            mode = result.mode or "thinking"
+            self._emit_sync({"type": "escalated", "task_id": task_id, "ack_text": result.text, "mode": mode})
             ack_cycle = _DuplexTtsCycle(self)
             ack_cycle.speak(result.text, cancel_event)
             ack_cycle.end()
-            self._start_deep_task_sync(task_id, utterance_text, cancel_event)
+            self._start_deep_task_sync(task_id, utterance_text, cancel_event, mode=mode)
             return None, task_id
 
         if result.escalate:
@@ -16579,15 +16671,37 @@ class _DuplexSession:
         self._emit_sync({"type": "instant_done", "text": full_reply})
         return full_reply, None
 
-    def _start_deep_task_sync(self, task_id: str, utterance_text: str, _cancel_event: threading.Event) -> None:
+    def _start_deep_task_sync(
+        self,
+        task_id: str,
+        utterance_text: str,
+        _cancel_event: threading.Event,
+        *,
+        mode: str = "thinking",
+    ) -> None:
         # Barge-in during the escalation ack does NOT cancel the background
         # deep task (spec) — this thread is deliberately independent of
         # cancel_event once started.
         transcript_messages = self.transcript.as_messages() if self.transcript is not None else []
+        with self._deep_tasks_lock:
+            self._deep_tasks[task_id] = {
+                "mode": mode,
+                "last_cue": time.monotonic(),
+                "cue_count": 0,
+                "label": "Sub-agent is working" if mode == "delegating" else "Thinking deeper",
+            }
 
         def _worker() -> None:
+            def _activity(event: Dict[str, str]) -> None:
+                self._deep_task_queue.put({"type": "activity", "task_id": task_id, **event})
+
             try:
-                result_text = _duplex_run_deep_task(transcript_messages, utterance_text)
+                result_text = _duplex_run_deep_task(
+                    transcript_messages,
+                    utterance_text,
+                    mode=mode,
+                    activity_callback=_activity,
+                )
                 self._deep_task_queue.put({"task_id": task_id, "text": result_text, "ok": True})
             except Exception as exc:
                 self._deep_task_queue.put({"task_id": task_id, "error": str(exc), "ok": False})
@@ -16617,26 +16731,88 @@ class _DuplexSession:
             if item is None:
                 if self._closed:
                     return
+                now = time.monotonic()
+                due = []
+                with self._deep_tasks_lock:
+                    for task_id, task in self._deep_tasks.items():
+                        if now - float(task.get("last_cue", now)) < _DUPLEX_DEEP_CUE_INTERVAL_SECONDS:
+                            continue
+                        task["last_cue"] = now
+                        task["cue_count"] = int(task.get("cue_count", 0)) + 1
+                        due.append((task_id, str(task.get("mode") or "thinking")))
+                for task_id, mode in due:
+                    label = "Sub-agent is still working" if mode == "delegating" else "Still thinking"
+                    cue = (
+                        "The sub-agent is still working. I'll tell you when it's finished."
+                        if mode == "delegating"
+                        else "I'm still working through that."
+                    )
+                    kind = "delegation" if mode == "delegating" else "thinking"
+                    await self._send(
+                        {
+                            "type": "activity",
+                            "task_id": task_id,
+                            "status": "started",
+                            "kind": kind,
+                            "label": label,
+                        }
+                    )
+                    if self.state == "listening":
+                        await self._speak_background(cue)
                 continue  # poll timeout, nothing queued yet — keep waiting
             if item is _DUPLEX_DEEP_TASK_STOP:
                 return
             task_id = item.get("task_id")
+            if item.get("type") == "activity":
+                with self._deep_tasks_lock:
+                    task = self._deep_tasks.get(task_id)
+                    if task is not None:
+                        task["label"] = item.get("label") or task.get("label")
+                        task["last_cue"] = time.monotonic()
+                await self._send({"type": "activity", **item})
+                if item.get("status") == "started":
+                    cue = _DUPLEX_ACTIVITY_CUES.get(str(item.get("kind") or ""))
+                    if cue and self.state == "listening":
+                        await self._speak_background(cue)
+                continue
             if item.get("ok"):
+                with self._deep_tasks_lock:
+                    self._deep_tasks.pop(task_id, None)
                 text = item.get("text") or ""
                 if self.transcript is not None:
                     self.transcript.add("assistant", text)
+                await self._wait_until_listening()
                 await self._send({"type": "deep_result", "task_id": task_id, "text": text})
-                await asyncio.to_thread(self._speak_full_sync, text)
+                await self._speak_background(text)
             else:
+                with self._deep_tasks_lock:
+                    self._deep_tasks.pop(task_id, None)
                 err = item.get("error") or "deep task failed"
                 await self._send({"type": "error", "error": err})
                 apology = "Sorry, I hit a snag working on that — want me to try again?"
+                await self._wait_until_listening()
                 await self._send({"type": "deep_result", "task_id": task_id, "text": apology})
-                await asyncio.to_thread(self._speak_full_sync, apology)
+                await self._speak_background(apology)
 
-    def _speak_full_sync(self, text: str) -> None:
+    async def _wait_until_listening(self) -> None:
+        while not self._closed and self.state != "listening":
+            await asyncio.sleep(0.05)
+
+    async def _speak_background(self, text: str) -> None:
+        async with self._background_speech_lock:
+            await self._wait_until_listening()
+            if self._closed:
+                return
+            cancel_event = threading.Event()
+            self._cancel_speaking = cancel_event
+            self.state = "speaking"
+            await asyncio.to_thread(self._speak_full_sync, text, cancel_event)
+            if self.state == "speaking":
+                self.state = "listening"
+
+    def _speak_full_sync(self, text: str, cancel_event: Optional[threading.Event] = None) -> None:
         cycle = _DuplexTtsCycle(self)
-        cycle.speak(text, threading.Event())
+        cycle.speak(text, cancel_event or threading.Event())
         cycle.end()
 
     async def close(self) -> None:
@@ -16664,7 +16840,10 @@ class _DuplexSession:
                 pass
         if self.stt_session is not None:
             try:
-                await asyncio.to_thread(_return_warm_parakeet_session, self.stt_session, self.stt_cfg)
+                if _streaming_stt_provider(self.stt_cfg) == "parakeet":
+                    await asyncio.to_thread(_return_warm_parakeet_session, self.stt_session, self.stt_cfg)
+                else:
+                    await asyncio.to_thread(self.stt_session.close)
             except Exception:
                 try:
                     await asyncio.to_thread(self.stt_session.close)

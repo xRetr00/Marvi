@@ -167,7 +167,7 @@ describe('settings helpers', () => {
       expect(enumOptionsFor('stt.local.model', 'large-v3-turbo', config)).toContain('large-v3-turbo')
       expect(enumOptionsFor('stt.local.device', 'cuda', config)).toEqual(['auto', 'cuda', 'cpu'])
       expect(enumOptionsFor('stt.local.compute_type', 'float16', config)).toContain('int8_float16')
-      expect(enumOptionsFor('stt.streaming.provider', 'parakeet', config)).toEqual(['', 'parakeet'])
+      expect(enumOptionsFor('stt.streaming.provider', 'parakeet', config)).toEqual(['', 'parakeet', 'moonshine'])
       expect(enumOptionsFor('stt.streaming.backend', 'faster_whisper', config)).toEqual([
         'faster_whisper',
         'tensorrt',
@@ -177,6 +177,12 @@ describe('settings helpers', () => {
       expect(enumOptionsFor('stt.streaming.model', 'nvidia/parakeet_realtime_eou_120m-v1', config)).toContain(
         'nvidia/parakeet_realtime_eou_120m-v1'
       )
+      expect(enumOptionsFor('stt.streaming.moonshine.model', 'small-streaming', config)).toEqual([
+        'tiny-streaming',
+        'base-streaming',
+        'small-streaming',
+        'medium-streaming'
+      ])
       expect(enumOptionsFor('tts.openai.model', 'gpt-4o-mini-tts', config)).toContain('tts-1-hd')
       expect(enumOptionsFor('tts.pockettts.device', 'cpu', config)).toEqual(['cpu', 'cuda'])
     })
@@ -207,18 +213,9 @@ describe('settings helpers', () => {
       ])
     })
 
-    it('offers only LiveKit for wake-word options — sherpa is dropped from the UI', () => {
+    it('offers only LiveKit for wake-word options', () => {
       expect(enumOptionsFor('voice.wake_word.provider', 'livekit', config)).toEqual(['livekit'])
       expect(enumOptionsFor('voice.wake_word.model', 'livekit-marvi', config)).toEqual(['livekit-marvi'])
-    })
-
-    it('still surfaces an existing sherpa-configured value rather than hiding it silently', () => {
-      // enumOptionsFor's generic "preserve the current value" fallback still
-      // applies here (existing configs may still carry the old sherpa
-      // default) — the dedicated Wake Word settings tab never renders these
-      // as a picker, so this is a defensive fallback, not a UI affordance.
-      expect(enumOptionsFor('voice.wake_word.provider', 'sherpa_onnx', config)).toEqual(['livekit', 'sherpa_onnx'])
-      expect(enumOptionsFor('voice.wake_word.model', 'kws-en-3.3m', config)).toEqual(['livekit-marvi', 'kws-en-3.3m'])
     })
 
     it('renders a dropdown for the terminal execution backend', () => {

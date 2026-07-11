@@ -1501,6 +1501,36 @@ def _run_post_setup(post_setup_key: str):
         except Exception as e:
             _print_warning(f"    Parakeet Realtime EOU STT install failed: {e}")
 
+    elif post_setup_key == "moonshine_stt":
+        _print_info("    Installing Moonshine and downloading the configured streaming model...")
+        try:
+            from tools.lazy_deps import ensure
+
+            feature = "stt.moonshine.windows" if os.name == "nt" else "stt.moonshine"
+            ensure(feature, prompt=False)
+            from tools.moonshine_streaming_stt import MoonshineStreamingSession
+
+            session = MoonshineStreamingSession((load_config().get("stt") or {}))
+            session.close()
+            _print_success("    Moonshine streaming STT is installed and its model is cached")
+            _print_info("    Moonshine uses its portable CPU runtime; upstream does not provide CUDA execution.")
+            _print_info("    Enable it with stt.streaming.provider=moonshine.")
+        except Exception as e:
+            _print_warning(f"    Moonshine streaming STT setup failed: {e}")
+
+    elif post_setup_key == "speaker_id":
+        _print_info("    Installing speaker identification and downloading its embedding model...")
+        try:
+            from tools.lazy_deps import ensure
+
+            ensure("voice.speaker_id", prompt=False)
+            from tools.voice_speaker_id import resolve_speaker_model_path
+
+            resolve_speaker_model_path()
+            _print_success("    Speaker identification is installed and its model is cached")
+        except Exception as e:
+            _print_warning(f"    Speaker identification setup failed: {e}")
+
     elif post_setup_key == "semantic_turn":
         _print_info("    Installing Smart Turn semantic VAD...")
         try:
@@ -1675,7 +1705,7 @@ def valid_post_setup_keys() -> Set[str]:
     command and the dashboard post-setup endpoint validate against, so a
     caller can't drive ``_run_post_setup`` with an arbitrary key.
     """
-    keys: Set[str] = {"livekit_wakeword", "parakeet_stt", "semantic_turn"}
+    keys: Set[str] = {"livekit_wakeword", "parakeet_stt", "moonshine_stt", "speaker_id", "semantic_turn"}
     for cat in TOOL_CATEGORIES.values():
         for prov in cat.get("providers", []):
             ps = prov.get("post_setup")

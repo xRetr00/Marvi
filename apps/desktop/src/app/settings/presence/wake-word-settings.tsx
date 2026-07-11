@@ -6,14 +6,6 @@ import type { useMarviConfig } from '../subconscious/use-marvi-config'
 
 const DEFAULT_PHRASES = ['hey marvi', 'marvi', 'marve', 'marvy', 'marvie', 'marfi', 'marfe', 'marvey']
 
-// LiveKit is the only wake-word provider the UI exposes — the sherpa-onnx KWS
-// path stays alive server-side for existing configs (see
-// docs/superpowers/specs/2026-07-10-marvi-duplex-voice-splitbrain-design.md:
-// "the sherpa KWS wake word is being dropped in favor of the LiveKit
-// wake-word provider"), but nothing here ever lets you pick or see it.
-const WAKE_WORD_PROVIDER = 'livekit'
-const WAKE_WORD_MODEL = 'livekit-marvi'
-
 function clampFloat(value: string, fallback: number, min: number, max: number): number {
   const n = Number.parseFloat(value)
 
@@ -28,8 +20,7 @@ function clampInt(value: string, fallback: number, min: number, max: number): nu
 
 /**
  * Settings → Presence → Wake Word tab. Say-the-phrase detection that lights
- * the Dynamic Island and starts a turn — LiveKit-only (see WAKE_WORD_PROVIDER
- * above); unrelated to speaker ID (Presence → Voice) or the duplex session
+ * the Dynamic Island and starts a turn; unrelated to speaker ID (Presence → Voice).
  * that actually carries the conversation once woken (desktop-controller.tsx).
  */
 export function WakeWordSettings({ marvi }: { marvi: ReturnType<typeof useMarviConfig> }) {
@@ -43,13 +34,9 @@ export function WakeWordSettings({ marvi }: { marvi: ReturnType<typeof useMarviC
 
   const setEnabled = (value: boolean) => {
     void marvi.patch('voice.wake_word.enabled', value)
-
-    // Make sure a freshly-enabled session actually uses LiveKit even if this
-    // machine's saved config still carries the old sherpa default — the UI
-    // never offers sherpa as a choice, so it must not silently keep running.
     if (value) {
-      void marvi.patch('voice.wake_word.provider', WAKE_WORD_PROVIDER)
-      void marvi.patch('voice.wake_word.model', WAKE_WORD_MODEL)
+      void marvi.patch('voice.wake_word.provider', 'livekit')
+      void marvi.patch('voice.wake_word.model', 'livekit-marvi')
     }
   }
 
@@ -68,7 +55,11 @@ export function WakeWordSettings({ marvi }: { marvi: ReturnType<typeof useMarviC
         onChange={setEnabled}
       />
 
-      <ListRow action={<Pill tone="primary">LiveKit</Pill>} description="On-device wake-word detector." title="Provider" />
+      <ListRow
+        action={<Pill tone="primary">LiveKit</Pill>}
+        description="Marvi's on-device wake-word detector."
+        title="Provider"
+      />
 
       <ListRow
         below={

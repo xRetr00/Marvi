@@ -240,7 +240,7 @@ export const ENUM_OPTIONS: Record<string, string[]> = {
   'stt.local.model': ['tiny', 'base', 'small', 'medium', 'large-v3', 'large-v3-turbo'],
   'stt.local.device': ['auto', 'cuda', 'cpu'],
   'stt.local.compute_type': ['auto', 'float16', 'int8_float16', 'int8'],
-  'stt.streaming.provider': ['', 'parakeet'],
+  'stt.streaming.provider': ['', 'parakeet', 'moonshine'],
   'stt.streaming.backend': ['faster_whisper', 'tensorrt', 'openvino'],
   'stt.streaming.model': [
     'tiny',
@@ -249,11 +249,13 @@ export const ENUM_OPTIONS: Record<string, string[]> = {
     'medium',
     'large-v3',
     'large-v3-turbo',
-    'nvidia/parakeet_realtime_eou_120m-v1'
+    'nvidia/parakeet_realtime_eou_120m-v1',
+    'tiny-streaming',
+    'base-streaming',
+    'small-streaming',
+    'medium-streaming'
   ],
-  // Sherpa-onnx KWS is intentionally not offered here — LiveKit is the only
-  // wake-word provider shown in the UI (the Python-side sherpa KWS path still
-  // exists for existing configs, but Settings never lets you pick it).
+  'stt.streaming.moonshine.model': ['tiny-streaming', 'base-streaming', 'small-streaming', 'medium-streaming'],
   'voice.wake_word.provider': ['livekit'],
   'voice.wake_word.model': ['livekit-marvi'],
   // Speech-to-text backends — kept in sync with the stt block in
@@ -399,7 +401,11 @@ export const FIELD_LABELS: Record<string, string> = defineFieldCopy({
       eouToken: 'Parakeet EOU Token',
       maxClients: 'Streaming STT Max Clients',
       maxConnectionTime: 'Streaming STT Max Seconds',
-      singleModel: 'Streaming STT Single Model'
+      singleModel: 'Streaming STT Single Model',
+      moonshine: {
+        language: 'Moonshine Language',
+        model: 'Moonshine Streaming Model'
+      }
     },
     openai: {
       model: 'OpenAI STT Model'
@@ -572,10 +578,14 @@ export const FIELD_DESCRIPTIONS: Record<string, string> = defineFieldCopy({
       vadFilter: 'Skip non-speech sections before transcription.'
     },
     streaming: {
-      provider: 'Optional live STT backend. Parakeet Realtime EOU runs locally for low-latency English STT.',
+      provider: 'Optional local live STT backend. Choose Parakeet Realtime EOU or Moonshine.',
       backend: 'Use faster_whisper for the built-in GPU path. TensorRT needs prebuilt engines.',
       model: 'Parakeet Realtime EOU Hugging Face model id.',
-      eouToken: 'Token emitted by Parakeet when the utterance is complete.'
+      eouToken: 'Token emitted by Parakeet when the utterance is complete.',
+      moonshine: {
+        language: 'Two-letter language code for the locally cached Moonshine model.',
+        model: 'CPU streaming architecture; larger models trade memory and latency for accuracy. Moonshine does not currently provide CUDA execution.'
+      }
     },
     elevenlabs: {
       languageCode: 'Optional ISO-639-3 language code. Blank lets ElevenLabs auto-detect.'
@@ -689,6 +699,8 @@ export const SECTIONS: DesktopConfigSection[] = [
       'stt.streaming.port',
       'stt.streaming.backend',
       'stt.streaming.model',
+      'stt.streaming.moonshine.language',
+      'stt.streaming.moonshine.model',
       'stt.streaming.eou_token',
       'stt.streaming.max_clients',
       'stt.streaming.max_connection_time',

@@ -134,7 +134,12 @@ LAZY_DEPS: dict[str, tuple[str, ...]] = {
         "sounddevice==0.5.5",
         "numpy==2.4.3",
     ),
+    # 0.0.68 is current but did not publish a Windows wheel; 0.0.66 is the
+    # newest release that did. The adapter selects the platform-safe key.
+    "stt.moonshine": ("moonshine-voice==0.0.68",),
+    "stt.moonshine.windows": ("moonshine-voice==0.0.66",),
     "voice.semantic_turn": ("pipecat-ai==1.4.0", "numpy==2.4.3"),
+    "voice.speaker_id": ("sherpa-onnx==1.13.4",),
 
     # ─── Image generation backends ─────────────────────────────────────────
     "image.fal": ("fal-client==0.13.1",),

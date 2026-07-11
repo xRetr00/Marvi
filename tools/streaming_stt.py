@@ -1,8 +1,7 @@
 """Local wake-word helpers for the desktop voice loop.
 
 The speech-to-text path remains the stable batch endpoint in
-``tools.transcription_tools``. This module is intentionally dependency-light:
-sherpa-onnx is imported only when wake-word detection starts.
+``tools.transcription_tools``. Marvi wake-word detection uses LiveKit.
 """
 
 from __future__ import annotations
@@ -62,8 +61,8 @@ _WAKEWORD_TELEMETRY_LOG = "wakeword-livekit.jsonl"
 @dataclass(frozen=True)
 class WakeWordConfig:
     enabled: bool = False
-    provider: str = "sherpa_onnx"
-    model: str = DEFAULT_WAKE_WORD_MODEL_ID
+    provider: str = "livekit"
+    model: str = DEFAULT_LIVEKIT_WAKE_WORD_MODEL_ID
     sample_rate: int = 16000
     phrases: tuple[str, ...] = DEFAULT_WAKE_WORD_PHRASES
     boost: float = 2.0
@@ -80,7 +79,7 @@ class WakeWordConfig:
 
 
 class WakeWordUnavailable(RuntimeError):
-    """Raised when local sherpa-onnx wake-word detection cannot start."""
+    """Raised when local wake-word detection cannot start."""
 
 
 def _positive_int(value: Any, default: int, *, min_value: int = 1, max_value: int = 60_000) -> int:
@@ -126,13 +125,18 @@ def wake_word_config(config: Optional[dict[str, Any]] = None) -> WakeWordConfig:
     voice = voice if isinstance(voice, dict) else {}
     raw = voice.get("wake_word")
     raw = raw if isinstance(raw, dict) else {}
-    provider = str(raw.get("provider") or "sherpa_onnx").strip().lower() or "sherpa_onnx"
-    default_model = DEFAULT_LIVEKIT_WAKE_WORD_MODEL_ID if provider == "livekit" else DEFAULT_WAKE_WORD_MODEL_ID
+    # Marvi uses LiveKit exclusively for wake-word detection. Sherpa ONNX is
+    # still used independently by speaker identification.
+    provider = "livekit"
+    default_model = DEFAULT_LIVEKIT_WAKE_WORD_MODEL_ID
+    model = str(raw.get("model") or default_model).strip() or default_model
+    if model == DEFAULT_WAKE_WORD_MODEL_ID:
+        model = default_model
 
     return WakeWordConfig(
         enabled=raw.get("enabled") is True,
         provider=provider,
-        model=str(raw.get("model") or default_model).strip() or default_model,
+        model=model,
         sample_rate=_positive_int(raw.get("sample_rate"), 16000, min_value=8000, max_value=48000),
         phrases=_normalize_phrases(raw.get("phrases")),
         boost=_float_value(raw.get("boost"), 2.0, min_value=0.1, max_value=10.0),
@@ -607,24 +611,15 @@ class LiveKitWakeWordSpotter:
 class WakeWordFactory:
     def __init__(
         self,
-        create_spotter: Optional[Callable[[WakeWordConfig], Any]] = None,
         create_livekit_spotter: Optional[Callable[[WakeWordConfig], Any]] = None,
-        native_self_test: Optional[Callable[[WakeWordConfig], None]] = None,
     ):
-        self._create_spotter = create_spotter or (lambda cfg: SherpaOnnxWakeWordSpotter(cfg))
         self._create_livekit_spotter = create_livekit_spotter or (lambda cfg: LiveKitWakeWordSpotter(cfg))
-        self._native_self_test = native_self_test or _run_sherpa_native_self_test
 
     def create(self, config: Optional[dict[str, Any] | WakeWordConfig] = None):
         cfg = config if isinstance(config, WakeWordConfig) else wake_word_config(config)
         if not cfg.enabled:
             raise WakeWordUnavailable("Wake word is disabled in voice.wake_word.enabled")
-        if cfg.provider == "sherpa_onnx":
-            self._native_self_test(cfg)
-            return self._create_spotter(cfg)
-        if cfg.provider == "livekit":
-            return self._create_livekit_spotter(cfg)
-        raise WakeWordUnavailable(f"Unsupported wake-word provider: {cfg.provider}")
+        return self._create_livekit_spotter(cfg)
 
 
 # --- Wake-word warm pool ----------------------------------------------------

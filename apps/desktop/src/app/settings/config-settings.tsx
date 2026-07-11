@@ -33,7 +33,10 @@ import { ModelSettings, ModelSettingsSkeleton } from './model-settings'
 import { EmptyState, ListRow, LoadingState, SettingsContent } from './primitives'
 import { ProviderConfigPanel } from './provider-config-panel'
 
-const PARAKEET_STREAMING_FIELDS = new Set(['stt.streaming.provider', 'stt.streaming.model', 'stt.streaming.eou_token'])
+const STREAMING_PROVIDER_FIELDS: Record<string, Set<string>> = {
+  moonshine: new Set(['stt.streaming.provider', 'stt.streaming.moonshine.language', 'stt.streaming.moonshine.model']),
+  parakeet: new Set(['stt.streaming.provider', 'stt.streaming.model', 'stt.streaming.eou_token'])
+}
 
 // On the Voice page, only surface the sub-fields of the *selected* TTS/STT
 // provider — otherwise every provider's options render at once (the "totally
@@ -43,8 +46,8 @@ export function voiceFieldVisible(key: string, config: HermesConfigRecord): bool
   if (key.startsWith('stt.streaming.')) {
     const provider = String(getNested(config, 'stt.streaming.provider') ?? '')
 
-    if (provider === 'parakeet') {
-      return PARAKEET_STREAMING_FIELDS.has(key)
+    if (STREAMING_PROVIDER_FIELDS[provider]) {
+      return STREAMING_PROVIDER_FIELDS[provider].has(key)
     }
 
     return true

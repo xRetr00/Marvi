@@ -47,7 +47,7 @@ GUEST_LABEL = "guest"
 UNKNOWN_LABEL = "unknown"
 
 DEFAULT_SPEAKER_MODEL_ID = "wespeaker-en-voxceleb-cam++"
-DEFAULT_THRESHOLD = 0.45
+DEFAULT_THRESHOLD = 0.60
 
 # A small (~7 MB), English speaker-embedding model from sherpa-onnx's own
 # speaker-recognition-models release -- same CPU ONNX runtime as the rest of
@@ -76,10 +76,16 @@ def _import_sherpa_onnx():
     try:
         import sherpa_onnx  # type: ignore
     except ImportError as exc:
-        raise SpeakerIdUnavailable(
-            "sherpa-onnx is not installed. Run `pip install sherpa-onnx` to "
-            "enable Marvi's voice speaker ID (owner/guest recognition)."
-        ) from exc
+        try:
+            from tools.lazy_deps import ensure
+
+            ensure("voice.speaker_id")
+            import sherpa_onnx  # type: ignore
+        except Exception as install_exc:
+            raise SpeakerIdUnavailable(
+                "Speaker ID dependency is unavailable. Run "
+                "`hermes tools post-setup speaker_id`."
+            ) from install_exc
     return sherpa_onnx
 
 

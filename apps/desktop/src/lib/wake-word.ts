@@ -67,7 +67,7 @@ export function normalizeWakeWordConfig(value: unknown): WakeWordConfig {
     debug: record.debug === true,
     enabled: record.enabled === true,
     phrases: phrases.length ? phrases : DEFAULT_WAKE_PHRASES,
-    provider: normalizePhrase(record.provider) || 'sherpa_onnx',
+    provider: 'livekit',
     sampleRate: clampNumber(record.sample_rate, 16000, 8000, 48000),
     threshold: Number.isFinite(Number(record.threshold)) ? Number(record.threshold) : 0.35
   }

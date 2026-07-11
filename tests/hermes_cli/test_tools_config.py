@@ -1140,6 +1140,28 @@ def test_semantic_turn_post_setup_key_is_allowed():
     assert "semantic_turn" in tools_config.valid_post_setup_keys()
 
 
+def test_moonshine_post_setup_downloads_configured_model(monkeypatch):
+    import tools.lazy_deps as lazy_deps
+    import tools.moonshine_streaming_stt as moonshine
+
+    calls = []
+
+    class FakeSession:
+        def __init__(self, config):
+            calls.append(("session", config))
+
+        def close(self):
+            calls.append(("close", None))
+
+    monkeypatch.setattr(lazy_deps, "ensure", lambda feature, prompt=False: calls.append((feature, prompt)))
+    monkeypatch.setattr(moonshine, "MoonshineStreamingSession", FakeSession)
+    monkeypatch.setattr("hermes_cli.tools_config.load_config", lambda: {"stt": {"streaming": {"provider": "moonshine"}}})
+
+    _run_post_setup("moonshine_stt")
+
+    assert calls[-2:] == [("session", {"streaming": {"provider": "moonshine"}}), ("close", None)]
+
+
 def test_semantic_turn_post_setup_installs_lazy_dependency(monkeypatch):
     import tools.lazy_deps as lazy_deps
 

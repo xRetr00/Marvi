@@ -3,12 +3,12 @@ import { describe, expect, it } from 'vitest'
 import { normalizeWakeWordConfig, stripWakePhrase } from './wake-word'
 
 describe('normalizeWakeWordConfig', () => {
-  it('defaults to disabled sherpa wake-word mode with Marvi variants', () => {
+  it('defaults to disabled LiveKit wake-word mode with Marvi variants', () => {
     const config = normalizeWakeWordConfig(undefined)
 
     expect(config.enabled).toBe(false)
     expect(config.debug).toBe(false)
-    expect(config.provider).toBe('sherpa_onnx')
+    expect(config.provider).toBe('livekit')
     expect(config.phrases).toContain('hey marvi')
     expect(config.phrases).toContain('marvi')
     expect(config.phrases).toContain('marve')

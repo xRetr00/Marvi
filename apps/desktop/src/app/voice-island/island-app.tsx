@@ -20,16 +20,19 @@ export function VoiceIslandApp() {
 
   useEffect(() => {
     const unsub = window.hermesDesktop?.islandOverlay?.onState(payload => setState(payload))
+
     return () => unsub?.()
   }, [])
 
   useEffect(() => {
     const unsub = window.hermesDesktop?.islandOverlay?.onCard(next => setCard(next))
+
     return () => unsub?.()
   }, [])
 
   useEffect(() => {
     const unsub = window.hermesDesktop?.islandOverlay?.onActivity(next => setActivity(next))
+
     return () => unsub?.()
   }, [])
 
@@ -37,6 +40,7 @@ export function VoiceIslandApp() {
 
   useEffect(() => {
     const off = window.hermesDesktop?.islandOverlay?.onSummon(() => setSummoned(true))
+
     return () => off?.()
   }, [])
 
@@ -46,6 +50,7 @@ export function VoiceIslandApp() {
     // controls are clickable/typeable.
     const interactive = summoned || Boolean(card?.actions?.length)
     window.hermesDesktop?.islandOverlay?.setIgnoreMouse(!interactive)
+
     return () => {
       // Never leave the stage window mouse-capturing if this unmounts.
       window.hermesDesktop?.islandOverlay?.setIgnoreMouse(true)
@@ -62,6 +67,7 @@ export function VoiceIslandApp() {
 
   const handleCardAction = (payload: CardAction) => {
     window.hermesDesktop?.islandOverlay?.cardAction(payload)
+
     if (payload.type === 'dismiss') {
       setCard(null)
     }
@@ -71,9 +77,11 @@ export function VoiceIslandApp() {
 
   const submitSummon = (text: string) => {
     const trimmed = text.trim()
+
     if (trimmed) {
       window.hermesDesktop?.islandOverlay?.cardAction({ type: 'submit', text: trimmed })
     }
+
     setSummoned(false)
   }
 
@@ -92,13 +100,13 @@ export function VoiceIslandApp() {
     >
       <div style={{ pointerEvents: interactive ? 'auto' : 'none' }}>
         <DynamicIsland
-          state={state}
-          card={card}
           activity={activity}
+          card={card}
           onCardAction={handleCardAction}
-          summoned={summoned}
-          onSummonSubmit={submitSummon}
           onSummonCancel={closeSummon}
+          onSummonSubmit={submitSummon}
+          state={state}
+          summoned={summoned}
         />
       </div>
     </div>

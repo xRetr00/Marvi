@@ -1,13 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 
+import { useDuplexVoice } from '@/app/voice-island/use-duplex-voice'
 import { useI18n } from '@/i18n'
 import { chatMessageText } from '@/lib/chat-messages'
 import { triggerHaptic } from '@/lib/haptics'
 import { resetBrowseState } from '@/store/composer-input-history'
 import { notifyError } from '@/store/notifications'
 import { $messages } from '@/store/session'
-import { publishBargeInEnabled, publishConversation } from '@/store/voice-presence'
 import { $autoSpeakReplies, setAutoSpeakReplies } from '@/store/voice-prefs'
+import { publishBargeInEnabled, publishConversation, setUserCaption, type VoiceStatus } from '@/store/voice-presence'
 
 import { onComposerVoiceToggleRequest } from '../focus'
 import type { ChatBarProps } from '../types'
@@ -57,6 +58,8 @@ export function useComposerVoice({
   const { t } = useI18n()
   const [voiceConversationActive, setVoiceConversationActive] = useState(false)
   const lastSpokenIdRef = useRef<string | null>(null)
+  const duplex = useDuplexVoice(voiceConversationActive)
+  const legacyVoiceEnabled = voiceConversationActive && duplex.status === 'unavailable'
 
   const { dictate, voiceActivityState, voiceStatus } = useVoiceRecorder({
     focusInput,
@@ -111,7 +114,7 @@ export function useComposerVoice({
     bargeInEnabled,
     busy,
     consumePendingResponse,
-    enabled: voiceConversationActive,
+    enabled: legacyVoiceEnabled,
     onFatalError: () => setVoiceConversationActive(false),
     onInterrupt: onCancel,
     onSubmit: submitVoiceTurn,
@@ -128,14 +131,29 @@ export function useComposerVoice({
   })
 
   useEffect(() => {
+    const duplexStatus: VoiceStatus =
+      duplex.state.phase === 'listening'
+        ? 'listening'
+        : duplex.state.phase === 'replying'
+          ? 'thinking'
+          : duplex.state.phase === 'speaking'
+            ? 'speaking'
+            : 'idle'
+
     publishConversation({
       active: voiceConversationActive,
-      status: conversation.status,
-      level: conversation.level,
-      muted: conversation.muted,
-      caption: conversation.caption
+      status: duplex.status === 'active' ? duplexStatus : conversation.status,
+      level: duplex.status === 'active' ? duplex.level : conversation.level,
+      muted: duplex.status === 'active' ? false : conversation.muted,
+      caption: duplex.status === 'active' ? duplex.state.replyText : conversation.caption
     })
-  }, [conversation.caption, conversation.level, conversation.muted, conversation.status, voiceConversationActive])
+
+    if (duplex.status === 'active') {
+      setUserCaption(duplex.state.partialCaption ?? duplex.state.utteranceCaption)
+    } else if (!voiceConversationActive) {
+      setUserCaption(null)
+    }
+  }, [conversation.caption, conversation.level, conversation.muted, conversation.status, duplex.level, duplex.state, duplex.status, voiceConversationActive])
 
   // duplex phase 3: one flag drives the island's "interrupt" affordance across
   // every mode (both speak paths arm barge-in from this same prop).

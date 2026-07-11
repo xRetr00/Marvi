@@ -13104,6 +13104,12 @@ def main():
     _add_presence_parser(subparsers)
 
     # =========================================================================
+    # voice command — Marvi duplex voice speaker enrollment (owner/guest)
+    # =========================================================================
+    from hermes_cli.voice_cmd import add_parser as _add_voice_parser
+    _add_voice_parser(subparsers)
+
+    # =========================================================================
     # kanban command — multi-profile collaboration board
     # =========================================================================
     from hermes_cli.kanban import build_parser as _build_kanban_parser

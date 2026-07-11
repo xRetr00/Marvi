@@ -28,6 +28,7 @@ import json
 import logging
 import mimetypes
 import os
+import queue
 import re
 import secrets
 import shlex
@@ -15897,6 +15898,679 @@ async def wake_word_stream_ws(ws: WebSocket) -> None:
                 await asyncio.to_thread(spotter.stop)
             except Exception:
                 pass
+
+# ---------------------------------------------------------------------------
+# /api/voice/duplex — Marvi duplex voice: instant lane + escalation router.
+#
+# Protocol pinned in
+# docs/superpowers/specs/2026-07-10-marvi-duplex-voice-splitbrain-design.md
+# (shared contract with the desktop client workstream — event names/shapes
+# below must not drift from that doc).
+#
+# Reuses, rather than reinvents:
+#   - The Parakeet streaming-session pattern (partials + EOU) from
+#     ``transcribe_audio_stream_ws`` above (_ParakeetSubprocessSession,
+#     the warm-session pool).
+#   - The streaming TTS generator ``tools.tts_tool.stream_text_to_speech_chunks``
+#     (same one ``/api/audio/speak/stream`` drives).
+#   - ``tools.vad.SpeechGate`` for barge-in detection during the TTS window.
+#   - ``run_agent.AIAgent`` itself (via ``_duplex_run_deep_task``) for the
+#     escalated deep task — full real system-prompt building (persona, tool
+#     definitions, context files, memory), the same "child gets a real agent"
+#     shape ``tools/delegate_tool.py`` uses for subagents. No hand-rolled
+#     prompt, no new agent runner.
+# ---------------------------------------------------------------------------
+
+_DUPLEX_ROLLING_TURNS = 20
+_DUPLEX_BARGE_IN_STREAK_MS = 260.0
+_DUPLEX_UTTERANCE_AUDIO_CAP_CHUNKS = 1000
+# Sentinel telling _pump_deep_tasks to stop -- distinct from None, which
+# _get_deep_task_item also returns on a plain poll timeout (no item yet).
+_DUPLEX_DEEP_TASK_STOP = object()
+
+_SENTENCE_END_CHARS = ".!?\n"
+
+
+def _split_ready_sentences(buffer: str) -> tuple[list[str], str]:
+    """Pop complete sentence-ish segments off ``buffer``; return (segments, remainder).
+
+    Flushes everything up to and including the LAST sentence-ending
+    character seen so far, leaving any trailing partial sentence buffered
+    for the next call. Pure and dependency-free so it's trivially unit
+    tested without a TTS provider.
+    """
+    idx = -1
+    for i, ch in enumerate(buffer):
+        if ch in _SENTENCE_END_CHARS:
+            idx = i
+    if idx < 0:
+        return [], buffer
+    ready = buffer[: idx + 1].strip()
+    rest = buffer[idx + 1:]
+    return ([ready] if ready else []), rest
+
+
+def _duplex_pcm16_to_float32(chunk: bytes) -> list[float]:
+    """Decode 16 kHz mono PCM16 bytes to float32 samples in [-1, 1] for
+    ``tools.vad.SpeechGate.accept`` (which expects float samples, unlike the
+    raw bytes ``_ParakeetSubprocessSession.accept_bytes`` and
+    ``tools.voice_speaker_id.identify`` take directly)."""
+    if len(chunk) % 2:
+        chunk = chunk[: len(chunk) - 1]
+    pcm = array("h")
+    pcm.frombytes(chunk)
+    if sys.byteorder != "little":
+        pcm.byteswap()
+    return [max(-1.0, min(1.0, sample / 32768.0)) for sample in pcm]
+
+
+class _InstantLaneUnavailable(RuntimeError):
+    """Raised when the instant-lane model can't be reached at all (as opposed
+    to failing mid-reply, which is treated as a partial answer)."""
+
+
+def _duplex_stt_session(stt_cfg: dict[str, Any]) -> "_ParakeetSubprocessSession":
+    """Acquire a Parakeet streaming session, preferring the warm pool.
+
+    Thin seam: tests monkeypatch this instead of spawning the real
+    subprocess helper.
+    """
+    session = _take_warm_parakeet_session(stt_cfg)
+    if session is None:
+        session = _ParakeetSubprocessSession(stt_cfg)
+    return session
+
+
+def _duplex_identify_speaker(pcm16_bytes: bytes) -> Tuple[str, float]:
+    from tools.voice_speaker_id import identify
+
+    return identify(pcm16_bytes)
+
+
+def _duplex_stream_instant_reply(transcript, utterance: str, *, allow_escalation: bool):
+    from tools.voice_instant_lane import stream_instant_reply
+
+    return stream_instant_reply(transcript, utterance, allow_escalation=allow_escalation)
+
+
+def _duplex_stream_tts_chunks(text: str):
+    from tools.tts_tool import stream_text_to_speech_chunks
+
+    return stream_text_to_speech_chunks(text)
+
+
+def _duplex_make_vad_gate():
+    from tools.vad import make_speech_gate
+
+    return make_speech_gate()
+
+
+# Toolsets granted to the escalated deep-task agent. Deliberately excludes
+# "terminal"/"delegation": a voice-triggered background task runs unattended
+# off a (possibly misheard) spoken ask, so it gets a capable-but-bounded
+# surface (file/search/web/memory, per the design review) rather than full
+# shell access or the ability to spawn further subagents.
+_DUPLEX_DEEP_TASK_TOOLSETS = ["file", "search", "web", "memory"]
+
+
+def _duplex_run_deep_task(transcript_messages: List[Dict[str, str]], task_text: str) -> str:
+    """Run the escalated ask on a REAL tool-armed agent turn.
+
+    Deliberately NOT the desktop chat WS's machinery: that runs through
+    ``/api/pty`` spawning a full ``hermes`` CLI subprocess (see
+    ``hermes_cli/web_server.py``'s ``pty_ws``) or the ``tui_gateway`` JSON-RPC
+    session dispatcher (``/api/ws``) — both built around an interactive
+    client attached to a live session, neither a fit for a one-shot
+    background turn. Also deliberately NOT a hand-rolled "you are an
+    assistant" prompt — that's exactly the hallucination risk full system-
+    prompt building avoids.
+
+    Instead this constructs a fresh :class:`run_agent.AIAgent` with no
+    explicit provider/model/base_url/api_key override, so it resolves the
+    user's configured MAIN model and builds its full real system prompt
+    (persona, tool definitions, context files, memory) exactly like an
+    ordinary top-level ``hermes`` conversation — the same "child gets a real
+    agent" shape ``tools/delegate_tool.py`` uses to spawn subagents (goal +
+    context -> ephemeral history, restricted toolset), adapted here for a
+    standalone turn since there's no live parent ``AIAgent`` in this process
+    to inherit runtime/toolsets from.
+
+    ``transcript_messages`` (the duplex session's rolling transcript) is
+    threaded in as ``conversation_history`` so the deep turn has the voice
+    conversation as context. Blocks the calling thread until the turn
+    completes; callers run this on a background thread.
+    """
+    from run_agent import AIAgent
+
+    history = [dict(m) for m in transcript_messages if isinstance(m, dict) and m.get("content")]
+
+    agent = AIAgent(
+        quiet_mode=True,
+        verbose_logging=False,
+        enabled_toolsets=_DUPLEX_DEEP_TASK_TOOLSETS,
+        platform="voice",
+    )
+    result = agent.run_conversation(task_text, conversation_history=history or None)
+    if isinstance(result, dict):
+        final_response = str(result.get("final_response") or "").strip()
+        if not final_response and result.get("error"):
+            raise RuntimeError(str(result.get("error")))
+        return final_response
+    return str(result or "").strip()
+
+
+class _DuplexTtsCycle:
+    """Tracks one ``tts_start``/``tts_chunk``*/``tts_end`` cycle.
+
+    A "cycle" spans the WHOLE reply (possibly several synthesized segments
+    as text accumulates sentence-by-sentence) — NOT each individual call to
+    ``stream_text_to_speech_chunks``, whose own per-call "start"/"end"
+    framing events are intentionally swallowed here.
+    """
+
+    def __init__(self, session: "_DuplexSession") -> None:
+        self._session = session
+        self._started = False
+        self._seq = 0
+
+    def speak(self, text: str, cancel_event: threading.Event) -> bool:
+        """Synthesize + emit ``text``. Returns False if cancelled mid-flight."""
+        text = (text or "").strip()
+        if not text:
+            return True
+        try:
+            events = _duplex_stream_tts_chunks(text)
+        except Exception as exc:
+            _log.warning("Voice duplex: TTS unavailable: %s", exc)
+            return True  # degrade silently — no audio, don't kill the turn
+        try:
+            for event in events:
+                if cancel_event.is_set():
+                    return False
+                if not isinstance(event, dict) or event.get("type") != "chunk":
+                    continue
+                if not self._started:
+                    self._session._emit_sync({"type": "tts_start"})
+                    self._started = True
+                self._seq += 1
+                self._session._emit_sync(
+                    {"type": "tts_chunk", "data": event.get("audio"), "seq": self._seq}
+                )
+        except Exception as exc:
+            _log.warning("Voice duplex: TTS stream failed mid-reply: %s", exc)
+        return not cancel_event.is_set()
+
+    def end(self) -> None:
+        if self._started:
+            self._session._emit_sync({"type": "tts_end"})
+            self._started = False
+            self._seq = 0
+
+
+class _DuplexSession:
+    """Per-connection orchestrator for ``/api/voice/duplex``.
+
+    Two states:
+
+    - ``listening``: incoming audio feeds the Parakeet STT session; once its
+      realtime-EOU model flags end-of-utterance, the utterance is finalized
+      and handed to the instant lane / escalation pipeline (state flips to
+      ``speaking``).
+    - ``speaking``: incoming audio instead feeds a VAD gate watching for
+      barge-in; sustained speech cancels the in-flight instant/TTS turn,
+      emits ``barge_in``, and the triggering audio seeds the next utterance
+      (state flips back to ``listening``).
+
+    The instant-lane + TTS pipeline for one turn runs synchronously on a
+    single worker thread (via ``asyncio.to_thread``) so it can stream
+    ``instant_delta``/``tts_chunk`` events out as they're produced while the
+    event loop keeps servicing incoming audio (barge-in) concurrently. That
+    worker thread schedules its outbound events back onto the loop with
+    ``asyncio.run_coroutine_threadsafe`` (see ``_emit_sync``), mirroring
+    ``tui_gateway.ws.WSTransport``'s cross-thread write pattern.
+    """
+
+    def __init__(self, ws: WebSocket, cfg: Dict[str, Any]) -> None:
+        self.ws = ws
+        self.cfg = cfg
+        self.stt_cfg = (cfg.get("stt") or {}) if isinstance(cfg, dict) else {}
+        self.loop = asyncio.get_event_loop()
+        self.send_lock = asyncio.Lock()
+        self.transcript = None
+        self.stt_session: Optional["_ParakeetSubprocessSession"] = None
+        self.state = "listening"
+        self.vad_gate = None
+        self._barge_streak_ms = 0.0
+        self._utterance_audio: List[bytes] = []
+        self._speaking_task: Optional[asyncio.Task] = None
+        self._cancel_speaking = threading.Event()
+        self._deep_task_queue: "queue.Queue[Optional[dict]]" = queue.Queue()
+        self._deep_task_pump: Optional[asyncio.Task] = None
+        self._task_counter = 0
+        self._closed = False
+
+    async def start(self) -> None:
+        from tools.voice_instant_lane import RollingTranscript
+
+        self.transcript = RollingTranscript(max_turns=_DUPLEX_ROLLING_TURNS)
+        try:
+            self.stt_session = await asyncio.to_thread(_duplex_stt_session, self.stt_cfg)
+            await asyncio.to_thread(self.stt_session.begin)
+        except Exception as exc:
+            _log.warning("Voice duplex: STT session unavailable: %s", exc)
+            self.stt_session = None
+            await self._send({"type": "error", "error": f"speech recognition unavailable: {exc}"})
+        self._deep_task_pump = asyncio.create_task(self._pump_deep_tasks())
+        await self._send({"type": "ready"})
+
+    async def _send(self, payload: dict) -> None:
+        if self._closed:
+            return
+        async with self.send_lock:
+            try:
+                await self.ws.send_json(payload)
+            except Exception:
+                self._closed = True
+
+    def _emit_sync(self, payload: dict) -> None:
+        """Schedule an outbound frame from a worker thread — fire-and-forget.
+
+        Deliberately does NOT block the calling worker thread on the send's
+        completion (no ``future.result()`` wait): raw Python threads are not
+        preemptible, so a worker blocked on a cross-thread wait can only be
+        unblocked by that wait itself returning. A stalled/disconnected
+        client can make ``self.ws.send_json`` (and thus ``self._send``) hang
+        indefinitely; if this method waited on that, the worker thread would
+        hang too, and since ``asyncio.to_thread`` runs on the loop's default
+        executor, an eventual ``executor.shutdown(wait=True)`` at interpreter/
+        loop teardown would then hang the whole process (in-progress
+        ``ThreadPoolExecutor`` work cannot be cancelled). Scheduling via
+        ``call_soon_threadsafe`` + ``create_task`` instead hands the actual
+        send to the event loop, which — unlike a raw thread — DOES get
+        cancelled cleanly on shutdown. Ordering is preserved: callbacks
+        scheduled via ``call_soon_threadsafe`` from one thread run in
+        scheduling order, and ``_send``'s ``send_lock`` serializes the actual
+        writes to match.
+        """
+        if self._closed:
+            return
+        try:
+            self.loop.call_soon_threadsafe(self._schedule_send, payload)
+        except Exception:
+            pass
+
+    def _schedule_send(self, payload: dict) -> None:
+        """Runs on the loop thread (via ``call_soon_threadsafe``); creates
+        the actual send as a task instead of awaiting it inline so the
+        ``call_soon_threadsafe`` callback itself returns immediately."""
+        if self._closed:
+            return
+        self.loop.create_task(self._send(payload))
+
+    # -- inbound audio -----------------------------------------------------
+
+    async def on_audio(self, chunk: bytes) -> None:
+        if not chunk:
+            return
+        if self.state == "listening":
+            await self._feed_stt(chunk)
+        else:
+            await self._feed_barge_in(chunk)
+
+    async def on_playback_done(self) -> None:
+        # No forced state transition — listening/speaking is driven by the
+        # turn lifecycle + barge-in, not by playback acks. Accepted so the
+        # protocol message isn't treated as unknown.
+        return
+
+    def _accept_stt_chunk(self, chunk: bytes) -> Tuple[str, bool, float]:
+        partial = self.stt_session.accept_bytes(chunk)
+        eou = bool(getattr(self.stt_session, "last_eou", False))
+        eou_prob = float(getattr(self.stt_session, "last_eou_prob", 0.0) or 0.0)
+        return partial, eou, eou_prob
+
+    async def _feed_stt(self, chunk: bytes) -> None:
+        if self.stt_session is None:
+            return
+        self._utterance_audio.append(chunk)
+        if len(self._utterance_audio) > _DUPLEX_UTTERANCE_AUDIO_CAP_CHUNKS:
+            self._utterance_audio.pop(0)
+        try:
+            partial, eou, eou_prob = await asyncio.to_thread(self._accept_stt_chunk, chunk)
+        except Exception as exc:
+            _log.warning("Voice duplex: STT accept failed: %s", exc)
+            return
+        if partial:
+            await self._send({"type": "partial", "text": partial, "eou_prob": eou_prob})
+        if eou:
+            await self._finalize_utterance()
+
+    async def _finalize_utterance(self) -> None:
+        try:
+            text = (await asyncio.to_thread(self.stt_session.finish) or "").strip()
+        except Exception as exc:
+            _log.warning("Voice duplex: STT finalize failed: %s", exc)
+            text = ""
+
+        pcm = b"".join(self._utterance_audio)
+        self._utterance_audio = []
+        try:
+            # Re-arm immediately so the next utterance isn't dropped while
+            # this one is being answered.
+            await asyncio.to_thread(self.stt_session.begin)
+        except Exception as exc:
+            _log.warning("Voice duplex: STT re-arm failed: %s", exc)
+
+        if not text:
+            return
+
+        try:
+            from tools.voice_residency import note_voice_activity
+
+            note_voice_activity()
+        except Exception:
+            pass
+
+        speaker_label, _score = await asyncio.to_thread(_duplex_identify_speaker, pcm)
+        await self._send({"type": "utterance", "text": text, "speaker": speaker_label})
+        self.transcript.add("user", text)
+
+        self.state = "speaking"
+        self._cancel_speaking = threading.Event()
+        cancel_event = self._cancel_speaking
+        self._speaking_task = asyncio.create_task(self._run_turn(text, speaker_label, cancel_event))
+
+    async def _feed_barge_in(self, chunk: bytes) -> None:
+        if self.vad_gate is None:
+            self.vad_gate = await asyncio.to_thread(_duplex_make_vad_gate)
+        if self.vad_gate is None:
+            return  # VAD unavailable — no barge-in detection this session
+        samples = _duplex_pcm16_to_float32(chunk)
+        await asyncio.to_thread(self.vad_gate.accept, samples)
+        chunk_ms = (len(chunk) / 2.0) / 16000.0 * 1000.0
+        has_speech = await asyncio.to_thread(
+            self.vad_gate.has_recent_speech, max(80, int(chunk_ms) + 40)
+        )
+        self._barge_streak_ms = (self._barge_streak_ms + chunk_ms) if has_speech else 0.0
+        if self._barge_streak_ms >= _DUPLEX_BARGE_IN_STREAK_MS:
+            await self._trigger_barge_in(chunk)
+
+    async def _trigger_barge_in(self, triggering_chunk: bytes) -> None:
+        self._cancel_speaking.set()
+        await self._send({"type": "barge_in"})
+        task = self._speaking_task
+        if task is not None:
+            try:
+                await task
+            except Exception:
+                pass
+            self._speaking_task = None
+        self._barge_streak_ms = 0.0
+        self.vad_gate = None
+        self.state = "listening"
+        self._utterance_audio = [triggering_chunk]
+        if self.stt_session is None:
+            return
+        try:
+            partial, eou, eou_prob = await asyncio.to_thread(self._accept_stt_chunk, triggering_chunk)
+        except Exception:
+            return
+        if partial:
+            await self._send({"type": "partial", "text": partial, "eou_prob": eou_prob})
+        if eou:
+            # The triggering chunk itself completed an utterance (e.g. a
+            # short, immediately-final barge-in) — surface it right away
+            # instead of silently discarding the EOU signal and waiting for
+            # a chunk that will never come.
+            await self._finalize_utterance()
+
+    # -- turn orchestration (instant lane + TTS + escalation) --------------
+
+    def _escalation_allowed(self, speaker_label: str) -> bool:
+        from tools.voice_instant_lane import escalation_enabled
+        from tools.voice_speaker_id import require_owner_for_escalation
+
+        if not escalation_enabled(self.cfg):
+            return False
+        if require_owner_for_escalation(self.cfg) and speaker_label != "owner":
+            return False
+        return True
+
+    async def _run_turn(self, utterance_text: str, speaker_label: str, cancel_event: threading.Event) -> None:
+        allow_escalation = self._escalation_allowed(speaker_label)
+        try:
+            result_text, _task_id = await asyncio.to_thread(
+                self._drive_instant_lane_sync, utterance_text, allow_escalation, cancel_event
+            )
+        except _InstantLaneUnavailable as exc:
+            await self._send({"type": "error", "error": str(exc)})
+            if allow_escalation:
+                self._task_counter += 1
+                task_id = f"voice-{self._task_counter}"
+                self._start_deep_task_sync(task_id, utterance_text, cancel_event)
+            if not cancel_event.is_set():
+                self.state = "listening"
+            return
+
+        if result_text:
+            self.transcript.add("assistant", result_text)
+        if not cancel_event.is_set():
+            self.state = "listening"
+
+    def _drive_instant_lane_sync(
+        self, utterance_text: str, allow_escalation: bool, cancel_event: threading.Event,
+    ) -> Tuple[Optional[str], Optional[str]]:
+        from tools.voice_instant_lane import EscalationStream
+
+        parser = EscalationStream()
+        tts = _DuplexTtsCycle(self)
+        tts_buffer = ""
+        full_reply = ""
+        got_any_delta = False
+
+        try:
+            deltas = _duplex_stream_instant_reply(
+                self.transcript, utterance_text, allow_escalation=allow_escalation,
+            )
+            for delta in deltas:
+                if cancel_event.is_set():
+                    return None, None
+                if not delta:
+                    continue
+                got_any_delta = True
+                reply_piece = parser.feed(delta)
+                if not reply_piece:
+                    continue
+                full_reply += reply_piece
+                self._emit_sync({"type": "instant_delta", "text": reply_piece})
+                tts_buffer += reply_piece
+                ready, tts_buffer = _split_ready_sentences(tts_buffer)
+                for sentence in ready:
+                    if cancel_event.is_set() or not tts.speak(sentence, cancel_event):
+                        return None, None
+        except Exception as exc:
+            if got_any_delta:
+                _log.warning("Voice duplex: instant lane failed mid-reply: %s", exc)
+            else:
+                raise _InstantLaneUnavailable(f"instant voice lane unavailable: {exc}") from exc
+
+        if cancel_event.is_set():
+            return None, None
+
+        result = parser.finish()
+        if result.escalate and allow_escalation:
+            self._task_counter += 1
+            task_id = f"voice-{self._task_counter}"
+            self._emit_sync({"type": "instant_done", "text": ""})
+            self._emit_sync({"type": "escalated", "task_id": task_id, "ack_text": result.text})
+            ack_cycle = _DuplexTtsCycle(self)
+            ack_cycle.speak(result.text, cancel_event)
+            ack_cycle.end()
+            self._start_deep_task_sync(task_id, utterance_text, cancel_event)
+            return None, task_id
+
+        if result.escalate:
+            full_reply = result.text
+            tts_buffer = result.text
+
+        if tts_buffer.strip():
+            if not tts.speak(tts_buffer, cancel_event):
+                return None, None
+        tts.end()
+        self._emit_sync({"type": "instant_done", "text": full_reply})
+        return full_reply, None
+
+    def _start_deep_task_sync(self, task_id: str, utterance_text: str, _cancel_event: threading.Event) -> None:
+        # Barge-in during the escalation ack does NOT cancel the background
+        # deep task (spec) — this thread is deliberately independent of
+        # cancel_event once started.
+        transcript_messages = self.transcript.as_messages() if self.transcript is not None else []
+
+        def _worker() -> None:
+            try:
+                result_text = _duplex_run_deep_task(transcript_messages, utterance_text)
+                self._deep_task_queue.put({"task_id": task_id, "text": result_text, "ok": True})
+            except Exception as exc:
+                self._deep_task_queue.put({"task_id": task_id, "error": str(exc), "ok": False})
+
+        threading.Thread(target=_worker, name=f"voice-duplex-deep-{task_id}", daemon=True).start()
+
+    def _get_deep_task_item(self, timeout: float = 1.0) -> Optional[dict]:
+        """Bounded poll of the deep-task result queue.
+
+        A plain (unbounded) ``queue.Queue.get()`` here — run via
+        ``asyncio.to_thread`` — would occupy an executor thread until an item
+        arrives, with no way to interrupt it if the ``close()``-time stop
+        sentinel is ever lost to a race; that thread would then hang
+        ``executor.shutdown(wait=True)`` at loop/interpreter teardown (worker
+        threads aren't cancellable). Polling with a short timeout instead
+        bounds every iteration, so :meth:`close` setting ``self._closed`` is
+        always observed within ``timeout`` seconds even without the sentinel.
+        """
+        try:
+            return self._deep_task_queue.get(timeout=timeout)
+        except queue.Empty:
+            return None
+
+    async def _pump_deep_tasks(self) -> None:
+        while True:
+            item = await asyncio.to_thread(self._get_deep_task_item)
+            if item is None:
+                if self._closed:
+                    return
+                continue  # poll timeout, nothing queued yet — keep waiting
+            if item is _DUPLEX_DEEP_TASK_STOP:
+                return
+            task_id = item.get("task_id")
+            if item.get("ok"):
+                text = item.get("text") or ""
+                if self.transcript is not None:
+                    self.transcript.add("assistant", text)
+                await self._send({"type": "deep_result", "task_id": task_id, "text": text})
+                await asyncio.to_thread(self._speak_full_sync, text)
+            else:
+                err = item.get("error") or "deep task failed"
+                await self._send({"type": "error", "error": err})
+                apology = "Sorry, I hit a snag working on that — want me to try again?"
+                await self._send({"type": "deep_result", "task_id": task_id, "text": apology})
+                await asyncio.to_thread(self._speak_full_sync, apology)
+
+    def _speak_full_sync(self, text: str) -> None:
+        cycle = _DuplexTtsCycle(self)
+        cycle.speak(text, threading.Event())
+        cycle.end()
+
+    async def close(self) -> None:
+        self._closed = True
+        self._cancel_speaking.set()
+        task = self._speaking_task
+        if task is not None:
+            try:
+                # Bounded defense-in-depth: cancel_event makes the worker
+                # thread return promptly in the normal case, but a raw
+                # thread blocked in a real network call can't be preempted.
+                # Give up waiting rather than hang the WS teardown forever;
+                # the orphaned thread finishes on its own and is harmless.
+                await asyncio.wait_for(task, timeout=30.0)
+            except Exception:
+                pass
+        if self._deep_task_pump is not None:
+            try:
+                self._deep_task_queue.put(_DUPLEX_DEEP_TASK_STOP)
+            except Exception:
+                pass
+            try:
+                await asyncio.wait_for(self._deep_task_pump, timeout=30.0)
+            except Exception:
+                pass
+        if self.stt_session is not None:
+            try:
+                await asyncio.to_thread(_return_warm_parakeet_session, self.stt_session, self.stt_cfg)
+            except Exception:
+                try:
+                    await asyncio.to_thread(self.stt_session.close)
+                except Exception:
+                    pass
+
+
+@app.websocket("/api/voice/duplex")
+async def voice_duplex_ws(ws: WebSocket) -> None:
+    if not await _accept_audio_ws(ws, "voice-duplex"):
+        return
+
+    cfg = load_config()
+    session = _DuplexSession(ws, cfg)
+    try:
+        await session.start()
+    except Exception:
+        _log.exception("Voice duplex: session start failed")
+        try:
+            await ws.close(code=1011)
+        except Exception:
+            pass
+        return
+
+    try:
+        while True:
+            msg = await ws.receive()
+            if msg.get("type") == "websocket.disconnect":
+                break
+
+            text = msg.get("text")
+            if not text:
+                continue
+            try:
+                payload = json.loads(text)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(payload, dict):
+                continue
+
+            mtype = payload.get("type")
+            if mtype == "audio":
+                raw = payload.get("data")
+                if not raw:
+                    continue
+                try:
+                    chunk = base64.b64decode(raw)
+                except (binascii.Error, ValueError):
+                    continue
+                await session.on_audio(chunk)
+            elif mtype == "playback_done":
+                await session.on_playback_done()
+            elif mtype == "stop":
+                break
+    except WebSocketDisconnect:
+        pass
+    except Exception:
+        _log.exception("Voice duplex session failed")
+        try:
+            await ws.send_json({"type": "error", "error": "voice duplex session failed"})
+        except Exception:
+            pass
+    finally:
+        await session.close()
+
 
 # ---------------------------------------------------------------------------
 # /api/console — safe Hermes Console command WebSocket.

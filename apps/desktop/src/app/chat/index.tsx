@@ -7,7 +7,7 @@ import {
 import { useStore } from '@nanostores/react'
 import { useQuery } from '@tanstack/react-query'
 import type * as React from 'react'
-import { Suspense, useCallback, useEffect, useMemo, useRef } from 'react'
+import { Suspense, useCallback, useMemo, useRef } from 'react'
 import { useLocation } from 'react-router-dom'
 
 import { Thread } from '@/components/assistant-ui/thread'
@@ -68,6 +68,7 @@ import { useFileDropZone } from './hooks/use-file-drop-zone'
 import { ScrollToBottomButton } from './scroll-to-bottom-button'
 import { SessionActionsMenu } from './sidebar/session-actions-menu'
 import { threadLoadingState } from './thread-loading'
+import { VoiceModeOverlay } from './voice-mode-overlay'
 
 interface ChatViewProps extends Omit<React.ComponentProps<'div'>, 'onSubmit'> {
   gateway: HermesGateway | null
@@ -511,8 +512,8 @@ export function ChatView({
         {showChatBar && (
           <Suspense fallback={<ChatBarFallback />}>
             <ChatBar
-              busy={busy}
               bargeInEnabled={bargeInEnabled}
+              busy={busy}
               cwd={currentCwd}
               disabled={!gatewayOpen}
               focusKey={activeSessionId}
@@ -531,15 +532,16 @@ export function ChatView({
               onSteer={onSteer}
               onSubmit={onSubmit}
               onTranscribeAudio={onTranscribeAudio}
-              semanticTurnEnabled={semanticTurnEnabled}
-              streamingSttEnabled={streamingSttEnabled}
               queueSessionKey={selectedSessionId}
+              semanticTurnEnabled={semanticTurnEnabled}
               sessionId={activeSessionId}
               state={chatBarState}
+              streamingSttEnabled={streamingSttEnabled}
             />
           </Suspense>
         )}
       </ChatRuntimeBoundary>
+      <VoiceModeOverlay />
     </div>
   )
 }

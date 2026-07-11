@@ -1,10 +1,11 @@
-import { useEffect, useRef, useState } from 'react'
-
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
+import { useEffect, useRef, useState } from 'react'
 
 import type { IslandCard, IslandCardKind } from '@/lib/island-queue'
 import type { VoicePhase, VoiceState } from '@/store/voice-presence'
 
+import { isDuplexPhaseActive, resolveDuplexPresentation } from './duplex-presentation'
+import type { DuplexSessionState } from './duplex-session'
 import { IslandWaveform } from './island-waveform'
 
 type IslandView = 'seed' | 'idle' | 'expanded' | 'summon'
@@ -23,6 +24,12 @@ interface DynamicIslandProps {
   summoned?: boolean
   onSummonSubmit?: (text: string) => void
   onSummonCancel?: () => void
+  // Duplex voice (see duplex-session.ts): when present and not 'connecting'/
+  // 'closed', its presentation takes over the island's phase/label/caption
+  // in place of `state` above. `duplexLevel` is the duplex mic's own live
+  // amplitude (the legacy `state.level` only reflects the old voice loop).
+  duplex?: DuplexSessionState | null
+  duplexLevel?: number
 }
 
 const SEED_HEIGHT = 26
@@ -61,13 +68,18 @@ function phaseLabel(phase: VoicePhase): string {
   switch (phase) {
     case 'wake':
       return 'Listening'
+
     case 'listening':
+
     case 'transcribing':
       return 'Listening'
+
     case 'thinking':
       return 'Thinking'
+
     case 'speaking':
       return 'Speaking'
+
     default:
       return 'Ready'
   }
@@ -76,13 +88,18 @@ function phaseLabel(phase: VoicePhase): string {
 function phaseColor(phase: VoicePhase): string {
   switch (phase) {
     case 'wake':
+
     case 'listening':
+
     case 'transcribing':
       return '#6ea8ff'
+
     case 'thinking':
       return '#f5b95c'
+
     case 'speaking':
       return '#5cd97e'
+
     default:
       return '#8a8a8e'
   }
@@ -101,9 +118,11 @@ function resolveCaption(state: VoiceState): ActiveCaption | null {
   if (state.phase === 'speaking' && state.caption) {
     return { text: state.caption, who: 'marvi' }
   }
+
   if (state.userCaption) {
     return { text: state.userCaption, who: 'you' }
   }
+
   return null
 }
 
@@ -111,22 +130,27 @@ function resolveView(state: VoiceState, card: IslandCard | null, summoned: boole
   if (summoned) {
     return 'summon'
   }
+
   if (card) {
     return 'expanded'
   }
+
   if (state.phase === 'listening' || state.phase === 'speaking') {
     return 'expanded'
   }
+
   if (caption) {
     // A caption ready to show (e.g. user speech during transcribing/thinking)
     // earns the roomier expanded pill so the words aren't clipped.
     return 'expanded'
   }
+
   if (state.phase === 'off') {
     // Nothing happening — rest as a tiny ambient seed rather than the fuller
     // idle pill, so Marvi reads as present-but-quiet between turns.
     return 'seed'
   }
+
   return 'idle'
 }
 
@@ -137,21 +161,38 @@ export function DynamicIsland({
   onCardAction,
   summoned = false,
   onSummonSubmit,
-  onSummonCancel
+  onSummonCancel,
+  duplex,
+  duplexLevel
 }: DynamicIslandProps) {
   const reducedMotion = useReducedMotion()
-  const caption = resolveCaption(state)
-  const view = resolveView(state, card, summoned, caption)
-  const active = state.phase === 'listening' || state.phase === 'speaking'
-  const color = phaseColor(state.phase)
+
+  // Duplex (see duplex-session.ts) fully drives the presentation once it's
+  // live — 'connecting'/'closed' (or no duplex at all, the common case until
+  // the server endpoint ships) means "not active", so the legacy
+  // IPC-pushed `state` keeps driving the island exactly as before.
+  const duplexPresentation = duplex && isDuplexPhaseActive(duplex.phase) ? resolveDuplexPresentation(duplex) : null
+
+  const effectivePhase: VoicePhase = duplexPresentation?.phase ?? state.phase
+  const caption = duplexPresentation?.caption ?? resolveCaption(state)
+  const view = resolveView({ ...state, phase: effectivePhase }, card, summoned, caption)
+
+  const active = duplexPresentation
+    ? duplexPresentation.phase === 'listening' || duplexPresentation.phase === 'speaking' || duplexPresentation.phase === 'thinking'
+    : state.phase === 'listening' || state.phase === 'speaking'
+
+  const color = phaseColor(effectivePhase)
+  const level = duplexPresentation ? (duplexLevel ?? 0) : state.level
+  const bargeableNow = duplexPresentation ? duplexPresentation.bargeable : state.bargeable
   // While thinking, narrate the agent's current tool action instead of the
   // static "Thinking" label — falls back to it once activity clears (between
-  // tools) or for phases that don't carry an activity.
-  const narrating = (state.phase === 'thinking' || state.phase === 'transcribing') && Boolean(activity)
-  const label = narrating ? activity! : phaseLabel(state.phase)
+  // tools) or for phases that don't carry an activity. Duplex's own labels
+  // ("Replying" / "Answering" / "Speaking") always win over tool narration.
+  const narrating = !duplexPresentation && (state.phase === 'thinking' || state.phase === 'transcribing') && Boolean(activity)
+  const label = duplexPresentation?.label ?? (narrating ? activity! : phaseLabel(state.phase))
   // Thinking with a live user caption: the caption becomes the primary line
   // and the activity narration steps aside rather than stacking a third row.
-  const showActivityLabel = !(state.phase === 'thinking' && caption)
+  const showActivityLabel = duplexPresentation ? true : !(state.phase === 'thinking' && caption)
 
   const contentTransition = reducedMotion ? CONTENT_TRANSITION_INSTANT : CONTENT_TRANSITION_MOTION
   const springTransition = reducedMotion ? CONTENT_TRANSITION_INSTANT : SPRING
@@ -162,20 +203,22 @@ export function DynamicIsland({
   // Caption component's own AnimatePresence (keyed on who+text) should react
   // to text changes.
   const contentKey =
-    view === 'summon' ? 'summon' : card ? `card:${card.id}` : `state:${view}:${state.phase}:${narrating ? label : ''}`
+    view === 'summon' ? 'summon' : card ? `card:${card.id}` : `state:${view}:${effectivePhase}:${narrating ? label : ''}`
 
   const minWidth =
     view === 'seed' ? SEED_MIN_WIDTH : view === 'idle' ? IDLE_MIN_WIDTH : view === 'summon' ? SUMMON_WIDTH : undefined
+
   const minHeight = view === 'seed' ? SEED_HEIGHT : view === 'summon' ? SUMMON_HEIGHT : IDLE_HEIGHT
+
   const radius =
     view === 'seed' ? SEED_RADIUS : view === 'idle' ? IDLE_RADIUS : view === 'summon' ? SUMMON_RADIUS : EXPANDED_RADIUS
+
   const padY = view === 'seed' ? SEED_PAD_Y : PAD_Y
   const padX = view === 'seed' ? SEED_PAD_X : PAD_X
 
   return (
     <motion.div
       layout
-      transition={springTransition}
       style={{
         transformOrigin: 'center top',
         marginTop: 10,
@@ -194,67 +237,71 @@ export function DynamicIsland({
         color: '#f2f2f7',
         fontFamily: 'system-ui, -apple-system, sans-serif'
       }}
+      transition={springTransition}
     >
       <AnimatePresence mode="wait">
         {view === 'summon' ? (
           <motion.div
-            key={contentKey}
-            initial={reducedMotion ? false : { scale: 0.9, opacity: 0, filter: 'blur(6px)' }}
             animate={{ scale: 1, opacity: 1, filter: 'blur(0px)' }}
             exit={reducedMotion ? undefined : { scale: 0.9, opacity: 0, filter: 'blur(6px)' }}
-            transition={contentTransition}
+            initial={reducedMotion ? false : { scale: 0.9, opacity: 0, filter: 'blur(6px)' }}
+            key={contentKey}
             style={{ display: 'flex', alignItems: 'center', width: '100%' }}
+            transition={contentTransition}
           >
-            <SummonBar onSubmit={onSummonSubmit} onCancel={onSummonCancel} />
+            <SummonBar onCancel={onSummonCancel} onSubmit={onSummonSubmit} />
           </motion.div>
         ) : view === 'seed' ? (
           <motion.div
-            key={contentKey}
-            initial={reducedMotion ? false : { scale: 0.9, opacity: 0, filter: 'blur(6px)' }}
             animate={{ scale: 1, opacity: 1, filter: 'blur(0px)' }}
             exit={reducedMotion ? undefined : { scale: 0.9, opacity: 0, filter: 'blur(6px)' }}
-            transition={contentTransition}
+            initial={reducedMotion ? false : { scale: 0.9, opacity: 0, filter: 'blur(6px)' }}
+            key={contentKey}
             style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+            transition={contentTransition}
           >
             <SeedDot reducedMotion={Boolean(reducedMotion)} />
           </motion.div>
         ) : view === 'idle' ? (
           <motion.div
-            key={contentKey}
-            initial={reducedMotion ? false : { scale: 0.9, opacity: 0, filter: 'blur(6px)' }}
             animate={{ scale: 1, opacity: 1, filter: 'blur(0px)' }}
             exit={reducedMotion ? undefined : { scale: 0.9, opacity: 0, filter: 'blur(6px)' }}
-            transition={contentTransition}
+            initial={reducedMotion ? false : { scale: 0.9, opacity: 0, filter: 'blur(6px)' }}
+            key={contentKey}
             style={{ display: 'flex', alignItems: 'center', gap: 10 }}
+            transition={contentTransition}
           >
-            <StateDot color={color} active={active} reducedMotion={Boolean(reducedMotion)} />
-            <IslandWaveform level={state.level} active={active} width={64} height={24} />
+            <StateDot active={active} color={color} reducedMotion={Boolean(reducedMotion)} />
+            <IslandWaveform active={active} height={24} level={level} width={64} />
             <span style={{ fontSize: 12, fontWeight: 500, color: 'rgba(255,255,255,0.72)', whiteSpace: 'nowrap' }}>
               {label}
             </span>
           </motion.div>
         ) : (
           <motion.div
-            key={contentKey}
-            initial={reducedMotion ? false : { scale: 0.9, opacity: 0, filter: 'blur(6px)' }}
             animate={{ scale: 1, opacity: 1, filter: 'blur(0px)' }}
             exit={reducedMotion ? undefined : { scale: 0.9, opacity: 0, filter: 'blur(6px)' }}
+            initial={reducedMotion ? false : { scale: 0.9, opacity: 0, filter: 'blur(6px)' }}
+            key={contentKey}
             transition={contentTransition}
           >
             {card ? (
               <CardContent card={card} onCardAction={onCardAction} />
             ) : (
               <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6 }}>
-                <IslandWaveform level={state.level} active={active} width={300} height={72} />
+                <IslandWaveform active={active} height={72} level={level} width={300} />
                 {showActivityLabel ? (
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <StateDot color={color} active={active} reducedMotion={Boolean(reducedMotion)} />
+                    <StateDot active={active} color={color} reducedMotion={Boolean(reducedMotion)} />
                     <span style={{ fontSize: 13, fontWeight: 500, color: 'rgba(255,255,255,0.78)' }}>{label}</span>
+                    {duplexPresentation?.speakerBadge ? <SpeakerBadge speaker={duplexPresentation.speakerBadge} /> : null}
                   </div>
                 ) : null}
-                {caption ? <Caption text={caption.text} who={caption.who} reducedMotion={Boolean(reducedMotion)} /> : null}
-                {state.phase === 'speaking' && state.bargeable ? (
+                {caption ? <Caption reducedMotion={Boolean(reducedMotion)} text={caption.text} who={caption.who} /> : null}
+                {effectivePhase === 'speaking' && bargeableNow ? (
                   <InterruptHint reducedMotion={Boolean(reducedMotion)} />
+                ) : duplexPresentation?.deepWorking ? (
+                  <DeepWorkHint reducedMotion={Boolean(reducedMotion)} />
                 ) : null}
               </div>
             )}
@@ -272,15 +319,16 @@ function SeedDot({ reducedMotion }: { reducedMotion: boolean }) {
   return (
     <motion.span
       animate={reducedMotion ? { opacity: 1, scale: 1 } : { opacity: [0.35, 0.75, 0.35], scale: [0.9, 1, 0.9] }}
-      transition={reducedMotion ? undefined : { duration: 2.6, repeat: Infinity, ease: 'easeInOut' }}
       style={{
         display: 'inline-block',
         width: 6,
         height: 6,
         borderRadius: '50%',
-        background: '#6b6b78',
+        background: 'radial-gradient(circle at 32% 28%, #fff, #8b7cff 38%, #242033 76%)',
+        boxShadow: '0 0 10px rgba(139,124,255,0.55)',
         flexShrink: 0
       }}
+      transition={reducedMotion ? undefined : { duration: 2.6, repeat: Infinity, ease: 'easeInOut' }}
     />
   )
 }
@@ -293,15 +341,16 @@ function StateDot({ color, active, reducedMotion }: { color: string; active: boo
           ? { opacity: [0.5, 1, 0.5], scale: [0.9, 1.05, 0.9] }
           : { opacity: 1, scale: 1 }
       }
-      transition={active && !reducedMotion ? { duration: 1.6, repeat: Infinity, ease: 'easeInOut' } : undefined}
       style={{
         display: 'inline-block',
         width: 8,
         height: 8,
         borderRadius: '50%',
-        background: color,
+        background: `radial-gradient(circle at 32% 28%, #fff, ${color} 40%, #34255f 78%)`,
+        boxShadow: `0 0 12px color-mix(in srgb, ${color} 65%, transparent)`,
         flexShrink: 0
       }}
+      transition={active && !reducedMotion ? { duration: 1.6, repeat: Infinity, ease: 'easeInOut' } : undefined}
     />
   )
 }
@@ -316,15 +365,16 @@ function StateDot({ color, active, reducedMotion }: { color: string; active: boo
 // (user -> Marvi) also gets a clean crossfade rather than a jump-cut.
 function Caption({ text, who, reducedMotion }: { text: string; who: 'you' | 'marvi'; reducedMotion: boolean }) {
   const isUser = who === 'you'
+
   return (
     <AnimatePresence mode="wait">
       <motion.div
-        key={`${who}:${text}`}
-        initial={reducedMotion ? false : { opacity: 0 }}
         animate={{ opacity: 1 }}
         exit={reducedMotion ? undefined : { opacity: 0 }}
-        transition={reducedMotion ? CONTENT_TRANSITION_INSTANT : CONTENT_TRANSITION_MOTION}
+        initial={reducedMotion ? false : { opacity: 0 }}
+        key={`${who}:${text}`}
         style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2, maxWidth: 280 }}
+        transition={reducedMotion ? CONTENT_TRANSITION_INSTANT : CONTENT_TRANSITION_MOTION}
       >
         {isUser && (
           <span
@@ -369,8 +419,8 @@ function InterruptHint({ reducedMotion }: { reducedMotion: boolean }) {
     <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 2 }}>
       <motion.span
         animate={reducedMotion ? { opacity: 0.7 } : { opacity: [0.3, 0.9, 0.3] }}
-        transition={reducedMotion ? undefined : { duration: 1.4, repeat: Infinity, ease: 'easeInOut' }}
         style={{ display: 'inline-block', width: 5, height: 5, borderRadius: '50%', background: '#5cd97e', flexShrink: 0 }}
+        transition={reducedMotion ? undefined : { duration: 1.4, repeat: Infinity, ease: 'easeInOut' }}
       />
       <span
         style={{
@@ -387,6 +437,56 @@ function InterruptHint({ reducedMotion }: { reducedMotion: boolean }) {
   )
 }
 
+// Small, unobtrusive ongoing-work indicator (duplex escalation, spec section
+// 2): shown once the server hands back an `escalated` ack and clears once
+// its `deep_result` arrives, while the conversation otherwise keeps flowing
+// normally (listening/replying to further turns) — this is deliberately NOT
+// a blocking state, just a quiet "still working on that" marker.
+function DeepWorkHint({ reducedMotion }: { reducedMotion: boolean }) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 2 }}>
+      <motion.span
+        animate={reducedMotion ? { opacity: 0.7 } : { opacity: [0.3, 0.9, 0.3] }}
+        style={{ display: 'inline-block', width: 5, height: 5, borderRadius: '50%', background: '#f5b95c', flexShrink: 0 }}
+        transition={reducedMotion ? undefined : { duration: 1.6, repeat: Infinity, ease: 'easeInOut' }}
+      />
+      <span
+        style={{
+          fontSize: 10,
+          fontWeight: 500,
+          letterSpacing: '0.06em',
+          textTransform: 'uppercase',
+          color: 'rgba(255,255,255,0.4)'
+        }}
+      >
+        thinking deeper…
+      </span>
+    </div>
+  )
+}
+
+// Small pill next to the phase label when the duplex server attributes the
+// last utterance to someone other than the enrolled owner (speaker ID, spec
+// section 4). Deliberately tiny/muted — this is a hint, not an alert.
+function SpeakerBadge({ speaker }: { speaker: 'guest' | 'unknown' }) {
+  return (
+    <span
+      style={{
+        border: '0.5px solid rgba(255,255,255,0.18)',
+        borderRadius: 999,
+        color: 'rgba(255,255,255,0.45)',
+        fontSize: 9,
+        fontWeight: 600,
+        letterSpacing: '0.08em',
+        padding: '2px 6px',
+        textTransform: 'uppercase'
+      }}
+    >
+      {speaker === 'guest' ? 'guest' : 'unknown voice'}
+    </span>
+  )
+}
+
 // Card content sizes to its text instead of a fixed layout: short bodies get
 // a bigger font and hug their width, long bodies shrink and clamp to a few
 // lines with an ellipsis so the pill never blows past the expanded max width.
@@ -394,14 +494,18 @@ const CARD_MIN_WIDTH = 220
 const CARD_LONG_WIDTH = 300
 
 function bodyFontSize(length: number): number {
-  if (length <= 44) return 16
-  if (length <= 120) return 14
+  if (length <= 44) {return 16}
+
+  if (length <= 120) {return 14}
+
   return 13
 }
 
 function bodyLineClamp(length: number): number {
-  if (length <= 44) return 2
-  if (length <= 120) return 3
+  if (length <= 44) {return 2}
+
+  if (length <= 120) {return 3}
+
   return 4
 }
 
@@ -409,8 +513,10 @@ function titleColor(kind: IslandCardKind): string {
   switch (kind) {
     case 'result':
       return 'rgba(140,224,168,0.85)'
+
     case 'approval':
       return 'rgba(255,255,255,0.5)'
+
     default:
       return 'rgba(255,255,255,0.5)'
   }
@@ -420,8 +526,10 @@ function dotColor(kind: IslandCardKind): string | null {
   switch (kind) {
     case 'result':
       return '#5cd97e'
+
     case 'approval':
       return '#f5b95c'
+
     default:
       return null
   }
@@ -493,6 +601,7 @@ function CardContent({ card, onCardAction }: { card: IslandCard; onCardAction: (
                 if (action.value) {
                   onCardAction({ type: 'submit', text: action.value })
                 }
+
                 dismiss()
               }}
               style={{
@@ -527,6 +636,7 @@ function SummonBar({ onSubmit, onCancel }: { onSubmit?: (text: string) => void; 
     // The OS window has to become key first (setFocusable + focus happen in
     // the main process), so focus the input on the next frame.
     const raf = requestAnimationFrame(() => inputRef.current?.focus())
+
     return () => cancelAnimationFrame(raf)
   }, [])
 
@@ -554,11 +664,10 @@ function SummonBar({ onSubmit, onCancel }: { onSubmit?: (text: string) => void; 
         }}
       />
       <input
-        ref={inputRef}
-        value={value}
         onChange={e => setValue(e.target.value)}
         onKeyDown={handleKeyDown}
         placeholder="Ask Marvi…"
+        ref={inputRef}
         style={{
           flex: 1,
           minWidth: 0,
@@ -569,6 +678,7 @@ function SummonBar({ onSubmit, onCancel }: { onSubmit?: (text: string) => void; 
           fontSize: 14,
           fontFamily: 'inherit'
         }}
+        value={value}
       />
     </div>
   )

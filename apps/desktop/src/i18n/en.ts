@@ -66,14 +66,14 @@ export const en: Translations = {
     desktopBootFailedWithMessage: message => `Desktop boot failed: ${message}`,
     steps: {
       connectingGateway: 'Connecting live desktop gateway',
-      loadingSettings: 'Loading Hermes settings',
+      loadingSettings: 'Loading Marvi settings',
       loadingSessions: 'Loading recent sessions',
       startingDesktopConnection: 'Starting desktop connection',
       startingHermesDesktop: 'Starting Marvi Desktop…'
     },
     errors: {
-      backgroundExited: 'Hermes background process exited.',
-      backgroundExitedDuringStartup: 'Hermes background process exited during startup.',
+      backgroundExited: 'Marvi background process exited.',
+      backgroundExitedDuringStartup: 'Marvi background process exited during startup.',
       backendStopped: 'Backend stopped',
       desktopBootFailed: 'Desktop boot failed',
       gatewayConnectionLost: 'Lost connection to the gateway',
@@ -299,7 +299,7 @@ export const en: Translations = {
     exportConfig: 'Export config',
     importConfig: 'Import config',
     resetToDefaults: 'Reset to defaults',
-    resetConfirm: 'Reset all settings to Hermes defaults?',
+    resetConfirm: 'Reset all settings to Marvi defaults?',
     exportFailed: 'Export failed',
     resetFailed: 'Reset failed',
     nav: {
@@ -329,11 +329,11 @@ export const en: Translations = {
         },
         input: {
           label: 'Input needed',
-          description: 'Hermes asked a question or needs a password or secret.'
+          description: 'Marvi asked a question or needs a password or secret.'
         },
         turnDone: {
           label: 'Response ready',
-          description: 'A turn finished while Hermes was in the background.'
+          description: 'A turn finished while Marvi was in the background.'
         },
         turnError: {
           label: 'Turn failed',
@@ -345,7 +345,7 @@ export const en: Translations = {
         }
       },
       test: 'Send test notification',
-      testTitle: 'Hermes',
+      testTitle: 'Marvi',
       testBody: 'Notifications are working.',
       testSent: 'Test sent. If nothing appears, check your OS notification permissions and Focus/Do Not Disturb.',
       testUnsupported: 'This system does not support native notifications.',
@@ -381,7 +381,7 @@ export const en: Translations = {
       intro:
         'These are desktop-only display preferences. Mode controls brightness; theme controls the accent palette and chat surface styling.',
       colorMode: 'Color Mode',
-      colorModeDesc: 'Pick a fixed mode or let Hermes follow your system setting.',
+      colorModeDesc: 'Pick a fixed mode or let Marvi follow your system setting.',
       toolViewTitle: 'Tool Call Display',
       toolViewDesc: 'Product hides raw tool payloads; Technical shows full input/output.',
       uiScaleTitle: 'UI Scale',
@@ -418,7 +418,7 @@ export const en: Translations = {
         intro:
           'Adopt an animated petdex mascot that floats over the app and reacts to what Marvi is doing — running while tools execute, celebrating on success, sulking on errors.',
         restartHint:
-          'Pets need a quick restart — the running app started before this feature was added. Quit and reopen Hermes, then come back here.',
+          'Pets need a quick restart — the running app started before this feature was added. Quit and reopen Marvi, then come back here.',
         on: 'On',
         off: 'Off',
         scaleTitle: 'Size',
@@ -475,7 +475,7 @@ export const en: Translations = {
       justNowSuffix: ' · just now',
       automaticUpdates: 'Automatic updates',
       automaticUpdatesDesc:
-        'Hermes checks for updates automatically in the background and lets you know when one is ready.',
+        'Marvi checks for updates automatically in the background and lets you know when one is ready.',
       branchCommit: (branch, commit) => `Branch ${branch} · Commit ${commit}`,
       never: 'never',
       justNow: 'just now',
@@ -488,7 +488,7 @@ export const en: Translations = {
       noneParen: '(none)',
       notSet: 'Not set',
       commaSeparated: 'comma-separated values',
-      loading: 'Loading Hermes configuration...',
+      loading: 'Loading Marvi configuration...',
       emptyTitle: 'Nothing to configure',
       emptyDesc: 'This section has no adjustable settings.',
       failedLoad: 'Settings failed to load',
@@ -572,7 +572,7 @@ export const en: Translations = {
       cloudAgentProvisioning: 'Provisioning…',
       cloudStatusLabel: status => `Status: ${status}`,
       remoteUrlTitle: 'Remote URL',
-      remoteUrlDesc: 'Base URL for the remote dashboard backend. Path prefixes are supported, for example /hermes.',
+      remoteUrlDesc: 'Base URL for the remote dashboard backend. Path prefixes are supported, for example /marvi.',
       probing: 'Checking how this gateway authenticates…',
       probeError: 'Could not reach this gateway yet. Check the URL — the auth method will appear once it responds.',
       signedIn: 'Signed in',
@@ -606,7 +606,7 @@ export const en: Translations = {
       savedTitle: 'Gateway settings saved',
       restartingMessage: 'Marvi Desktop will reconnect using the saved settings — the shell stays open.',
       savedMessage: 'Saved for the next restart.',
-      connectedTo: (baseUrl, version) => `Connected to ${baseUrl}${version ? ` · Hermes ${version}` : ''}`,
+      connectedTo: (baseUrl, version) => `Connected to ${baseUrl}${version ? ` · Marvi ${version}` : ''}`,
       reachableTitle: 'Remote gateway reachable',
       signedOutTitle: 'Signed out',
       signedOutMessage: 'Cleared the remote gateway session.',
@@ -721,7 +721,7 @@ export const en: Translations = {
       connectAccount: 'Connect an account',
       haveApiKey: 'Have an API key instead?',
       intro:
-        'Sign in with a subscription — no API key to copy. Hermes runs the browser sign-in for you, right here in the app.',
+        'Sign in with a subscription — no API key to copy. Marvi runs the browser sign-in for you, right here in the app.',
       connected: 'Connected',
       collapse: 'Collapse',
       connectAnother: 'Connect another provider',
@@ -864,7 +864,7 @@ export const en: Translations = {
     edit: 'Edit',
     archive: 'Archive',
     skillArchivedTitle: 'Skill archived',
-    skillArchivedMessage: 'Restorable via hermes curator restore.',
+    skillArchivedMessage: 'Restorable via marvi curator restore.',
     hub: {
       searchPlaceholder: 'Search the skill hub',
       search: 'Search',
@@ -928,7 +928,7 @@ export const en: Translations = {
     loadFailed: 'Could not load memory graph',
     loading: 'Loading…',
     emptyTitle: 'Nothing learned yet',
-    emptyDesc: 'As Hermes builds skills and memories for your work, they appear here.',
+    emptyDesc: 'As Marvi builds skills and memories for your work, they appear here.',
     share: 'Share map',
     shareHint:
       'Copy the code to share this map, or paste one to load. It only includes the layout, not your memory or skill text.',
@@ -992,7 +992,7 @@ export const en: Translations = {
       placeholder: 'Search pets…',
       loading: 'Loading petdex gallery…',
       error: 'Could not reach the petdex gallery.',
-      staleBackend: 'Restart Hermes to use pets — the backend predates this feature.',
+      staleBackend: 'Restart Marvi to use pets — the backend predates this feature.',
       empty: 'No matching pets.',
       turnOff: 'Turn off',
       turnOn: 'Turn on',
@@ -1020,7 +1020,7 @@ export const en: Translations = {
       hatchSaving: 'Almost there…',
       namePlaceholder: 'Name your pet',
       staleBackend: 'Update Marvi to generate pets.',
-      backgroundHint: 'You can close this — Hermes will notify you when it’s done.',
+      backgroundHint: 'You can close this — Marvi will notify you when it’s done.',
       slowProviderHint: 'This can take several minutes',
       remix: 'Remix',
       remixConfirmTitle: 'Remix this look?',
@@ -1056,7 +1056,7 @@ export const en: Translations = {
     },
     nav: {
       newChat: { title: 'New session', detail: 'Start a fresh session' },
-      settings: { title: 'Settings', detail: 'Configure Hermes desktop' },
+      settings: { title: 'Settings', detail: 'Configure Marvi desktop' },
       skills: { title: 'Capabilities', detail: 'Skills, tools, and MCP servers' },
       messaging: { title: 'Messaging', detail: 'Set up Telegram, Slack, Discord, and more' },
       artifacts: { title: 'Artifacts', detail: 'Browse generated outputs' }
@@ -1078,7 +1078,7 @@ export const en: Translations = {
     noSessions: 'No sessions yet.',
     gatewayRunning: 'Messaging gateway running',
     gatewayStopped: 'Messaging gateway stopped',
-    hermesActiveSessions: (version, count) => `Hermes ${version} · Active sessions ${count}`,
+    hermesActiveSessions: (version, count) => `Marvi ${version} · Active sessions ${count}`,
     restartGateway: 'Restart gateway',
     gatewayRestartFailed: 'Gateway restart failed.',
     updateHermes: 'Update Marvi',
@@ -1264,7 +1264,7 @@ export const en: Translations = {
       },
       MATRIX_HOMESERVER: { label: 'Homeserver URL', placeholder: 'https://matrix.org' },
       MATRIX_ACCESS_TOKEN: { label: 'Access token' },
-      MATRIX_USER_ID: { label: 'Bot user ID', placeholder: '@hermes:example.org' },
+      MATRIX_USER_ID: { label: 'Bot user ID', placeholder: '@marvi:example.org' },
       MATRIX_ALLOWED_USERS: {
         label: 'Allowed Matrix user IDs',
         help: 'Recommended. Comma-separated user IDs in @user:server format.'
@@ -1337,7 +1337,7 @@ export const en: Translations = {
     deleteDescMid: ' and remove its ',
     deleteDescSuffix: ' directory. This cannot be undone.',
     deleting: 'Deleting...',
-    createDesc: 'Profiles are independent Hermes environments: separate config, skills, and SOUL.md.',
+    createDesc: 'Profiles are independent Marvi environments: separate config, skills, and SOUL.md.',
     nameLabel: 'Name',
     cloneFrom: 'Clone from',
     cloneFromNone: 'None (blank)',
@@ -1426,7 +1426,7 @@ export const en: Translations = {
     everyHourAt: minute => `Every hour at :${minute}`,
     newCron: 'New cron',
     emptyDescNew:
-      'Schedule a prompt to run on a cron expression. Hermes will run it and deliver results to the destination you pick.',
+      'Schedule a prompt to run on a cron expression. Marvi will run it and deliver results to the destination you pick.',
     emptyDescSearch: 'Try a broader search query.',
     emptyTitleNew: 'No scheduled jobs yet',
     emptyTitleSearch: 'No matches',
@@ -1573,7 +1573,7 @@ export const en: Translations = {
       createFailed: 'Could not create project',
       staleBackend:
         'Update the Marvi backend to create projects — your backend is older than this desktop app (Settings → Updates → Backend).',
-      deleteConfirm: 'This removes the saved project from Hermes. Files, git repos, and worktrees stay untouched.',
+      deleteConfirm: 'This removes the saved project from Marvi. Files, git repos, and worktrees stay untouched.',
       startWork: 'New worktree',
       newWorktreeTitle: 'New worktree',
       newWorktreeDesc: 'Name the branch for this worktree.',
@@ -1637,12 +1637,12 @@ export const en: Translations = {
   composer: {
     message: 'Message',
     wakingProfile: profile => `Waking up ${profile}…`,
-    placeholderStarting: 'Starting Hermes...',
-    placeholderReconnecting: 'Reconnecting to Hermes…',
-    placeholderFollowUp: 'Send follow-up',
+    placeholderStarting: 'Starting Marvi...',
+    placeholderReconnecting: 'Reconnecting to Marvi…',
+    placeholderFollowUp: 'Send Marvi a follow-up',
     newSessionPlaceholders: [
       'What are we building?',
-      'Give Hermes a task',
+      'Give Marvi a task',
       "What's on your mind?",
       'Describe what you need',
       'What should we tackle?',
@@ -1650,7 +1650,7 @@ export const en: Translations = {
       'Start with a goal'
     ],
     followUpPlaceholders: [
-      'Send a follow-up',
+      'Send Marvi a follow-up',
       'Add more context',
       'Refine the request',
       "What's next?",
@@ -1692,7 +1692,7 @@ export const en: Translations = {
       '/resume': 'resume a prior session',
       '/details': 'control transcript detail level',
       '/copy': 'copy selection or last assistant message',
-      '/quit': 'exit hermes'
+      '/quit': 'exit Marvi (close the app)',
     },
     hotkeyDescs: {
       'composer.mention': 'reference files, folders, urls, git',
@@ -1705,7 +1705,7 @@ export const en: Translations = {
       'composer.history': 'cycle popover / history'
     },
     attachUrlTitle: 'Attach a URL',
-    attachUrlDesc: 'Hermes will fetch the page and include it as context for this turn.',
+    attachUrlDesc: 'Marvi will fetch the page and include it as context for this turn.',
     urlPlaceholder: 'https://example.com/post',
     urlHintPre: 'Include the full URL, e.g. ',
     attach: 'Attach',
@@ -1810,7 +1810,7 @@ export const en: Translations = {
       createPr: 'Create PR',
       openPr: 'Open PR',
       ghMissing: 'Install the GitHub CLI (gh) and sign in to open PRs',
-      agentShip: 'Ask Hermes to open PR',
+      agentShip: 'Ask Marvi to open PR',
       agentShipPrompt:
         'Review the current changes, commit them with a clear conventional-commit message, push the branch, and open a pull request.',
       newBranch: 'New branch',
@@ -1830,7 +1830,7 @@ export const en: Translations = {
       pydeps: 'Finishing up…',
       update: 'Updating Marvi…',
       rebuild: 'Rebuilding the desktop app…',
-      restart: 'Restarting Hermes…',
+      restart: 'Restarting Marvi…',
       done: 'Update complete',
       manual: 'Update from your terminal',
       guiSkew: 'Update the desktop app',
@@ -1840,7 +1840,7 @@ export const en: Translations = {
     checkFailedTitle: 'Couldn’t check for updates',
     tryAgain: 'Try again',
     notAvailableTitle: 'Update not available',
-    unsupportedMessage: 'This version of Hermes can’t update itself from inside the app.',
+    unsupportedMessage: 'This version of Marvi can’t update itself from inside the app.',
     connectionRetry: 'Check your connection and try again.',
     latestBody: 'You’re running the latest version.',
     latestBodyBackend: 'The backend is running the latest version.',
@@ -1854,19 +1854,19 @@ export const en: Translations = {
     maybeLater: 'Maybe later',
     moreChanges: count => `+ ${count} more change${count === 1 ? '' : 's'} included.`,
     manualTitle: 'Update from your terminal',
-    manualBody: 'You installed Hermes from the command line, so updates run there too. Paste this into your terminal:',
-    manualPickedUp: 'Hermes will pick up the new version next time you launch it.',
+    manualBody: 'You installed Marvi from the command line, so updates run there too. Paste this into your terminal:',
+    manualPickedUp: 'Marvi will pick up the new version next time you launch it.',
     guiSkewTitle: 'Update the desktop app',
     guiSkewBody:
-      'The backend was updated, but this desktop app package wasn’t changed. Update or reinstall the Hermes desktop app (your AppImage / .deb / .rpm) to match.',
+      'The backend was updated, but this desktop app package wasn’t changed. Update or reinstall the Marvi desktop app (your AppImage / .deb / .rpm) to match.',
     copy: 'Copy',
     copied: 'Copied',
     done: 'Done',
     applyingBody:
-      'The Hermes updater takes over in its own window and reopens Hermes automatically when it’s done. Please don’t reopen Hermes yourself while it’s updating.',
+      'The Marvi updater takes over in its own window and reopens Marvi automatically when it’s done. Please don’t reopen Marvi yourself while it’s updating.',
     applyingBodyBackend:
-      'The remote backend is applying the update and will restart. Hermes reconnects automatically when it’s back.',
-    applyingClose: 'This window will close while the update runs, then Hermes reopens on its own.',
+      'The remote backend is applying the update and will restart. Marvi reconnects automatically when it’s back.',
+    applyingClose: 'This window will close while the update runs, then Marvi reopens on its own.',
     errorTitle: 'Update didn’t finish',
     errorBody: 'No worries — nothing was lost. You can try again now.',
     notNow: 'Not now',
@@ -1888,7 +1888,7 @@ export const en: Translations = {
       skipped: 'Skipped',
       failed: 'Failed'
     },
-    oneTimeTitle: 'Hermes needs a one-time install',
+    oneTimeTitle: 'Marvi needs a one-time install',
     unsupportedDesc: platform =>
       `Automated first-launch install isn’t available on ${platform} yet. Open Terminal and run the command below, then relaunch this app. Subsequent launches will skip this step.`,
     installCommand: 'Install command',
@@ -1900,9 +1900,9 @@ export const en: Translations = {
     settingUpTitle: 'Setting up Marvi Agent',
     finishingTitle: 'Finishing up',
     failedDesc:
-      'One of the install steps failed. On Windows, this can happen if another Hermes CLI or desktop instance is running. Stop any running Hermes instances, then retry. Check the details below or the desktop log for the full transcript.',
+      'One of the install steps failed. On Windows, this can happen if another Marvi CLI or desktop instance is running. Stop any running Marvi instances, then retry. Check the details below or the desktop log for the full transcript.',
     activeDesc:
-      'This is a one-time setup. The Hermes installer is downloading dependencies and configuring your machine. Subsequent launches will skip this step.',
+      'This is a one-time setup. The Marvi installer is downloading dependencies and configuring your machine. Subsequent launches will skip this step.',
     progress: (completed, total) => `${completed} of ${total} steps complete`,
     currentStage: stage => ` -- now: ${stage}`,
     fetchingManifest: 'Fetching installer manifest...',
@@ -1923,7 +1923,7 @@ export const en: Translations = {
     headerTitle: "Let's get you setup with Marvi Agent",
     headerDesc: 'Connect a model provider to start chatting. Most options take one click.',
     preparingInstall: 'Marvi is finishing install. This usually takes under a minute on first run.',
-    starting: 'Starting Hermes…',
+    starting: 'Starting Marvi…',
     lookingUpProviders: 'Looking up providers...',
     collapse: 'Collapse',
     otherProviders: 'Other providers',
@@ -1931,7 +1931,7 @@ export const en: Translations = {
     chooseLater: "I'll choose a provider later",
     recommended: 'Recommended',
     connected: 'Connected',
-    featuredPitch: 'One subscription, 300+ frontier models — the recommended way to run Hermes',
+    featuredPitch: 'One subscription, 300+ frontier models — the recommended way to run Marvi',
     openRouterPitch: 'One key, hundreds of models — a solid default',
     apiKeyOptions: {
       openrouter: {
@@ -1943,7 +1943,7 @@ export const en: Translations = {
       xai: { short: 'Grok models', description: 'Direct access to xAI Grok models.' },
       local: {
         short: 'self-hosted',
-        description: 'Point Hermes at a local or self-hosted OpenAI-compatible endpoint (vLLM, llama.cpp, Ollama, etc).'
+        description: 'Point Marvi at a local or self-hosted OpenAI-compatible endpoint (vLLM, llama.cpp, Ollama, etc).'
       }
     },
     backToSignIn: 'Back to sign in',
@@ -1956,7 +1956,7 @@ export const en: Translations = {
     update: 'Update',
     flowSubtitles: {
       pkce: 'Opens your browser to sign in, then continues here',
-      device_code: 'Opens a verification page in your browser — Hermes connects automatically',
+      device_code: 'Opens a verification page in your browser — Marvi connects automatically',
       external: 'Sign in once in your terminal, then come back to chat'
     },
     startingSignIn: provider => `Starting sign-in for ${provider}...`,
@@ -1967,12 +1967,12 @@ export const en: Translations = {
     pickDifferentProvider: 'Pick a different provider',
     signInWith: provider => `Sign in with ${provider}`,
     openedBrowser: provider => `We opened ${provider} in your browser.`,
-    authorizeThere: 'Authorize Hermes there.',
+    authorizeThere: 'Authorize Marvi there.',
     copyAuthCode: 'Copy the authorization code and paste it below.',
     pasteAuthCode: 'Paste authorization code',
     reopenAuthPage: 'Re-open authorization page',
     autoBrowser: provider =>
-      `We opened ${provider} in your browser. Authorize Hermes there and you'll be connected automatically — nothing to copy or paste.`,
+      `We opened ${provider} in your browser. Authorize Marvi there and you'll be connected automatically — nothing to copy or paste.`,
     reopenSignInPage: 'Re-open sign-in page',
     waitingAuthorize: 'Waiting for you to authorize...',
     externalPending: provider =>
@@ -2078,7 +2078,7 @@ export const en: Translations = {
       gatewayConnecting: 'connecting',
       gatewayOffline: 'offline',
       gatewayRestarting: 'restarting…',
-      gatewayTitle: 'Hermes inference gateway status',
+      gatewayTitle: 'Marvi inference gateway status',
       agents: 'Agents',
       closeAgents: 'Close agents',
       openAgents: 'Open agents',
@@ -2182,7 +2182,7 @@ export const en: Translations = {
     binaryTitle: 'This looks like a binary file',
     binaryBody: label => `Previewing ${label} may show unreadable text.`,
     largeTitle: 'This file is large',
-    largeBody: (label, size) => `${label} is ${size}. Hermes will only show the first 512 KB.`,
+    largeBody: (label, size) => `${label} is ${size}. Marvi will only show the first 512 KB.`,
     previewAnyway: 'Preview anyway',
     truncated: 'Showing first 512 KB.',
     noInlineTitle: 'No inline preview',
@@ -2222,7 +2222,7 @@ export const en: Translations = {
       failedToLoad: 'Preview failed to load',
       tryAgain: 'Try again',
       restarting: 'Marvi is restarting...',
-      askRestart: 'Ask Hermes to restart the server',
+      askRestart: 'Ask Marvi to restart the server',
       lookingRestart: taskId => `Marvi is looking for a preview server to restart (${taskId})`,
       restartingTitle: 'Restarting preview server',
       restartingMessage: 'Marvi is working in the background. Watch the preview console for progress.',
@@ -2303,7 +2303,7 @@ export const en: Translations = {
       reject: 'Reject',
       alwaysTitle: 'Always allow this command?',
       alwaysDescription: pattern =>
-        `This adds the “${pattern}” pattern to your permanent allowlist (~/.hermes/config.yaml). Hermes won’t ask again for commands like this — in this session or any future one.`,
+        `This adds the “${pattern}” pattern to your permanent allowlist (~/.hermes/config.yaml). Marvi won’t ask again for commands like this — in this session or any future one.`,
       alwaysAllow: 'Always allow'
     },
     clarify: {
@@ -2408,10 +2408,10 @@ export const en: Translations = {
     sudoSendFailed: 'Could not send sudo password',
     secretSendFailed: 'Could not send secret',
     sudoTitle: 'Administrator password',
-    sudoDesc: 'Hermes needs your sudo password to run a privileged command. It is sent only to your local agent.',
+    sudoDesc: 'Marvi needs your sudo password to run a privileged command. It is sent only to your local agent.',
     sudoPlaceholder: 'sudo password',
     secretTitle: 'Secret required',
-    secretDesc: 'Hermes needs a credential to continue.',
+    secretDesc: 'Marvi needs a credential to continue.',
     secretPlaceholder: 'secret value'
   },
 
@@ -2483,7 +2483,7 @@ export const en: Translations = {
       success: platform => `Handed off to ${platform}. Resume here anytime.`,
       systemNote: platform => `↻ Handed off to ${platform} — resume here anytime.`,
       failed: error => `Handoff failed: ${error}`,
-      timedOut: 'Timed out waiting for the gateway. Is `hermes gateway` running?'
+      timedOut: 'Timed out waiting for the gateway. Is `marvi gateway` running?'
     }
   },
 

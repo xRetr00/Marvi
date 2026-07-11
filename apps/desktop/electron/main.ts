@@ -445,7 +445,7 @@ const BOOT_FAKE_STEP_MS = (() => {
 
   return Math.max(120, raw)
 })()
-const APP_NAME = 'Marvi'
+const APP_NAME = process.env.HERMES_DESKTOP_APP_NAME || 'Marvi'
 const WINDOW_TITLE = 'Marvi by Marvex'
 const START_HIDDEN = process.argv.includes('--hidden')
 const TITLEBAR_HEIGHT = 34

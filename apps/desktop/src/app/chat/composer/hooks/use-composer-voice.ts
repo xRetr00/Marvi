@@ -153,7 +153,9 @@ export function useComposerVoice({
       level: duplex.status === 'active' ? duplex.level : conversation.level,
       muted: duplex.status === 'active' ? false : conversation.muted,
       caption: duplex.status === 'active' ? duplex.state.replyText : conversation.caption,
+      activity: presentation?.activity ?? null,
       deepWorking: presentation?.deepWorking ?? false,
+      deepMode: presentation?.deepMode ?? null,
       label: presentation?.label ?? null,
       speakerBadge: presentation?.speakerBadge ?? null
     })
@@ -163,7 +165,16 @@ export function useComposerVoice({
     } else if (!voiceConversationActive) {
       setUserCaption(null)
     }
-  }, [conversation.caption, conversation.level, conversation.muted, conversation.status, duplex.level, duplex.state, duplex.status, voiceConversationActive])
+  }, [
+    conversation.caption,
+    conversation.level,
+    conversation.muted,
+    conversation.status,
+    duplex.level,
+    duplex.state,
+    duplex.status,
+    voiceConversationActive
+  ])
 
   // duplex phase 3: one flag drives the island's "interrupt" affordance across
   // every mode (both speak paths arm barge-in from this same prop).

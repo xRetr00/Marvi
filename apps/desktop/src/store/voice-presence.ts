@@ -1,5 +1,6 @@
 import { atom, computed } from 'nanostores'
 
+import type { DuplexActivityKind, DuplexWorkMode } from '@/app/voice-island/duplex-protocol'
 import { vpLog } from '@/lib/voice-presence-log'
 
 import { $voicePlayback } from './voice-playback'
@@ -38,6 +39,8 @@ export interface VoiceState {
   speakerBadge: 'guest' | 'unknown' | null
   /** Duplex-only: true while an escalated background task hasn't resolved yet. */
   deepWorking: boolean
+  deepMode: DuplexWorkMode | null
+  activity: { kind: DuplexActivityKind; label: string } | null
 }
 
 /** Conversation status from use-voice-conversation.ts. */
@@ -84,9 +87,17 @@ export interface DuplexExtras {
   label: string | null
   speakerBadge: 'guest' | 'unknown' | null
   deepWorking: boolean
+  deepMode: DuplexWorkMode | null
+  activity: { kind: DuplexActivityKind; label: string } | null
 }
 
-const NO_DUPLEX_EXTRAS: DuplexExtras = { label: null, speakerBadge: null, deepWorking: false }
+const NO_DUPLEX_EXTRAS: DuplexExtras = {
+  label: null,
+  speakerBadge: null,
+  deepWorking: false,
+  deepMode: null,
+  activity: null
+}
 
 /** Conversation inputs, published by the composer (owns useVoiceConversation / the hands-free duplex session). */
 export const $conversation = atom<
@@ -114,46 +125,10 @@ export const $userCaption = atom<string | null>(null)
  */
 export const $bargeInEnabled = atom<boolean>(true)
 
-/**
- * Ambient (wake-word / presence) duplex session, published by desktop-controller.tsx
- * (owns the ambient `useDuplexVoice` alongside `useWakeWord`). While `active`,
- * this fully drives `$voiceState` — the presence/island path's duplex session
- * takes priority over the legacy wake-status derivation below, exactly like
- * the composer's hands-free `$conversation.active` already does for its own
- * duplex session. Falls back to the legacy wake-word-driven phase the moment
- * the duplex endpoint proves unavailable.
- */
-export const $ambientDuplex = atom<{ active: boolean; phase: VoicePhase; level: number; caption: string | null; userCaption: string | null; bargeable: boolean } & DuplexExtras>({
-  active: false,
-  phase: 'off',
-  level: 0,
-  caption: null,
-  userCaption: null,
-  bargeable: false,
-  ...NO_DUPLEX_EXTRAS
-})
-
 /** The single derived presence state the island overlay mirrors. */
 export const $voiceState = computed(
-  [$conversation, $wakeStatus, $userCaption, $voicePlayback, $bargeInEnabled, $ambientDuplex],
-  (conv, wakeStatus, userCaption, playback, bargeInEnabled, ambient): VoiceState => {
-    // Ambient duplex (wake-word/presence path) takes over the presentation the
-    // same way the composer's hands-free duplex session already does via
-    // `conv` below — see $ambientDuplex's doc comment.
-    if (ambient.active) {
-      return {
-        bargeable: ambient.bargeable,
-        caption: ambient.caption,
-        deepWorking: ambient.deepWorking,
-        label: ambient.label,
-        level: ambient.level,
-        muted: false,
-        phase: ambient.phase,
-        speakerBadge: ambient.speakerBadge,
-        userCaption: ambient.userCaption
-      }
-    }
-
+  [$conversation, $wakeStatus, $userCaption, $voicePlayback, $bargeInEnabled],
+  (conv, wakeStatus, userCaption, playback, bargeInEnabled): VoiceState => {
     const playbackSpeaking = playback.status === 'speaking'
     const phase = deriveVoicePhase({ active: conv.active, voiceStatus: conv.status, wakeStatus, playbackSpeaking })
 
@@ -161,6 +136,8 @@ export const $voiceState = computed(
       bargeable: phase === 'speaking' && bargeInEnabled,
       caption: conv.caption,
       deepWorking: conv.active ? conv.deepWorking : false,
+      deepMode: conv.active ? conv.deepMode : null,
+      activity: conv.active ? conv.activity : null,
       label: conv.active ? conv.label : null,
       level: conv.level,
       muted: conv.muted,
@@ -173,16 +150,15 @@ export const $voiceState = computed(
 
 /** Publish the conversation slice (called from the composer). */
 export function publishConversation(
-  next: { active: boolean; status: VoiceStatus; level: number; muted: boolean; caption: string | null } & Partial<DuplexExtras>
+  next: {
+    active: boolean
+    status: VoiceStatus
+    level: number
+    muted: boolean
+    caption: string | null
+  } & Partial<DuplexExtras>
 ): void {
   $conversation.set({ ...NO_DUPLEX_EXTRAS, ...next })
-}
-
-/** Publish the ambient (wake-word/presence) duplex slice (called from desktop-controller.tsx). */
-export function publishAmbientDuplex(
-  next: { active: boolean; phase: VoicePhase; level: number; caption: string | null; userCaption: string | null; bargeable: boolean } & Partial<DuplexExtras>
-): void {
-  $ambientDuplex.set({ ...NO_DUPLEX_EXTRAS, ...next })
 }
 
 /** Publish the wake-word slice (called from chat/index.tsx). */

@@ -81,7 +81,7 @@ import { openUpdatesWindow, startUpdatePoller, stopUpdatePoller } from '../store
 import { $voicePlayback } from '../store/voice-playback'
 import { $voiceWarmup, startVoiceWarmupPolling } from '../store/voice-warmup'
 import { initVoiceIslandBridge } from '../store/voice-island'
-import { publishAmbientDuplex, publishWakeStatus } from '../store/voice-presence'
+import { publishWakeStatus } from '../store/voice-presence'
 import { $presenceEnabled, setPresenceEnabled } from '../store/voice-presence-settings'
 import { initWindowPresence } from '../store/window-presence'
 import { isSecondaryWindow } from '../store/windows'
@@ -136,8 +136,6 @@ import type { StatusbarItem } from './shell/statusbar-controls'
 import type { TitlebarTool } from './shell/titlebar-controls'
 import { useGroupRegistry } from './shell/use-group-registry'
 import { UpdatesOverlay } from './updates-overlay'
-import { resolveDuplexPresentation } from './voice-island/duplex-presentation'
-import { useDuplexVoice } from './voice-island/use-duplex-voice'
 
 const AgentsView = lazy(async () => ({ default: (await import('./agents')).AgentsView }))
 const ArtifactsView = lazy(async () => ({ default: (await import('./artifacts')).ArtifactsView }))
@@ -881,45 +879,12 @@ export function DesktopController() {
   const voicePlayback = useStore($voicePlayback)
   const voiceWarmup = useStore($voiceWarmup)
 
-  // Presence-driven duplex session (see docs/superpowers/specs/2026-07-10-
-  // marvi-duplex-voice-splitbrain-design.md): tried once whenever presence
-  // would otherwise arm the legacy wake word, so the island's ambient
-  // wake-word mode runs through duplex as its PRIMARY path too — mirroring
-  // how useComposerVoice already gates the hands-free overlay's duplex
-  // session. `useWakeWord` below only arms once duplex proves unavailable
-  // ('unavailable' fires exactly once per attempt — see use-duplex-voice.ts),
-  // so the two capture paths are mutually exclusive, never fighting over the
-  // mic.
   const presenceActive = !isSecondaryWindow() && presenceEnabled && gatewayState === 'open'
-  const ambientDuplex = useDuplexVoice(presenceActive)
-  const legacyWakeEnabled = presenceActive && ambientDuplex.status === 'unavailable'
-
-  useEffect(() => {
-    if (ambientDuplex.status !== 'active') {
-      publishAmbientDuplex({ active: false, bargeable: false, caption: null, level: 0, phase: 'off', userCaption: null })
-
-      return
-    }
-
-    const presentation = resolveDuplexPresentation(ambientDuplex.state)
-
-    publishAmbientDuplex({
-      active: true,
-      bargeable: presentation.bargeable,
-      caption: presentation.caption?.who === 'marvi' ? presentation.caption.text : null,
-      deepWorking: presentation.deepWorking,
-      label: presentation.label,
-      level: ambientDuplex.level,
-      phase: presentation.phase,
-      speakerBadge: presentation.speakerBadge,
-      userCaption: presentation.caption?.who === 'you' ? presentation.caption.text : null
-    })
-  }, [ambientDuplex.level, ambientDuplex.state, ambientDuplex.status])
 
   const wake = useWakeWord({
     busy: voiceBusy || voicePlayback.status !== 'idle',
     config: wakeWordConfig,
-    enabled: legacyWakeEnabled,
+    enabled: presenceActive,
     onSubmit: async text => {
       await submitTextRef.current(text)
     },
@@ -940,8 +905,7 @@ export function DesktopController() {
       (streamingSttEnabled ||
         wake.status === 'woken' ||
         wake.status === 'listening' ||
-        wake.status === 'transcribing' ||
-        ambientDuplex.status === 'active')
+        wake.status === 'transcribing')
     const ttsActive = ttsProvider === 'pockettts' && voicePlayback.status !== 'idle'
     const streamingLabel = streamingSttEnabled ? streamingSttProvider || 'on' : 'off'
 
@@ -974,7 +938,6 @@ export function DesktopController() {
       variant: 'text'
     }
   }, [
-    ambientDuplex.status,
     streamingSttEnabled,
     streamingSttProvider,
     sttEnabled,
@@ -1166,10 +1129,7 @@ export function DesktopController() {
   })
 
   const wakeStatusItem = useMemo<StatusbarItem>(() => {
-    // Either capture path can be "listening" — whichever one is actually
-    // armed (duplex when reachable, legacy wake word once it falls back).
-    const duplexListening = ambientDuplex.status === 'active' && ambientDuplex.state.phase === 'listening'
-    const listening = duplexListening || wake.status === 'woken' || wake.status === 'listening'
+    const listening = wake.status === 'woken' || wake.status === 'listening'
     const label = !presenceEnabled
       ? 'Presence off'
       : listening
@@ -1191,7 +1151,7 @@ export function DesktopController() {
       title: presenceEnabled ? 'Voice presence is on; click to turn off' : 'Voice presence is off; click to turn on',
       variant: 'action'
     }
-  }, [ambientDuplex.state.phase, ambientDuplex.status, presenceEnabled, wake.status])
+  }, [presenceEnabled, wake.status])
 
   const { leftStatusbarItems, statusbarItems } = useStatusbarItems({
     agentsOpen,

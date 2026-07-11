@@ -240,10 +240,14 @@ class TestConfig:
     def test_resolve_instant_max_tokens_defaults(self):
         assert vil._resolve_instant_max_tokens({}) == vil.DEFAULT_MAX_TOKENS
 
-    def test_resolve_instant_runtime_defaults_to_auto(self):
-        runtime = vil.resolve_instant_runtime({})
-        assert runtime["provider"] is None
-        assert runtime["model"] is None
+    def test_resolve_instant_runtime_raises_when_nothing_resolvable(self, monkeypatch):
+        # No auxiliary.voice_instant.* configured AND no main provider
+        # configured either -- the instant lane must NEVER silently fall
+        # through to the normal auto-detect chain (which could resolve to
+        # the slow main/thinking model). It must disable itself instead.
+        monkeypatch.setattr(vil, "_configured_main_provider", lambda cfg: "")
+        with pytest.raises(vil.InstantLaneUnavailable):
+            vil.resolve_instant_runtime({})
 
     def test_resolve_instant_runtime_reads_auxiliary_voice_instant(self, monkeypatch):
         from hermes_cli import runtime_provider
@@ -261,11 +265,227 @@ class TestConfig:
         assert runtime["provider"] == "openrouter"
         assert runtime["model"] == "some/fast-model"
         assert runtime["api_key"] == "resolved-key"
+        assert runtime["reasoning_config"] is None
 
-    def test_resolve_instant_runtime_treats_auto_as_unconfigured(self):
+    def test_resolve_instant_runtime_treats_auto_as_unconfigured(self, monkeypatch):
+        # provider="auto" is treated the same as "unset" -> falls back to a
+        # curated instant model for the configured MAIN provider, never a
+        # bare auto-detect that could land on the main/thinking model.
+        from hermes_cli import runtime_provider
+
+        monkeypatch.setattr(vil, "_configured_main_provider", lambda cfg: "anthropic")
+        monkeypatch.setattr(
+            runtime_provider, "resolve_runtime_provider",
+            lambda **kw: {"provider": kw["requested"], "api_key": "k", "base_url": None, "api_mode": None},
+        )
         cfg = {"auxiliary": {"voice_instant": {"provider": "auto"}}}
         runtime = vil.resolve_instant_runtime(cfg)
-        assert runtime["provider"] is None
+        assert runtime["provider"] == "anthropic"
+        assert runtime["model"] == "claude-haiku-4-5-20251001"
+
+
+# ---------------------------------------------------------------------------
+# is_instant_capable / thinking_off_params -- the reasoning/"thinking"
+# deny-list heuristic and the best-effort "turn reasoning off" params.
+# ---------------------------------------------------------------------------
+
+
+class TestIsInstantCapable:
+    @pytest.mark.parametrize("model", [
+        "claude-haiku-4-5-20251001",
+        "gpt-4o-mini",
+        "gemini-3-flash-preview",
+        "glm-4.5-flash",
+        "llama-3.1-8b-instant",
+        "openai/gpt-4o-mini",
+        "kimi-k2-turbo-preview",
+        "",
+    ])
+    def test_fast_models_are_capable(self, model):
+        assert vil.is_instant_capable(model) is True
+
+    @pytest.mark.parametrize("model", [
+        "o1",
+        "o1-mini",
+        "o1-preview",
+        "o3",
+        "o3-mini",
+        "o4-mini",
+        "openai/o3",
+        "deepseek-r1",
+        "deepseek-r1-distill-llama-70b",
+        "deepseek-reasoner",
+        "gemini-2.5-flash-thinking",
+        "grok-4-fast-reasoning",
+        "qwq-32b",
+        "glm-4.5-thinking",
+    ])
+    def test_thinking_models_are_not_capable(self, model):
+        assert vil.is_instant_capable(model) is False
+
+    def test_does_not_false_positive_on_substrings_that_merely_contain_digits(self):
+        # "4o" (gpt-4o family) must not be confused with the "o1/o3/o4" deny
+        # patterns, which require a boundary before/after the digit-letter pair.
+        assert vil.is_instant_capable("gpt-4o-mini") is True
+        assert vil.is_instant_capable("gpt-4o") is True
+
+
+class TestThinkingOffParams:
+    def test_known_toggle_provider_returns_reasoning_config(self):
+        params = vil.thinking_off_params("anthropic", "claude-opus-4-6")
+        assert params == {"reasoning_config": {"enabled": False, "effort": "none"}}
+
+    def test_openai_returns_reasoning_config(self):
+        params = vil.thinking_off_params("openai", "o3-mini")
+        assert params["reasoning_config"]["enabled"] is False
+
+    @pytest.mark.parametrize("provider", ["openrouter", "groq", "gemini", "vertex", "lmstudio"])
+    def test_other_known_toggle_providers(self, provider):
+        assert vil.thinking_off_params(provider, "some-thinking-model") != {}
+
+    def test_unknown_provider_returns_empty(self):
+        assert vil.thinking_off_params("some-exotic-provider", "o1") == {}
+
+    def test_blank_provider_returns_empty(self):
+        assert vil.thinking_off_params("", "o1") == {}
+
+
+class TestResolveInstantRuntimeThinkingGuard:
+    """resolve_instant_runtime() must never hand back a configured
+    reasoning/thinking model as the instant model."""
+
+    def test_configured_thinking_model_gets_reasoning_disabled(self, monkeypatch):
+        from hermes_cli import runtime_provider
+
+        monkeypatch.setattr(
+            runtime_provider, "resolve_runtime_provider",
+            lambda **kw: {"provider": kw["requested"], "api_key": "k", "base_url": None, "api_mode": None},
+        )
+        cfg = {"auxiliary": {"voice_instant": {"provider": "anthropic", "model": "claude-opus-4-6-thinking"}}}
+        runtime = vil.resolve_instant_runtime(cfg)
+
+        # Model is kept (Anthropic supports toggling reasoning off), but
+        # reasoning_config disables it.
+        assert runtime["provider"] == "anthropic"
+        assert runtime["model"] == "claude-opus-4-6-thinking"
+        assert runtime["reasoning_config"] == {"enabled": False, "effort": "none"}
+
+    def test_configured_thinking_model_on_untoggleable_provider_falls_back(self, monkeypatch):
+        from hermes_cli import runtime_provider
+
+        monkeypatch.setattr(vil, "_curated_instant_model", lambda provider: "curated-fast-model")
+        monkeypatch.setattr(vil, "_configured_main_provider", lambda cfg: "some-exotic-provider")
+        monkeypatch.setattr(
+            runtime_provider, "resolve_runtime_provider",
+            lambda **kw: {"provider": kw["requested"], "api_key": "k", "base_url": None, "api_mode": None},
+        )
+        cfg = {"auxiliary": {"voice_instant": {"provider": "some-exotic-provider", "model": "o1-preview"}}}
+        runtime = vil.resolve_instant_runtime(cfg)
+
+        # The configured o1-preview model must NEVER be used -- falls back
+        # to the curated model for the (fallback-resolved) main provider.
+        assert runtime["model"] != "o1-preview"
+        assert runtime["model"] == "curated-fast-model"
+        assert runtime["reasoning_config"] is None
+
+    def test_configured_thinking_model_with_no_fallback_raises(self, monkeypatch):
+        monkeypatch.setattr(vil, "_curated_instant_model", lambda provider: "")
+        monkeypatch.setattr(vil, "_configured_main_provider", lambda cfg: "")
+        cfg = {"auxiliary": {"voice_instant": {"provider": "some-exotic-provider", "model": "o1-preview"}}}
+
+        with pytest.raises(vil.InstantLaneUnavailable):
+            vil.resolve_instant_runtime(cfg)
+
+
+# ---------------------------------------------------------------------------
+# Curated-default + local-provider fallback resolution helpers.
+# ---------------------------------------------------------------------------
+
+
+class TestCuratedInstantModel:
+    def test_anthropic_resolves_via_aux_client_table(self):
+        assert vil._curated_instant_model("anthropic") == "claude-haiku-4-5-20251001"
+
+    def test_gemini_resolves_via_aux_client_table(self):
+        assert vil._curated_instant_model("gemini")
+
+    @pytest.mark.parametrize("provider,expected", [
+        ("openai", "gpt-4o-mini"),
+        ("openai-codex", "gpt-4o-mini"),
+        ("openrouter", "openai/gpt-4o-mini"),
+        ("groq", "llama-3.1-8b-instant"),
+    ])
+    def test_supplemental_table_covers_providers_without_aux_profile(self, provider, expected):
+        assert vil._curated_instant_model(provider) == expected
+
+    def test_unknown_provider_returns_empty(self):
+        assert vil._curated_instant_model("totally-unknown-provider-xyz") == ""
+
+    def test_blank_provider_returns_empty(self):
+        assert vil._curated_instant_model("") == ""
+
+
+class TestConfiguredMainProvider:
+    def test_reads_model_provider_from_config(self):
+        cfg = {"model": {"provider": "openai"}}
+        assert vil._configured_main_provider(cfg) == "openai"
+
+    def test_auto_is_treated_as_unset(self):
+        cfg = {"model": {"provider": "auto"}}
+        assert vil._configured_main_provider(cfg) == ""
+
+    def test_falls_back_to_env_var(self, monkeypatch):
+        monkeypatch.setenv("HERMES_INFERENCE_PROVIDER", "groq")
+        assert vil._configured_main_provider({}) == "groq"
+
+    def test_nothing_configured_returns_empty(self, monkeypatch):
+        monkeypatch.delenv("HERMES_INFERENCE_PROVIDER", raising=False)
+        assert vil._configured_main_provider({}) == ""
+
+
+class TestIsLocalProvider:
+    @pytest.mark.parametrize("provider", ["ollama", "llamacpp", "llama-cpp", "llama.cpp", "vllm", "lmstudio", "local"])
+    def test_known_local_provider_names(self, provider):
+        assert vil._is_local_provider({}, provider) is True
+
+    def test_localhost_base_url_is_local(self):
+        cfg = {"model": {"base_url": "http://localhost:8080/v1"}}
+        assert vil._is_local_provider(cfg, "custom") is True
+
+    def test_loopback_ip_base_url_is_local(self):
+        cfg = {"model": {"base_url": "http://127.0.0.1:1234/v1"}}
+        assert vil._is_local_provider(cfg, "custom") is True
+
+    def test_hosted_provider_is_not_local(self):
+        cfg = {"model": {"base_url": "https://api.openai.com/v1"}}
+        assert vil._is_local_provider(cfg, "openai") is False
+
+
+class TestResolveFallbackInstantModel:
+    def test_local_provider_reuses_configured_main_model_as_is(self, monkeypatch):
+        cfg = {"model": {"provider": "ollama", "default": "my-local-gguf:latest"}}
+        provider, model = vil._resolve_fallback_instant_model(cfg)
+        assert provider == "ollama"
+        assert model == "my-local-gguf:latest"
+
+    def test_local_provider_with_no_model_configured_is_unresolvable(self):
+        cfg = {"model": {"provider": "ollama"}}
+        provider, model = vil._resolve_fallback_instant_model(cfg)
+        assert (provider, model) == ("", "")
+
+    def test_hosted_provider_uses_curated_model(self):
+        cfg = {"model": {"provider": "anthropic"}}
+        provider, model = vil._resolve_fallback_instant_model(cfg)
+        assert provider == "anthropic"
+        assert model == "claude-haiku-4-5-20251001"
+
+    def test_no_provider_configured_is_unresolvable(self, monkeypatch):
+        monkeypatch.delenv("HERMES_INFERENCE_PROVIDER", raising=False)
+        assert vil._resolve_fallback_instant_model({}) == ("", "")
+
+    def test_provider_with_no_curated_default_is_unresolvable(self):
+        cfg = {"model": {"provider": "totally-unknown-provider-xyz"}}
+        assert vil._resolve_fallback_instant_model(cfg) == ("", "")
 
 
 # ---------------------------------------------------------------------------
@@ -274,6 +494,26 @@ class TestConfig:
 
 
 class TestStreamInstantReply:
+    """These tests exercise the streaming/threading/tool-whitelist bridge,
+    not instant-model resolution -- resolve_instant_runtime() is stubbed out
+    so cfg={} keeps working regardless of what provider/model resolution
+    would otherwise pick (that behavior has its own dedicated tests above)."""
+
+    @pytest.fixture(autouse=True)
+    def _stub_runtime(self, monkeypatch):
+        monkeypatch.setattr(
+            vil,
+            "resolve_instant_runtime",
+            lambda cfg=None: {
+                "provider": "test-provider",
+                "model": "test-model",
+                "base_url": None,
+                "api_key": None,
+                "api_mode": None,
+                "reasoning_config": None,
+            },
+        )
+
     def test_yields_text_deltas_from_stream_callback(self, fake_agent_cls):
         transcript = vil.RollingTranscript()
         transcript.add("user", "earlier turn")

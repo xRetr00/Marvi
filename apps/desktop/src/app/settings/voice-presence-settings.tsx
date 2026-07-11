@@ -1,9 +1,8 @@
 import { useStore } from '@nanostores/react'
-import { type ReactNode, useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { Switch } from '@/components/ui/switch'
 import {
   enrollVoiceSpeaker,
   getVoiceSpeakers,
@@ -12,7 +11,6 @@ import {
 } from '@/hermes'
 import { triggerHaptic } from '@/lib/haptics'
 import { Loader2, Mic, Settings2, Trash2 } from '@/lib/icons'
-import { cn } from '@/lib/utils'
 import { notifyError } from '@/store/notifications'
 import {
   $islandEnabled,
@@ -27,44 +25,21 @@ import {
 
 import { type DuplexMicCapture, startDuplexMicCapture } from '../voice-island/duplex-audio'
 
-import { ListRow, SectionHeading, SettingsContent } from './primitives'
+import { Caption, DebouncedField, ListRow, Pill, SectionHeading, SettingsContent, ToggleRow } from './primitives'
+import type { useMarviConfig } from './subconscious/use-marvi-config'
 
-const CAPTION = 'text-[length:var(--conversation-caption-font-size)] text-(--ui-text-tertiary)'
+function clampThreshold(value: string, fallback: number): number {
+  const n = Number.parseFloat(value)
 
-function Caption({ children, className }: { children: ReactNode; className?: string }) {
-  return <p className={cn(CAPTION, className)}>{children}</p>
-}
-
-function ToggleRow(props: {
-  checked: boolean
-  description: string
-  disabled?: boolean
-  label: string
-  onChange: (on: boolean) => void
-}) {
-  return (
-    <ListRow
-      action={
-        <Switch
-          aria-label={props.label}
-          checked={props.checked}
-          disabled={props.disabled}
-          onCheckedChange={on => {
-            triggerHaptic('selection')
-            props.onChange(on)
-          }}
-        />
-      }
-      description={props.description}
-      title={props.label}
-    />
-  )
+  return Number.isFinite(n) ? Math.max(0, Math.min(1, n)) : fallback
 }
 
 export function VoicePresenceSettings({
+  marvi,
   onOpenModelConfig,
   onOpenVoiceConfig
 }: {
+  marvi: ReturnType<typeof useMarviConfig>
   onOpenModelConfig: () => void
   onOpenVoiceConfig: () => void
 }) {
@@ -76,6 +51,8 @@ export function VoicePresenceSettings({
   const [speakers, setSpeakers] = useState<VoiceSpeaker[]>([])
   const [enrolling, setEnrolling] = useState(false)
   const captureRef = useRef<DuplexMicCapture | null>(null)
+  const speakerIdThreshold = marvi.get('voice.speaker_id.threshold', 0.45)
+  const requireOwnerForEscalation = marvi.get('voice.speaker_id.require_owner_for_escalation', true)
 
   useEffect(() => {
     void Promise.resolve()
@@ -127,13 +104,15 @@ export function VoicePresenceSettings({
     <SettingsContent>
       <SectionHeading icon={Mic} title="Voice presence" />
       <Caption className="mb-2 leading-(--conversation-caption-line-height)">
-        An always-on presence for Marvi: speak the wake word from anywhere and a Dynamic Island appears at the top of the
-        screen as it listens, thinks, and speaks. It keeps working while Marvi is minimized to the system tray.
+        An always-on presence for Marvi: talk from anywhere (wake word — see the Wake Word tab) and a Dynamic Island
+        appears at the top of the screen as it listens, thinks, and speaks. Runs through the duplex voice session
+        when reachable, falling back to the classic pipeline otherwise. Keeps working while Marvi is minimized to
+        the system tray.
       </Caption>
 
       <ToggleRow
         checked={presenceEnabled}
-        description="Listen for the wake word whenever Marvi is running — even minimized to the tray — and send what you say to the active chat. Turn this off to stop all background listening."
+        description="Listen whenever Marvi is running — even minimized to the tray — and send what you say to the active chat. Turn this off to stop all background listening."
         label="Always-on voice presence"
         onChange={setPresenceEnabled}
       />
@@ -171,8 +150,8 @@ export function VoicePresenceSettings({
             Open voice settings
           </Button>
         }
-        description="Set the wake phrase, speech-to-text, and text-to-speech in the Voice settings."
-        title="Wake phrase, speech & voice"
+        description="Set speech-to-text and text-to-speech in the Voice settings."
+        title="Speech & voice"
       />
 
       <ListRow
@@ -189,7 +168,21 @@ export function VoicePresenceSettings({
       <div className="my-1 h-px bg-border/30" />
 
       <SectionHeading icon={Mic} title="Speaker recognition" />
-      <Caption>Record five seconds of clear speech. The first enrolled speaker becomes the owner.</Caption>
+      <Caption>
+        Passive — active the moment a speaker is enrolled below, with no separate switch. Record five seconds of
+        clear speech; the first enrolled speaker becomes the owner.
+      </Caption>
+
+      <ListRow
+        action={
+          <Pill tone={speakers.length ? 'primary' : 'muted'}>
+            {speakers.length ? `Active — ${speakers.length} enrolled` : 'Inactive — none enrolled'}
+          </Pill>
+        }
+        description="Every voice surface (island, hands-free overlay, composer) shows a small badge when speech is attributed to a guest or unknown voice."
+        title="Speaker ID"
+      />
+
       <div className="flex items-center gap-2">
         <Input
           aria-label="Speaker name"
@@ -227,6 +220,25 @@ export function VoicePresenceSettings({
       ) : (
         <Caption>No speakers enrolled.</Caption>
       )}
+
+      <ListRow
+        action={
+          <DebouncedField
+            onCommit={value => void marvi.patch('voice.speaker_id.threshold', clampThreshold(value, 0.45))}
+            type="number"
+            value={String(speakerIdThreshold)}
+          />
+        }
+        description="Minimum enrolled-speaker similarity. Raise it to reduce false owner matches."
+        title="Match threshold"
+      />
+
+      <ToggleRow
+        checked={requireOwnerForEscalation}
+        description="Only an enrolled owner may hand a voice request to the tool-enabled reasoning model. Non-owner speech still gets instant-lane answers."
+        label="Require owner for escalation"
+        onChange={value => void marvi.patch('voice.speaker_id.require_owner_for_escalation', value)}
+      />
     </SettingsContent>
   )
 }

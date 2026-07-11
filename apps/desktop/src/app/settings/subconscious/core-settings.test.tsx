@@ -1,7 +1,7 @@
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { PresenceSettings, SubconsciousCoreSettings } from './core-settings'
+import { DesktopPresenceSettings, SubconsciousCoreSettings } from './core-settings'
 import type { useMarviConfig } from './use-marvi-config'
 
 vi.mock('./use-activitywatch-status', () => ({
@@ -96,9 +96,9 @@ describe('SubconsciousCoreSettings', () => {
   })
 })
 
-describe('PresenceSettings', () => {
+describe('DesktopPresenceSettings', () => {
   it('shows the ActivityWatch reachability indicator', () => {
-    render(<PresenceSettings marvi={fakeMarvi()} />)
+    render(<DesktopPresenceSettings marvi={fakeMarvi()} />)
 
     expect(screen.getByText('ActivityWatch reachable')).toBeTruthy()
   })
@@ -106,7 +106,7 @@ describe('PresenceSettings', () => {
   it('enables presence via the setup endpoint, not a raw config patch', async () => {
     const { setupPresence } = await import('./activation-service')
     const marvi = fakeMarvi({ 'presence.enabled': false })
-    render(<PresenceSettings marvi={marvi} />)
+    render(<DesktopPresenceSettings marvi={marvi} />)
 
     fireEvent.click(screen.getByLabelText('Enable presence'))
 
@@ -123,7 +123,7 @@ describe('PresenceSettings', () => {
   it('disables presence via the pause endpoint', async () => {
     const { pausePresence } = await import('./activation-service')
     const marvi = fakeMarvi({ 'presence.enabled': true })
-    render(<PresenceSettings marvi={marvi} />)
+    render(<DesktopPresenceSettings marvi={marvi} />)
 
     fireEvent.click(screen.getByLabelText('Enable presence'))
 
@@ -152,7 +152,7 @@ describe('PresenceSettings', () => {
     })
 
     const marvi = fakeMarvi({ 'presence.enabled': false })
-    render(<PresenceSettings marvi={marvi} />)
+    render(<DesktopPresenceSettings marvi={marvi} />)
 
     fireEvent.click(screen.getByLabelText('Enable presence'))
 
@@ -163,7 +163,7 @@ describe('PresenceSettings', () => {
 
   it('toggles flow gating as a plain config patch', () => {
     const marvi = fakeMarvi({ 'presence.enabled': true, 'presence.flow_gating': true })
-    render(<PresenceSettings marvi={marvi} />)
+    render(<DesktopPresenceSettings marvi={marvi} />)
 
     fireEvent.click(screen.getByLabelText('Flow-aware delivery'))
 
@@ -172,7 +172,7 @@ describe('PresenceSettings', () => {
 
   it('adds a denylist entry', () => {
     const marvi = fakeMarvi({ 'presence.enabled': true, 'presence.denylist': [] })
-    render(<PresenceSettings marvi={marvi} />)
+    render(<DesktopPresenceSettings marvi={marvi} />)
 
     fireEvent.change(screen.getByPlaceholderText('Title substring to strip'), { target: { value: 'Private Tab' } })
     fireEvent.click(screen.getByRole('button', { name: 'Add' }))

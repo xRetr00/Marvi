@@ -208,8 +208,9 @@ export interface DuplexAudioPlayer {
   enqueueChunk: (data: string, seq: number) => void
   /** No more chunks are coming for the current utterance; fire onDrained once queued audio finishes. */
   expectEnd: () => void
-  /** Barge-in kill: stop everything playing/queued immediately. */
-  reset: () => void
+  /** Barge-in kill: stop everything playing/queued immediately. An optional
+   *  sampleRate (from tts_start) applies to chunks enqueued after the reset. */
+  reset: (sampleRate?: number) => void
   /** Register (single) callback for "all queued audio finished playing" after expectEnd(). */
   onDrained: (callback: (() => void) | null) => void
   /** Tear down the underlying AudioContext entirely. */
@@ -225,7 +226,7 @@ export function createDuplexAudioPlayer(deps: DuplexAudioPlayerDeps = {}): Duple
 
   let ctx: AudioContext | null = null
   let nextTime = 0
-  const sampleRate = DEFAULT_TTS_SAMPLE_RATE
+  let sampleRate = DEFAULT_TTS_SAMPLE_RATE
   const sources = new Set<AudioBufferSourceNode>()
   let endRequested = false
   let drainedCallback: (() => void) | null = null
@@ -321,8 +322,12 @@ export function createDuplexAudioPlayer(deps: DuplexAudioPlayerDeps = {}): Duple
       drainedCallback = callback
     },
 
-    reset: () => {
+    reset: (nextSampleRate?: number) => {
       endRequested = false
+
+      if (typeof nextSampleRate === 'number' && nextSampleRate > 0) {
+        sampleRate = nextSampleRate
+      }
 
       for (const source of sources) {
         try {

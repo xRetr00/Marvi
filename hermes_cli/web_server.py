@@ -510,12 +510,39 @@ def _resolve_restart_drain_timeout() -> float:
         return DEFAULT_GATEWAY_RESTART_DRAIN_TIMEOUT
 
 
+# Concurrency budget for streaming-STT work (transcribe_audio_stream_ws's
+# Parakeet path, the one-shot /api/audio/transcribe upload path, AND
+# /api/voice/duplex's own STT session -- see _get_audio_transcribe_lock).
+#
+# Was a plain asyncio.Lock() (max 1) HELD FOR THE ENTIRE WS CONNECTION
+# LIFETIME in transcribe_audio_stream_ws, not just the STT-session-spawn
+# step. That over-serializes: a second legitimate streaming-STT connection
+# (e.g. a barge-in listener opened while a main capture session is still
+# open, or a second duplex session) doesn't get a fast, clear rejection --
+# it just hangs on lock.acquire() with no feedback until the first
+# connection closes or the client's own ~120s timeout fires. The real
+# constraint _ParakeetSubprocessSession.begin() is protecting against is
+# concurrent NeMo/CUDA model LOADS thrashing the GPU (see its docstring),
+# not concurrent STEADY-STATE use of already-loaded sessions -- so a small
+# bounded semaphore (2: the warm/reused session + one lightweight overflow
+# session, matching the duplex spec's "mic stays open during TTS playback"
+# barge-in design, which legitimately wants a second STT stream alongside
+# the main one) is the right shape, paired with a bounded acquire timeout
+# (_STREAMING_STT_ACQUIRE_TIMEOUT) so a THIRD+ concurrent attempt fails
+# fast and audibly instead of hanging silently.
+_STREAMING_STT_MAX_CONCURRENT = 2
+_STREAMING_STT_ACQUIRE_TIMEOUT = 8.0  # seconds
+
+
 @asynccontextmanager
 async def _lifespan(app: "FastAPI"):
     app.state.event_channels = {}  # dict[str, set]
     app.state.event_lock = asyncio.Lock()
     app.state.pty_active_session_files = {}  # dict[str, Path]
-    app.state.audio_transcribe_lock = asyncio.Lock()
+    # Bounds concurrent streaming-STT/Parakeet-subprocess work process-wide --
+    # see _get_audio_transcribe_lock's docstring for why this is a Semaphore
+    # (bounded concurrency), not a Lock (exclusive single-flight).
+    app.state.audio_transcribe_lock = asyncio.Semaphore(_STREAMING_STT_MAX_CONCURRENT)
     # Serializes chat-argv resolution so concurrent /api/pty connections
     # don't trigger overlapping ``npm install`` / ``npm run build`` work.
     # On app.state (not a module global) so the Lock binds to the running
@@ -589,11 +616,25 @@ def _get_chat_argv_lock(app: "FastAPI") -> asyncio.Lock:
         return app.state.chat_argv_lock
 
 
-def _get_audio_transcribe_lock(app: "FastAPI") -> asyncio.Lock:
+def _get_audio_transcribe_lock(app: "FastAPI") -> "asyncio.Semaphore":
+    """Return the process-wide streaming-STT concurrency semaphore.
+
+    Named ``*_lock`` for historical/back-compat reasons (existing callers
+    and test doubles reference it by this name), but it's an
+    ``asyncio.Semaphore(_STREAMING_STT_MAX_CONCURRENT)``, not an exclusive
+    Lock -- see :data:`_STREAMING_STT_MAX_CONCURRENT`'s comment for why.
+    ``Semaphore`` supports the same ``async with`` / ``acquire()``/
+    ``release()`` protocol as ``Lock``, so this is a drop-in replacement for
+    every existing call site (including test fakes that only implement
+    ``__aenter__``/``__aexit__``).
+
+    Lazily initialises for non-``with`` ``TestClient`` usages that skip the
+    lifespan (mirrors :func:`_get_event_state`).
+    """
     try:
         return app.state.audio_transcribe_lock
     except AttributeError:
-        app.state.audio_transcribe_lock = asyncio.Lock()
+        app.state.audio_transcribe_lock = asyncio.Semaphore(_STREAMING_STT_MAX_CONCURRENT)
         return app.state.audio_transcribe_lock
 
 
@@ -15723,7 +15764,24 @@ async def transcribe_audio_stream_ws(ws: WebSocket) -> None:
     sample_rate = 16000
     total_bytes = 0
     transcribe_lock = _get_audio_transcribe_lock(app)
-    await transcribe_lock.acquire()
+    try:
+        await asyncio.wait_for(transcribe_lock.acquire(), timeout=_STREAMING_STT_ACQUIRE_TIMEOUT)
+    except asyncio.TimeoutError:
+        # _STREAMING_STT_MAX_CONCURRENT concurrent streaming-STT sessions are
+        # already active -- fail fast and audibly instead of hanging this
+        # connection open with no feedback (see _STREAMING_STT_MAX_CONCURRENT's
+        # comment). The client sees a clean WS close, not a silent stall.
+        _log.warning(
+            "audio-transcribe-stream refused: streaming-STT concurrency budget "
+            "(max=%d) exhausted for %.0fs", _STREAMING_STT_MAX_CONCURRENT, _STREAMING_STT_ACQUIRE_TIMEOUT,
+        )
+        try:
+            await ws.send_json({"type": "error", "error": "Too many concurrent speech-recognition sessions; try again shortly"})
+        except Exception:
+            pass
+        await ws.close(code=1013)  # 1013 Try Again Later
+        return
+    acquired = True
 
     try:
         while True:
@@ -15925,6 +15983,13 @@ async def wake_word_stream_ws(ws: WebSocket) -> None:
 _DUPLEX_ROLLING_TURNS = 20
 _DUPLEX_BARGE_IN_STREAK_MS = 260.0
 _DUPLEX_UTTERANCE_AUDIO_CAP_CHUNKS = 1000
+# Fallback only -- used when a tts_chunk stream never reports its own
+# sample_rate (shouldn't happen with tools.tts_tool.stream_text_to_speech_chunks,
+# which always yields a "start" event carrying one; kept as a safety net so
+# tts_start always carries a sample_rate field even if a future TTS backend
+# forgets to). Matches PocketTTS's own fallback default (tools/tts_tool.py)
+# and the desktop GaplessPlayer's prior hardcoded assumption.
+_DUPLEX_DEFAULT_TTS_SAMPLE_RATE = 24000
 # Sentinel telling _pump_deep_tasks to stop -- distinct from None, which
 # _get_deep_task_item also returns on a plain poll timeout (no item yet).
 _DUPLEX_DEEP_TASK_STOP = object()
@@ -16107,13 +16172,15 @@ class _DuplexTtsCycle:
     A "cycle" spans the WHOLE reply (possibly several synthesized segments
     as text accumulates sentence-by-sentence) — NOT each individual call to
     ``stream_text_to_speech_chunks``, whose own per-call "start"/"end"
-    framing events are intentionally swallowed here.
+    framing events are intentionally swallowed here. Their ``sample_rate``
+    payload is NOT swallowed, though — see :data:`_DUPLEX_DEFAULT_TTS_SAMPLE_RATE`.
     """
 
     def __init__(self, session: "_DuplexSession") -> None:
         self._session = session
         self._started = False
         self._seq = 0
+        self._sample_rate: Optional[int] = None
 
     def speak(self, text: str, cancel_event: threading.Event) -> bool:
         """Synthesize + emit ``text``. Returns False if cancelled mid-flight."""
@@ -16129,10 +16196,32 @@ class _DuplexTtsCycle:
             for event in events:
                 if cancel_event.is_set():
                     return False
-                if not isinstance(event, dict) or event.get("type") != "chunk":
+                if not isinstance(event, dict):
+                    continue
+                etype = event.get("type")
+                if etype in ("start", "sample_rate"):
+                    # tools.tts_tool.stream_text_to_speech_chunks reports the
+                    # ACTUAL sample rate of the PCM it's about to stream (it
+                    # reads the loaded TTS model's native rate, which is not
+                    # guaranteed to be 24 kHz for every provider/voice) --
+                    # captured here so tts_start can pass it to the client
+                    # instead of the client assuming a fixed rate.
+                    sr = event.get("sample_rate")
+                    if sr:
+                        try:
+                            self._sample_rate = int(sr)
+                        except (TypeError, ValueError):
+                            pass
+                    continue
+                if etype != "chunk":
                     continue
                 if not self._started:
-                    self._session._emit_sync({"type": "tts_start"})
+                    self._session._emit_sync(
+                        {
+                            "type": "tts_start",
+                            "sample_rate": self._sample_rate or _DUPLEX_DEFAULT_TTS_SAMPLE_RATE,
+                        }
+                    )
                     self._started = True
                 self._seq += 1
                 self._session._emit_sync(
@@ -16190,11 +16279,39 @@ class _DuplexSession:
         self._deep_task_pump: Optional[asyncio.Task] = None
         self._task_counter = 0
         self._closed = False
+        self._stt_slot_acquired = False
 
     async def start(self) -> None:
         from tools.voice_instant_lane import RollingTranscript
 
         self.transcript = RollingTranscript(max_turns=_DUPLEX_ROLLING_TURNS)
+
+        # Share the SAME streaming-STT concurrency budget as
+        # transcribe_audio_stream_ws (see _STREAMING_STT_MAX_CONCURRENT) --
+        # previously this endpoint bypassed that budget entirely, so a
+        # legacy /api/audio/transcribe/stream connection (e.g. the desktop
+        # wake-word flow) and a duplex session could independently spawn
+        # concurrent Parakeet subprocess loads with no shared cap between
+        # them. Bounded wait, not indefinite: if the budget is exhausted the
+        # session still starts (functional, just without a live STT session
+        # this turn) rather than hanging the WS open with no feedback.
+        transcribe_lock = _get_audio_transcribe_lock(app)
+        try:
+            await asyncio.wait_for(transcribe_lock.acquire(), timeout=_STREAMING_STT_ACQUIRE_TIMEOUT)
+            self._stt_slot_acquired = True
+        except asyncio.TimeoutError:
+            _log.warning(
+                "Voice duplex: streaming-STT concurrency budget (max=%d) exhausted -- "
+                "starting this session without a live STT session",
+                _STREAMING_STT_MAX_CONCURRENT,
+            )
+            await self._send(
+                {"type": "error", "error": "speech recognition temporarily unavailable (too many concurrent voice sessions)"}
+            )
+            self._deep_task_pump = asyncio.create_task(self._pump_deep_tasks())
+            await self._send({"type": "ready"})
+            return
+
         try:
             self.stt_session = await asyncio.to_thread(_duplex_stt_session, self.stt_cfg)
             await asyncio.to_thread(self.stt_session.begin)
@@ -16553,6 +16670,9 @@ class _DuplexSession:
                     await asyncio.to_thread(self.stt_session.close)
                 except Exception:
                     pass
+        if self._stt_slot_acquired:
+            _get_audio_transcribe_lock(app).release()
+            self._stt_slot_acquired = False
 
 
 @app.websocket("/api/voice/duplex")

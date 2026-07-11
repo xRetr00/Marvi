@@ -1,11 +1,10 @@
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
 import { useEffect, useRef, useState } from 'react'
 
+import { VoiceSpeakerBadge } from '@/components/voice-speaker-badge'
 import type { IslandCard, IslandCardKind } from '@/lib/island-queue'
 import type { VoicePhase, VoiceState } from '@/store/voice-presence'
 
-import { isDuplexPhaseActive, resolveDuplexPresentation } from './duplex-presentation'
-import type { DuplexSessionState } from './duplex-session'
 import { IslandWaveform } from './island-waveform'
 
 type IslandView = 'seed' | 'idle' | 'expanded' | 'summon'
@@ -24,12 +23,6 @@ interface DynamicIslandProps {
   summoned?: boolean
   onSummonSubmit?: (text: string) => void
   onSummonCancel?: () => void
-  // Duplex voice (see duplex-session.ts): when present and not 'connecting'/
-  // 'closed', its presentation takes over the island's phase/label/caption
-  // in place of `state` above. `duplexLevel` is the duplex mic's own live
-  // amplitude (the legacy `state.level` only reflects the old voice loop).
-  duplex?: DuplexSessionState | null
-  duplexLevel?: number
 }
 
 const SEED_HEIGHT = 26
@@ -161,38 +154,34 @@ export function DynamicIsland({
   onCardAction,
   summoned = false,
   onSummonSubmit,
-  onSummonCancel,
-  duplex,
-  duplexLevel
+  onSummonCancel
 }: DynamicIslandProps) {
   const reducedMotion = useReducedMotion()
 
-  // Duplex (see duplex-session.ts) fully drives the presentation once it's
-  // live — 'connecting'/'closed' (or no duplex at all, the common case until
-  // the server endpoint ships) means "not active", so the legacy
-  // IPC-pushed `state` keeps driving the island exactly as before.
-  const duplexPresentation = duplex && isDuplexPhaseActive(duplex.phase) ? resolveDuplexPresentation(duplex) : null
+  // `state` already carries whichever session is authoritative — a duplex
+  // session (composer hands-free or ambient wake-word, see voice-presence.ts's
+  // $voiceState) or the legacy wake-word/conversation derivation — so the
+  // island never needs to know which one produced it. `state.label` is only
+  // ever set by a duplex session (see DuplexExtras), so its presence doubles
+  // as "duplex is driving this frame" without a separate prop.
+  const duplexDriven = state.label !== null
+  const caption = resolveCaption(state)
+  const view = resolveView(state, card, summoned, caption)
 
-  const effectivePhase: VoicePhase = duplexPresentation?.phase ?? state.phase
-  const caption = duplexPresentation?.caption ?? resolveCaption(state)
-  const view = resolveView({ ...state, phase: effectivePhase }, card, summoned, caption)
+  const active =
+    state.phase === 'listening' || state.phase === 'speaking' || (duplexDriven && state.phase === 'thinking')
 
-  const active = duplexPresentation
-    ? duplexPresentation.phase === 'listening' || duplexPresentation.phase === 'speaking' || duplexPresentation.phase === 'thinking'
-    : state.phase === 'listening' || state.phase === 'speaking'
-
-  const color = phaseColor(effectivePhase)
-  const level = duplexPresentation ? (duplexLevel ?? 0) : state.level
-  const bargeableNow = duplexPresentation ? duplexPresentation.bargeable : state.bargeable
+  const color = phaseColor(state.phase)
+  const level = state.level
   // While thinking, narrate the agent's current tool action instead of the
   // static "Thinking" label — falls back to it once activity clears (between
   // tools) or for phases that don't carry an activity. Duplex's own labels
   // ("Replying" / "Answering" / "Speaking") always win over tool narration.
-  const narrating = !duplexPresentation && (state.phase === 'thinking' || state.phase === 'transcribing') && Boolean(activity)
-  const label = duplexPresentation?.label ?? (narrating ? activity! : phaseLabel(state.phase))
+  const narrating = !duplexDriven && (state.phase === 'thinking' || state.phase === 'transcribing') && Boolean(activity)
+  const label = state.label ?? (narrating ? activity! : phaseLabel(state.phase))
   // Thinking with a live user caption: the caption becomes the primary line
   // and the activity narration steps aside rather than stacking a third row.
-  const showActivityLabel = duplexPresentation ? true : !(state.phase === 'thinking' && caption)
+  const showActivityLabel = duplexDriven ? true : !(state.phase === 'thinking' && caption)
 
   const contentTransition = reducedMotion ? CONTENT_TRANSITION_INSTANT : CONTENT_TRANSITION_MOTION
   const springTransition = reducedMotion ? CONTENT_TRANSITION_INSTANT : SPRING
@@ -203,7 +192,7 @@ export function DynamicIsland({
   // Caption component's own AnimatePresence (keyed on who+text) should react
   // to text changes.
   const contentKey =
-    view === 'summon' ? 'summon' : card ? `card:${card.id}` : `state:${view}:${effectivePhase}:${narrating ? label : ''}`
+    view === 'summon' ? 'summon' : card ? `card:${card.id}` : `state:${view}:${state.phase}:${narrating ? label : ''}`
 
   const minWidth =
     view === 'seed' ? SEED_MIN_WIDTH : view === 'idle' ? IDLE_MIN_WIDTH : view === 'summon' ? SUMMON_WIDTH : undefined
@@ -294,13 +283,13 @@ export function DynamicIsland({
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                     <StateDot active={active} color={color} reducedMotion={Boolean(reducedMotion)} />
                     <span style={{ fontSize: 13, fontWeight: 500, color: 'rgba(255,255,255,0.78)' }}>{label}</span>
-                    {duplexPresentation?.speakerBadge ? <SpeakerBadge speaker={duplexPresentation.speakerBadge} /> : null}
+                    {state.speakerBadge ? <VoiceSpeakerBadge speaker={state.speakerBadge} variant="dark" /> : null}
                   </div>
                 ) : null}
                 {caption ? <Caption reducedMotion={Boolean(reducedMotion)} text={caption.text} who={caption.who} /> : null}
-                {effectivePhase === 'speaking' && bargeableNow ? (
+                {state.phase === 'speaking' && state.bargeable ? (
                   <InterruptHint reducedMotion={Boolean(reducedMotion)} />
-                ) : duplexPresentation?.deepWorking ? (
+                ) : state.deepWorking ? (
                   <DeepWorkHint reducedMotion={Boolean(reducedMotion)} />
                 ) : null}
               </div>
@@ -462,28 +451,6 @@ function DeepWorkHint({ reducedMotion }: { reducedMotion: boolean }) {
         thinking deeper…
       </span>
     </div>
-  )
-}
-
-// Small pill next to the phase label when the duplex server attributes the
-// last utterance to someone other than the enrolled owner (speaker ID, spec
-// section 4). Deliberately tiny/muted — this is a hint, not an alert.
-function SpeakerBadge({ speaker }: { speaker: 'guest' | 'unknown' }) {
-  return (
-    <span
-      style={{
-        border: '0.5px solid rgba(255,255,255,0.18)',
-        borderRadius: 999,
-        color: 'rgba(255,255,255,0.45)',
-        fontSize: 9,
-        fontWeight: 600,
-        letterSpacing: '0.08em',
-        padding: '2px 6px',
-        textTransform: 'uppercase'
-      }}
-    >
-      {speaker === 'guest' ? 'guest' : 'unknown voice'}
-    </span>
   )
 }
 

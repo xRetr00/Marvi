@@ -3,11 +3,11 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { setVoicePlaybackState } from './voice-playback'
 import {
   $bargeInEnabled,
-  $conversation,
   $userCaption,
   $voiceState,
   $wakeStatus,
   deriveVoicePhase,
+  publishAmbientDuplex,
   publishBargeInEnabled,
   publishConversation,
   publishWakeStatus
@@ -47,7 +47,8 @@ describe('deriveVoicePhase', () => {
 
 describe('$voiceState (computed)', () => {
   afterEach(() => {
-    $conversation.set({ active: false, status: 'idle', level: 0, muted: false, caption: null })
+    publishConversation({ active: false, status: 'idle', level: 0, muted: false, caption: null })
+    publishAmbientDuplex({ active: false, phase: 'off', level: 0, caption: null, userCaption: null, bargeable: false })
     $wakeStatus.set('idle')
     $userCaption.set(null)
     setVoicePlaybackState(idlePlayback)
@@ -56,16 +57,46 @@ describe('$voiceState (computed)', () => {
 
   it('reflects the conversation slice when active', () => {
     publishConversation({ active: true, status: 'listening', level: 0.5, muted: false, caption: 'hi' })
-    expect($voiceState.get()).toEqual({ phase: 'listening', level: 0.5, muted: false, caption: 'hi', userCaption: null, bargeable: false })
+    expect($voiceState.get()).toEqual({
+      phase: 'listening',
+      level: 0.5,
+      muted: false,
+      caption: 'hi',
+      userCaption: null,
+      bargeable: false,
+      label: null,
+      speakerBadge: null,
+      deepWorking: false
+    })
   })
 
   it('lights as wake from the wake-word slice', () => {
     publishWakeStatus('woken')
-    expect($voiceState.get()).toEqual({ phase: 'wake', level: 0, muted: false, caption: null, userCaption: null, bargeable: false })
+    expect($voiceState.get()).toEqual({
+      phase: 'wake',
+      level: 0,
+      muted: false,
+      caption: null,
+      userCaption: null,
+      bargeable: false,
+      label: null,
+      speakerBadge: null,
+      deepWorking: false
+    })
   })
 
   it('is off when both slices are idle', () => {
-    expect($voiceState.get()).toEqual({ phase: 'off', level: 0, muted: false, caption: null, userCaption: null, bargeable: false })
+    expect($voiceState.get()).toEqual({
+      phase: 'off',
+      level: 0,
+      muted: false,
+      caption: null,
+      userCaption: null,
+      bargeable: false,
+      label: null,
+      speakerBadge: null,
+      deepWorking: false
+    })
   })
 
   it('lights as speaking + bargeable from TTS playback in any mode (read-aloud/wake-word)', () => {
@@ -78,5 +109,39 @@ describe('$voiceState (computed)', () => {
     setVoicePlaybackState(speakingReadAloud)
     publishBargeInEnabled(false)
     expect($voiceState.get()).toMatchObject({ phase: 'speaking', bargeable: false })
+  })
+
+  it('an active ambient duplex session (wake-word path) takes over the presentation', () => {
+    publishWakeStatus('woken') // legacy wake path would otherwise light 'wake'
+    publishAmbientDuplex({
+      active: true,
+      phase: 'thinking',
+      level: 0.3,
+      caption: 'reply so far',
+      userCaption: 'what did you say',
+      bargeable: true,
+      label: 'Replying',
+      speakerBadge: 'guest',
+      deepWorking: true
+    })
+
+    expect($voiceState.get()).toEqual({
+      phase: 'thinking',
+      level: 0.3,
+      muted: false,
+      caption: 'reply so far',
+      userCaption: 'what did you say',
+      bargeable: true,
+      label: 'Replying',
+      speakerBadge: 'guest',
+      deepWorking: true
+    })
+  })
+
+  it('falls back to the legacy wake-status derivation once ambient duplex is inactive', () => {
+    publishAmbientDuplex({ active: false, phase: 'off', level: 0, caption: null, userCaption: null, bargeable: false })
+    publishWakeStatus('listening')
+
+    expect($voiceState.get()).toMatchObject({ phase: 'wake', speakerBadge: null, label: null })
   })
 })

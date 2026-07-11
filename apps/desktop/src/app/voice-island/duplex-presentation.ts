@@ -3,11 +3,15 @@ import type { VoicePhase } from '@/store/voice-presence'
 import type { DuplexSessionState } from './duplex-session'
 
 /**
- * Maps a `DuplexSessionState` onto the island's existing display vocabulary
- * (VoicePhase colors/labels, caption speaker convention) so `dynamic-island.tsx`
- * can render the duplex-driven states with the same visual language as the
- * legacy IPC-pushed `VoiceState`, without either side needing to know about
- * the other's internals. Pure + unit-testable.
+ * Maps a `DuplexSessionState` onto the shared display vocabulary
+ * (`VoicePhase`, labels, the `who`-tagged caption convention, `VoiceState`'s
+ * `label`/`speakerBadge`/`deepWorking` extras) that every voice surface reads
+ * from `$voiceState`. Both duplex sessions — the composer's hands-free
+ * overlay (use-composer-voice.ts) and the ambient wake-word/island path
+ * (desktop-controller.tsx) — funnel their `DuplexSessionState` through this
+ * one pure function before publishing into the store, so the island,
+ * voice-mode overlay, and composer status all render duplex turns identically
+ * without needing to know about duplex's internals. Pure + unit-testable.
  */
 export interface DuplexPresentation {
   phase: VoicePhase
@@ -54,11 +58,6 @@ function resolveCaption(state: DuplexSessionState): DuplexPresentation['caption'
   }
 
   return null
-}
-
-/** Only call for `connecting`/`closed` — those phases mean "not actually active"; callers should fall back to the legacy presentation instead. */
-export function isDuplexPhaseActive(phase: DuplexSessionState['phase']): boolean {
-  return phase !== 'connecting' && phase !== 'closed'
 }
 
 export function resolveDuplexPresentation(state: DuplexSessionState): DuplexPresentation {

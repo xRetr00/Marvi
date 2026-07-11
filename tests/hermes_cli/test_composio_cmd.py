@@ -66,12 +66,39 @@ class TestConnect:
             composio_cmd.cmd_composio_connect(args)
         assert exc.value.code == 1
 
-    def test_connect_fails_when_sdk_missing(self, monkeypatch):
+    def test_connect_fails_when_sdk_missing_and_auto_install_fails(self, monkeypatch):
         monkeypatch.setattr(composio_client_mod, "is_sdk_installed", lambda: False)
+        monkeypatch.setattr(
+            composio_client_mod,
+            "ensure_sdk_installed",
+            lambda **kw: (_ for _ in ()).throw(composio_client_mod.ComposioUnavailable("nope, no network")),
+        )
         args = SimpleNamespace(app="gmail", api_key="k123")
         with pytest.raises(SystemExit) as exc:
             composio_cmd.cmd_composio_connect(args)
         assert exc.value.code == 1
+
+    def test_connect_auto_installs_missing_sdk_then_connects(self, monkeypatch, fake_sdk, capsys):
+        # is_sdk_installed() reports missing up front, but ensure_sdk_installed()
+        # (the lazy auto-install path) succeeds -- connect should proceed
+        # instead of asking the user to install it themselves.
+        calls = []
+        monkeypatch.setattr(composio_client_mod, "is_sdk_installed", lambda: False)
+        monkeypatch.setattr(
+            composio_client_mod,
+            "ensure_sdk_installed",
+            lambda **kw: calls.append(kw) or True,
+        )
+
+        args = SimpleNamespace(app="gmail", api_key="k123")
+        composio_cmd.cmd_composio_connect(args)
+
+        assert calls, "ensure_sdk_installed should have been called instead of just printing a hint"
+        assert calls[0].get("prompt") is True  # interactive CLI call site prompts
+        out = capsys.readouterr().out
+        assert "installing" in out.lower()
+        config = load_config()
+        assert "gmail" in config["composio"]["surfaces"]
 
     def test_connect_success_persists_api_key_and_surface(self, fake_sdk, capsys):
         args = SimpleNamespace(app="gmail", api_key="k123")

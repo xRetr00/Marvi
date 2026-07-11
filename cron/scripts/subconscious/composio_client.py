@@ -8,13 +8,16 @@ That mirrors the lazy-dependency convention used throughout the codebase
 never touches Composio should never pay for it, and a broken/unavailable
 Composio install must never take down anything else.
 
-This module intentionally does NOT register itself in ``tools/lazy_deps.py``'s
-allowlist (that file is owned by another part of the codebase) -- it does its
-own plain ``try/except ImportError`` with a clear remediation hint instead,
-which gets the "lazy, no hard dependency" property without touching shared
-infrastructure. If/when Composio graduates to a first-class lazy backend,
-wiring it into ``tools/lazy_deps.py`` (for auto-install support) is a small
-follow-up, not a design change here.
+Registered in ``tools/lazy_deps.py``'s ``LAZY_DEPS`` allowlist as
+``"integration.composio"`` (mirrors ``tools/presence/media_watcher.py``'s
+``winsdk``/``presence.media_watcher`` pattern): the SDK auto-installs on
+first real use (:meth:`ComposioClient._client`, via
+:func:`_import_composio_sdk`) instead of just telling the user to run pip
+themselves. :func:`is_sdk_installed` stays a cheap, install-free presence
+check (used by passive status output like ``hermes composio list``) --
+:func:`ensure_sdk_installed` is the function that actually triggers an
+install attempt, and only ``hermes composio connect`` and the internal
+SDK-usage seam call it.
 
 Everything fetchers/CLI need from Composio goes through :class:`ComposioClient`
 so the actual SDK call surface (which has shifted across Composio SDK major
@@ -29,9 +32,10 @@ from typing import Any, Dict, Optional
 
 logger = logging.getLogger(__name__)
 
-# Pin used only for the remediation hint printed when the SDK is missing --
-# NOT a project dependency pin (Composio ships no dependency file entry here
-# by design; see module docstring).
+# Pin used only as a LAST-RESORT fallback for the remediation hint text, if
+# tools.lazy_deps itself is somehow unavailable. The real source of truth is
+# tools/lazy_deps.py's LAZY_DEPS["integration.composio"] entry -- see
+# _install_hint(), which reads the pin from there so the two can't drift.
 COMPOSIO_PACKAGE_SPEC = "composio==0.17.1"
 
 
@@ -74,33 +78,95 @@ def install_hint() -> str:
 
 
 def _install_hint() -> str:
+    try:
+        from tools.lazy_deps import feature_install_command
+
+        manual_cmd = feature_install_command("integration.composio")
+    except Exception:
+        manual_cmd = None
+    if not manual_cmd:
+        manual_cmd = f"uv pip install {COMPOSIO_PACKAGE_SPEC!r}"
     return (
         "Composio SDK not installed. Install it with:\n"
-        f"  uv pip install {COMPOSIO_PACKAGE_SPEC}\n"
+        f"  {manual_cmd}\n"
         f"  (or: pip install {COMPOSIO_PACKAGE_SPEC})\n"
         "Composio powers Marvi's account-awareness sync (Gmail, GitHub, etc.) "
         "and is entirely optional -- Marvi runs fine without it until you "
-        "run `hermes composio connect <app>`."
+        "run `hermes composio connect <app>`, which now installs it "
+        "automatically -- this hint is only shown if that auto-install "
+        "itself couldn't proceed (see the reason above)."
     )
 
 
+def is_sdk_installed() -> bool:
+    """Cheap presence check that never raises and never triggers an install
+    -- used by passive CLI status output (``hermes composio list``). Callers
+    that actually need the SDK available should go through
+    :func:`ensure_sdk_installed` (auto-installs on demand) instead."""
+    try:
+        import composio  # type: ignore  # noqa: F401
+    except ImportError:
+        return False
+    return True
+
+
+def ensure_sdk_installed(*, prompt: bool = False) -> bool:
+    """Make sure the Composio SDK is importable, auto-installing it via
+    ``tools.lazy_deps`` (feature ``integration.composio``) when missing --
+    the SAME lazy-install convention every other optional backend in this
+    codebase follows (see ``tools/lazy_deps.py``'s module docstring),
+    instead of just telling the user to run pip themselves.
+
+    ``prompt``: forwarded to ``tools.lazy_deps.ensure`` -- True for
+    interactive CLI call sites (``hermes composio connect``, which already
+    has a terminal to ask "install now? [Y/n]" on), False for unattended
+    call sites (the subconscious cron fetchers, ``hermes composio list``'s
+    passive status probe never calls this at all).
+
+    Returns True on success. Raises :class:`ComposioUnavailable` (never a
+    bare ``ImportError`` or ``lazy_deps.FeatureUnavailable``) when the
+    install is declined/disabled/fails -- callers that just want a
+    best-effort probe should catch that and degrade, matching every other
+    ``ComposioUnavailable`` call site in this module.
+    """
+    if is_sdk_installed():
+        return True
+
+    from tools.lazy_deps import FeatureUnavailable, ensure
+
+    try:
+        ensure("integration.composio", prompt=prompt)
+    except FeatureUnavailable as exc:
+        raise ComposioUnavailable(str(exc)) from exc
+    except Exception as exc:
+        logger.debug("lazy_deps.ensure failed for integration.composio", exc_info=True)
+        raise ComposioUnavailable(_install_hint()) from exc
+
+    if not is_sdk_installed():
+        # ensure() reported success but the package still isn't importable
+        # (see its own post-install verification) -- surface the generic
+        # hint since there's no more specific reason to report here.
+        raise ComposioUnavailable(_install_hint())
+    return True
+
+
 def _import_composio_sdk():
-    """Lazy import of the ``composio`` package. Raises :class:`ComposioUnavailable`
-    with a clear remediation hint on failure -- never a bare ``ImportError``."""
+    """Import the ``composio`` package, auto-installing it on first use when
+    missing (via :func:`ensure_sdk_installed`, ``prompt=False`` -- this is
+    the internal SDK-usage seam :class:`ComposioClient` calls from
+    unattended contexts, not an interactive CLI command). Raises
+    :class:`ComposioUnavailable` with a clear remediation hint on failure --
+    never a bare ``ImportError``."""
     try:
         import composio  # type: ignore
-    except ImportError as e:
-        raise ComposioUnavailable(_install_hint()) from e
+        return composio
+    except ImportError:
+        pass
+
+    ensure_sdk_installed(prompt=False)  # raises ComposioUnavailable on failure
+
+    import composio  # type: ignore  -- just verified importable above
     return composio
-
-
-def is_sdk_installed() -> bool:
-    """Cheap presence check that never raises -- used by CLI status output."""
-    try:
-        _import_composio_sdk()
-        return True
-    except ComposioUnavailable:
-        return False
 
 
 def get_api_key(config: Optional[Dict[str, Any]] = None) -> Optional[str]:

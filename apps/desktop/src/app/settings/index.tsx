@@ -14,7 +14,6 @@ import {
   Globe,
   Info,
   KeyRound,
-  Mic,
   RefreshCw,
   Settings2,
   Upload,
@@ -36,11 +35,10 @@ import { SECTIONS } from './constants'
 import { GatewaySettings } from './gateway-settings'
 import { KEYS_VIEWS, KeysSettings, type KeysView } from './keys-settings'
 import { NotificationsSettings } from './notifications-settings'
+import { PresenceSettings } from './presence'
 import { PROVIDER_VIEWS, ProvidersSettings, type ProviderView } from './providers-settings'
 import { SessionsSettings } from './sessions-settings'
-import { SubconsciousSettings } from './subconscious'
 import type { SettingsPageProps, SettingsView as SettingsViewId } from './types'
-import { VoicePresenceSettings } from './voice-presence-settings'
 
 const SETTINGS_VIEWS: readonly SettingsViewId[] = [
   ...SECTIONS.map(s => `config:${s.id}` as SettingsViewId),
@@ -48,8 +46,7 @@ const SETTINGS_VIEWS: readonly SettingsViewId[] = [
   'gateway',
   'keys',
   'notifications',
-  'voice-presence',
-  'subconscious',
+  'presence',
   'sessions',
   'about'
 ]
@@ -151,18 +148,11 @@ export function SettingsView({ onClose, onConfigSaved, onMainModelChanged }: Set
       onSelect: () => setActiveView('notifications')
     },
     {
-      active: activeView === 'voice-presence',
-      icon: Mic,
-      id: 'voice-presence',
-      label: 'Voice presence',
-      onSelect: () => setActiveView('voice-presence')
-    },
-    {
-      active: activeView === 'subconscious',
+      active: activeView === 'presence',
       icon: Brain,
-      id: 'subconscious',
-      label: 'Subconscious',
-      onSelect: () => setActiveView('subconscious')
+      id: 'presence',
+      label: 'Presence',
+      onSelect: () => setActiveView('presence')
     },
     {
       active: activeView === 'providers',
@@ -291,13 +281,11 @@ export function SettingsView({ onClose, onConfigSaved, onMainModelChanged }: Set
             <KeysSettings view={keysView} />
           ) : activeView === 'notifications' ? (
             <NotificationsSettings />
-          ) : activeView === 'voice-presence' ? (
-            <VoicePresenceSettings
+          ) : activeView === 'presence' ? (
+            <PresenceSettings
               onOpenModelConfig={() => setActiveView('config:model')}
               onOpenVoiceConfig={() => setActiveView('config:voice')}
             />
-          ) : activeView === 'subconscious' ? (
-            <SubconsciousSettings />
           ) : (
             <SessionsSettings />
           )}

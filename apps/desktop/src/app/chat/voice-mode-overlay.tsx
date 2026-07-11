@@ -2,6 +2,7 @@ import { useStore } from '@nanostores/react'
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
 
 import { requestVoiceToggle } from '@/app/chat/composer/focus'
+import { VoiceSpeakerBadge } from '@/components/voice-speaker-badge'
 import { $conversation, $voiceState, type VoicePhase } from '@/store/voice-presence'
 
 import { VoiceOrb } from './voice-orb'
@@ -57,7 +58,10 @@ export function VoiceModeOverlay() {
           </motion.div>
 
           <div aria-live="polite" className="relative mt-8 min-h-24 max-w-xl" role="status">
-            <div className="text-sm font-medium tracking-wide text-white/72">{presentation.label}</div>
+            <div className="flex items-center justify-center gap-2">
+              <div className="text-sm font-medium tracking-wide text-white/72">{voice.label ?? presentation.label}</div>
+              {voice.speakerBadge ? <VoiceSpeakerBadge speaker={voice.speakerBadge} variant="dark" /> : null}
+            </div>
             {caption ? <div className="mt-3 line-clamp-3 text-balance text-lg leading-relaxed text-white/92">{caption}</div> : null}
             {voice.phase === 'speaking' && voice.bargeable ? <div className="mt-3 text-xs text-white/40">Speak to interrupt</div> : null}
           </div>

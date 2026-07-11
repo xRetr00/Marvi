@@ -97,15 +97,19 @@ def cmd_composio_connect(args: Any) -> None:
         ComposioRateLimited,
         ComposioTransientError,
         ComposioUnavailable,
+        ensure_sdk_installed,
         is_sdk_installed,
     )
 
     if not is_sdk_installed():
-        from cron.scripts.subconscious.composio_client import install_hint
-
-        print_error("Composio SDK not installed.")
-        print_info(install_hint())
-        sys.exit(1)
+        print_info("Composio SDK not installed -- installing it now...")
+        try:
+            ensure_sdk_installed(prompt=True)
+        except ComposioUnavailable as e:
+            print_error("Composio SDK not installed.")
+            print_info(str(e))
+            sys.exit(1)
+        print_success("Composio SDK installed.")
 
     client = ComposioClient(api_key)
     try:

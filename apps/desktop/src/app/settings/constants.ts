@@ -251,8 +251,11 @@ export const ENUM_OPTIONS: Record<string, string[]> = {
     'large-v3-turbo',
     'nvidia/parakeet_realtime_eou_120m-v1'
   ],
-  'voice.wake_word.provider': ['sherpa_onnx', 'livekit'],
-  'voice.wake_word.model': ['kws-en-3.3m', 'livekit-marvi'],
+  // Sherpa-onnx KWS is intentionally not offered here — LiveKit is the only
+  // wake-word provider shown in the UI (the Python-side sherpa KWS path still
+  // exists for existing configs, but Settings never lets you pick it).
+  'voice.wake_word.provider': ['livekit'],
+  'voice.wake_word.model': ['livekit-marvi'],
   // Speech-to-text backends — kept in sync with the stt block in
   // hermes_cli/config.py (local/groq/openai/mistral/elevenlabs).
   'stt.provider': ['local', 'groq', 'openai', 'mistral', 'xai', 'elevenlabs'],
@@ -533,7 +536,7 @@ export const FIELD_DESCRIPTIONS: Record<string, string> = defineFieldCopy({
     wakeWord: {
       enabled: 'Listen for a local wake phrase and submit one spoken command, then return to wake-only mode.',
       provider: 'Local keyword spotter used for wake detection.',
-      model: 'Sherpa KWS model used for local wake detection.',
+      model: 'LiveKit wake-word model used for local wake detection.',
       phrases: 'Phrases and common Marvi misrecognitions that can wake the one-shot command pipeline.',
       threshold: 'Higher values reduce false wakes but may miss valid wake phrases.',
       boost: 'Keyword score boost. Increase only if valid wake phrases are missed.',
@@ -702,18 +705,10 @@ export const SECTIONS: DesktopConfigSection[] = [
       'voice.semantic_turn',
       'voice.barge_in',
       'voice.escalation.enabled',
-      'voice.speaker_id.threshold',
-      'voice.speaker_id.require_owner_for_escalation',
-      'auxiliary.voice_instant.max_tokens',
-      'voice.wake_word.enabled',
-      'voice.wake_word.provider',
-      'voice.wake_word.model',
-      'voice.wake_word.phrases',
-      'voice.wake_word.threshold',
-      'voice.wake_word.boost',
-      'voice.wake_word.debug',
-      'voice.wake_word.command_timeout_ms',
-      'voice.wake_word.cooldown_ms'
+      'auxiliary.voice_instant.max_tokens'
+      // Wake word (voice.wake_word.*) and speaker ID (voice.speaker_id.*) live
+      // in Settings → Presence → Wake Word / Voice instead of here — see
+      // settings/presence/wake-word-settings.tsx and voice-presence-settings.tsx.
     ]
   },
   {

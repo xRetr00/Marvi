@@ -118,7 +118,7 @@ export async function connectDuplexVoice(options: DuplexConnectOptions): Promise
     for (const command of commands) {
       switch (command.type) {
         case 'reset_playback':
-          player.reset()
+          player.reset(command.sampleRate)
 
           break
 

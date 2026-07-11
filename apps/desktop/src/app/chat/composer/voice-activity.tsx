@@ -2,6 +2,7 @@ import { useStore } from '@nanostores/react'
 import { useEffect, useRef } from 'react'
 
 import { Button } from '@/components/ui/button'
+import { VoiceSpeakerBadge } from '@/components/voice-speaker-badge'
 import { useI18n } from '@/i18n'
 import { iconSize, Loader2, Mic, Volume2, VolumeX } from '@/lib/icons'
 import { cn } from '@/lib/utils'
@@ -231,7 +232,10 @@ export function VoiceConversationActivity() {
         {voice.phase === 'thinking' ? <Loader2 className="animate-spin" size={12} /> : <Mic size={12} />}
       </div>
       <div className="min-w-0 flex-1">
-        <div className="font-medium text-primary">{label}</div>
+        <div className="flex items-center gap-1.5 font-medium text-primary">
+          <span>{label}</span>
+          {voice.speakerBadge ? <VoiceSpeakerBadge speaker={voice.speakerBadge} /> : null}
+        </div>
         <div className="line-clamp-2 break-words text-foreground/85">{text}</div>
       </div>
     </div>

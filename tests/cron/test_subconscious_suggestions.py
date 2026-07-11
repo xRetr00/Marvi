@@ -138,6 +138,19 @@ class TestSubconsciousConfig:
 
         assert calls["create"] == 1
 
+    def test_tick_toolsets_are_all_registered(self, subconscious):
+        """Regression guard: every name in _TICK_TOOLSETS must be a real,
+        registered toolset (tools.registry) — a typo here (e.g. "search"
+        instead of "web") silently strips that capability from every
+        subconscious tick with no error anywhere, since create_job's
+        enabled_toolsets is just a filter, not a validated reference."""
+        from tools.registry import discover_builtin_tools, registry
+
+        discover_builtin_tools()
+        registered = set(registry.get_registered_toolset_names())
+        missing = [t for t in subconscious._TICK_TOOLSETS if t not in registered]
+        assert missing == [], f"_TICK_TOOLSETS references unregistered toolset(s): {missing}"
+
     def test_disable_pauses_job_and_flips_config(self, subconscious):
         with patch("cron.jobs.create_job", lambda **k: {"id": "job123", "schedule_display": "every 20m"}):
             subconscious.enable()

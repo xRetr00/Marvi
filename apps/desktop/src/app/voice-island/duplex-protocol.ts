@@ -59,6 +59,8 @@ export interface DuplexInstantDoneEvent {
 
 export interface DuplexTtsStartEvent {
   type: 'tts_start'
+  /** PCM sample rate of the chunks that follow; server falls back to 24000. */
+  sample_rate?: number
 }
 
 export interface DuplexTtsChunkEvent {
@@ -150,7 +152,9 @@ export function parseDuplexServerEvent(raw: unknown): DuplexServerEvent | null {
       return typeof raw.text === 'string' ? { type: 'instant_done', text: raw.text } : null
 
     case 'tts_start':
-      return { type: 'tts_start' }
+      return typeof raw.sample_rate === 'number' && raw.sample_rate > 0
+        ? { type: 'tts_start', sample_rate: raw.sample_rate }
+        : { type: 'tts_start' }
 
     case 'tts_chunk':
       return typeof raw.data === 'string' && typeof raw.seq === 'number'

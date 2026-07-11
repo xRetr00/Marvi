@@ -248,6 +248,14 @@ LAZY_DEPS: dict[str, tuple[str, ...]] = {
     ),
     # HF Agent Trace Viewer upload (hermes trace upload / /upload-trace).
     "tool.trace_upload": ("huggingface-hub==1.2.3",),
+
+    # ─── Account-awareness integrations ────────────────────────────────────
+    # Composio (https://composio.dev) powers Marvi's account-awareness sync
+    # (Gmail, GitHub, ...) -- see cron/scripts/subconscious/composio_client.py.
+    # Optional everywhere: the subconscious sync cron job and `hermes composio
+    # connect/list` both degrade to "not connected"/"sdk not installed"
+    # without it. Mirrors presence.media_watcher's lazy-install pattern.
+    "integration.composio": ("composio==0.17.1",),
 }
 
 

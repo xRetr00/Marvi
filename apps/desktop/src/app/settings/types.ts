@@ -9,10 +9,9 @@ export type SettingsView =
   | 'gateway'
   | 'keys'
   | 'notifications'
+  | 'presence'
   | 'providers'
   | 'sessions'
-  | 'subconscious'
-  | 'voice-presence'
   | `config:${string}`
 export type EnvPatch = Partial<Pick<EnvVarInfo, 'is_set' | 'redacted_value'>>
 

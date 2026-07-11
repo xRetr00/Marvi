@@ -3,16 +3,16 @@ import { CheckCircle2, Eye, Link as LinkIcon } from '@/lib/icons'
 import { LoadingState, SectionHeading, SettingsContent } from '../primitives'
 
 import { ConnectedAccounts } from './connected-accounts'
-import { PresenceSettings, SubconsciousCoreSettings } from './core-settings'
+import { SubconsciousCoreSettings } from './core-settings'
 import { GoalsPanel } from './goals-panel'
 import { KnowledgeViewer } from './knowledge-viewer'
 import { useMarviConfig } from './use-marvi-config'
 
-// Marvi's proactive-agent surface: subconscious tick + presence settings,
-// goals, a read-only memory viewer, and Composio accounts — all one scrolling
-// settings page, matching the flat single-page pattern of neighboring
-// settings surfaces (VoicePresenceSettings, NotificationsSettings) rather
-// than introducing new nested sub-nav routing.
+// Marvi's proactive-agent surface: subconscious tick, goals, a read-only
+// memory viewer, and Composio accounts — one scrolling settings page,
+// rendered as the "Subconscious" tab of Settings → Presence (see
+// ../presence/index.tsx). Desktop Presence (ActivityWatch/flow-gating) and
+// Voice presence live in their own sibling tabs there instead of here.
 export function SubconsciousSettings() {
   const marvi = useMarviConfig()
 
@@ -36,10 +36,6 @@ export function SubconsciousSettings() {
   return (
     <SettingsContent>
       <SubconsciousCoreSettings marvi={marvi} />
-
-      <div className="my-4 h-px bg-border/30" />
-
-      <PresenceSettings marvi={marvi} />
 
       <div className="my-4 h-px bg-border/30" />
 

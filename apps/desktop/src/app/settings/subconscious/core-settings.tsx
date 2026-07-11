@@ -1,14 +1,7 @@
-import type { ReactNode } from 'react'
-
-import { Input } from '@/components/ui/input'
-import { Switch } from '@/components/ui/switch'
-import { triggerHaptic } from '@/lib/haptics'
 import { Activity, Brain } from '@/lib/icons'
-import { cn } from '@/lib/utils'
 import { notifyError } from '@/store/notifications'
 
-import { CONTROL_TEXT } from '../constants'
-import { ListRow, Pill, SectionHeading } from '../primitives'
+import { Caption, DebouncedField, ListRow, Pill, SectionHeading, ToggleRow } from '../primitives'
 
 import { disableSubconscious, enableSubconscious, pausePresence, setupPresence } from './activation-service'
 import { StringListEditor } from './string-list-editor'
@@ -16,64 +9,6 @@ import { TierMatrix } from './tier-matrix'
 import type { TierMap } from './types'
 import { useActivityWatchStatus } from './use-activitywatch-status'
 import type { useMarviConfig } from './use-marvi-config'
-
-const CAPTION = 'text-[length:var(--conversation-caption-font-size)] text-(--ui-text-tertiary)'
-
-function Caption({ children }: { children: ReactNode }) {
-  return <p className={cn(CAPTION, 'mb-2 leading-(--conversation-caption-line-height)')}>{children}</p>
-}
-
-function ToggleRow(props: { checked: boolean; description: string; disabled?: boolean; label: string; onChange: (on: boolean) => void }) {
-  return (
-    <ListRow
-      action={
-        <Switch
-          aria-label={props.label}
-          checked={props.checked}
-          disabled={props.disabled}
-          onCheckedChange={on => {
-            triggerHaptic('selection')
-            props.onChange(on)
-          }}
-        />
-      }
-      description={props.description}
-      title={props.label}
-    />
-  )
-}
-
-/** Debounced-on-blur text field for config strings that shouldn't save per keystroke (interval, minutes). */
-function DebouncedField({
-  value,
-  onCommit,
-  placeholder,
-  type = 'text',
-  disabled
-}: {
-  value: string
-  onCommit: (next: string) => void
-  placeholder?: string
-  type?: 'number' | 'text'
-  disabled?: boolean
-}) {
-  return (
-    <Input
-      className={cn('max-w-32', CONTROL_TEXT)}
-      defaultValue={value}
-      disabled={disabled}
-      key={value}
-      onBlur={e => onCommit(e.target.value)}
-      onKeyDown={e => {
-        if (e.key === 'Enter') {
-          e.currentTarget.blur()
-        }
-      }}
-      placeholder={placeholder}
-      type={type}
-    />
-  )
-}
 
 export function SubconsciousCoreSettings({ marvi }: { marvi: ReturnType<typeof useMarviConfig> }) {
   const enabled = marvi.get('subconscious.enabled', false)
@@ -152,7 +87,10 @@ export function SubconsciousCoreSettings({ marvi }: { marvi: ReturnType<typeof u
   )
 }
 
-export function PresenceSettings({ marvi }: { marvi: ReturnType<typeof useMarviConfig> }) {
+// "Desktop Presence" in the UI (Settings → Presence → Desktop Presence) — the
+// ActivityWatch-backed local-context surface. Named with the Desktop prefix
+// to disambiguate from the top-level Presence settings section itself.
+export function DesktopPresenceSettings({ marvi }: { marvi: ReturnType<typeof useMarviConfig> }) {
   const enabled = marvi.get('presence.enabled', false)
   const flowGating = marvi.get('presence.flow_gating', true)
   const shoulderTaps = marvi.get('presence.goblin.shoulder_taps', false)

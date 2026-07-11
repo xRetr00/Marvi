@@ -40,8 +40,9 @@ export interface DuplexSessionState {
 }
 
 export type DuplexCommand =
-  /** Stop any playing/queued audio immediately (barge-in, tts_start reset, close). */
-  | { type: 'reset_playback' }
+  /** Stop any playing/queued audio immediately (barge-in, tts_start reset, close).
+   *  sampleRate (from tts_start) applies to the chunks that follow the reset. */
+  | { type: 'reset_playback'; sampleRate?: number }
   /** Schedule one TTS chunk for playback. */
   | { type: 'enqueue_audio'; data: string; seq: number }
   /**
@@ -140,7 +141,7 @@ export class DuplexSessionMachine {
         this.awaitingPlaybackEnd = false
         this.patch({ phase: 'speaking', bargeable: true })
 
-        return [{ type: 'reset_playback' }]
+        return [{ type: 'reset_playback', sampleRate: event.sample_rate }]
 
       case 'tts_chunk':
         // A chunk without an active speaking session (arrived early/late,

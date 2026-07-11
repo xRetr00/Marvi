@@ -207,9 +207,18 @@ describe('settings helpers', () => {
       ])
     })
 
-    it('renders dropdowns for local wake-word options', () => {
-      expect(enumOptionsFor('voice.wake_word.provider', 'sherpa_onnx', config)).toEqual(['sherpa_onnx', 'livekit'])
-      expect(enumOptionsFor('voice.wake_word.model', 'kws-en-3.3m', config)).toEqual(['kws-en-3.3m', 'livekit-marvi'])
+    it('offers only LiveKit for wake-word options — sherpa is dropped from the UI', () => {
+      expect(enumOptionsFor('voice.wake_word.provider', 'livekit', config)).toEqual(['livekit'])
+      expect(enumOptionsFor('voice.wake_word.model', 'livekit-marvi', config)).toEqual(['livekit-marvi'])
+    })
+
+    it('still surfaces an existing sherpa-configured value rather than hiding it silently', () => {
+      // enumOptionsFor's generic "preserve the current value" fallback still
+      // applies here (existing configs may still carry the old sherpa
+      // default) — the dedicated Wake Word settings tab never renders these
+      // as a picker, so this is a defensive fallback, not a UI affordance.
+      expect(enumOptionsFor('voice.wake_word.provider', 'sherpa_onnx', config)).toEqual(['livekit', 'sherpa_onnx'])
+      expect(enumOptionsFor('voice.wake_word.model', 'kws-en-3.3m', config)).toEqual(['livekit-marvi', 'kws-en-3.3m'])
     })
 
     it('renders a dropdown for the terminal execution backend', () => {

@@ -12,6 +12,7 @@ sherpa-onnx/Parakeet/TTS/LLM/network is touched.
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import time
 
@@ -137,8 +138,23 @@ def duplex_client(monkeypatch, _isolate_hermes_home):
 
     previous_auth_required = getattr(web_server.app.state, "auth_required", None)
     previous_bound_host = getattr(web_server.app.state, "bound_host", None)
+    previous_transcribe_lock = getattr(web_server.app.state, "audio_transcribe_lock", None)
     web_server.app.state.auth_required = False
     web_server.app.state.bound_host = None
+    # Fresh, full-capacity semaphore per test. TestClient (used here without
+    # a `with` block, so the app lifespan never runs) spins a NEW anyio
+    # portal/event loop per `websocket_connect()` call; asyncio.Semaphore
+    # only binds to "a" loop the first time it actually has to wait (value
+    # hits 0), so reusing one semaphore instance across tests/connections on
+    # different loops throws "bound to a different event loop" the moment
+    # it's exhausted -- and since app.state is a module-level singleton that
+    # outlives any one test, a previous test's session.close() racing with
+    # TestClient teardown (a known async-fire-and-forget gap, unrelated to
+    # this semaphore) can otherwise leave a permit "leaked" into the next
+    # test. A fresh semaphore per test sidesteps both: never exhausted
+    # within a single test's 1-2 connections, so acquire() never needs to
+    # wait/bind to a loop at all.
+    web_server.app.state.audio_transcribe_lock = asyncio.Semaphore(web_server._STREAMING_STT_MAX_CONCURRENT)
 
     client = TestClient(web_server.app)
     try:
@@ -157,6 +173,11 @@ def duplex_client(monkeypatch, _isolate_hermes_home):
                 delattr(web_server.app.state, "bound_host")
         else:
             web_server.app.state.bound_host = previous_bound_host
+        if previous_transcribe_lock is None:
+            if hasattr(web_server.app.state, "audio_transcribe_lock"):
+                delattr(web_server.app.state, "audio_transcribe_lock")
+        else:
+            web_server.app.state.audio_transcribe_lock = previous_transcribe_lock
 
 
 @pytest.fixture
@@ -315,10 +336,59 @@ def test_utterance_instant_delta_tts_cycle(duplex_client, full_fakes):
         chunk = next(frame for frame in frames if frame["type"] == "tts_chunk")
         assert chunk["seq"] == 1
         assert chunk["data"] == "AAA="
-        assert any(frame["type"] == "tts_start" for frame in frames)
+        tts_start = next(frame for frame in frames if frame["type"] == "tts_start")
+        assert tts_start["sample_rate"] == 24000
 
     # STT was re-armed for the next utterance immediately after finishing.
     assert stt.begin_count >= 2
+
+
+def test_tts_start_reports_actual_backend_sample_rate(duplex_client, full_fakes, monkeypatch):
+    """tts_start must carry whatever sample rate the TTS backend actually
+    reports -- the duplex client must not have to assume a fixed 24 kHz."""
+    stt = full_fakes["stt"]
+    stt.queue_response("", True)
+    stt.final_text = "what time is it"
+
+    def fake_stream(text):
+        return [
+            {"type": "start", "sample_rate": 16000, "provider": "fake-16k"},
+            {"type": "chunk", "audio": "AAA="},
+            {"type": "end", "provider": "fake-16k"},
+        ]
+
+    from hermes_cli import web_server
+
+    monkeypatch.setattr(web_server, "_duplex_stream_tts_chunks", fake_stream)
+
+    with duplex_client.websocket_connect(_duplex_url()) as conn:
+        conn.receive_json()  # ready
+        conn.send_json(_audio_msg(_pcm16_chunk()))
+        _recv_until(conn, "utterance")
+
+        tts_start = _recv_until(conn, "tts_start")
+        assert tts_start["sample_rate"] == 16000
+
+
+def test_tts_start_falls_back_to_default_sample_rate_when_backend_omits_it(duplex_client, full_fakes, monkeypatch):
+    stt = full_fakes["stt"]
+    stt.queue_response("", True)
+    stt.final_text = "what time is it"
+
+    def fake_stream(text):
+        return [{"type": "chunk", "audio": "AAA="}]  # no start/sample_rate event at all
+
+    from hermes_cli import web_server
+
+    monkeypatch.setattr(web_server, "_duplex_stream_tts_chunks", fake_stream)
+
+    with duplex_client.websocket_connect(_duplex_url()) as conn:
+        conn.receive_json()  # ready
+        conn.send_json(_audio_msg(_pcm16_chunk()))
+        _recv_until(conn, "utterance")
+
+        tts_start = _recv_until(conn, "tts_start")
+        assert tts_start["sample_rate"] == web_server._DUPLEX_DEFAULT_TTS_SAMPLE_RATE
 
 
 def test_utterance_event_carries_guest_label(duplex_client, full_fakes):
@@ -383,7 +453,7 @@ def test_escalation_event_order(duplex_client, full_fakes):
         assert task_id
 
         # Ack TTS cycle.
-        assert conn.receive_json() == {"type": "tts_start"}
+        assert conn.receive_json() == {"type": "tts_start", "sample_rate": 24000}
         _recv_until(conn, "tts_end")
 
         deep_result = _recv_until(conn, "deep_result", timeout=10.0)
@@ -391,7 +461,7 @@ def test_escalation_event_order(duplex_client, full_fakes):
         assert deep_result["text"] == "Here's what I found."
 
         # Deep-result TTS cycle.
-        assert conn.receive_json() == {"type": "tts_start"}
+        assert conn.receive_json() == {"type": "tts_start", "sample_rate": 24000}
         _recv_until(conn, "tts_end")
 
 
@@ -407,7 +477,7 @@ def test_escalation_deep_task_failure_speaks_apology_and_errors(duplex_client, f
         conn.send_json(_audio_msg(_pcm16_chunk()))
 
         _recv_until(conn, "escalated")
-        assert conn.receive_json() == {"type": "tts_start"}
+        assert conn.receive_json() == {"type": "tts_start", "sample_rate": 24000}
         _recv_until(conn, "tts_end")
 
         error = _recv_until(conn, "error", timeout=10.0)
@@ -416,7 +486,7 @@ def test_escalation_deep_task_failure_speaks_apology_and_errors(duplex_client, f
         deep_result = _recv_until(conn, "deep_result", timeout=5.0)
         assert deep_result["text"]  # spoken apology, non-empty
 
-        assert conn.receive_json() == {"type": "tts_start"}
+        assert conn.receive_json() == {"type": "tts_start", "sample_rate": 24000}
         _recv_until(conn, "tts_end")
 
 

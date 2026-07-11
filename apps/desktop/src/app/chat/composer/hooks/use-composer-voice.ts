@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 
+import { resolveDuplexPresentation } from '@/app/voice-island/duplex-presentation'
 import { useDuplexVoice } from '@/app/voice-island/use-duplex-voice'
 import { useI18n } from '@/i18n'
 import { chatMessageText } from '@/lib/chat-messages'
@@ -140,12 +141,21 @@ export function useComposerVoice({
             ? 'speaking'
             : 'idle'
 
+    // Reuse the shared duplex→UI mapping (duplex-presentation.ts) rather than
+    // re-deriving label/speaker/deep-work bookkeeping here — the same pure
+    // function backs the ambient (wake-word/island) duplex session in
+    // desktop-controller.tsx, so both duplex paths present identically.
+    const presentation = duplex.status === 'active' ? resolveDuplexPresentation(duplex.state) : null
+
     publishConversation({
       active: voiceConversationActive,
       status: duplex.status === 'active' ? duplexStatus : conversation.status,
       level: duplex.status === 'active' ? duplex.level : conversation.level,
       muted: duplex.status === 'active' ? false : conversation.muted,
-      caption: duplex.status === 'active' ? duplex.state.replyText : conversation.caption
+      caption: duplex.status === 'active' ? duplex.state.replyText : conversation.caption,
+      deepWorking: presentation?.deepWorking ?? false,
+      label: presentation?.label ?? null,
+      speakerBadge: presentation?.speakerBadge ?? null
     })
 
     if (duplex.status === 'active') {

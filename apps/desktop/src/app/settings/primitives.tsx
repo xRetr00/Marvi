@@ -3,6 +3,9 @@ import type { ReactNode } from 'react'
 import { PageLoader } from '@/components/page-loader'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Switch } from '@/components/ui/switch'
+import { triggerHaptic } from '@/lib/haptics'
 import type { IconComponent } from '@/lib/icons'
 import { cn } from '@/lib/utils'
 
@@ -13,6 +16,74 @@ export function SettingsContent({ children }: { children: ReactNode }) {
     <section className="min-h-0 overflow-hidden">
       <div className={cn('h-full min-h-0 overflow-y-auto pb-20', PAGE_INSET_X)}>{children}</div>
     </section>
+  )
+}
+
+const CAPTION_CLASS = 'text-[length:var(--conversation-caption-font-size)] text-(--ui-text-tertiary)'
+
+/** Small muted caption paragraph — the standard section-intro copy across settings pages. */
+export function Caption({ children, className }: { children: ReactNode; className?: string }) {
+  return <p className={cn(CAPTION_CLASS, 'mb-2 leading-(--conversation-caption-line-height)', className)}>{children}</p>
+}
+
+/** A `ListRow` with a trailing `Switch` — the standard boolean-toggle row across settings pages. */
+export function ToggleRow(props: {
+  checked: boolean
+  description: string
+  disabled?: boolean
+  label: string
+  onChange: (on: boolean) => void
+}) {
+  return (
+    <ListRow
+      action={
+        <Switch
+          aria-label={props.label}
+          checked={props.checked}
+          disabled={props.disabled}
+          onCheckedChange={on => {
+            triggerHaptic('selection')
+            props.onChange(on)
+          }}
+        />
+      }
+      description={props.description}
+      title={props.label}
+    />
+  )
+}
+
+/** Debounced-on-blur text field for config strings that shouldn't save per keystroke (interval, minutes, thresholds). */
+export function DebouncedField({
+  value,
+  onCommit,
+  placeholder,
+  type = 'text',
+  disabled,
+  className
+}: {
+  value: string
+  onCommit: (next: string) => void
+  placeholder?: string
+  type?: 'number' | 'text'
+  disabled?: boolean
+  className?: string
+}) {
+  return (
+    <Input
+      className={cn('max-w-32 text-xs', className)}
+      defaultValue={value}
+      disabled={disabled}
+      key={value}
+      onBlur={e => onCommit(e.target.value)}
+      onKeyDown={e => {
+        if (e.key === 'Enter') {
+          e.currentTarget.blur()
+        }
+      }}
+      placeholder={placeholder}
+      type={type}
+    />
   )
 }
 

@@ -49,7 +49,12 @@ _REAL_SNAPSHOT_SCRIPT = Path(__file__).resolve().parent / "scripts" / "subconsci
 # ``cronjob`` toolset (force-disabled by ``_resolve_cron_disabled_toolsets``
 # in cron/scheduler.py), so the "auto"-tier auto-create path lives inside
 # the ``suggest_automation`` tool handler (tools/goal_tools.py), not here.
-_TICK_TOOLSETS = ["goals", "subconscious", "memory", "search"]
+# "web" (not "search" — there is no toolset registered under that name;
+# web_search/web_extract live under "web", see tools/web.py and
+# tools/presence/goblin.py's INVESTIGATION_TOOLSETS for the same name)
+# gives the tick the ability to actually look something up while deciding
+# whether a diff item is worth surfacing.
+_TICK_TOOLSETS = ["goals", "subconscious", "memory", "web"]
 
 _TICK_PROMPT = (
     "[Subconscious tick] You woke up on your own schedule, not because the "

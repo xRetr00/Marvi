@@ -7544,15 +7544,28 @@ function spawnIslandWindow() {
 
   wireCommonWindowHandlers(win)
 
-  win.once('ready-to-show', () => {
-    if (!win.isDestroyed()) win.showInactive()
+  const showIsland = () => {
+    if (!win.isDestroyed()) {
+      win.showInactive()
+    }
+  }
+  win.once('ready-to-show', showIsland)
+  // Transparent utility windows do not reliably emit ready-to-show on every
+  // Windows GPU/driver combination. did-finish-load is the reliable fallback.
+  win.webContents.once('did-finish-load', showIsland)
+  win.webContents.on('did-fail-load', (_event, code, description) => {
+    console.error(`[voice-island] renderer failed to load (${code}): ${description}`)
   })
 
   win.on('closed', () => {
-    if (islandWindow === win) islandWindow = null
+    if (islandWindow === win) {
+      islandWindow = null
+    }
   })
 
-  win.loadURL(islandWindowUrl())
+  void win.loadURL(islandWindowUrl()).catch(error => {
+    console.error('[voice-island] loadURL failed', error)
+  })
 
   return win
 }

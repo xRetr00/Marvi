@@ -119,7 +119,12 @@ function resolveCaption(state: VoiceState): ActiveCaption | null {
   return null
 }
 
-function resolveView(state: VoiceState, card: IslandCard | null, summoned: boolean, caption: ActiveCaption | null): IslandView {
+function resolveView(
+  state: VoiceState,
+  card: IslandCard | null,
+  summoned: boolean,
+  caption: ActiveCaption | null
+): IslandView {
   if (summoned) {
     return 'summon'
   }
@@ -286,11 +291,13 @@ export function DynamicIsland({
                     {state.speakerBadge ? <VoiceSpeakerBadge speaker={state.speakerBadge} variant="dark" /> : null}
                   </div>
                 ) : null}
-                {caption ? <Caption reducedMotion={Boolean(reducedMotion)} text={caption.text} who={caption.who} /> : null}
+                {caption ? (
+                  <Caption reducedMotion={Boolean(reducedMotion)} text={caption.text} who={caption.who} />
+                ) : null}
                 {state.phase === 'speaking' && state.bargeable ? (
                   <InterruptHint reducedMotion={Boolean(reducedMotion)} />
                 ) : state.deepWorking ? (
-                  <DeepWorkHint reducedMotion={Boolean(reducedMotion)} />
+                  <DeepWorkHint mode={state.deepMode} reducedMotion={Boolean(reducedMotion)} />
                 ) : null}
               </div>
             )}
@@ -326,9 +333,7 @@ function StateDot({ color, active, reducedMotion }: { color: string; active: boo
   return (
     <motion.span
       animate={
-        active && !reducedMotion
-          ? { opacity: [0.5, 1, 0.5], scale: [0.9, 1.05, 0.9] }
-          : { opacity: 1, scale: 1 }
+        active && !reducedMotion ? { opacity: [0.5, 1, 0.5], scale: [0.9, 1.05, 0.9] } : { opacity: 1, scale: 1 }
       }
       style={{
         display: 'inline-block',
@@ -408,7 +413,14 @@ function InterruptHint({ reducedMotion }: { reducedMotion: boolean }) {
     <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 2 }}>
       <motion.span
         animate={reducedMotion ? { opacity: 0.7 } : { opacity: [0.3, 0.9, 0.3] }}
-        style={{ display: 'inline-block', width: 5, height: 5, borderRadius: '50%', background: '#5cd97e', flexShrink: 0 }}
+        style={{
+          display: 'inline-block',
+          width: 5,
+          height: 5,
+          borderRadius: '50%',
+          background: '#5cd97e',
+          flexShrink: 0
+        }}
         transition={reducedMotion ? undefined : { duration: 1.4, repeat: Infinity, ease: 'easeInOut' }}
       />
       <span
@@ -431,12 +443,19 @@ function InterruptHint({ reducedMotion }: { reducedMotion: boolean }) {
 // its `deep_result` arrives, while the conversation otherwise keeps flowing
 // normally (listening/replying to further turns) — this is deliberately NOT
 // a blocking state, just a quiet "still working on that" marker.
-function DeepWorkHint({ reducedMotion }: { reducedMotion: boolean }) {
+function DeepWorkHint({ mode, reducedMotion }: { mode: VoiceState['deepMode']; reducedMotion: boolean }) {
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 2 }}>
       <motion.span
         animate={reducedMotion ? { opacity: 0.7 } : { opacity: [0.3, 0.9, 0.3] }}
-        style={{ display: 'inline-block', width: 5, height: 5, borderRadius: '50%', background: '#f5b95c', flexShrink: 0 }}
+        style={{
+          display: 'inline-block',
+          width: 5,
+          height: 5,
+          borderRadius: '50%',
+          background: '#f5b95c',
+          flexShrink: 0
+        }}
         transition={reducedMotion ? undefined : { duration: 1.6, repeat: Infinity, ease: 'easeInOut' }}
       />
       <span
@@ -448,7 +467,7 @@ function DeepWorkHint({ reducedMotion }: { reducedMotion: boolean }) {
           color: 'rgba(255,255,255,0.4)'
         }}
       >
-        thinking deeper…
+        {mode === 'delegating' ? 'sub-agent working…' : 'thinking deeper…'}
       </span>
     </div>
   )
@@ -461,17 +480,25 @@ const CARD_MIN_WIDTH = 220
 const CARD_LONG_WIDTH = 300
 
 function bodyFontSize(length: number): number {
-  if (length <= 44) {return 16}
+  if (length <= 44) {
+    return 16
+  }
 
-  if (length <= 120) {return 14}
+  if (length <= 120) {
+    return 14
+  }
 
   return 13
 }
 
 function bodyLineClamp(length: number): number {
-  if (length <= 44) {return 2}
+  if (length <= 44) {
+    return 2
+  }
 
-  if (length <= 120) {return 3}
+  if (length <= 120) {
+    return 3
+  }
 
   return 4
 }

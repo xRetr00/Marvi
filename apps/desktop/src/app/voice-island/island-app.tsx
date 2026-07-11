@@ -16,7 +16,9 @@ const INITIAL_STATE: VoiceState = {
   bargeable: false,
   label: null,
   speakerBadge: null,
-  deepWorking: false
+  deepWorking: false,
+  deepMode: null,
+  activity: null
 }
 
 // Apple-style Dynamic Island: a near-black pill anchored top-center in the

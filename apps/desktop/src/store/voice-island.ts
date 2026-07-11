@@ -20,6 +20,7 @@ let unsubActivity: (() => void) | null = null
 let unsubIsland: (() => void) | null = null
 let unsubPresence: (() => void) | null = null
 let open = false
+let retryAfter = 0
 let closeTimer: ReturnType<typeof setTimeout> | null = null
 
 // ponytail: 1.2s linger before closing so a brief idle gap between a turn and
@@ -27,25 +28,35 @@ let closeTimer: ReturnType<typeof setTimeout> | null = null
 const CLOSE_LINGER_MS = 1200
 
 function ensureOpen(): void {
-  if (open) {
+  if (open || Date.now() < retryAfter) {
+    return
+  }
+
+  const overlay = window.hermesDesktop?.islandOverlay
+  if (!overlay) {
+    vpLog('window', 'open failed', { error: 'island overlay preload API is unavailable' })
+    retryAfter = Date.now() + 2000
     return
   }
 
   open = true
   vpLog('window', 'open')
-  void window.hermesDesktop?.islandOverlay
-    ?.open()
+  void overlay
+    .open()
     .then(() => {
+      retryAfter = 0
       // The window may mount after the synchronous push in the subscriber, so
       // hand it a first frame once it actually exists.
       window.hermesDesktop?.islandOverlay?.pushState($voiceState.get())
       window.hermesDesktop?.islandOverlay?.pushCard($islandCards.get().active)
       window.hermesDesktop?.islandOverlay?.pushActivity($islandActivity.get())
     })
-    .catch(() => {
+    .catch(error => {
       // Open failed (IPC hiccup / window destroyed) — clear the flag so the
       // next non-off tick retries instead of pushing to a dead window.
       open = false
+      retryAfter = Date.now() + 2000
+      vpLog('window', 'open failed', { error: error instanceof Error ? error.message : String(error) })
     })
 }
 
@@ -57,6 +68,7 @@ function scheduleClose(): void {
   closeTimer = setTimeout(() => {
     closeTimer = null
     open = false
+    retryAfter = 0
     vpLog('window', 'close')
     void window.hermesDesktop?.islandOverlay?.close()
   }, CLOSE_LINGER_MS)

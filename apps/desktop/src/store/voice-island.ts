@@ -2,7 +2,7 @@ import { vpLog } from '@/lib/voice-presence-log'
 
 import { $islandActivity } from './island-activity'
 import { $islandCards } from './island-cards'
-import { $voiceState } from './voice-presence'
+import { $voiceState, type VoicePhase } from './voice-presence'
 import { $islandEnabled, $presenceEnabled } from './voice-presence-settings'
 
 /**
@@ -69,10 +69,14 @@ function cancelClose(): void {
   }
 }
 
+export function shouldShowVoiceIsland(islandEnabled: boolean, presenceEnabled: boolean, phase: VoicePhase): boolean {
+  return islandEnabled && (presenceEnabled || phase !== 'off')
+}
+
 function shouldBeOpen(): boolean {
-  // Ambient: the island is a persistent layer while enabled — it rests as a
-  // seed and morphs on activity, rather than opening/closing per turn.
-  return $presenceEnabled.get() && $islandEnabled.get()
+  // Wake-word presence keeps the ambient seed alive. Explicit voice mode must
+  // still show the island when background wake listening is disabled.
+  return shouldShowVoiceIsland($islandEnabled.get(), $presenceEnabled.get(), $voiceState.get().phase)
 }
 
 // Re-evaluate open/closed from the three inputs and push the latest frame.

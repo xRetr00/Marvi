@@ -4,13 +4,15 @@ import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
 import { requestVoiceToggle } from '@/app/chat/composer/focus'
 import { $conversation, $voiceState, type VoicePhase } from '@/store/voice-presence'
 
-const PRESENTATION: Record<VoicePhase, { color: string; label: string }> = {
-  off: { color: '#8b7cff', label: 'Ready' },
-  wake: { color: '#68b7ff', label: 'Listening' },
-  listening: { color: '#68b7ff', label: 'Listening' },
-  transcribing: { color: '#a78bfa', label: 'Understanding' },
-  thinking: { color: '#ff9c72', label: 'Thinking deeper' },
-  speaking: { color: '#76e6b5', label: 'Speaking' }
+import { VoiceOrb } from './voice-orb'
+
+const PRESENTATION: Record<VoicePhase, { label: string }> = {
+  off: { label: 'Ready' },
+  wake: { label: 'Listening' },
+  listening: { label: 'Listening' },
+  transcribing: { label: 'Understanding' },
+  thinking: { label: 'Thinking deeper' },
+  speaking: { label: 'Speaking' }
 }
 
 export function voiceModePresentation(phase: VoicePhase) {
@@ -48,24 +50,10 @@ export function VoiceModeOverlay() {
                     y: voice.phase === 'thinking' ? [0, -5, 0] : 0
                   }
             }
-            className="relative size-[min(34vw,17rem)] min-h-48 min-w-48"
+            className="relative size-[min(38vw,19rem)] min-h-48 min-w-48"
             transition={{ duration: voice.phase === 'listening' ? 0.1 : 3.2, ease: 'easeInOut', repeat: voice.phase === 'listening' ? 0 : Infinity }}
           >
-            <motion.div
-              animate={reducedMotion ? undefined : { rotate: 360 }}
-              className="absolute inset-0 rounded-full blur-[2px]"
-              style={{
-                background: `conic-gradient(from 35deg, ${presentation.color}, #8b5cf6 24%, #ef74c8 48%, #4ecdc4 72%, ${presentation.color})`,
-                boxShadow: `0 0 72px color-mix(in srgb, ${presentation.color} 38%, transparent)`
-              }}
-              transition={{ duration: 9, ease: 'linear', repeat: Infinity }}
-            />
-            <motion.div
-              animate={reducedMotion ? undefined : { borderRadius: ['48% 52% 44% 56%', '56% 44% 54% 46%', '48% 52% 44% 56%'], rotate: [0, -18, 0] }}
-              className="absolute inset-[7%] bg-[radial-gradient(circle_at_34%_28%,rgba(255,255,255,0.88),rgba(255,255,255,0.08)_22%,rgba(13,16,26,0.82)_64%)] shadow-[inset_-28px_-24px_58px_rgba(4,5,12,0.62),inset_18px_14px_42px_rgba(255,255,255,0.13)]"
-              transition={{ duration: 5.5, ease: 'easeInOut', repeat: Infinity }}
-            />
-            <div className="absolute inset-[19%] rounded-full bg-[radial-gradient(circle_at_42%_35%,rgba(255,255,255,0.18),rgba(4,6,14,0.76)_58%,rgba(0,0,0,0.94))] blur-[1px]" />
+            <VoiceOrb className="size-full" level={level} phase={voice.phase} size="100%" />
           </motion.div>
 
           <div aria-live="polite" className="relative mt-8 min-h-24 max-w-xl" role="status">

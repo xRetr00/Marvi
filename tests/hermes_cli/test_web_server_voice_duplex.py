@@ -252,6 +252,35 @@ def test_route_is_registered():
     assert "/api/voice/duplex" in paths
 
 
+def test_speaker_enrollment_api(duplex_client, monkeypatch):
+    from tools import voice_speaker_id
+
+    speakers = []
+
+    def fake_enroll(name, pcm):
+        assert pcm == b"\x01\x02"
+        speakers[:] = [{"name": name, "is_owner": True, "embeddings": 1}]
+
+    monkeypatch.setattr(voice_speaker_id, "enroll", fake_enroll)
+    monkeypatch.setattr(voice_speaker_id, "list_speakers", lambda: list(speakers))
+    monkeypatch.setattr(voice_speaker_id, "remove_speaker", lambda name: bool(speakers.pop()) if speakers else False)
+
+    response = duplex_client.post(
+        "/api/voice/speakers",
+        headers={"Authorization": f"Bearer {web_server._SESSION_TOKEN}"},
+        json={"name": "Owner", "audio": [base64.b64encode(b"\x01\x02").decode("ascii")]},
+    )
+    assert response.status_code == 200
+    assert response.json()["speakers"][0]["is_owner"] is True
+
+    response = duplex_client.delete(
+        "/api/voice/speakers/Owner",
+        headers={"Authorization": f"Bearer {web_server._SESSION_TOKEN}"},
+    )
+    assert response.status_code == 200
+    assert response.json() == {"speakers": []}
+
+
 def test_ready_on_connect(duplex_client, full_fakes):
     with duplex_client.websocket_connect(_duplex_url()) as conn:
         assert conn.receive_json() == {"type": "ready"}

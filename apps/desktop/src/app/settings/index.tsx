@@ -292,7 +292,10 @@ export function SettingsView({ onClose, onConfigSaved, onMainModelChanged }: Set
           ) : activeView === 'notifications' ? (
             <NotificationsSettings />
           ) : activeView === 'voice-presence' ? (
-            <VoicePresenceSettings onOpenVoiceConfig={() => setActiveView('config:voice')} />
+            <VoicePresenceSettings
+              onOpenModelConfig={() => setActiveView('config:model')}
+              onOpenVoiceConfig={() => setActiveView('config:voice')}
+            />
           ) : activeView === 'subconscious' ? (
             <SubconsciousSettings />
           ) : (

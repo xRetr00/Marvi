@@ -540,6 +540,13 @@ export const FIELD_DESCRIPTIONS: Record<string, string> = defineFieldCopy({
       debug: 'Write extra wake-word tuning logs for frames, energy, starts, and detections. Leave off unless diagnosing missed wakes.',
       commandTimeoutMs: 'Maximum time to keep listening for the command after the wake phrase.',
       cooldownMs: 'Delay before wake listening arms again after one command finishes.'
+    },
+    escalation: {
+      enabled: 'Let the instant voice model hand complex requests to the main reasoning model.'
+    },
+    speakerId: {
+      threshold: 'Minimum enrolled-speaker similarity. Raise it to reduce false owner matches.',
+      requireOwnerForEscalation: 'Only an enrolled owner may hand a voice request to the tool-enabled reasoning model.'
     }
   },
   tts: {
@@ -694,6 +701,10 @@ export const SECTIONS: DesktopConfigSection[] = [
       'voice.max_recording_seconds',
       'voice.semantic_turn',
       'voice.barge_in',
+      'voice.escalation.enabled',
+      'voice.speaker_id.threshold',
+      'voice.speaker_id.require_owner_for_escalation',
+      'auxiliary.voice_instant.max_tokens',
       'voice.wake_word.enabled',
       'voice.wake_word.provider',
       'voice.wake_word.model',

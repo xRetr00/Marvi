@@ -415,6 +415,41 @@ export function saveHermesConfig(config: HermesConfigRecord): Promise<{ ok: bool
   })
 }
 
+export interface VoiceSpeaker {
+  embeddings: number
+  is_owner: boolean
+  name: string
+}
+
+export interface VoiceSpeakersResponse {
+  speakers: VoiceSpeaker[]
+}
+
+export function getVoiceSpeakers(): Promise<VoiceSpeakersResponse> {
+  return window.hermesDesktop.api<VoiceSpeakersResponse>({
+    ...profileScoped(),
+    path: '/api/voice/speakers'
+  })
+}
+
+export function enrollVoiceSpeaker(name: string, audio: string[]): Promise<VoiceSpeakersResponse> {
+  return window.hermesDesktop.api<VoiceSpeakersResponse>({
+    ...profileScoped(),
+    body: { audio, name },
+    method: 'POST',
+    path: '/api/voice/speakers',
+    timeoutMs: 180_000
+  })
+}
+
+export function removeVoiceSpeaker(name: string): Promise<VoiceSpeakersResponse> {
+  return window.hermesDesktop.api<VoiceSpeakersResponse>({
+    ...profileScoped(),
+    method: 'DELETE',
+    path: `/api/voice/speakers/${encodeURIComponent(name)}`
+  })
+}
+
 export function getMemoryProviderConfig(provider: string): Promise<MemoryProviderConfig> {
   return window.hermesDesktop.api<MemoryProviderConfig>({
     path: `/api/memory/providers/${encodeURIComponent(provider)}/config`

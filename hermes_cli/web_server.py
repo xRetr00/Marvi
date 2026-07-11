@@ -5732,6 +5732,7 @@ _AUX_TASK_SLOTS: Tuple[str, ...] = (
     "kanban_decomposer",
     "profile_describer",
     "curator",
+    "voice_instant",
 )
 
 
@@ -16003,6 +16004,47 @@ def _duplex_make_vad_gate():
     from tools.vad import make_speech_gate
 
     return make_speech_gate()
+
+
+class _VoiceSpeakerEnrollBody(BaseModel):
+    name: str
+    audio: List[str]
+
+
+@app.get("/api/voice/speakers")
+def voice_speakers_list():
+    from tools.voice_speaker_id import list_speakers
+
+    return {"speakers": list_speakers()}
+
+
+@app.post("/api/voice/speakers")
+def voice_speakers_enroll(body: _VoiceSpeakerEnrollBody):
+    from tools.voice_speaker_id import SpeakerIdUnavailable, enroll, list_speakers
+
+    name = body.name.strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="speaker name is required")
+    try:
+        pcm = b"".join(base64.b64decode(chunk, validate=True) for chunk in body.audio)
+    except (binascii.Error, ValueError) as exc:
+        raise HTTPException(status_code=400, detail="invalid speaker audio") from exc
+    if not pcm or len(pcm) > 16 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="speaker audio must be between 1 byte and 16 MB")
+    try:
+        enroll(name, pcm)
+    except SpeakerIdUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    return {"speakers": list_speakers()}
+
+
+@app.delete("/api/voice/speakers/{name}")
+def voice_speakers_remove(name: str):
+    from tools.voice_speaker_id import list_speakers, remove_speaker
+
+    if not remove_speaker(name):
+        raise HTTPException(status_code=404, detail="speaker not found")
+    return {"speakers": list_speakers()}
 
 
 # Toolsets granted to the escalated deep-task agent. Deliberately excludes

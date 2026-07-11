@@ -1728,6 +1728,13 @@ DEFAULT_CONFIG = {
             "timeout": 120,
             "extra_body": {},
         },
+        "voice_instant": {
+            "provider": "auto",
+            "model": "",
+            "base_url": "",
+            "api_key": "",
+            "max_tokens": 200,
+        },
         "moa_reference": {
             "provider": "auto",
             "model": "",
@@ -2166,13 +2173,20 @@ DEFAULT_CONFIG = {
         "auto_tts": False,
         "semantic_turn": True,
         "barge_in": True,
+        "escalation": {
+            "enabled": True,
+        },
+        "speaker_id": {
+            "threshold": 0.45,
+            "require_owner_for_escalation": True,
+        },
         "beep_enabled": True,         # Play record start/stop beeps in CLI voice mode
         "silence_threshold": 200,     # RMS below this = silence (0-32767)
         "silence_duration": 3.0,      # Seconds of silence before auto-stop
         "wake_word": {
             "enabled": False,
-            "provider": "livekit",
-            "model": "livekit-marvi",
+            "provider": "sherpa_onnx",
+            "model": "kws-en-3.3m",
             "phrases": ["hey marvi", "marvi", "marve", "marvy", "marvie", "marfi", "marfe", "marvey"],
             "threshold": 0.5,
             "boost": 4,

@@ -169,7 +169,7 @@ describe('DuplexSessionMachine', () => {
 
       machine.applyEvent({ type: 'barge_in' })
 
-      expect(machine.state.deepWork).toEqual({ ackText: 'Let me look into that.', taskId: 'task-1' })
+      expect(machine.state.deepWork).toEqual({ ackText: 'Let me look into that.', taskId: 'task-1', mode: 'thinking' })
     })
   })
 
@@ -186,7 +186,11 @@ describe('DuplexSessionMachine', () => {
       expect(commands).toEqual([])
       expect(machine.state.phase).toBe('replying')
       expect(machine.state.replyText).toBe('Give me a moment to check.')
-      expect(machine.state.deepWork).toEqual({ ackText: 'Give me a moment to check.', taskId: 'task-42' })
+      expect(machine.state.deepWork).toEqual({
+        ackText: 'Give me a moment to check.',
+        taskId: 'task-42',
+        mode: 'thinking'
+      })
     })
 
     it('stays interactive after escalation: a new utterance is accepted normally while deepWork is pending', () => {
@@ -206,7 +210,27 @@ describe('DuplexSessionMachine', () => {
       expect(machine.state.replyText).toBe('Sure, adding oat milk.')
       // The earlier escalation is still tracked — a second, unrelated turn
       // must not clear it.
-      expect(machine.state.deepWork).toEqual({ ackText: 'Working on it.', taskId: 'task-1' })
+      expect(machine.state.deepWork).toEqual({ ackText: 'Working on it.', taskId: 'task-1', mode: 'thinking' })
+    })
+
+    it('tracks delegated work and live tool activity separately from thinking', () => {
+      const machine = new DuplexSessionMachine()
+      machine.applyEvent({
+        type: 'escalated',
+        ack_text: "I'll hand this to a sub-agent.",
+        task_id: 'task-work',
+        mode: 'delegating'
+      })
+
+      expect(machine.state.deepWork?.mode).toBe('delegating')
+      expect(machine.state.activity).toEqual({ kind: 'delegation', label: 'Sub-agent is working' })
+
+      machine.applyEvent({ type: 'activity', status: 'started', kind: 'file', label: 'Reviewing files' })
+      expect(machine.state.activity).toEqual({ kind: 'file', label: 'Reviewing files' })
+
+      machine.applyEvent({ type: 'activity', status: 'completed', kind: 'file', label: 'Reviewing files' })
+      expect(machine.state.activity).toEqual({ kind: 'delegation', label: 'Sub-agent is working' })
+      expect(machine.state.deepWork?.mode).toBe('delegating')
     })
 
     it('deep_result after further utterances still applies and clears deepWork', () => {

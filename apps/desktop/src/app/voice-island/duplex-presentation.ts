@@ -1,5 +1,6 @@
 import type { VoicePhase } from '@/store/voice-presence'
 
+import type { DuplexActivityKind, DuplexWorkMode } from './duplex-protocol'
 import type { DuplexSessionState } from './duplex-session'
 
 /**
@@ -22,6 +23,8 @@ export interface DuplexPresentation {
   speakerBadge: 'guest' | 'unknown' | null
   /** True while an escalated background task hasn't resolved yet. */
   deepWorking: boolean
+  deepMode: DuplexWorkMode | null
+  activity: { kind: DuplexActivityKind; label: string } | null
 }
 
 const PHASE_MAP: Record<DuplexSessionState['phase'], VoicePhase> = {
@@ -33,6 +36,10 @@ const PHASE_MAP: Record<DuplexSessionState['phase'], VoicePhase> = {
 }
 
 function resolveLabel(state: DuplexSessionState): string {
+  if (state.activity) {
+    return state.activity.label
+  }
+
   if (state.phase === 'speaking') {
     return 'Speaking'
   }
@@ -65,6 +72,8 @@ export function resolveDuplexPresentation(state: DuplexSessionState): DuplexPres
     bargeable: state.bargeable,
     caption: resolveCaption(state),
     deepWorking: Boolean(state.deepWork),
+    deepMode: state.deepWork?.mode ?? null,
+    activity: state.activity,
     label: resolveLabel(state),
     phase: PHASE_MAP[state.phase],
     speakerBadge: state.speaker === 'guest' || state.speaker === 'unknown' ? state.speaker : null

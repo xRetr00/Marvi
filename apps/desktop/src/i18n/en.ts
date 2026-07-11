@@ -706,7 +706,7 @@ export const en: Translations = {
       autoUseMain: 'auto · use main model',
       providerDefault: '(provider default)',
       tasks: {
-        voice_instant: { label: 'Instant voice', hint: 'First spoken response' },
+        voice_instant: { label: 'Instant voice', hint: 'Dedicated provider · reasoning off by default' },
         vision: { label: 'Vision', hint: 'Image analysis' },
         web_extract: { label: 'Web extract', hint: 'Page summarization' },
         compression: { label: 'Compression', hint: 'Context compaction' },

@@ -1,4 +1,10 @@
-import { type DuplexServerEvent, type DuplexSpeaker, parseDuplexServerEvent } from './duplex-protocol'
+import {
+  type DuplexActivityKind,
+  type DuplexServerEvent,
+  type DuplexSpeaker,
+  type DuplexWorkMode,
+  parseDuplexServerEvent
+} from './duplex-protocol'
 
 /**
  * Pure state machine over the `WS /api/voice/duplex` protocol (see
@@ -18,6 +24,12 @@ export type DuplexPhase = 'closed' | 'connecting' | 'listening' | 'replying' | '
 export interface DuplexDeepWork {
   taskId: string
   ackText: string
+  mode: DuplexWorkMode
+}
+
+export interface DuplexActivity {
+  kind: DuplexActivityKind
+  label: string
 }
 
 export interface DuplexSessionState {
@@ -33,6 +45,7 @@ export interface DuplexSessionState {
   replySource: 'deep' | 'instant' | null
   /** Set while a background deep task is outstanding (escalated, no deep_result/error yet). */
   deepWork: DuplexDeepWork | null
+  activity: DuplexActivity | null
   /** True while Marvi is speaking and a barge-in would be honored. */
   bargeable: boolean
   /** Last error message from the server, for surfacing/logging. Not fatal. */
@@ -64,6 +77,7 @@ export const INITIAL_DUPLEX_STATE: DuplexSessionState = {
   replyText: null,
   replySource: null,
   deepWork: null,
+  activity: null,
   bargeable: false,
   lastError: null
 }
@@ -133,7 +147,7 @@ export class DuplexSessionMachine {
         return []
 
       case 'instant_done':
-        this.patch({ phase: 'replying', replySource: 'instant', replyText: event.text })
+        this.patch({ phase: 'replying', replySource: 'instant', replyText: event.text, activity: null })
 
         return []
 
@@ -175,12 +189,19 @@ export class DuplexSessionMachine {
         // The ack is spoken through the normal instant-reply + TTS cycle, so
         // treat it as this turn's reply text while ALSO raising the
         // "thinking deeper" flag for the outstanding background task.
-        this.patch({
-          phase: 'replying',
-          replyText: event.ack_text,
-          replySource: 'instant',
-          deepWork: { taskId: event.task_id, ackText: event.ack_text }
-        })
+        {
+          const mode = event.mode ?? 'thinking'
+          this.patch({
+            phase: 'replying',
+            replyText: event.ack_text,
+            replySource: 'instant',
+            deepWork: { taskId: event.task_id, ackText: event.ack_text, mode },
+            activity: {
+              kind: mode === 'delegating' ? 'delegation' : 'thinking',
+              label: mode === 'delegating' ? 'Sub-agent is working' : 'Thinking deeper'
+            }
+          })
+        }
 
         return []
 
@@ -194,7 +215,8 @@ export class DuplexSessionMachine {
           phase: 'replying',
           replyText: event.text,
           replySource: 'deep',
-          deepWork: null
+          deepWork: null,
+          activity: null
         })
 
         return []
@@ -205,7 +227,22 @@ export class DuplexSessionMachine {
         // the alternative (never clearing on error) risks the "thinking
         // deeper" indicator sticking forever when the failure WAS the deep
         // task, which is the worse user-facing outcome.
-        this.patch({ lastError: event.error, deepWork: null })
+        this.patch({ lastError: event.error, deepWork: null, activity: null })
+
+        return []
+
+      case 'activity':
+        this.patch({
+          activity:
+            event.status === 'started'
+              ? { kind: event.kind, label: event.label }
+              : this._state.deepWork
+                ? {
+                    kind: this._state.deepWork.mode === 'delegating' ? 'delegation' : 'thinking',
+                    label: this._state.deepWork.mode === 'delegating' ? 'Sub-agent is working' : 'Thinking deeper'
+                  }
+                : null
+        })
 
         return []
 

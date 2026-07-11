@@ -29,7 +29,14 @@ describe('parseDuplexServerEvent', () => {
     expect(parseDuplexServerEvent({ type: 'escalated', task_id: 't1', ack_text: 'ack' })).toEqual({
       type: 'escalated',
       task_id: 't1',
-      ack_text: 'ack'
+      ack_text: 'ack',
+      mode: 'thinking'
+    })
+    expect(parseDuplexServerEvent({ type: 'activity', status: 'started', kind: 'web', label: 'Searching' })).toEqual({
+      type: 'activity',
+      status: 'started',
+      kind: 'web',
+      label: 'Searching'
     })
     expect(parseDuplexServerEvent({ type: 'deep_result', task_id: 't1', text: 'result' })).toEqual({
       type: 'deep_result',
@@ -54,7 +61,10 @@ describe('parseDuplexServerEvent', () => {
 
   it('falls back to a generic message when error.error is missing/non-string', () => {
     expect(parseDuplexServerEvent({ type: 'error' })).toEqual({ type: 'error', error: 'Unknown duplex error' })
-    expect(parseDuplexServerEvent({ type: 'error', error: 42 })).toEqual({ type: 'error', error: 'Unknown duplex error' })
+    expect(parseDuplexServerEvent({ type: 'error', error: 42 })).toEqual({
+      type: 'error',
+      error: 'Unknown duplex error'
+    })
   })
 
   it('returns null for non-object, missing-type, and unknown-type payloads', () => {

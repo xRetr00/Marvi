@@ -72,4 +72,13 @@ describe('voiceFieldVisible', () => {
     expect(voiceFieldVisible('stt.streaming.port', config)).toBe(false)
     expect(voiceFieldVisible('stt.streaming.max_clients', config)).toBe(false)
   })
+
+  it('shows only Moonshine streaming settings when Moonshine is selected', () => {
+    const config = cfg({ stt: { enabled: true, provider: 'local', streaming: { provider: 'moonshine' } } })
+
+    expect(voiceFieldVisible('stt.streaming.moonshine.language', config)).toBe(true)
+    expect(voiceFieldVisible('stt.streaming.moonshine.model', config)).toBe(true)
+    expect(voiceFieldVisible('stt.streaming.model', config)).toBe(false)
+    expect(voiceFieldVisible('stt.streaming.eou_token', config)).toBe(false)
+  })
 })

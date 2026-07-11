@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import struct
 import time
 
 import pytest
@@ -200,11 +201,14 @@ def identify_speaker(monkeypatch):
 
 @pytest.fixture
 def instant_reply(monkeypatch):
-    state = {"deltas": ["Hi", " there."], "raises": None, "delay": 0.0}
+    state = {"deltas": ["Hi", " there."], "raises": None, "delay": 0.0, "activity": None}
 
-    def fake_stream(transcript, utterance, *, allow_escalation):
+    def fake_stream(transcript, utterance, *, allow_escalation, activity_callback=None):
         if state["raises"] is not None:
             raise state["raises"]
+        if state["activity"] and activity_callback:
+            activity_callback({"status": "started", **state["activity"]})
+            activity_callback({"status": "completed", **state["activity"]})
         for d in state["deltas"]:
             if state["delay"]:
                 time.sleep(state["delay"])
@@ -239,10 +243,13 @@ def vad_gate(monkeypatch):
 
 @pytest.fixture
 def deep_task(monkeypatch):
-    state = {"text": "Deep answer.", "raises": None, "calls": []}
+    state = {"text": "Deep answer.", "raises": None, "calls": [], "modes": [], "delay": 0.0}
 
-    def fake_run(transcript_messages, task_text):
+    def fake_run(transcript_messages, task_text, *, mode="thinking", activity_callback=None):
         state["calls"].append(task_text)
+        state["modes"].append(mode)
+        if state["delay"]:
+            time.sleep(state["delay"])
         if state["raises"] is not None:
             raise state["raises"]
         return state["text"]
@@ -325,6 +332,9 @@ def test_utterance_instant_delta_tts_cycle(duplex_client, full_fakes):
         utterance = _recv_until(conn, "utterance")
         assert utterance["text"] == "what time is it"
         assert utterance["speaker"] == "owner"
+        # Renderer audio is PCM16; the streaming STT contract is little-endian
+        # Float32. Keep speaker-ID audio in PCM16, but convert the STT copy.
+        assert struct.unpack_from("<f", stt.accepted_chunks[0])[0] == pytest.approx(100 / 32768)
 
         frames = _drain_until(conn, {"tts_end"})
         if not any(frame["type"] == "instant_done" for frame in frames):
@@ -431,6 +441,40 @@ def test_partial_events_stream_before_eou(duplex_client, full_fakes):
 # ---------------------------------------------------------------------------
 
 
+def test_deep_worker_mode_gets_execution_tools_and_verification_prompt(monkeypatch):
+    import run_agent
+    from hermes_cli import web_server
+
+    captured = {}
+
+    class FakeAgent:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+            self.tool_start_callback = kwargs.get("tool_start_callback")
+            self.tool_complete_callback = kwargs.get("tool_complete_callback")
+
+        def run_conversation(self, task_text, conversation_history=None):
+            self.tool_start_callback("c1", "terminal", {"cmd": "test"})
+            self.tool_complete_callback("c1", "terminal", {}, "passed")
+            return {"final_response": "I finished the work and verification passed."}
+
+    monkeypatch.setattr(run_agent, "AIAgent", FakeAgent)
+    activity = []
+
+    result = web_server._duplex_run_deep_task(
+        [{"role": "user", "content": "context"}],
+        "do the work",
+        mode="delegating",
+        activity_callback=activity.append,
+    )
+
+    assert result == "I finished the work and verification passed."
+    assert "terminal" in captured["enabled_toolsets"]
+    assert "verify" in captured["ephemeral_system_prompt"].lower()
+    assert captured["platform"] == "voice-subagent"
+    assert [event["status"] for event in activity] == ["started", "completed"]
+
+
 def test_escalation_event_order(duplex_client, full_fakes):
     full_fakes["instant"]["deltas"] = ["[ESCALATE] On it, one sec."]
     full_fakes["deep"]["text"] = "Here's what I found."
@@ -449,6 +493,7 @@ def test_escalation_event_order(duplex_client, full_fakes):
 
         escalated = _recv_until(conn, "escalated")
         assert escalated["ack_text"] == "On it, one sec."
+        assert escalated["mode"] == "thinking"
         task_id = escalated["task_id"]
         assert task_id
 
@@ -464,6 +509,61 @@ def test_escalation_event_order(duplex_client, full_fakes):
         assert conn.receive_json() == {"type": "tts_start", "sample_rate": 24000}
         _recv_until(conn, "tts_end")
 
+
+def test_delegation_routes_work_to_background_subagent(duplex_client, full_fakes):
+    full_fakes["instant"]["deltas"] = ["[DELEGATE] I'll hand this to a sub-agent."]
+    stt = full_fakes["stt"]
+    stt.queue_response("", True)
+    stt.final_text = "fix the project and verify it"
+
+    with duplex_client.websocket_connect(_duplex_url()) as conn:
+        conn.receive_json()
+        conn.send_json(_audio_msg(_pcm16_chunk()))
+        escalated = _recv_until(conn, "escalated")
+        assert escalated["mode"] == "delegating"
+        assert "sub-agent" in escalated["ack_text"]
+        _recv_until(conn, "deep_result", timeout=10.0)
+
+    assert full_fakes["deep"]["modes"] == ["delegating"]
+
+
+def test_instant_tool_activity_emits_ui_event_and_spoken_cue(duplex_client, full_fakes):
+    full_fakes["instant"]["activity"] = {"kind": "web", "label": "Searching the web", "tool": "web_search"}
+    stt = full_fakes["stt"]
+    stt.queue_response("", True)
+    stt.final_text = "search the weather"
+
+    with duplex_client.websocket_connect(_duplex_url()) as conn:
+        conn.receive_json()
+        conn.send_json(_audio_msg(_pcm16_chunk()))
+        activity = _recv_until(conn, "activity")
+        assert activity["kind"] == "web"
+        assert activity["label"] == "Searching the web"
+        _recv_until(conn, "tts_end")
+
+    assert "Let me search for that." in full_fakes["tts"]
+
+
+def test_long_background_work_keeps_talking_until_result(duplex_client, full_fakes, monkeypatch):
+    from hermes_cli import web_server
+
+    monkeypatch.setattr(web_server, "_DUPLEX_DEEP_CUE_INTERVAL_SECONDS", 0.01)
+    full_fakes["instant"]["deltas"] = ["[DELEGATE] I'll hand this to a sub-agent."]
+    full_fakes["deep"]["delay"] = 1.2
+    stt = full_fakes["stt"]
+    stt.queue_response("", True)
+    stt.final_text = "do the work"
+
+    with duplex_client.websocket_connect(_duplex_url()) as conn:
+        conn.receive_json()
+        conn.send_json(_audio_msg(_pcm16_chunk()))
+        _recv_until(conn, "escalated")
+        activity = _recv_until(conn, "activity", timeout=5.0)
+        assert activity["label"] == "Sub-agent is still working"
+        result = _recv_until(conn, "deep_result", timeout=10.0)
+        assert result["text"] == "Deep answer."
+
+    assert any("still working" in text for text in full_fakes["tts"])
 
 def test_escalation_deep_task_failure_speaks_apology_and_errors(duplex_client, full_fakes):
     full_fakes["instant"]["deltas"] = ["[ESCALATE] Sure, one moment."]

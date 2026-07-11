@@ -10,6 +10,8 @@
  */
 
 export type DuplexSpeaker = 'owner' | 'guest' | 'unknown'
+export type DuplexWorkMode = 'thinking' | 'delegating'
+export type DuplexActivityKind = 'web' | 'file' | 'memory' | 'session' | 'thinking' | 'delegation'
 
 // --- Client -> Server --------------------------------------------------
 
@@ -82,6 +84,16 @@ export interface DuplexEscalatedEvent {
   type: 'escalated'
   task_id: string
   ack_text: string
+  mode?: DuplexWorkMode
+}
+
+export interface DuplexActivityEvent {
+  type: 'activity'
+  status: 'started' | 'completed'
+  kind: DuplexActivityKind
+  label: string
+  tool?: string
+  task_id?: string
 }
 
 export interface DuplexDeepResultEvent {
@@ -106,6 +118,7 @@ export type DuplexServerEvent =
   | DuplexTtsEndEvent
   | DuplexBargeInEvent
   | DuplexEscalatedEvent
+  | DuplexActivityEvent
   | DuplexDeepResultEvent
   | DuplexErrorEvent
 
@@ -115,6 +128,16 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function asSpeaker(value: unknown): DuplexSpeaker {
   return value === 'owner' || value === 'guest' || value === 'unknown' ? value : 'unknown'
+}
+
+function asWorkMode(value: unknown): DuplexWorkMode {
+  return value === 'delegating' ? 'delegating' : 'thinking'
+}
+
+function asActivityKind(value: unknown): DuplexActivityKind {
+  return value === 'web' || value === 'file' || value === 'memory' || value === 'session' || value === 'delegation'
+    ? value
+    : 'thinking'
 }
 
 /**
@@ -131,11 +154,17 @@ export function parseDuplexServerEvent(raw: unknown): DuplexServerEvent | null {
 
   switch (raw.type) {
     case 'ready':
-      return { type: 'ready' }    case 'partial': {
-      if (typeof raw.text !== 'string') {return null}
+      return { type: 'ready' }
+    case 'partial': {
+      if (typeof raw.text !== 'string') {
+        return null
+      }
+
       const event: DuplexPartialEvent = { type: 'partial', text: raw.text }
 
-      if (typeof raw.eou_prob === 'number') {event.eou_prob = raw.eou_prob}
+      if (typeof raw.eou_prob === 'number') {
+        event.eou_prob = raw.eou_prob
+      }
 
       return event
     }
@@ -169,7 +198,19 @@ export function parseDuplexServerEvent(raw: unknown): DuplexServerEvent | null {
 
     case 'escalated':
       return typeof raw.task_id === 'string' && typeof raw.ack_text === 'string'
-        ? { type: 'escalated', task_id: raw.task_id, ack_text: raw.ack_text }
+        ? { type: 'escalated', task_id: raw.task_id, ack_text: raw.ack_text, mode: asWorkMode(raw.mode) }
+        : null
+
+    case 'activity':
+      return (raw.status === 'started' || raw.status === 'completed') && typeof raw.label === 'string'
+        ? {
+            type: 'activity',
+            status: raw.status,
+            kind: asActivityKind(raw.kind),
+            label: raw.label,
+            ...(typeof raw.tool === 'string' ? { tool: raw.tool } : {}),
+            ...(typeof raw.task_id === 'string' ? { task_id: raw.task_id } : {})
+          }
         : null
 
     case 'deep_result':

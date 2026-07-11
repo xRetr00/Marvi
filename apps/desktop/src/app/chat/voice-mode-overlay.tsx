@@ -20,12 +20,16 @@ export function voiceModePresentation(phase: VoicePhase) {
   return PRESENTATION[phase]
 }
 
+export function voiceModeCaption(voice: Pick<ReturnType<typeof $voiceState.get>, 'caption' | 'phase' | 'userCaption'>) {
+  return voice.phase === 'speaking' || voice.phase === 'thinking' ? voice.caption : voice.userCaption
+}
+
 export function VoiceModeOverlay() {
   const conversation = useStore($conversation)
   const voice = useStore($voiceState)
   const reducedMotion = useReducedMotion()
   const presentation = voiceModePresentation(voice.phase)
-  const caption = voice.phase === 'speaking' ? voice.caption : voice.userCaption
+  const caption = voiceModeCaption(voice)
   const level = Math.max(0, Math.min(1, voice.level))
 
   return (
@@ -40,7 +44,10 @@ export function VoiceModeOverlay() {
           role="dialog"
           transition={{ duration: reducedMotion ? 0 : 0.28 }}
         >
-          <div aria-hidden className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_50%_48%,rgba(72,75,130,0.16),transparent_42%)]" />
+          <div
+            aria-hidden
+            className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_50%_48%,rgba(72,75,130,0.16),transparent_42%)]"
+          />
 
           <motion.div
             animate={
@@ -52,18 +59,44 @@ export function VoiceModeOverlay() {
                   }
             }
             className="relative size-[min(38vw,19rem)] min-h-48 min-w-48"
-            transition={{ duration: voice.phase === 'listening' ? 0.1 : 3.2, ease: 'easeInOut', repeat: voice.phase === 'listening' ? 0 : Infinity }}
+            transition={{
+              duration: voice.phase === 'listening' ? 0.1 : 3.2,
+              ease: 'easeInOut',
+              repeat: voice.phase === 'listening' ? 0 : Infinity
+            }}
           >
             <VoiceOrb className="size-full" level={level} phase={voice.phase} size="100%" />
           </motion.div>
 
           <div aria-live="polite" className="relative mt-8 min-h-24 max-w-xl" role="status">
             <div className="flex items-center justify-center gap-2">
-              <div className="text-sm font-medium tracking-wide text-white/72">{voice.label ?? presentation.label}</div>
+              {voice.activity ? (
+                <motion.div
+                  animate={reducedMotion ? undefined : { opacity: [0.65, 1, 0.65] }}
+                  className="flex items-center gap-2 rounded-full border border-white/10 bg-white/7 px-3 py-1.5 text-sm font-medium tracking-wide text-white/78 shadow-[0_0_24px_rgba(126,110,255,0.12)]"
+                  transition={{ duration: 1.5, ease: 'easeInOut', repeat: Infinity }}
+                >
+                  <span className="size-1.5 rounded-full bg-violet-300 shadow-[0_0_9px_rgba(196,181,253,0.8)]" />
+                  {voice.activity.label}
+                </motion.div>
+              ) : (
+                <div className="text-sm font-medium tracking-wide text-white/72">
+                  {voice.label ?? presentation.label}
+                </div>
+              )}
               {voice.speakerBadge ? <VoiceSpeakerBadge speaker={voice.speakerBadge} variant="dark" /> : null}
             </div>
-            {caption ? <div className="mt-3 line-clamp-3 text-balance text-lg leading-relaxed text-white/92">{caption}</div> : null}
-            {voice.phase === 'speaking' && voice.bargeable ? <div className="mt-3 text-xs text-white/40">Speak to interrupt</div> : null}
+            {caption ? (
+              <div className="mt-3 line-clamp-3 text-balance text-lg leading-relaxed text-white/92">{caption}</div>
+            ) : null}
+            {voice.phase === 'speaking' && voice.bargeable ? (
+              <div className="mt-3 text-xs text-white/40">Speak to interrupt</div>
+            ) : null}
+            {voice.deepWorking && voice.phase !== 'speaking' ? (
+              <div className="mt-3 text-[0.68rem] font-medium uppercase tracking-[0.14em] text-white/36">
+                {voice.deepMode === 'delegating' ? 'Background sub-agent active' : 'Background reasoning active'}
+              </div>
+            ) : null}
           </div>
 
           <button

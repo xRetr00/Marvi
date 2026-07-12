@@ -28,7 +28,7 @@ describe('DuplexSessionMachine', () => {
     const machine = new DuplexSessionMachine()
     machine.applyEvent({ type: 'ready' })
     machine.applyEvent({ type: 'partial', text: 'what is' })
-    machine.applyEvent({ type: 'utterance', text: 'what is the weather', speaker: 'owner' })
+    machine.applyEvent({ type: 'utterance', text: 'what is the weather', speaker: 'owner', speaker_name: 'Shereef' })
 
     expect(machine.state).toMatchObject({
       partialCaption: null,
@@ -36,6 +36,7 @@ describe('DuplexSessionMachine', () => {
       replySource: null,
       replyText: null,
       speaker: 'owner',
+      speakerName: 'Shereef',
       utteranceCaption: 'what is the weather'
     })
   })

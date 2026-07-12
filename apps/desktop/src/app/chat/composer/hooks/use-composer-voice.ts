@@ -157,7 +157,8 @@ export function useComposerVoice({
       deepWorking: presentation?.deepWorking ?? false,
       deepMode: presentation?.deepMode ?? null,
       label: presentation?.label ?? null,
-      speakerBadge: presentation?.speakerBadge ?? null
+      speakerBadge: presentation?.speakerBadge ?? null,
+      speakerName: presentation?.speakerName ?? null
     })
 
     if (duplex.status === 'active') {
@@ -200,10 +201,7 @@ export function useComposerVoice({
 
   useEffect(() => onComposerVoiceToggleRequest(toggleVoiceConversation), [toggleVoiceConversation])
 
-  useEffect(
-    () => onComposerVoiceStartRequest(() => !disabled && setVoiceConversationActive(true)),
-    [disabled]
-  )
+  useEffect(() => onComposerVoiceStartRequest(() => !disabled && setVoiceConversationActive(true)), [disabled])
 
   // Explicit start/end for the on-screen conversation controls (the hotkey uses
   // the gated toggle above).

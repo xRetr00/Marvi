@@ -3,12 +3,7 @@ import { useEffect, useRef, useState } from 'react'
 
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import {
-  enrollVoiceSpeaker,
-  getVoiceSpeakers,
-  removeVoiceSpeaker,
-  type VoiceSpeaker
-} from '@/hermes'
+import { enrollVoiceSpeaker, getVoiceSpeakers, removeVoiceSpeaker, type VoiceSpeaker } from '@/hermes'
 import { triggerHaptic } from '@/lib/haptics'
 import { Loader2, Mic, Settings2, Trash2 } from '@/lib/icons'
 import { notifyError } from '@/store/notifications'
@@ -57,14 +52,19 @@ export function VoicePresenceSettings({
   useEffect(() => {
     void Promise.resolve()
       .then(getVoiceSpeakers)
-      .then(result => setSpeakers(result.speakers))
+      .then(result => {
+        setSpeakers(result.speakers)
+        setSpeakerName(current =>
+          current === 'Owner' ? (result.speakers.find(speaker => speaker.is_owner)?.name ?? current) : current
+        )
+      })
       .catch(() => undefined)
 
     return () => captureRef.current?.stop()
   }, [])
 
-  const enrollSpeaker = async () => {
-    const name = speakerName.trim()
+  const enrollSpeaker = async (nameOverride?: string) => {
+    const name = (nameOverride ?? speakerName).trim()
 
     if (!name || enrolling) {
       return
@@ -91,7 +91,6 @@ export function VoicePresenceSettings({
   }
 
   const removeSpeaker = async (name: string) => {
-
     try {
       const result = await removeVoiceSpeaker(name)
       setSpeakers(result.speakers)
@@ -105,9 +104,9 @@ export function VoicePresenceSettings({
       <SectionHeading icon={Mic} title="Voice presence" />
       <Caption className="mb-2 leading-(--conversation-caption-line-height)">
         An always-on presence for Marvi: talk from anywhere (wake word — see the Wake Word tab) and a Dynamic Island
-        appears at the top of the screen as it listens, thinks, and speaks. Runs through the duplex voice session
-        when reachable, falling back to the classic pipeline otherwise. Keeps working while Marvi is minimized to
-        the system tray.
+        appears at the top of the screen as it listens, thinks, and speaks. Runs through the duplex voice session when
+        reachable, falling back to the classic pipeline otherwise. Keeps working while Marvi is minimized to the system
+        tray.
       </Caption>
 
       <ToggleRow
@@ -169,14 +168,18 @@ export function VoicePresenceSettings({
 
       <SectionHeading icon={Mic} title="Speaker recognition" />
       <Caption>
-        Passive — active the moment a speaker is enrolled below, with no separate switch. Record five seconds of
-        clear speech; the first enrolled speaker becomes the owner.
+        Record several independent five-second samples. Marvi marks a profile ready after three samples agree; use
+        different sentences and normal speaking distance. The first enrolled speaker becomes the owner.
       </Caption>
 
       <ListRow
         action={
-          <Pill tone={speakers.length ? 'primary' : 'muted'}>
-            {speakers.length ? `Active — ${speakers.length} enrolled` : 'Inactive — none enrolled'}
+          <Pill tone={speakers.some(speaker => speaker.is_owner && speaker.ready) ? 'primary' : 'muted'}>
+            {speakers.some(speaker => speaker.is_owner && speaker.ready)
+              ? `Ready — ${speakers.length} enrolled`
+              : speakers.length
+                ? 'Learning voice'
+                : 'Inactive — none enrolled'}
           </Pill>
         }
         description="Every duplex voice surface (island, hands-free overlay, composer) shows the resolved owner, guest, or unknown speaker badge."
@@ -201,17 +204,36 @@ export function VoicePresenceSettings({
           {speakers.map(speaker => (
             <ListRow
               action={
-                <Button
-                  aria-label={`Remove ${speaker.name}`}
-                  onClick={() => void removeSpeaker(speaker.name)}
-                  size="icon-sm"
-                  type="button"
-                  variant="ghost"
-                >
-                  <Trash2 className="size-3.5" />
-                </Button>
+                <div className="flex items-center gap-1">
+                  <Button
+                    aria-label={`Add voice sample for ${speaker.name}`}
+                    disabled={enrolling}
+                    onClick={() => void enrollSpeaker(speaker.name)}
+                    size="sm"
+                    type="button"
+                    variant="outline"
+                  >
+                    <Mic className="size-3.5" />
+                    Add sample
+                  </Button>
+                  <Button
+                    aria-label={`Remove ${speaker.name}`}
+                    onClick={() => void removeSpeaker(speaker.name)}
+                    size="icon-sm"
+                    type="button"
+                    variant="ghost"
+                  >
+                    <Trash2 className="size-3.5" />
+                  </Button>
+                </div>
               }
-              description={`${speaker.embeddings} voice sample${speaker.embeddings === 1 ? '' : 's'}`}
+              description={
+                speaker.ready
+                  ? `Ready · ${speaker.embeddings} samples · ${Math.round((speaker.consistency ?? 0) * 100)}% consistency`
+                  : speaker.samples_needed
+                    ? `Needs ${speaker.samples_needed} more independent sample${speaker.samples_needed === 1 ? '' : 's'}`
+                    : `Samples disagree (${Math.round((speaker.consistency ?? 0) * 100)}%) · add a clearer sample`
+              }
               key={speaker.name}
               title={`${speaker.name}${speaker.is_owner ? ' · owner' : ''}`}
             />

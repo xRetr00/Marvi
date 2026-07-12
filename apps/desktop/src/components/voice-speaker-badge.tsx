@@ -5,10 +5,9 @@ export type VoiceSpeakerBadgeSpeaker = 'owner' | 'guest' | 'unknown'
 /**
  * Small, unobtrusive pill shown while duplex speaker ID (see
  * docs/superpowers/specs/2026-07-10-marvi-duplex-voice-splitbrain-design.md
- * section 4) attributes the live utterance to someone other than the
- * enrolled owner. Deliberately tiny/muted — this is a hint, not an alert —
- * and deliberately silent for the owner: you don't need a badge telling you
- * that you are you.
+ * section 4) attributes the live utterance. Deliberately tiny/muted — this
+ * is a hint, not an alert — but includes the enrolled display name so the
+ * category alone never hides who matched.
  *
  * Shared across every voice surface (the wake-word island, the hands-free
  * voice-mode overlay/orb, and the composer's inline voice status) so the
@@ -16,10 +15,12 @@ export type VoiceSpeakerBadgeSpeaker = 'owner' | 'guest' | 'unknown'
  */
 export function VoiceSpeakerBadge({
   speaker,
+  name,
   variant = 'default',
   className
 }: {
   speaker: VoiceSpeakerBadgeSpeaker
+  name?: string | null
   /** `dark` matches the island/orb's always-dark chrome; `default` follows the app's light/dark theme tokens. */
   variant?: 'dark' | 'default'
   className?: string
@@ -32,7 +33,7 @@ export function VoiceSpeakerBadge({
         className
       )}
     >
-      {speaker === 'owner' ? 'owner' : speaker === 'guest' ? 'guest' : 'unknown voice'}
+      {name ? `${name} · ${speaker}` : speaker === 'unknown' ? 'unknown voice' : speaker}
     </span>
   )
 }

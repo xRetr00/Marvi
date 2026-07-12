@@ -45,6 +45,8 @@ logger = logging.getLogger(__name__)
 OWNER_LABEL = "owner"
 GUEST_LABEL = "guest"
 UNKNOWN_LABEL = "unknown"
+MIN_ENROLLMENT_SAMPLES = 3
+MIN_ENROLLMENT_CONSISTENCY = 0.60
 
 DEFAULT_SPEAKER_MODEL_ID = "wespeaker-en-voxceleb-cam++"
 DEFAULT_THRESHOLD = 0.60
@@ -311,12 +313,29 @@ def list_speakers(*, path: Optional[Path] = None) -> List[Dict[str, Any]]:
     owner_key = store.get("owner")
     out = []
     for key, entry in sorted((store.get("speakers") or {}).items()):
+        embeddings = entry.get("embeddings") or []
+        pairs = [
+            cosine_similarity(left, right)
+            for i, left in enumerate(embeddings)
+            for right in embeddings[i + 1:]
+            if left and right and len(left) == len(right)
+        ]
+        consistency = sum(pairs) / len(pairs) if pairs else None
+        # ponytail: three mutually consistent samples are a useful local
+        # readiness heuristic; replace with calibrated DET/EER data if this
+        # profile ever becomes an authentication boundary.
+        ready = len(embeddings) >= MIN_ENROLLMENT_SAMPLES and bool(
+            consistency is not None and consistency >= MIN_ENROLLMENT_CONSISTENCY
+        )
         out.append(
             {
                 "name": entry.get("display_name", key),
                 "key": key,
                 "is_owner": key == owner_key,
-                "embeddings": len(entry.get("embeddings") or []),
+                "embeddings": len(embeddings),
+                "consistency": round(consistency, 3) if consistency is not None else None,
+                "samples_needed": max(0, MIN_ENROLLMENT_SAMPLES - len(embeddings)),
+                "ready": ready,
             }
         )
     return out
@@ -370,17 +389,16 @@ def _average_embedding(embeddings: List[List[float]]) -> Optional[List[float]]:
     return [s / n for s in sums]
 
 
-def identify_embedding(
+def identify_embedding_details(
     embedding: List[float],
     *,
     threshold: float = DEFAULT_THRESHOLD,
     path: Optional[Path] = None,
-) -> Tuple[str, float]:
+) -> Tuple[str, float, Optional[str]]:
     """Match ``embedding`` against enrolled speakers. Never raises.
 
-    Returns ``("unknown", score)`` when nothing clears ``threshold`` (or the
-    store is empty), ``("owner", score)`` for the enrolled owner, and
-    ``("guest", score)`` for any other enrolled speaker.
+    Also returns the enrolled display name for a match, or ``None`` when
+    nothing clears ``threshold``.
     """
     path = path or default_store_path()
     store = load_store(path)
@@ -398,20 +416,35 @@ def identify_embedding(
             best_key, best_score = key, score
 
     if best_key is None or best_score < threshold:
-        return UNKNOWN_LABEL, max(best_score, 0.0)
-    return (OWNER_LABEL if best_key == owner_key else GUEST_LABEL), best_score
+        return UNKNOWN_LABEL, max(best_score, 0.0), None
+    entry = speakers[best_key]
+    return (
+        OWNER_LABEL if best_key == owner_key else GUEST_LABEL,
+        best_score,
+        str(entry.get("display_name") or best_key),
+    )
 
 
-def identify(
+def identify_embedding(
+    embedding: List[float],
+    *,
+    threshold: float = DEFAULT_THRESHOLD,
+    path: Optional[Path] = None,
+) -> Tuple[str, float]:
+    label, score, _name = identify_embedding_details(embedding, threshold=threshold, path=path)
+    return label, score
+
+
+def identify_details(
     pcm16_bytes_16k: bytes,
     *,
     cfg: Optional[Dict[str, Any]] = None,
     path: Optional[Path] = None,
-) -> Tuple[str, float]:
+) -> Tuple[str, float, Optional[str]]:
     """Compute an embedding for ``pcm16_bytes_16k`` and identify the speaker.
 
-    Never raises and never blocks the caller on a hard failure: any problem
-    (no store, no model, bad audio) degrades to ``("unknown", 0.0)``.
+    Never raises: any problem (no store, no model, bad audio) degrades to
+    ``("unknown", 0.0, None)``.
     """
     try:
         from hermes_cli.config import cfg_get, load_config
@@ -427,14 +460,24 @@ def identify(
     try:
         store_path = path or default_store_path()
         if not store_path.exists():
-            return UNKNOWN_LABEL, 0.0
+            return UNKNOWN_LABEL, 0.0, None
         embedding = compute_embedding(pcm16_bytes_16k, cfg=cfg_dict)
         if embedding is None:
-            return UNKNOWN_LABEL, 0.0
-        return identify_embedding(embedding, threshold=threshold, path=store_path)
+            return UNKNOWN_LABEL, 0.0, None
+        return identify_embedding_details(embedding, threshold=threshold, path=store_path)
     except Exception:
         logger.exception("Speaker identify failed; returning unknown")
-        return UNKNOWN_LABEL, 0.0
+        return UNKNOWN_LABEL, 0.0, None
+
+
+def identify(
+    pcm16_bytes_16k: bytes,
+    *,
+    cfg: Optional[Dict[str, Any]] = None,
+    path: Optional[Path] = None,
+) -> Tuple[str, float]:
+    label, score, _name = identify_details(pcm16_bytes_16k, cfg=cfg, path=path)
+    return label, score
 
 
 def require_owner_for_escalation(cfg: Optional[Dict[str, Any]] = None) -> bool:

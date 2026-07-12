@@ -234,7 +234,7 @@ export function VoiceConversationActivity() {
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-1.5 font-medium text-primary">
           <span>{label}</span>
-          {voice.speakerBadge ? <VoiceSpeakerBadge speaker={voice.speakerBadge} /> : null}
+          {voice.speakerBadge ? <VoiceSpeakerBadge name={voice.speakerName} speaker={voice.speakerBadge} /> : null}
         </div>
         <div className="line-clamp-2 break-words text-foreground/85">{text}</div>
       </div>

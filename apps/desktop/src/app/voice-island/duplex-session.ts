@@ -40,6 +40,7 @@ export interface DuplexSessionState {
   utteranceCaption: string | null
   /** Who the server attributed the last `utterance` to. */
   speaker: DuplexSpeaker | null
+  speakerName: string | null
   /** Accumulated instant/deep reply text for the in-flight turn. */
   replyText: string | null
   replySource: 'deep' | 'instant' | null
@@ -74,6 +75,7 @@ export const INITIAL_DUPLEX_STATE: DuplexSessionState = {
   partialCaption: null,
   utteranceCaption: null,
   speaker: null,
+  speakerName: null,
   replyText: null,
   replySource: null,
   deepWork: null,
@@ -129,6 +131,7 @@ export class DuplexSessionMachine {
         this.patch({
           utteranceCaption: event.text,
           speaker: event.speaker,
+          speakerName: event.speaker_name ?? null,
           partialCaption: null,
           replyText: null,
           replySource: null,

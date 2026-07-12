@@ -288,7 +288,9 @@ export function DynamicIsland({
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                     <StateDot active={active} color={color} reducedMotion={Boolean(reducedMotion)} />
                     <span style={{ fontSize: 13, fontWeight: 500, color: 'rgba(255,255,255,0.78)' }}>{label}</span>
-                    {state.speakerBadge ? <VoiceSpeakerBadge speaker={state.speakerBadge} variant="dark" /> : null}
+                    {state.speakerBadge ? (
+                      <VoiceSpeakerBadge name={state.speakerName} speaker={state.speakerBadge} variant="dark" />
+                    ) : null}
                   </div>
                 ) : null}
                 {caption ? (

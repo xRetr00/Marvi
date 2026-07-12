@@ -16092,10 +16092,10 @@ def _streaming_stt_provider(stt_cfg: dict[str, Any]) -> str:
     return str(streaming.get("provider") or "parakeet").strip().lower()
 
 
-def _duplex_identify_speaker(pcm16_bytes: bytes) -> Tuple[str, float]:
-    from tools.voice_speaker_id import identify
+def _duplex_identify_speaker(pcm16_bytes: bytes) -> Tuple[str, float, Optional[str]]:
+    from tools.voice_speaker_id import identify_details
 
-    return identify(pcm16_bytes)
+    return identify_details(pcm16_bytes)
 
 
 def _duplex_stream_instant_reply(
@@ -16365,6 +16365,8 @@ class _DuplexSession:
         self.stt_session: Optional["_ParakeetSubprocessSession"] = None
         self.state = "listening"
         self.vad_gate = None
+        self._barge_vad_unavailable = False
+        self._last_barge_log_at = 0.0
         self._barge_streak_ms = 0.0
         self._utterance_audio: List[bytes] = []
         self._speaking_task: Optional[asyncio.Task] = None
@@ -16527,14 +16529,21 @@ class _DuplexSession:
         except Exception:
             pass
 
-        speaker_label, score = await asyncio.to_thread(_duplex_identify_speaker, pcm)
+        speaker_label, score, speaker_name = await asyncio.to_thread(_duplex_identify_speaker, pcm)
         _log.info(
             "Voice duplex speaker identified label=%s score=%.4f audio_ms=%d",
             speaker_label,
             score,
             int(len(pcm) / 2 / 16000 * 1000),
         )
-        await self._send({"type": "utterance", "text": text, "speaker": speaker_label})
+        await self._send(
+            {
+                "type": "utterance",
+                "text": text,
+                "speaker": speaker_label,
+                "speaker_name": speaker_name,
+            }
+        )
         self.transcript.add("user", text)
 
         self.state = "speaking"
@@ -16543,10 +16552,16 @@ class _DuplexSession:
         self._speaking_task = asyncio.create_task(self._run_turn(text, speaker_label, cancel_event))
 
     async def _feed_barge_in(self, chunk: bytes) -> None:
+        if self._barge_vad_unavailable:
+            return
         if self.vad_gate is None:
             self.vad_gate = await asyncio.to_thread(_duplex_make_vad_gate)
         if self.vad_gate is None:
-            return  # VAD unavailable — no barge-in detection this session
+            self._barge_vad_unavailable = True
+            _log.warning("Voice duplex barge-in unavailable: VAD did not initialize")
+            return
+        if self._last_barge_log_at == 0.0:
+            _log.info("Voice duplex barge-in armed threshold_ms=%d", _DUPLEX_BARGE_IN_STREAK_MS)
         samples = _duplex_pcm16_to_float32(chunk)
         await asyncio.to_thread(self.vad_gate.accept, samples)
         chunk_ms = (len(chunk) / 2.0) / 16000.0 * 1000.0
@@ -16554,10 +16569,19 @@ class _DuplexSession:
             self.vad_gate.has_recent_speech, max(80, int(chunk_ms) + 40)
         )
         self._barge_streak_ms = (self._barge_streak_ms + chunk_ms) if has_speech else 0.0
+        now = time.monotonic()
+        if now - self._last_barge_log_at >= 1.0:
+            _log.info(
+                "Voice duplex barge-in monitoring speech=%s streak_ms=%d",
+                has_speech,
+                int(self._barge_streak_ms),
+            )
+            self._last_barge_log_at = now
         if self._barge_streak_ms >= _DUPLEX_BARGE_IN_STREAK_MS:
             await self._trigger_barge_in(chunk)
 
     async def _trigger_barge_in(self, triggering_chunk: bytes) -> None:
+        _log.info("Voice duplex barge-in accepted streak_ms=%d", int(self._barge_streak_ms))
         self._cancel_speaking.set()
         await self._send({"type": "barge_in"})
         task = self._speaking_task

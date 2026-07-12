@@ -47,6 +47,7 @@ export interface DuplexUtteranceEvent {
   type: 'utterance'
   text: string
   speaker: DuplexSpeaker
+  speaker_name?: string
 }
 
 export interface DuplexInstantDeltaEvent {
@@ -171,7 +172,12 @@ export function parseDuplexServerEvent(raw: unknown): DuplexServerEvent | null {
 
     case 'utterance':
       return typeof raw.text === 'string'
-        ? { type: 'utterance', text: raw.text, speaker: asSpeaker(raw.speaker) }
+        ? {
+            type: 'utterance',
+            text: raw.text,
+            speaker: asSpeaker(raw.speaker),
+            ...(typeof raw.speaker_name === 'string' ? { speaker_name: raw.speaker_name } : {})
+          }
         : null
 
     case 'instant_delta':

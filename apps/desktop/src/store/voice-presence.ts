@@ -32,11 +32,12 @@ export interface VoiceState {
   label: string | null
   /**
    * Duplex-only (speaker ID, spec section 4): set when the duplex server
-   * attributes the current utterance to someone other than the enrolled
-   * owner. Every voice surface shows the same small, unobtrusive badge for
+   * attributes the current utterance. Every voice surface shows the same
+   * small, unobtrusive named badge for
    * this — see components/voice-speaker-badge.tsx.
    */
   speakerBadge: 'owner' | 'guest' | 'unknown' | null
+  speakerName: string | null
   /** Duplex-only: true while an escalated background task hasn't resolved yet. */
   deepWorking: boolean
   deepMode: DuplexWorkMode | null
@@ -86,6 +87,7 @@ export function deriveVoicePhase(args: {
 export interface DuplexExtras {
   label: string | null
   speakerBadge: 'owner' | 'guest' | 'unknown' | null
+  speakerName: string | null
   deepWorking: boolean
   deepMode: DuplexWorkMode | null
   activity: { kind: DuplexActivityKind; label: string } | null
@@ -94,6 +96,7 @@ export interface DuplexExtras {
 const NO_DUPLEX_EXTRAS: DuplexExtras = {
   label: null,
   speakerBadge: null,
+  speakerName: null,
   deepWorking: false,
   deepMode: null,
   activity: null
@@ -143,6 +146,7 @@ export const $voiceState = computed(
       muted: conv.muted,
       phase,
       speakerBadge: conv.active ? conv.speakerBadge : null,
+      speakerName: conv.active ? conv.speakerName : null,
       userCaption
     }
   }

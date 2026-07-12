@@ -16,6 +16,7 @@ const INITIAL_STATE: VoiceState = {
   bargeable: false,
   label: null,
   speakerBadge: null,
+  speakerName: null,
   deepWorking: false,
   deepMode: null,
   activity: null

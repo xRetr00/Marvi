@@ -190,10 +190,10 @@ def stt_session(monkeypatch):
 
 @pytest.fixture
 def identify_speaker(monkeypatch):
-    state = {"label": "owner", "score": 0.9}
+    state = {"label": "owner", "score": 0.9, "name": "Shereef"}
 
     def fake_identify(pcm16_bytes):
-        return state["label"], state["score"]
+        return state["label"], state["score"], state["name"]
 
     monkeypatch.setattr(web_server, "_duplex_identify_speaker", fake_identify)
     return state
@@ -332,6 +332,7 @@ def test_utterance_instant_delta_tts_cycle(duplex_client, full_fakes):
         utterance = _recv_until(conn, "utterance")
         assert utterance["text"] == "what time is it"
         assert utterance["speaker"] == "owner"
+        assert utterance["speaker_name"] == "Shereef"
         # Renderer audio is PCM16; the streaming STT contract is little-endian
         # Float32. Keep speaker-ID audio in PCM16, but convert the STT copy.
         assert struct.unpack_from("<f", stt.accepted_chunks[0])[0] == pytest.approx(100 / 32768)

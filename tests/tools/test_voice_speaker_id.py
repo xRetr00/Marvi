@@ -74,6 +74,15 @@ class TestStoreCrud:
         assert speakers["Bob"]["is_owner"] is False
         assert speakers["Bob"]["embeddings"] == 2
 
+    def test_profile_is_ready_after_three_consistent_samples(self, store_path):
+        for embedding in ([1.0, 0.0], [0.99, 0.05], [0.98, -0.04]):
+            vsid.enroll_embedding("Alice", embedding, path=store_path)
+
+        speaker = vsid.list_speakers(path=store_path)[0]
+        assert speaker["ready"] is True
+        assert speaker["samples_needed"] == 0
+        assert speaker["consistency"] > 0.9
+
     def test_remove_speaker(self, store_path):
         vsid.enroll_embedding("Alice", [1.0, 0.0], path=store_path)
         vsid.enroll_embedding("Bob", [0.0, 1.0], path=store_path)
@@ -152,6 +161,15 @@ class TestIdentifyEmbedding:
 
         label, score = vsid.identify_embedding([0.0, 1.0, 0.0], threshold=0.45, path=store_path)
         assert label == "guest"
+        assert score == pytest.approx(1.0)
+
+    def test_details_include_enrolled_display_name(self, store_path):
+        vsid.enroll_embedding("Alice Smith", [1.0, 0.0], path=store_path)
+
+        label, score, name = vsid.identify_embedding_details(
+            [1.0, 0.0], threshold=0.45, path=store_path
+        )
+        assert (label, name) == ("owner", "Alice Smith")
         assert score == pytest.approx(1.0)
 
     def test_below_threshold_is_unknown(self, store_path):

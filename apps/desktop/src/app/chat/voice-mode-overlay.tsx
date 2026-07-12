@@ -84,7 +84,9 @@ export function VoiceModeOverlay() {
                   {voice.label ?? presentation.label}
                 </div>
               )}
-              {voice.speakerBadge ? <VoiceSpeakerBadge speaker={voice.speakerBadge} variant="dark" /> : null}
+              {voice.speakerBadge ? (
+                <VoiceSpeakerBadge name={voice.speakerName} speaker={voice.speakerBadge} variant="dark" />
+              ) : null}
             </div>
             {caption ? (
               <div className="mt-3 line-clamp-3 text-balance text-lg leading-relaxed text-white/92">{caption}</div>

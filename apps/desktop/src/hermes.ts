@@ -416,9 +416,12 @@ export function saveHermesConfig(config: HermesConfigRecord): Promise<{ ok: bool
 }
 
 export interface VoiceSpeaker {
+  consistency: number | null
   embeddings: number
   is_owner: boolean
   name: string
+  ready: boolean
+  samples_needed: number
 }
 
 export interface VoiceSpeakersResponse {

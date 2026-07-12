@@ -11,10 +11,11 @@ describe('parseDuplexServerEvent', () => {
       text: 'hi',
       eou_prob: 0.9
     })
-    expect(parseDuplexServerEvent({ type: 'utterance', text: 'hi', speaker: 'guest' })).toEqual({
+    expect(parseDuplexServerEvent({ type: 'utterance', text: 'hi', speaker: 'guest', speaker_name: 'Alice' })).toEqual({
       type: 'utterance',
       text: 'hi',
-      speaker: 'guest'
+      speaker: 'guest',
+      speaker_name: 'Alice'
     })
     expect(parseDuplexServerEvent({ type: 'instant_delta', text: 'a' })).toEqual({ type: 'instant_delta', text: 'a' })
     expect(parseDuplexServerEvent({ type: 'instant_done', text: 'a' })).toEqual({ type: 'instant_done', text: 'a' })

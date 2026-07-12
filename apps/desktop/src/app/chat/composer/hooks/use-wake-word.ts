@@ -40,6 +40,8 @@ interface WakeWordOptions {
   busy: boolean
   config?: WakeWordConfig
   enabled: boolean
+  /** Hand wake activation to the shared duplex conversation instead of using the legacy command recorder. */
+  onWakeDetected?: () => Promise<void> | void
   onSubmit: (text: string) => Promise<void> | void
   onTranscribeAudio?: (audio: Blob) => Promise<string>
   semanticTurnEnabled?: boolean
@@ -95,6 +97,7 @@ export function useWakeWord({
   busy,
   config,
   enabled,
+  onWakeDetected,
   onSubmit,
   onTranscribeAudio,
   semanticTurnEnabled = true,
@@ -141,6 +144,7 @@ export function useWakeWord({
   const statusRef = useRef<WakeWordStatus>('idle')
   const handleRef = useRef(handle)
   const onSubmitRef = useRef(onSubmit)
+  const onWakeDetectedRef = useRef(onWakeDetected)
   const onTranscribeAudioRef = useRef(onTranscribeAudio)
   const finishCaptureRef = useRef<(() => Promise<void>) | null>(null)
   const finishIfTurnCompleteRef = useRef<(() => Promise<boolean | void>) | null>(null)
@@ -175,8 +179,9 @@ export function useWakeWord({
 
   useEffect(() => {
     onSubmitRef.current = onSubmit
+    onWakeDetectedRef.current = onWakeDetected
     onTranscribeAudioRef.current = onTranscribeAudio
-  }, [onSubmit, onTranscribeAudio])
+  }, [onSubmit, onTranscribeAudio, onWakeDetected])
 
   useEffect(() => {
     startupFailedRef.current = false
@@ -426,7 +431,7 @@ export function useWakeWord({
   }, [busy, scheduleRestart])
 
   useEffect(() => {
-    if (!wakeConfig.enabled || !enabled || busy || !transcribeAvailable) {
+    if (!wakeConfig.enabled || !enabled || busy || (!transcribeAvailable && !onWakeDetectedRef.current)) {
       stop()
 
       return
@@ -522,6 +527,16 @@ export function useWakeWord({
             stopStreamingSession()
             commandFramesRef.current = []
             streamingErrorRef.current = null
+
+            // Presence is only the activation gate. The explicit voice-mode
+            // duplex client owns mic, STT, speaker ID, Island state, barge-in,
+            // TTS, and follow-up turns after the wake phrase.
+            if (onWakeDetectedRef.current) {
+              setStatus('woken')
+              handleRef.current.cancel()
+              void onWakeDetectedRef.current()
+              return
+            }
 
             if (streamingSttEnabled) {
               streamingOpenRef.current = openStreamingTranscription({ onPartial: text => setUserCaption(text) })

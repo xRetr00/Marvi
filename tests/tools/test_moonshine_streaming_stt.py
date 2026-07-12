@@ -4,6 +4,8 @@ import struct
 import sys
 import types
 
+import pytest
+
 from tools import moonshine_streaming_stt
 
 
@@ -65,6 +67,7 @@ def test_moonshine_session_streams_float32_and_reports_eou(monkeypatch):
     session = moonshine_streaming_stt.MoonshineStreamingSession(
         {"streaming": {"moonshine": {"language": "en", "model": "tiny-streaming"}}}
     )
+    assert session.device == "cpu"
     session.begin()
     partial = session.accept_bytes(struct.pack("<ff", 0.25, -0.5))
 
@@ -73,3 +76,19 @@ def test_moonshine_session_streams_float32_and_reports_eou(monkeypatch):
     assert FakeTranscriber.instances[0].audio == [([0.25, -0.5], 16000)]
     assert session.finish() == "hello world"
     assert session.last_eou is True
+
+
+def test_moonshine_rejects_fake_cuda_device(monkeypatch):
+    monkeypatch.setattr(moonshine_streaming_stt, "ensure", lambda _feature: None)
+    fake_module = types.SimpleNamespace(
+        ModelArch=FakeModelArch,
+        TranscriptEventListener=FakeListener,
+        Transcriber=FakeTranscriber,
+        get_model_for_language=lambda language, arch: (f"/{language}/model", arch),
+    )
+    monkeypatch.setitem(sys.modules, "moonshine_voice", fake_module)
+
+    with pytest.raises(ValueError, match="does not expose CUDA"):
+        moonshine_streaming_stt.MoonshineStreamingSession(
+            {"streaming": {"moonshine": {"device": "cuda"}}}
+        )

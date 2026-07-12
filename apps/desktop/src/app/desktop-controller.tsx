@@ -79,13 +79,13 @@ import { openUpdatesWindow, startUpdatePoller, stopUpdatePoller } from '../store
 import { $voicePlayback } from '../store/voice-playback'
 import { $voiceWarmup, startVoiceWarmupPolling } from '../store/voice-warmup'
 import { initVoiceIslandBridge } from '../store/voice-island'
-import { publishWakeStatus } from '../store/voice-presence'
+import { $conversation, publishWakeStatus } from '../store/voice-presence'
 import { $presenceEnabled, setPresenceEnabled } from '../store/voice-presence-settings'
 import { initWindowPresence } from '../store/window-presence'
 import { isSecondaryWindow } from '../store/windows'
 
 import { ChatView } from './chat'
-import { requestComposerFocus, requestComposerInsert } from './chat/composer/focus'
+import { requestComposerFocus, requestComposerInsert, requestVoiceStart } from './chat/composer/focus'
 import { useWakeWord } from './chat/composer/hooks/use-wake-word'
 import { useComposerActions } from './chat/hooks/use-composer-actions'
 import {
@@ -849,15 +849,17 @@ export function DesktopController() {
   requestGatewayRef.current = requestGateway
   const presenceEnabled = useStore($presenceEnabled)
   const voiceBusy = useStore($busy)
+  const voiceConversation = useStore($conversation)
   const voicePlayback = useStore($voicePlayback)
   const voiceWarmup = useStore($voiceWarmup)
 
   const presenceActive = !isSecondaryWindow() && presenceEnabled && gatewayState === 'open'
 
   const wake = useWakeWord({
-    busy: voiceBusy || voicePlayback.status !== 'idle',
+    busy: voiceBusy || voiceConversation.active || voicePlayback.status !== 'idle',
     config: wakeWordConfig,
     enabled: presenceActive,
+    onWakeDetected: requestVoiceStart,
     onSubmit: async text => {
       await submitTextRef.current(text)
     },

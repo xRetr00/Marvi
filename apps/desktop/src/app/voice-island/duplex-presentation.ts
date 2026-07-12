@@ -20,7 +20,7 @@ export interface DuplexPresentation {
   caption: { text: string; who: 'marvi' | 'you' } | null
   bargeable: boolean
   /** Small unobtrusive badge when the server attributes speech to someone other than the owner. */
-  speakerBadge: 'guest' | 'unknown' | null
+  speakerBadge: 'owner' | 'guest' | 'unknown' | null
   /** True while an escalated background task hasn't resolved yet. */
   deepWorking: boolean
   deepMode: DuplexWorkMode | null
@@ -76,6 +76,6 @@ export function resolveDuplexPresentation(state: DuplexSessionState): DuplexPres
     activity: state.activity,
     label: resolveLabel(state),
     phase: PHASE_MAP[state.phase],
-    speakerBadge: state.speaker === 'guest' || state.speaker === 'unknown' ? state.speaker : null
+    speakerBadge: state.speaker
   }
 }

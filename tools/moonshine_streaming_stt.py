@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import sys
 import threading
 from array import array
@@ -16,6 +17,8 @@ _MODEL_NAMES = {
     "small-streaming": "SMALL_STREAMING",
     "medium-streaming": "MEDIUM_STREAMING",
 }
+
+logger = logging.getLogger(__name__)
 
 
 class MoonshineStreamingSession:
@@ -32,6 +35,12 @@ class MoonshineStreamingSession:
         language = str(nested.get("language") or "en").strip() or "en"
         requested = str(nested.get("model") or streaming.get("model") or "small-streaming").lower()
         requested = requested.removeprefix("moonshine-")
+        device = str(nested.get("device") or "auto").strip().lower()
+        if device not in {"auto", "cpu"}:
+            raise ValueError(
+                "Moonshine streaming STT supports device=auto or cpu; "
+                "moonshine-voice does not expose CUDA execution."
+            )
         arch = getattr(ModelArch, _MODEL_NAMES.get(requested, "SMALL_STREAMING"))
         model_path, model_arch = get_model_for_language(language, arch)
 
@@ -42,6 +51,8 @@ class MoonshineStreamingSession:
         self.last_eou_prob = 0.0
         self._started = False
         self._transcriber = Transcriber(model_path=model_path, model_arch=model_arch, update_interval=0.2)
+        self.device = "cpu"
+        logger.info("Moonshine streaming STT ready (model=%s language=%s device=cpu)", requested, language)
         owner = self
 
         class Listener(TranscriptEventListener):

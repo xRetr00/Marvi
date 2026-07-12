@@ -34,7 +34,12 @@ import { EmptyState, ListRow, LoadingState, SettingsContent } from './primitives
 import { ProviderConfigPanel } from './provider-config-panel'
 
 const STREAMING_PROVIDER_FIELDS: Record<string, Set<string>> = {
-  moonshine: new Set(['stt.streaming.provider', 'stt.streaming.moonshine.language', 'stt.streaming.moonshine.model']),
+  moonshine: new Set([
+    'stt.streaming.provider',
+    'stt.streaming.moonshine.language',
+    'stt.streaming.moonshine.model',
+    'stt.streaming.moonshine.device'
+  ]),
   parakeet: new Set(['stt.streaming.provider', 'stt.streaming.model', 'stt.streaming.eou_token'])
 }
 

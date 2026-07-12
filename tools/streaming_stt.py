@@ -18,6 +18,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import time
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -487,6 +488,7 @@ class LiveKitWakeWordSpotter:
         self.model = WakeWordModel(models=self._model_paths)
         self._samples: list[float] = []
         self._frames_seen = 0
+        self._last_debug_log_at = 0.0
         # TEN VAD speech gate (falls back to the RMS energy gate if unavailable).
         from tools.vad import make_speech_gate
 
@@ -553,6 +555,13 @@ class LiveKitWakeWordSpotter:
     ) -> None:
         if not self.cfg.debug:
             return
+        # Keep positive detections, but sample routine decisions. Writing each
+        # inference frame to two logs made debug mode noticeably stall the
+        # local gateway.
+        now = time.monotonic()
+        if decision != "passed" and now - self._last_debug_log_at < 1.0:
+            return
+        self._last_debug_log_at = now
         try:
             import numpy as np
 

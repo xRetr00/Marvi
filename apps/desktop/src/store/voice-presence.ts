@@ -36,7 +36,7 @@ export interface VoiceState {
    * owner. Every voice surface shows the same small, unobtrusive badge for
    * this — see components/voice-speaker-badge.tsx.
    */
-  speakerBadge: 'guest' | 'unknown' | null
+  speakerBadge: 'owner' | 'guest' | 'unknown' | null
   /** Duplex-only: true while an escalated background task hasn't resolved yet. */
   deepWorking: boolean
   deepMode: DuplexWorkMode | null
@@ -85,7 +85,7 @@ export function deriveVoicePhase(args: {
 /** Duplex-only extras a conversation/ambient slice can carry (see VoiceState). */
 export interface DuplexExtras {
   label: string | null
-  speakerBadge: 'guest' | 'unknown' | null
+  speakerBadge: 'owner' | 'guest' | 'unknown' | null
   deepWorking: boolean
   deepMode: DuplexWorkMode | null
   activity: { kind: DuplexActivityKind; label: string } | null

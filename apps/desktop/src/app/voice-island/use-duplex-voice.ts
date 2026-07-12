@@ -15,9 +15,8 @@ export interface UseDuplexVoiceResult {
  * Tries the duplex voice endpoint once while `enabled`. If it connects, this
  * hook owns the mic + `/api/voice/duplex` socket for as long as the island
  * overlay stays mounted and `state`/`level` become the authoritative voice
- * presentation. If it never connects — today, always, since the server
- * endpoint doesn't exist yet — `available` stays false and the caller should
- * keep rendering off the legacy `$voiceState` IPC push; this hook never reads
+ * presentation. If it cannot connect, `available` stays false and the caller
+ * keeps rendering off the legacy `$voiceState` IPC push; this hook never reads
  * or writes that store.
  */
 export function useDuplexVoice(enabled: boolean): UseDuplexVoiceResult {

@@ -16527,7 +16527,13 @@ class _DuplexSession:
         except Exception:
             pass
 
-        speaker_label, _score = await asyncio.to_thread(_duplex_identify_speaker, pcm)
+        speaker_label, score = await asyncio.to_thread(_duplex_identify_speaker, pcm)
+        _log.info(
+            "Voice duplex speaker identified label=%s score=%.4f audio_ms=%d",
+            speaker_label,
+            score,
+            int(len(pcm) / 2 / 16000 * 1000),
+        )
         await self._send({"type": "utterance", "text": text, "speaker": speaker_label})
         self.transcript.add("user", text)
 

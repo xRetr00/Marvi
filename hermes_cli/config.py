@@ -2152,6 +2152,7 @@ DEFAULT_CONFIG = {
             "moonshine": {
                 "language": "en",
                 "model": "small-streaming",
+                "device": "auto",  # auto resolves to CPU; moonshine-voice has no CUDA runtime
             },
             "eou_token": "<EOU>",
             "max_clients": 1,

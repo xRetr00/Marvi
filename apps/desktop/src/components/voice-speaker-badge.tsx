@@ -1,6 +1,6 @@
 import { cn } from '@/lib/utils'
 
-export type VoiceSpeakerBadgeSpeaker = 'guest' | 'unknown'
+export type VoiceSpeakerBadgeSpeaker = 'owner' | 'guest' | 'unknown'
 
 /**
  * Small, unobtrusive pill shown while duplex speaker ID (see
@@ -32,7 +32,7 @@ export function VoiceSpeakerBadge({
         className
       )}
     >
-      {speaker === 'guest' ? 'guest' : 'unknown voice'}
+      {speaker === 'owner' ? 'owner' : speaker === 'guest' ? 'guest' : 'unknown voice'}
     </span>
   )
 }

@@ -179,7 +179,7 @@ export function VoicePresenceSettings({
             {speakers.length ? `Active — ${speakers.length} enrolled` : 'Inactive — none enrolled'}
           </Pill>
         }
-        description="Every voice surface (island, hands-free overlay, composer) shows a small badge when speech is attributed to a guest or unknown voice."
+        description="Every duplex voice surface (island, hands-free overlay, composer) shows the resolved owner, guest, or unknown speaker badge."
         title="Speaker ID"
       />
 

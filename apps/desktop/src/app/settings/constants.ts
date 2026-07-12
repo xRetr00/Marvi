@@ -256,6 +256,7 @@ export const ENUM_OPTIONS: Record<string, string[]> = {
     'medium-streaming'
   ],
   'stt.streaming.moonshine.model': ['tiny-streaming', 'base-streaming', 'small-streaming', 'medium-streaming'],
+  'stt.streaming.moonshine.device': ['auto', 'cpu'],
   'voice.wake_word.provider': ['livekit'],
   'voice.wake_word.model': ['livekit-marvi'],
   // Speech-to-text backends — kept in sync with the stt block in
@@ -403,6 +404,7 @@ export const FIELD_LABELS: Record<string, string> = defineFieldCopy({
       maxConnectionTime: 'Streaming STT Max Seconds',
       singleModel: 'Streaming STT Single Model',
       moonshine: {
+        device: 'Moonshine Device',
         language: 'Moonshine Language',
         model: 'Moonshine Streaming Model'
       }
@@ -583,6 +585,7 @@ export const FIELD_DESCRIPTIONS: Record<string, string> = defineFieldCopy({
       model: 'Parakeet Realtime EOU Hugging Face model id.',
       eouToken: 'Token emitted by Parakeet when the utterance is complete.',
       moonshine: {
+        device: 'Auto currently resolves to CPU. Moonshine Voice does not expose CUDA execution.',
         language: 'Two-letter language code for the locally cached Moonshine model.',
         model: 'CPU streaming architecture; larger models trade memory and latency for accuracy. Moonshine does not currently provide CUDA execution.'
       }
@@ -701,6 +704,7 @@ export const SECTIONS: DesktopConfigSection[] = [
       'stt.streaming.model',
       'stt.streaming.moonshine.language',
       'stt.streaming.moonshine.model',
+      'stt.streaming.moonshine.device',
       'stt.streaming.eou_token',
       'stt.streaming.max_clients',
       'stt.streaming.max_connection_time',

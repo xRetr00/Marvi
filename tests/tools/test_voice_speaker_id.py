@@ -214,6 +214,19 @@ class TestIdentify:
         assert (label, score) == ("unknown", 0.0)
 
 
+def test_warm_loads_runtime_before_enrolled_model(store_path, monkeypatch):
+    store_path.parent.mkdir(parents=True)
+    store_path.write_text('{"owner": null, "speakers": {}}', encoding="utf-8")
+    events = []
+    monkeypatch.setattr(vsid, "default_store_path", lambda: store_path)
+    monkeypatch.setattr(vsid, "_import_sherpa_onnx", lambda: events.append("runtime"))
+    monkeypatch.setattr(vsid, "resolve_speaker_model_path", lambda cfg=None: events.append("model") or "model.onnx")
+    monkeypatch.setattr(vsid, "_get_extractor", lambda path: events.append("extractor"))
+
+    assert vsid.warm_speaker_id({}) is True
+    assert events == ["runtime", "model", "extractor"]
+
+
 # ---------------------------------------------------------------------------
 # Enroll (transport-facing, mocked)
 # ---------------------------------------------------------------------------

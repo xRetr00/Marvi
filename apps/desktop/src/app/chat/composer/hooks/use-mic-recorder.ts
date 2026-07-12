@@ -144,6 +144,12 @@ export function useMicRecorder(copy: MicRecorderErrorCopy): {
   const silencePendingRef = useRef(false)
   const silenceStartedAtRef = useRef<number | null>(null)
   const stopResolverRef = useRef<((recording: MicRecording | null) => void) | null>(null)
+  const methodsRef = useRef<MicRecorderHandle | null>(null)
+  const handleRef = useRef<MicRecorderHandle>({
+    start: options => methodsRef.current!.start(options),
+    stop: () => methodsRef.current!.stop(),
+    cancel: () => methodsRef.current!.cancel()
+  })
 
   const cleanup = () => {
     if (animationRef.current) {
@@ -389,7 +395,7 @@ export function useMicRecorder(copy: MicRecorderErrorCopy): {
     resolver?.(null)
   }
 
-  const handle: MicRecorderHandle = { start, stop, cancel }
+  methodsRef.current = { start, stop, cancel }
 
-  return { handle, level, recording }
+  return { handle: handleRef.current, level, recording }
 }

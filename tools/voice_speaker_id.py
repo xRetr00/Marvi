@@ -149,6 +149,15 @@ def _get_extractor(model_path: str):
         return extractor
 
 
+def warm_speaker_id(cfg: Optional[Dict[str, Any]] = None) -> bool:
+    """Load Sherpa's runtime first and an enrolled speaker model when present."""
+    _import_sherpa_onnx()
+    if not default_store_path().exists():
+        return False
+    _get_extractor(resolve_speaker_model_path(cfg))
+    return True
+
+
 def compute_embedding(
     pcm16_bytes_16k: bytes, *, cfg: Optional[Dict[str, Any]] = None,
 ) -> Optional[List[float]]:

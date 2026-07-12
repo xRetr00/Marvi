@@ -1,6 +1,26 @@
+import { renderHook } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 
-import { downsampleFloat32, getMicrophoneStream, resumeAudioContextIfSuspended } from './use-mic-recorder'
+import { downsampleFloat32, getMicrophoneStream, resumeAudioContextIfSuspended, useMicRecorder } from './use-mic-recorder'
+
+const errorCopy = {
+  microphoneAccessDenied: '',
+  microphoneConstraintsUnsupported: '',
+  microphoneInUse: '',
+  microphonePermissionDenied: '',
+  microphoneStartFailed: '',
+  microphoneUnsupported: '',
+  noMicrophone: ''
+}
+
+it('keeps the recorder handle stable across audio-level renders', () => {
+  const { result, rerender } = renderHook(() => useMicRecorder(errorCopy))
+  const handle = result.current.handle
+
+  rerender()
+
+  expect(result.current.handle).toBe(handle)
+})
 
 describe('downsampleFloat32', () => {
   it('averages source samples into the requested output rate', () => {

@@ -476,6 +476,21 @@ def _warm_desktop_voice_models() -> None:
     else:
         _set_warmup(stt="skipped")
 
+    # Moonshine bundles an older onnxruntime.dll on Windows. Load Sherpa before
+    # the server accepts Moonshine sessions so both bind to Sherpa's
+    # backward-compatible runtime; otherwise speaker ID terminates the process.
+    try:
+        import sherpa_onnx  # noqa: F401
+
+        from tools.voice_speaker_id import warm_speaker_id
+
+        if warm_speaker_id(cfg):
+            _log.info("Warmed speaker-ID model")
+    except ImportError:
+        pass
+    except Exception as exc:
+        _log.warning("Could not warm speaker ID: %s", exc)
+
     # Wake word: preload its model so the first arm at startup is instant.
     _set_warmup(wake="warming")
     try:

@@ -21,7 +21,6 @@ const BLEND_MODES = [
 ] as const
 
 type BlendMode = (typeof BLEND_MODES)[number]
-const assetPath = (path: string) => `${import.meta.env.BASE_URL}${path.replace(/^\/+/, '')}`
 
 export function Backdrop() {
   const [controlsOpen, setControlsOpen] = useState(false)
@@ -64,21 +63,18 @@ export function Backdrop() {
     document.documentElement.style.setProperty('--radius-scalar', String(shape.radiusScalar))
   }, [shape.radiusScalar])
 
-  const statue = useControls(
-    'Backdrop / Statue',
+  const artwork = useControls(
+    'Backdrop / Electric Gaze',
     {
       enabled: { value: true, label: 'on' },
-      opacity: { value: 0.025, min: 0, max: 1, step: 0.005 },
+      opacity: { value: 0.15, min: 0, max: 1, step: 0.005 },
       blendMode: { value: 'difference' as BlendMode, options: BLEND_MODES, label: 'blend' },
-      invert: { value: true, label: 'invert color' },
-      saturate: { value: 1, min: 0, max: 3, step: 0.05, label: 'saturate' },
-      brightness: { value: 1, min: 0, max: 2, step: 0.05, label: 'brightness' },
       objectPosition: {
-        value: 'top left',
+        value: 'center',
         options: ['top left', 'top right', 'bottom left', 'bottom right', 'center', 'top', 'bottom', 'left', 'right'],
         label: 'position'
       },
-      scale: { value: 160, min: 100, max: 300, step: 5, label: 'height (dvh)' }
+      scale: { value: 100, min: 100, max: 300, step: 5, label: 'height (dvh)' }
     },
     { collapsed: true }
   )
@@ -87,24 +83,26 @@ export function Backdrop() {
     <>
       <Leva collapsed hidden={!import.meta.env.DEV || !controlsOpen} titleBar={{ title: 'backdrop', drag: true }} />
 
-      {statue.enabled && (
+      {artwork.enabled && (
         <div
           aria-hidden
           className="pointer-events-none absolute inset-0 z-2"
           style={{
-            mixBlendMode: statue.blendMode as CSSProperties['mixBlendMode'],
-            opacity: statue.opacity
+            mixBlendMode: artwork.blendMode as CSSProperties['mixBlendMode'],
+            opacity: artwork.opacity
           }}
         >
-          <img
-            alt=""
+          <video
+            autoPlay
             className="w-auto min-w-dvw object-cover"
-            fetchPriority="low"
-            src={assetPath('ds-assets/filler-bg0.jpg')}
+            loop
+            muted
+            playsInline
+            poster="https://assets.21st.dev/ascii-recipes/thumbnails/user_2nElBLvklOKlAURm6W1PTu6yYFh/ae758991-0c3f-4c6a-9296-33784c65d43b.webp"
+            src="https://assets.21st.dev/ascii-recipes/videos/user_2nElBLvklOKlAURm6W1PTu6yYFh/c458eb38-7f4e-4272-8711-59a86e20d624.mp4"
             style={{
-              height: `${statue.scale}dvh`,
-              objectPosition: statue.objectPosition,
-              filter: `invert(calc(${statue.invert ? 1 : 0} * var(--backdrop-invert-mul, 1))) saturate(${statue.saturate}) brightness(${statue.brightness})`
+              height: `${artwork.scale}dvh`,
+              objectPosition: artwork.objectPosition
             }}
           />
         </div>

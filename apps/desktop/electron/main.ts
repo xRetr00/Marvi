@@ -7521,7 +7521,7 @@ function spawnIslandWindow() {
     hiddenInMissionControl: IS_MAC,
     backgroundColor: '#00000000',
     webPreferences: {
-      preload: path.join(__dirname, 'preload.cjs'),
+      preload: PRELOAD_PATH,
       contextIsolation: true,
       sandbox: true,
       nodeIntegration: false,

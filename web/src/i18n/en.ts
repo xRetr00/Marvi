@@ -131,6 +131,8 @@ export const en: Translations = {
     starting: "Starting",
     startedInBackground: "Started in background — check logs for progress",
     stopped: "Stopped",
+    updateMarvi: "Update Marvi",
+    updatingMarvi: "Updating Marvi…",
     updateHermes: "Update Marvi",
     updateHermesConfirmMessage:
       "This runs hermes update and restarts the gateway when it finishes. Active sessions keep their prompt cache until then.",

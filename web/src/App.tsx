@@ -957,8 +957,8 @@ function SidebarSystemActions({
     items.push({
       action: "update",
       icon: Download,
-      label: t.status.updateHermes,
-      runningLabel: t.status.updatingHermes,
+      label: t.status.updateHermes ?? t.status.updateMarvi,
+      runningLabel: t.status.updatingHermes ?? t.status.updatingMarvi,
       spin: false,
     });
   }

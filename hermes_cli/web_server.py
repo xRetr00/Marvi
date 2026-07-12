@@ -383,6 +383,7 @@ atexit.register(_close_warm_parakeet_session)
 # ready | skipped | failed. `done` flips true once all have resolved.
 _VOICE_WARMUP_STATUS: dict[str, Any] = {"tts": "pending", "stt": "pending", "wake": "pending", "done": False, "started": False}
 _VOICE_WARMUP_LOCK = threading.Lock()
+_VOICE_PREWARMED_BEFORE_LOOP = False
 
 
 def _set_warmup(**updates: Any) -> None:
@@ -571,7 +572,8 @@ async def _lifespan(app: "FastAPI"):
             name="desktop-cron-ticker",
         )
         cron_thread.start()
-        threading.Thread(target=_warm_desktop_voice_models, daemon=True, name="desktop-voice-warmup").start()
+        if not _VOICE_PREWARMED_BEFORE_LOOP:
+            threading.Thread(target=_warm_desktop_voice_models, daemon=True, name="desktop-voice-warmup").start()
 
     # Reap idle/dead keep-alive PTY sessions in the background (30-min TTL).
     pty_reaper_task = asyncio.create_task(run_reaper(PTY_REGISTRY))
@@ -19060,6 +19062,8 @@ def start_server(
     build and no SPA mount (mount_spa() honours ``HERMES_SERVE_HEADLESS``), so
     the banner announces the bind rather than a browser URL.
     """
+    global _VOICE_PREWARMED_BEFORE_LOOP
+
     import uvicorn
 
     try:
@@ -19147,6 +19151,13 @@ def start_server(
     # Record the bound host so host_header_middleware can validate incoming
     # Host headers against it. Defends against DNS rebinding (GHSA-ppp5-vxwm-4cf7).
     app.state.bound_host = host
+
+    # Native model imports can hold the GIL. Warm them before uvicorn's event
+    # loop exists so desktop startup cannot freeze its websocket/RPC loop.
+    if os.getenv("HERMES_DESKTOP") == "1":
+        if not get_voice_warmup_status()["started"]:
+            _warm_desktop_voice_models()
+        _VOICE_PREWARMED_BEFORE_LOOP = True
 
     # ── Start uvicorn with direct Server API ─────────────────────────
     # We use uvicorn.Server directly (not uvicorn.run) so we can split

@@ -363,6 +363,25 @@ class TestRefreshActiveFeatures:
         with pytest.raises(ld.FeatureUnavailable, match="unsupported on Windows"):
             ld.ensure("platform.matrix", prompt=False)
 
+    def test_windows_moonshine_refresh_uses_platform_backend(self, monkeypatch):
+        monkeypatch.setattr(ld.sys, "platform", "win32")
+        monkeypatch.setattr(ld, "active_features", lambda: ["stt.moonshine", "stt.moonshine.windows"])
+        monkeypatch.setattr(
+            ld,
+            "_is_satisfied",
+            lambda spec: spec == "moonshine-voice==0.0.66",
+        )
+        monkeypatch.setattr(
+            ld,
+            "_venv_pip_install",
+            lambda *a, **kw: pytest.fail("pip should not request the non-Windows wheel"),
+        )
+
+        result = ld.refresh_active_features()
+
+        assert result["stt.moonshine"].startswith("skipped:")
+        assert result["stt.moonshine.windows"] == "current"
+
     def test_windows_matrix_already_satisfied_still_works(self, monkeypatch):
         # Do not break users who already have a working Matrix dependency set;
         # only the impossible Windows install/refresh path should be blocked.

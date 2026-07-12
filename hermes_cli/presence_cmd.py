@@ -249,13 +249,18 @@ def ensure_distill_job(schedule: Optional[str] = None) -> Tuple[bool, str]:
 
     existing = _find_distill_job()
     if existing:
+        updates: Dict[str, Any] = {}
         if existing.get("schedule_display") != schedule:
+            updates["schedule"] = schedule
+        if existing.get("enabled_toolsets") != ["memory"]:
+            updates["enabled_toolsets"] = ["memory"]
+        if updates:
             try:
                 from cron.jobs import update_job
 
-                update_job(existing["id"], {"schedule": schedule})
+                update_job(existing["id"], updates)
             except Exception as exc:
-                return False, f"presence distiller job exists but schedule update failed: {exc}"
+                return False, f"presence distiller job update failed: {exc}"
             return True, f"presence distiller job updated (id={existing['id']}, schedule={schedule})"
         return True, f"presence distiller job already up to date (id={existing['id']})"
 
@@ -270,6 +275,7 @@ def ensure_distill_job(schedule: Optional[str] = None) -> Tuple[bool, str]:
             name=DISTILL_JOB_NAME,
             script=DISTILL_SCRIPT_NAME,
             deliver="local",
+            enabled_toolsets=["memory"],
         )
     except Exception as exc:
         return False, f"failed to create presence distiller job: {exc}"

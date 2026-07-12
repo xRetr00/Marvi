@@ -489,6 +489,11 @@ def _unsupported_feature_reason(feature: str) -> Optional[str]:
             "which has no Windows wheel and requires make + libolm to build "
             "from sdist. Run Hermes under WSL to use Matrix on Windows."
         )
+    if sys.platform == "win32" and feature == "stt.moonshine":
+        return (
+            "unsupported on Windows: moonshine-voice 0.0.68 has no Windows wheel; "
+            "use the stt.moonshine.windows backend instead."
+        )
     if feature == "presence.media_watcher" and sys.platform != "win32":
         return (
             "unsupported on this platform: winsdk wraps the Windows SMTC "

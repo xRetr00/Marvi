@@ -2395,6 +2395,19 @@ def provider_model_ids(provider: Optional[str], *, force_refresh: bool = False) 
         live = fetch_ollama_cloud_models(force_refresh=force_refresh)
         if live:
             return live
+    if normalized == "llamacpp":
+        try:
+            from hermes_cli.auth import resolve_api_key_provider_credentials
+
+            creds = resolve_api_key_provider_credentials("llamacpp")
+            live = fetch_api_models(
+                str(creds.get("api_key") or "").strip(),
+                str(creds.get("base_url") or "").strip(),
+            )
+            if live:
+                return live
+        except Exception:
+            pass
     if normalized in ("openai", "openai-api"):
         api_key = os.getenv("OPENAI_API_KEY", "").strip()
         if api_key:

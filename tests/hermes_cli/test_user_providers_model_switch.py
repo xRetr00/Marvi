@@ -7,7 +7,9 @@ are exposed in the model picker.
 
 import pytest
 from hermes_cli.model_switch import list_authenticated_providers, switch_model
+from hermes_cli.models import provider_model_ids
 from hermes_cli import runtime_provider as rp
+from hermes_cli.auth import LLAMACPP_NOAUTH_PLACEHOLDER
 
 
 # =============================================================================
@@ -1144,6 +1146,51 @@ def test_section3_probes_no_key_endpoint_without_explicit_models(monkeypatch):
     row = next(p for p in providers if p["slug"] == "local-llamacpp")
     assert row["models"] == ["live-model-1", "live-model-2", "live-model-3"]
     assert row["total_models"] == 3
+
+
+def test_llamacpp_provider_model_ids_probe_openai_models(monkeypatch):
+    monkeypatch.delenv("LLAMACPP_API_KEY", raising=False)
+    monkeypatch.delenv("LLAMACPP_BASE_URL", raising=False)
+
+    called = {}
+
+    def _fake_fetch(api_key, base_url, **kwargs):
+        called["api_key"] = api_key
+        called["base_url"] = base_url
+        called["kwargs"] = kwargs
+        return ["local.gguf"]
+
+    monkeypatch.setattr("hermes_cli.models.fetch_api_models", _fake_fetch)
+
+    assert provider_model_ids("llamacpp") == ["local.gguf"]
+    assert called == {
+        "api_key": LLAMACPP_NOAUTH_PLACEHOLDER,
+        "base_url": "http://127.0.0.1:8080/v1",
+        "kwargs": {},
+    }
+
+
+def test_current_llamacpp_no_key_provider_row_uses_live_models(monkeypatch):
+    monkeypatch.delenv("LLAMACPP_API_KEY", raising=False)
+    monkeypatch.delenv("LLAMACPP_BASE_URL", raising=False)
+    monkeypatch.setattr("agent.models_dev.fetch_models_dev", lambda: {})
+
+    def _fake_fetch(api_key, base_url, **kwargs):
+        return ["local.gguf"]
+
+    monkeypatch.setattr("hermes_cli.models.fetch_api_models", _fake_fetch)
+
+    providers = list_authenticated_providers(
+        current_provider="llamacpp",
+        current_base_url="http://127.0.0.1:8080/v1",
+        custom_providers=[],
+        max_models=50,
+        refresh=True,
+    )
+
+    row = next(p for p in providers if p["slug"] == "llamacpp")
+    assert row["models"] == ["local.gguf"]
+    assert row["total_models"] == 1
 
 
 def test_section3_skips_probe_when_no_key_but_explicit_models(monkeypatch):

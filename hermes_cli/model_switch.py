@@ -1767,6 +1767,11 @@ def list_authenticated_providers(
                     if any(os.environ.get(ev) for ev in pcfg.api_key_env_vars):
                         has_creds = True
                         break
+        if not has_creds and hermes_slug == "llamacpp":
+            has_creds = bool(
+                os.environ.get("LLAMACPP_BASE_URL", "").strip()
+                or current_provider.strip().lower() == "llamacpp"
+            )
         # Check auth store and credential pool for non-env-var credentials.
         # This applies to OAuth providers AND api_key providers that also
         # support OAuth (e.g. anthropic supports both API key and Claude Code

@@ -384,7 +384,7 @@ Edit with `hermes config edit` or `hermes config set section.key value`.
 | `compression` | `enabled`, `threshold` (0.50), `target_ratio` (0.20) |
 | `display` | `skin`, `interface` (cli/tui), `tool_progress`, `show_reasoning`, `show_cost`, `language` |
 | `stt` | `enabled`, `provider` (local/groq/openai/mistral) |
-| `tts` | `provider` (edge/elevenlabs/openai/minimax/mistral/neutts) |
+| `tts` | `provider` (edge/elevenlabs/openai/minimax/mistral/pockettts/piper) |
 | `memory` | `memory_enabled`, `user_profile_enabled`, `provider` |
 | `security` | `tirith_enabled`, `website_blocklist` |
 | `delegation` | `model`, `provider`, `base_url`, `api_key`, `max_iterations` (50), `reasoning_effort` |
@@ -553,18 +553,28 @@ stt:
 | OpenAI | `VOICE_TOOLS_OPENAI_KEY` | Paid |
 | MiniMax | `MINIMAX_API_KEY` | Paid |
 | Mistral (Voxtral) | `MISTRAL_API_KEY` | Paid |
-| NeuTTS (local) | None (`pip install neutts[all]` + `espeak-ng`) | Free |
 
 Voice commands: `/voice on` (voice-to-voice), `/voice tts` (always voice), `/voice off`.
 
 ### Marvi Desktop Voice Stack
 
-Marvi keeps desktop voice features that may not exist in upstream Hermes:
-streaming STT, wake word, voice presence, glow overlay, Qwen3-TTS, and
-PocketTTS. During upstream syncs, preserve these features, their config keys,
-settings UI, Electron IPC/window wiring, and desktop composer/status-bar hooks.
-If upstream rewrites nearby files, reapply Marvi's voice stack on top of the
-new upstream code instead of deleting it as conflict cleanup.
+Marvi keeps downstream features that may not exist in upstream Hermes:
+streaming STT (including Parakeet/Moonshine), wake word, voice presence/Dynamic
+Island, glow overlay, Qwen3-TTS, PocketTTS, voice-residency tiers,
+presence-aware resource policy, and backend supervision. Preserve their config
+keys, Settings UI, Electron IPC/window wiring, desktop composer/status hooks,
+tests, and installer/updater integration during upstream syncs.
+
+Marvi also keeps the subconscious and presence stack: goal storage/tools,
+proactive tick and idle trigger, connected-account snapshots (GitHub, Gmail,
+Calendar, Slack), ActivityWatch/media/rhythm observation, distilled-memory
+viewer, REST activation endpoints, CLI commands, and the Settings ->
+Presence/Subconscious UI. The UI must use the activation endpoints; raw config
+writes alone do not create or pause the associated jobs/watchers. Reapply these
+features over upstream rewrites rather than removing them as conflict cleanup.
+
+NeuTTS and KittenTTS are intentionally blocked in Marvi. Do not restore their
+providers, installers, setup options, documentation, or UI wiring from upstream.
 
 ---
 

@@ -27,6 +27,24 @@ We value contributions in this order:
 - Building a new skill? Start with [Creating Skills](./creating-skills.md)
 - Building a new inference provider? Start with [Adding Providers](./adding-providers.md)
 
+## Marvi Upstream Sync Policy
+
+When merging Hermes upstream, preserve Marvi's downstream functionality rather
+than resolving conflicts by deleting it. Protected surfaces include streaming
+STT (Parakeet/Moonshine), wake word, voice presence/Dynamic Island, glow
+overlay, Qwen3-TTS, PocketTTS, voice-residency/resource supervision, and their
+desktop settings, IPC, installer/updater integration, and tests.
+
+Also preserve the subconscious and presence system: goals, proactive and idle
+triggers, connected-account snapshots, ActivityWatch/media/rhythm observation,
+distilled-memory viewer, activation REST endpoints, CLI commands, and the
+Settings -> Presence/Subconscious UI. The UI must use activation endpoints;
+writing config values alone does not start or stop its jobs and watchers.
+
+NeuTTS and KittenTTS are deliberately blocked in Marvi. Do not reintroduce
+their providers, installers, documentation, setup options, or UI wiring from
+upstream.
+
 ## Development Setup
 
 ### Prerequisites

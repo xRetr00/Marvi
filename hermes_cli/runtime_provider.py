@@ -57,6 +57,15 @@ def _normalize_custom_provider_name(value: str) -> str:
     return value.strip().lower().replace(" ", "-")
 
 
+_BARE_CUSTOM_PROVIDER_ALIASES = frozenset({
+    "ollama",
+    "vllm",
+    "llamacpp",
+    "llama-cpp",
+    "llama.cpp",
+})
+
+
 def _loopback_hostname(host: str) -> bool:
     h = (host or "").lower().rstrip(".")
     return h in {"localhost", "127.0.0.1", "::1", "0.0.0.0"}
@@ -75,6 +84,8 @@ def _config_base_url_trustworthy_for_bare_custom(cfg_base_url: str, cfg_provider
     if not bu:
         return False
     if cfg_provider_norm == "custom":
+        return True
+    if cfg_provider_norm in _BARE_CUSTOM_PROVIDER_ALIASES:
         return True
     # GitHub #27132: provider aliases that resolve to "custom" at runtime
     # (ollama, vllm, llamacpp, …) should be trusted the same way "custom"
@@ -1621,6 +1632,18 @@ def resolve_runtime_provider(
         model_cfg = _get_model_config()
         cfg_provider = str(model_cfg.get("provider") or "").strip().lower()
         cfg_base_url = str(model_cfg.get("base_url") or "").strip()
+        # Keep the dedicated llama.cpp provider for its default/local endpoint,
+        # but route an explicitly configured LAN endpoint through custom. That
+        # preserves the local-server alias contract and avoids cloud fallbacks.
+        if (
+            requested_provider in {"llamacpp", "llama-cpp", "llama.cpp"}
+            and cfg_provider in _BARE_CUSTOM_PROVIDER_ALIASES
+            and cfg_base_url
+            and not _loopback_hostname(base_url_hostname(cfg_base_url))
+        ):
+            runtime = _resolve_openrouter_runtime(requested_provider="custom")
+            runtime["requested_provider"] = requested_provider
+            return runtime
         if cfg_base_url and cfg_provider in ("auto", ""):
             # Check that base_url isn't one of the well-known cloud API roots
             # (OpenRouter, Anthropic, OpenAI). If it's something else (Ollama,
@@ -1989,6 +2012,20 @@ def resolve_runtime_provider(
     pconfig = PROVIDER_REGISTRY.get(provider)
     if pconfig and pconfig.auth_type == "api_key":
         creds = resolve_api_key_provider_credentials(provider)
+        # An explicitly selected API-key provider is authoritative. Returning
+        # a runtime with an empty key defers failure until the first request and
+        # can make a later fallback look like a silent provider switch. Fail at
+        # resolution so callers surface the missing credential (or consult only
+        # an explicitly configured fallback chain). LM Studio's no-auth path
+        # supplies a non-empty placeholder in the credential resolver above.
+        if not has_usable_secret(creds.get("api_key")):
+            env_names = ", ".join(pconfig.api_key_env_vars)
+            hint = f" Set {env_names}." if env_names else ""
+            raise AuthError(
+                f"No usable credentials found for provider '{provider}'.{hint}",
+                provider=provider,
+                code="missing_api_key",
+            )
         # Honour model.base_url from config.yaml when the configured provider
         # matches this provider — mirrors the Anthropic path above.  Without
         # this, users who set model.base_url to e.g. api.minimaxi.com/anthropic

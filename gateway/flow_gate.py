@@ -140,7 +140,13 @@ async def wait_if_gated(metadata: Optional[Dict[str, Any]]) -> None:
     time. Safe to call unconditionally from every ``_deliver_to_platform``
     invocation -- it is the single hook point delivery.py needs.
     """
-    if not should_gate(metadata):
+    # should_gate() (and the _focus_app_active() checks below) do synchronous
+    # network I/O (tools.presence.aw_client's requests-based HTTP client, up
+    # to DEFAULT_TIMEOUT_SECONDS per call) and, on Win32 fallback paths,
+    # blocking ctypes calls. Run them off the event loop via asyncio.to_thread
+    # so a slow/unreachable ActivityWatch server stalls only this coroutine,
+    # not every other in-flight request/delivery on the gateway's loop.
+    if not await asyncio.to_thread(should_gate, metadata):
         return
 
     job_id = (metadata or {}).get("job_id")
@@ -155,7 +161,7 @@ async def wait_if_gated(metadata: Optional[Dict[str, Any]]) -> None:
         if _shutdown_event.is_set():
             logger.info("flow_gate: shutdown in progress -- flushing held delivery (job_id=%s)", job_id)
             return
-        if not _focus_app_active():
+        if not await asyncio.to_thread(_focus_app_active):
             logger.info("flow_gate: user left focus app -- flushing held delivery (job_id=%s)", job_id)
             return
 

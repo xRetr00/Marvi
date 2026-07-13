@@ -613,6 +613,9 @@ export interface Translations {
       change: string
       autoUseMain: string
       providerDefault: string
+      fallbackAdd: string
+      fallbackEmpty: string
+      notInCatalog: string
       tasks: Record<string, AuxTaskCopy>
     }
     providers: {

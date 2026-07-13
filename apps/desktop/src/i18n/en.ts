@@ -710,6 +710,9 @@ export const en: Translations = {
       change: 'Change',
       autoUseMain: 'auto · use main model',
       providerDefault: '(provider default)',
+      fallbackAdd: 'Add fallback',
+      fallbackEmpty: 'No fallback models — the default model is used unless it fails.',
+      notInCatalog: "isn't in this provider's model list — calls may fall back to a backup.",
       tasks: {
         voice_instant: { label: 'Instant voice', hint: 'Dedicated provider · reasoning off by default' },
         vision: { label: 'Vision', hint: 'Image analysis' },

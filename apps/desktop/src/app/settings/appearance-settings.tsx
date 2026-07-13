@@ -13,6 +13,7 @@ import { selectableCardClass } from '@/lib/selectable-card'
 import { normalize } from '@/lib/text'
 import { cn } from '@/lib/utils'
 import { $embedAllowed, $embedMode, clearEmbedAllowed, type EmbedMode, setEmbedMode } from '@/store/embed-consent'
+import { $backgroundMode, type BackgroundMode, setBackgroundMode } from '@/store/background'
 import { $activeGatewayProfile, $profiles, normalizeProfileKey } from '@/store/profile'
 import { $toolViewMode, setToolViewMode } from '@/store/tool-view'
 import { $translucency, setTranslucency } from '@/store/translucency'
@@ -248,6 +249,7 @@ export function AppearanceSettings() {
   const embedMode = useStore($embedMode)
   const embedAllowed = useStore($embedAllowed)
   const translucency = useStore($translucency)
+  const backgroundMode = useStore($backgroundMode)
   const installs = useStore($marketplaceInstalls)
   const profiles = useStore($profiles)
   const activeProfileKey = normalizeProfileKey(useStore($activeGatewayProfile))
@@ -284,6 +286,12 @@ export function AppearanceSettings() {
     { id: 'product', label: a.product },
     { id: 'technical', label: a.technical }
   ] as const
+
+  const backgroundOptions = [
+    { id: 'electricGaze', label: a.backgroundElectricGaze },
+    { id: 'personalWebsite', label: a.backgroundPersonalWebsite },
+    { id: 'auto', label: a.backgroundAuto }
+  ] as const satisfies readonly { id: BackgroundMode; label: string }[]
 
   const embedOptions = [
     { id: 'ask', label: a.embedsAsk },
@@ -408,6 +416,21 @@ export function AppearanceSettings() {
               </div>
             }
             wide
+          />
+
+          <ListRow
+            action={
+              <SegmentedControl
+                onChange={id => {
+                  triggerHaptic('selection')
+                  setBackgroundMode(id)
+                }}
+                options={backgroundOptions}
+                value={backgroundMode}
+              />
+            }
+            description={a.backgroundDesc}
+            title={a.backgroundTitle}
           />
 
           <ListRow

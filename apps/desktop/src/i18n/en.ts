@@ -394,6 +394,11 @@ export const en: Translations = {
         `Scales text and controls across the whole app. Cmd/Ctrl with +, - and 0 also works. Current: ${percent}%.`,
       translucencyTitle: 'Window Translucency',
       translucencyDesc: 'See your desktop through the whole window. macOS and Windows only.',
+      backgroundTitle: 'Animated Background',
+      backgroundDesc: 'Choose an ASCII art background, or automatically rotate through all of them every five minutes.',
+      backgroundElectricGaze: 'Electric Gaze',
+      backgroundPersonalWebsite: 'Personal Site',
+      backgroundAuto: 'Auto',
       embedsTitle: 'Inline Embeds',
       embedsDesc:
         'Rich previews load from third-party sites (YouTube, X, …). Ask shows a placeholder until you allow each one; Always loads them automatically; Off keeps plain links.',

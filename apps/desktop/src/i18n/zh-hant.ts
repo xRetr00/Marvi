@@ -290,6 +290,11 @@ export const zhHant = defineLocale({
         `縮放整個應用程式的文字與介面。也可使用 Cmd/Ctrl 加 +、- 或 0 調整。目前：${percent}%`,
       translucencyTitle: '視窗透明',
       translucencyDesc: '讓整個視窗透出桌面。僅支援 macOS 與 Windows。',
+      backgroundTitle: '動態背景',
+      backgroundDesc: '選擇 ASCII 藝術背景，或每五分鐘自動輪換所有背景。',
+      backgroundElectricGaze: '電光凝視',
+      backgroundPersonalWebsite: '個人網站',
+      backgroundAuto: '自動',
       embedsTitle: '內嵌預覽',
       embedsDesc:
         '豐富預覽會從第三方網站（YouTube、X 等）載入。詢問會在你允許前顯示佔位符；一律會自動載入；關閉則保留純連結。',

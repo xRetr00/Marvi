@@ -1,5 +1,8 @@
 import { Leva, useControls } from 'leva'
+import { useStore } from '@nanostores/react'
 import { type CSSProperties, useEffect, useState } from 'react'
+
+import { $backgroundMode, backgroundFor } from '@/store/background'
 
 const BLEND_MODES = [
   'normal',
@@ -21,9 +24,22 @@ const BLEND_MODES = [
 ] as const
 
 type BlendMode = (typeof BLEND_MODES)[number]
+const SMART_SWITCH_INTERVAL = 5 * 60 * 1000
 
 export function Backdrop() {
   const [controlsOpen, setControlsOpen] = useState(false)
+  const backgroundMode = useStore($backgroundMode)
+  const [backgroundIndex, setBackgroundIndex] = useState(0)
+
+  useEffect(() => {
+    if (backgroundMode !== 'auto') {
+      return
+    }
+
+    const timer = window.setInterval(() => setBackgroundIndex(index => index + 1), SMART_SWITCH_INTERVAL)
+
+    return () => window.clearInterval(timer)
+  }, [backgroundMode])
 
   useEffect(() => {
     if (!import.meta.env.DEV) {
@@ -78,6 +94,7 @@ export function Backdrop() {
     },
     { collapsed: true }
   )
+  const background = backgroundFor(backgroundMode, backgroundIndex)
 
   return (
     <>
@@ -95,11 +112,12 @@ export function Backdrop() {
           <video
             autoPlay
             className="w-auto min-w-dvw object-cover"
+            key={background.src}
             loop
             muted
             playsInline
-            poster="https://assets.21st.dev/ascii-recipes/thumbnails/user_2nElBLvklOKlAURm6W1PTu6yYFh/ae758991-0c3f-4c6a-9296-33784c65d43b.webp"
-            src="https://assets.21st.dev/ascii-recipes/videos/user_2nElBLvklOKlAURm6W1PTu6yYFh/c458eb38-7f4e-4272-8711-59a86e20d624.mp4"
+            poster={background.poster}
+            src={background.src}
             style={{
               height: `${artwork.scale}dvh`,
               objectPosition: artwork.objectPosition

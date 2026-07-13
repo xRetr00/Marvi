@@ -383,6 +383,11 @@ export const zh: Translations = {
         `缩放整个应用的文字和界面。也可使用 Cmd/Ctrl 加 +、- 或 0 调整。当前：${percent}%`,
       translucencyTitle: '窗口透明',
       translucencyDesc: '让整个窗口透出桌面。仅支持 macOS 和 Windows。',
+      backgroundTitle: '动态背景',
+      backgroundDesc: '选择 ASCII 艺术背景，或每五分钟自动轮换所有背景。',
+      backgroundElectricGaze: '电光凝视',
+      backgroundPersonalWebsite: '个人网站',
+      backgroundAuto: '自动',
       embedsTitle: '内嵌预览',
       embedsDesc:
         '富预览会从第三方网站（YouTube、X 等）加载。询问会在你允许前显示占位符；总是会自动加载；关闭则保留纯链接。',

@@ -273,7 +273,19 @@ class ComposioClient:
         try:
             tools = getattr(client, "tools", None)
             if tools is not None and hasattr(tools, "execute"):
-                result = tools.execute(slug=action, arguments=params or {}, user_id=user_id)
+                # Manual execution requires pinned per-toolkit versions or this
+                # explicit opt-out; without one, every call fails with "Toolkit
+                # version not specified" (SDK >= 0.17). Older SDKs without the
+                # kwarg raise TypeError -> retry without it.
+                try:
+                    result = tools.execute(
+                        slug=action,
+                        arguments=params or {},
+                        user_id=user_id,
+                        dangerously_skip_version_check=True,
+                    )
+                except TypeError:
+                    result = tools.execute(slug=action, arguments=params or {}, user_id=user_id)
             else:
                 actions = getattr(client, "actions")
                 result = actions.execute(action=action, params=params or {}, user_id=user_id)

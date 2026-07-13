@@ -2,6 +2,7 @@ import { CheckCircle2, Eye, Link as LinkIcon } from '@/lib/icons'
 
 import { LoadingState, SectionHeading, SettingsContent } from '../primitives'
 
+import { ActivitySection } from './activity-section'
 import { ConnectedAccounts } from './connected-accounts'
 import { SubconsciousCoreSettings } from './core-settings'
 import { GoalsPanel } from './goals-panel'
@@ -35,6 +36,10 @@ export function SubconsciousSettings() {
 
   return (
     <SettingsContent>
+      <ActivitySection />
+
+      <div className="my-4 h-px bg-border/30" />
+
       <SubconsciousCoreSettings marvi={marvi} />
 
       <div className="my-4 h-px bg-border/30" />

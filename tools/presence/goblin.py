@@ -361,7 +361,7 @@ def notify_stuck(finding: Dict[str, Any]) -> bool:
     try:
         from cron.jobs import create_job
 
-        create_job(
+        job = create_job(
             prompt=prompt,
             schedule="1m",
             name=SHOULDER_TAP_JOB_NAME,
@@ -373,7 +373,33 @@ def notify_stuck(finding: Dict[str, Any]) -> bool:
         logger.warning("goblin: failed to create shoulder-tap job", exc_info=True)
         return False
     _mark_notified()
+    _record_shoulder_tap_activity(finding, job)
     return True
+
+
+def _record_shoulder_tap_activity(finding: Dict[str, Any], job: Optional[Dict[str, Any]]) -> None:
+    """Append a shoulder-tap event to the shared subconscious activity feed
+    (see cron/scheduler.py's ``record_subconscious_activity``) so the
+    desktop Activity panel shows goblin nudges alongside tick/distiller
+    runs. Best-effort: a logging failure must never affect the notify path
+    that already succeeded above.
+    """
+    try:
+        from cron.scheduler import record_subconscious_activity
+
+        minutes = round(finding.get("duration_seconds", 0) / 60)
+        summary = (
+            f"Stuck signal: \"{finding.get('title')}\" ({finding.get('app')}) "
+            f"for ~{minutes}m — {_signal_description(finding)}"
+        )
+        record_subconscious_activity(
+            source="goblin",
+            outcome="message",
+            job_id=job.get("id") if job else None,
+            summary=summary,
+        )
+    except Exception:
+        logger.debug("goblin: failed to record shoulder-tap activity", exc_info=True)
 
 
 def check_stuck_and_notify() -> Optional[Dict[str, Any]]:

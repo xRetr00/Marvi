@@ -9,6 +9,7 @@ shape, and error handling, not the underlying cron/AW/watcher mechanics
 (those belong to their owning workstreams' own test suites).
 """
 
+import json
 from unittest.mock import patch
 
 import pytest
@@ -299,6 +300,298 @@ class TestMarviKnowledgeEndpoint:
     def test_failure_returns_structured_500(self, client):
         with patch("hermes_cli.web_server._read_marvi_knowledge_entries", side_effect=RuntimeError("boom")):
             resp = client.get("/api/marvi/knowledge")
+
+        assert resp.status_code == 500
+        assert "boom" not in resp.json()["detail"]
+
+
+# ---------------------------------------------------------------------------
+# /api/subconscious/activity, /surfaces, /suggestions — the tick visibility
+# surface (see cron/scheduler.py's activity-log hooks and
+# cron/scripts/subconscious/snapshot_store.py).
+# ---------------------------------------------------------------------------
+
+
+class TestSubconsciousActivityEndpoint:
+    def _activity_path(self):
+        from hermes_constants import get_hermes_home
+
+        return get_hermes_home() / "subconscious" / "activity.jsonl"
+
+    def test_empty_when_no_log_and_no_last_run(self, client):
+        with patch("cron.subconscious.status", return_value={"last_run_at": None}):
+            resp = client.get("/api/subconscious/activity")
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["ok"] is True
+        assert data["runs"] == []
+        assert "note" in data and data["note"]
+
+    def test_falls_back_to_cron_store_last_run_when_no_log(self, client):
+        with patch("cron.subconscious.status", return_value={"last_run_at": "2026-07-13T12:00:00+00:00"}):
+            resp = client.get("/api/subconscious/activity")
+
+        data = resp.json()
+        assert data["ok"] is True
+        assert len(data["runs"]) == 1
+        assert data["runs"][0]["at"] == "2026-07-13T12:00:00+00:00"
+        assert data["runs"][0]["outcome"] is None
+        assert "note" in data and "activity log" in data["note"]
+
+    def test_reads_jsonl_newest_first(self, client):
+        path = self._activity_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        lines = [
+            {"at": "2026-07-13T10:00:00", "job_id": "j1", "outcome": "no_change", "summary": None},
+            {"at": "2026-07-13T10:20:00", "job_id": "j1", "outcome": "message", "summary": "Told you about X"},
+            {"at": "2026-07-13T10:40:00", "job_id": "j1", "outcome": "error", "summary": "boom"},
+        ]
+        path.write_text("\n".join(json.dumps(r) for r in lines) + "\n", encoding="utf-8")
+
+        resp = client.get("/api/subconscious/activity")
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["ok"] is True
+        assert "note" not in data or not data["note"]
+        outcomes = [r["outcome"] for r in data["runs"]]
+        assert outcomes == ["error", "message", "no_change"]
+        assert data["runs"][0]["summary"] == "boom"
+
+    def test_exposes_source_diff_thought_and_output_path(self, client):
+        """The activity feed's whole point is showing the thinking, not just
+        the outcome — verify the richer fields make it through untouched."""
+        path = self._activity_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        record = {
+            "at": "2026-07-13T10:00:00",
+            "source": "distiller",
+            "job_id": "job-distiller",
+            "outcome": "message",
+            "summary": "Learned about your workspace",
+            "diff": "App usage since last check:\n  - vscode: 2h",
+            "thought": "Noted: you spent 2h in vscode on hermes-agent today.",
+            "output_path": "/home/user/.hermes/cron/output/job-distiller/2026-07-13_10-00-00.md",
+        }
+        path.write_text(json.dumps(record) + "\n", encoding="utf-8")
+
+        resp = client.get("/api/subconscious/activity")
+
+        data = resp.json()
+        run = data["runs"][0]
+        assert run["source"] == "distiller"
+        assert run["diff"] == "App usage since last check:\n  - vscode: 2h"
+        assert run["thought"] == "Noted: you spent 2h in vscode on hermes-agent today."
+        assert run["output_path"] == "/home/user/.hermes/cron/output/job-distiller/2026-07-13_10-00-00.md"
+
+    def test_defaults_source_to_tick_for_legacy_lines_without_it(self, client):
+        """A line written before the `source` field existed should still
+        read back sensibly rather than surfacing null."""
+        path = self._activity_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({"at": "2026-07-13T10:00:00", "job_id": "j1", "outcome": "no_change"}) + "\n", encoding="utf-8")
+
+        resp = client.get("/api/subconscious/activity")
+
+        assert resp.json()["runs"][0]["source"] == "tick"
+
+    def test_respects_limit_param(self, client):
+        path = self._activity_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        lines = [{"at": f"2026-07-13T10:0{i}:00", "job_id": "j1", "outcome": "no_change"} for i in range(5)]
+        path.write_text("\n".join(json.dumps(r) for r in lines) + "\n", encoding="utf-8")
+
+        resp = client.get("/api/subconscious/activity?limit=2")
+
+        assert resp.status_code == 200
+        assert len(resp.json()["runs"]) == 2
+
+    def test_skips_malformed_lines(self, client):
+        path = self._activity_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            "not json at all\n"
+            + json.dumps({"at": "2026-07-13T10:00:00", "job_id": "j1", "outcome": "no_change"})
+            + "\n",
+            encoding="utf-8",
+        )
+
+        resp = client.get("/api/subconscious/activity")
+
+        data = resp.json()
+        assert len(data["runs"]) == 1
+        assert data["runs"][0]["outcome"] == "no_change"
+
+    def test_failure_returns_structured_500(self, client):
+        with patch("hermes_cli.web_server._read_subconscious_activity_sync", side_effect=RuntimeError("boom")):
+            resp = client.get("/api/subconscious/activity")
+
+        assert resp.status_code == 500
+        assert "boom" not in resp.json()["detail"]
+
+
+class TestSubconsciousSurfacesEndpoint:
+    def test_no_surfaces_configured(self, client):
+        resp = client.get("/api/subconscious/surfaces")
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["ok"] is True
+        assert data["surfaces"] == []
+
+    def test_reads_healthy_surface(self, client):
+        from hermes_cli.config import load_config, save_config
+        from cron.scripts.subconscious.snapshot_store import open_store
+
+        config = load_config()
+        config.setdefault("composio", {})["surfaces"] = ["gmail"]
+        save_config(config)
+
+        store = open_store("gmail")
+        store.mark_attempt()
+        store.record_success(changed=False)
+        store.save()
+
+        resp = client.get("/api/subconscious/surfaces")
+
+        assert resp.status_code == 200
+        data = resp.json()
+        surface = data["surfaces"][0]
+        assert surface["surface"] == "gmail"
+        assert surface["status"] == "ok"
+        assert surface["consecutive_failures"] == 0
+        assert surface["quiet_streak"] == 1
+        assert surface["last_error"] is None
+
+    def test_reports_backing_off_surface(self, client):
+        from hermes_cli.config import load_config, save_config
+        from cron.scripts.subconscious.snapshot_store import open_store
+
+        config = load_config()
+        config.setdefault("composio", {})["surfaces"] = ["github"]
+        save_config(config)
+
+        store = open_store("github")
+        store.record_failure("401 Unauthorized: token expired for real this time round the loop")
+        store.save()
+
+        resp = client.get("/api/subconscious/surfaces")
+
+        data = resp.json()
+        surface = data["surfaces"][0]
+        assert surface["surface"] == "github"
+        assert surface["status"] == "backing-off"
+        assert surface["consecutive_failures"] == 1
+        assert "expired" in surface["last_error"]
+        assert surface["next_retry_at"]
+
+    def test_failure_returns_structured_500(self, client):
+        with patch("hermes_cli.web_server._read_subconscious_surfaces_sync", side_effect=RuntimeError("boom")):
+            resp = client.get("/api/subconscious/surfaces")
+
+        assert resp.status_code == 500
+        assert "boom" not in resp.json()["detail"]
+
+
+class TestSubconsciousSuggestionsEndpoints:
+    @pytest.fixture(autouse=True)
+    def _fresh_cron_stores(self, _isolate_hermes_home):
+        # cron.jobs / cron.suggestions bind their storage paths to a
+        # module-level constant computed from get_hermes_home() at FIRST
+        # import — reloading them here re-binds those constants to THIS
+        # test's isolated HERMES_HOME. Without this, whichever test in this
+        # process imports the module first "wins" the path for every test
+        # that follows (dedup_key collisions, leaked pending suggestions).
+        import importlib
+
+        import cron.jobs as jobs_mod
+        import cron.suggestions as suggestions_mod
+
+        importlib.reload(jobs_mod)
+        importlib.reload(suggestions_mod)
+
+    def _add_pending(self, **overrides):
+        from cron.suggestions import add_suggestion
+
+        kwargs = dict(
+            title="Daily digest",
+            description="Summarize yesterday's activity every morning.",
+            source="subconscious",
+            job_spec={"prompt": "Summarize yesterday", "schedule": "every 1d"},
+            dedup_key="daily-digest",
+            category="digest",
+        )
+        kwargs.update(overrides)
+        return add_suggestion(**kwargs)
+
+    def test_list_pending(self, client):
+        self._add_pending()
+
+        resp = client.get("/api/subconscious/suggestions")
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["ok"] is True
+        assert len(data["suggestions"]) == 1
+        item = data["suggestions"][0]
+        assert item["title"] == "Daily digest"
+        assert item["summary"] == "Summarize yesterday's activity every morning."
+        assert item["source"] == "subconscious"
+        assert item["category"] == "digest"
+        assert item["tier"] == "propose"
+        assert item["created"]
+
+    def test_list_empty(self, client):
+        resp = client.get("/api/subconscious/suggestions")
+
+        assert resp.status_code == 200
+        assert resp.json()["suggestions"] == []
+
+    def test_accept_creates_job_and_clears_pending(self, client):
+        record = self._add_pending()
+
+        resp = client.post(f"/api/subconscious/suggestions/{record['id']}/accept")
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["ok"] is True
+        assert data["job"]["prompt"] == "Summarize yesterday"
+
+        follow_up = client.get("/api/subconscious/suggestions")
+        assert follow_up.json()["suggestions"] == []
+
+    def test_accept_unknown_id_returns_404(self, client):
+        resp = client.post("/api/subconscious/suggestions/does-not-exist/accept")
+
+        assert resp.status_code == 404
+
+    def test_dismiss_clears_pending(self, client):
+        record = self._add_pending()
+
+        resp = client.post(f"/api/subconscious/suggestions/{record['id']}/dismiss")
+
+        assert resp.status_code == 200
+        assert resp.json()["ok"] is True
+
+        follow_up = client.get("/api/subconscious/suggestions")
+        assert follow_up.json()["suggestions"] == []
+
+    def test_dismiss_unknown_id_returns_404(self, client):
+        resp = client.post("/api/subconscious/suggestions/does-not-exist/dismiss")
+
+        assert resp.status_code == 404
+
+    def test_accept_failure_returns_structured_500(self, client):
+        with patch("hermes_cli.web_server._accept_subconscious_suggestion_sync", side_effect=RuntimeError("boom")):
+            resp = client.post("/api/subconscious/suggestions/x/accept")
+
+        assert resp.status_code == 500
+        assert "boom" not in resp.json()["detail"]
+
+    def test_dismiss_failure_returns_structured_500(self, client):
+        with patch("hermes_cli.web_server._dismiss_subconscious_suggestion_sync", side_effect=RuntimeError("boom")):
+            resp = client.post("/api/subconscious/suggestions/x/dismiss")
 
         assert resp.status_code == 500
         assert "boom" not in resp.json()["detail"]

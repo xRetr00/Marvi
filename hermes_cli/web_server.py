@@ -12482,6 +12482,276 @@ async def get_subconscious_status():
         raise HTTPException(status_code=500, detail="Failed to read subconscious status")
 
 
+# ---------------------------------------------------------------------------
+# Subconscious activity — the missing visibility surface.
+#
+# The subconscious tick fires every ~20 minutes and the wake-gate/agent/
+# suggestion machinery all work, but there was never anywhere in the UI that
+# showed it: a quiet tick (nothing changed) and a dead ticker look identical
+# from the app — nothing renders either way. These endpoints expose:
+#
+#   * GET  /api/subconscious/activity     — recent tick runs, newest first
+#   * GET  /api/subconscious/surfaces     — per-Composio-surface sync health
+#   * GET  /api/subconscious/suggestions  — pending suggestion inbox
+#   * POST /api/subconscious/suggestions/{id}/accept  — schedule it
+#   * POST /api/subconscious/suggestions/{id}/dismiss — latch-dismiss it
+#
+# Activity source design: cron/jobs.py's job store only ever records the
+# MOST RECENT run per job (last_run_at/last_status/last_error) — there is no
+# run history array. cron/scheduler.py now appends one JSON line per
+# background-thinking event to HERMES_HOME/subconscious/activity.jsonl
+# (capped at 500 lines, ONE shared feed) from every tracked surface: the
+# subconscious tick (source "tick" or "idle_trigger"), the presence
+# distiller ("distiller"), and goblin shoulder taps ("goblin", appended
+# directly from tools/presence/goblin.py). Each tick/distiller entry carries
+# not just the outcome but the "thinking" itself — `diff` (the stage-1
+# world-diff/script output that woke the run) and `thought` (the stage-2
+# agent's raw final response, even a bare "[SILENT]"), each capped at 4000
+# chars in the jsonl; the untruncated full doc is at `output_path` (attached
+# once cron/jobs.py::save_job_output picks its filename) for deep-dive. That
+# log is this endpoint's preferred source. For installs where the tick has
+# been running since before that log existed (or a build predates it), there
+# simply is no per-run history to show — the endpoint says so honestly via
+# `note` and falls back to the single last-run fact the cron job store does
+# carry, rather than presenting an empty list indistinguishable from "the
+# ticker is dead".
+# ---------------------------------------------------------------------------
+
+_SUBCONSCIOUS_ACTIVITY_DEFAULT_LIMIT = 30
+_SUBCONSCIOUS_ACTIVITY_MAX_LIMIT = 200
+_SUBCONSCIOUS_ACTIVITY_NO_HISTORY_NOTE = (
+    "No per-run activity history yet — the activity log "
+    "(HERMES_HOME/subconscious/activity.jsonl) starts recording from the "
+    "next tick onward. Showing the cron job store's last-run fact instead."
+)
+
+
+def _subconscious_activity_log_path() -> Path:
+    from hermes_constants import get_hermes_home
+
+    return get_hermes_home() / "subconscious" / "activity.jsonl"
+
+
+def _read_subconscious_activity_sync(limit: int) -> Dict[str, Any]:
+    limit = max(1, min(int(limit or _SUBCONSCIOUS_ACTIVITY_DEFAULT_LIMIT), _SUBCONSCIOUS_ACTIVITY_MAX_LIMIT))
+    path = _subconscious_activity_log_path()
+    runs: List[Dict[str, Any]] = []
+
+    if path.exists():
+        try:
+            raw_lines = path.read_text(encoding="utf-8").splitlines()
+        except OSError:
+            raw_lines = []
+        # File is append-only oldest→newest; walk backwards for newest-first.
+        for line in reversed(raw_lines):
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                record = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(record, dict):
+                continue
+            runs.append(
+                {
+                    "at": record.get("at"),
+                    "source": record.get("source") or "tick",
+                    "job_id": record.get("job_id"),
+                    "outcome": record.get("outcome"),
+                    "summary": record.get("summary"),
+                    "diff": record.get("diff"),
+                    "thought": record.get("thought"),
+                    "output_path": record.get("output_path"),
+                    "duration_ms": record.get("duration_ms"),
+                }
+            )
+            if len(runs) >= limit:
+                break
+
+    if runs:
+        return {"runs": runs}
+
+    # No activity-log history at all — fall back to the one fact the cron
+    # job store itself carries (last_run_at), so the panel still reflects
+    # something real instead of an empty void indistinguishable from "dead".
+    try:
+        from cron.subconscious import status as subconscious_status
+
+        sc_status = subconscious_status()
+    except Exception:
+        sc_status = {}
+
+    last_run_at = sc_status.get("last_run_at") if isinstance(sc_status, dict) else None
+    if last_run_at:
+        runs.append(
+            {
+                "at": last_run_at,
+                "source": "tick",
+                "job_id": sc_status.get("job_id"),
+                "outcome": None,
+                "summary": None,
+                "diff": None,
+                "thought": None,
+                "output_path": None,
+                "duration_ms": None,
+            }
+        )
+
+    return {"runs": runs, "note": _SUBCONSCIOUS_ACTIVITY_NO_HISTORY_NOTE}
+
+
+@app.get("/api/subconscious/activity")
+async def get_subconscious_activity(limit: int = 30):
+    try:
+        result = await run_in_threadpool(_read_subconscious_activity_sync, limit)
+        return {"ok": True, **result}
+    except Exception:
+        _log.exception("GET /api/subconscious/activity failed")
+        raise HTTPException(status_code=500, detail="Failed to read subconscious activity")
+
+
+def _configured_composio_surfaces(config: Optional[Dict[str, Any]] = None) -> List[str]:
+    from hermes_cli.config import load_config
+
+    cfg = config if config is not None else load_config()
+    composio_cfg = cfg.get("composio") or {}
+    if not isinstance(composio_cfg, dict) or not isinstance(composio_cfg.get("surfaces"), list):
+        return []
+    return [str(s).strip().lower() for s in composio_cfg["surfaces"] if str(s or "").strip()]
+
+
+def _read_subconscious_surfaces_sync() -> Dict[str, Any]:
+    surfaces = _configured_composio_surfaces()
+    if not surfaces:
+        return {"surfaces": []}
+
+    from cron.scripts.subconscious.snapshot_store import open_store
+
+    out: List[Dict[str, Any]] = []
+    for name in surfaces:
+        try:
+            store = open_store(name)
+            snap = store.status_dict()
+            backing_off = store.is_backoff_active()
+        except Exception as e:  # pragma: no cover - defensive, matches `hermes composio list`
+            out.append(
+                {
+                    "surface": name,
+                    "status": "error",
+                    "cursor_age_seconds": None,
+                    "quiet_streak": None,
+                    "effective_interval_seconds": None,
+                    "consecutive_failures": None,
+                    "last_error": str(e)[:200],
+                    "last_success_at": None,
+                    "next_retry_at": None,
+                }
+            )
+            continue
+
+        failures = snap.get("consecutive_failures") or 0
+        if failures and backing_off:
+            dot = "backing-off"
+        elif failures:
+            dot = "error"
+        else:
+            dot = "ok"
+
+        last_error = snap.get("last_error")
+        out.append(
+            {
+                "surface": name,
+                "status": dot,
+                "cursor_age_seconds": snap.get("seconds_since_last_fetch"),
+                "quiet_streak": snap.get("quiet_streak"),
+                "effective_interval_seconds": snap.get("effective_min_interval_seconds"),
+                "consecutive_failures": failures,
+                "last_error": (str(last_error)[:200] if last_error else None),
+                "last_success_at": snap.get("last_success_at"),
+                "next_retry_at": snap.get("next_retry_at"),
+            }
+        )
+    return {"surfaces": out}
+
+
+@app.get("/api/subconscious/surfaces")
+async def get_subconscious_surfaces():
+    try:
+        result = await run_in_threadpool(_read_subconscious_surfaces_sync)
+        return {"ok": True, **result}
+    except Exception:
+        _log.exception("GET /api/subconscious/surfaces failed")
+        raise HTTPException(status_code=500, detail="Failed to read subconscious surfaces")
+
+
+def _read_subconscious_suggestions_sync() -> Dict[str, Any]:
+    from cron.suggestions import list_pending, resolve_tier
+
+    pending = list_pending()
+    out = []
+    for s in pending:
+        category = s.get("category") or "general"
+        out.append(
+            {
+                "id": s.get("id"),
+                "title": s.get("title"),
+                "summary": s.get("description"),
+                "source": s.get("source"),
+                "category": category,
+                "tier": resolve_tier(category),
+                "created": s.get("created_at"),
+            }
+        )
+    return {"suggestions": out}
+
+
+@app.get("/api/subconscious/suggestions")
+async def get_subconscious_suggestions():
+    try:
+        result = await run_in_threadpool(_read_subconscious_suggestions_sync)
+        return {"ok": True, **result}
+    except Exception:
+        _log.exception("GET /api/subconscious/suggestions failed")
+        raise HTTPException(status_code=500, detail="Failed to read subconscious suggestions")
+
+
+def _accept_subconscious_suggestion_sync(suggestion_id: str) -> Optional[Dict[str, Any]]:
+    from cron.suggestions import accept_suggestion
+
+    return accept_suggestion(suggestion_id)
+
+
+def _dismiss_subconscious_suggestion_sync(suggestion_id: str) -> bool:
+    from cron.suggestions import dismiss_suggestion
+
+    return dismiss_suggestion(suggestion_id)
+
+
+@app.post("/api/subconscious/suggestions/{suggestion_id}/accept")
+async def accept_subconscious_suggestion(suggestion_id: str):
+    try:
+        job = await run_in_threadpool(_accept_subconscious_suggestion_sync, suggestion_id)
+    except Exception:
+        _log.exception("POST /api/subconscious/suggestions/%s/accept failed", suggestion_id)
+        raise HTTPException(status_code=500, detail="Failed to accept suggestion")
+    if job is None:
+        raise HTTPException(status_code=404, detail="No pending suggestion with that id")
+    return {"ok": True, "job": job}
+
+
+@app.post("/api/subconscious/suggestions/{suggestion_id}/dismiss")
+async def dismiss_subconscious_suggestion(suggestion_id: str):
+    try:
+        dismissed = await run_in_threadpool(_dismiss_subconscious_suggestion_sync, suggestion_id)
+    except Exception:
+        _log.exception("POST /api/subconscious/suggestions/%s/dismiss failed", suggestion_id)
+        raise HTTPException(status_code=500, detail="Failed to dismiss suggestion")
+    if not dismissed:
+        raise HTTPException(status_code=404, detail="No pending suggestion with that id")
+    return {"ok": True}
+
+
 def _presence_setup_sync() -> Dict[str, Any]:
     from hermes_cli.presence_cmd import setup_presence
 
@@ -16558,6 +16828,7 @@ class _DuplexTtsCycle:
                 if etype != "chunk":
                     continue
                 if not self._started:
+                    self._session._assistant_audio_started.set()
                     self._session._emit_sync(
                         {
                             "type": "tts_start",
@@ -16764,6 +17035,7 @@ class _DuplexSession:
         self._barge_vad_unavailable = False
         self._last_barge_log_at = 0.0
         self._barge_streak_ms = 0.0
+        self._assistant_audio_started = threading.Event()
         self._utterance_audio: List[bytes] = []
         self._speaking_task: Optional[asyncio.Task] = None
         self._cancel_speaking = threading.Event()
@@ -16978,11 +17250,17 @@ class _DuplexSession:
         self.transcript.add("user", text)
 
         self.state = "speaking"
+        self._assistant_audio_started.clear()
         self._cancel_speaking = threading.Event()
         cancel_event = self._cancel_speaking
         self._speaking_task = asyncio.create_task(self._run_turn(text, speaker_label, cancel_event))
 
     async def _feed_barge_in(self, chunk: bytes) -> None:
+        # Do not mistake the tail of the user's just-finalized utterance for
+        # an interruption. Barge-in becomes meaningful only once the client
+        # has received assistant audio it can actually interrupt.
+        if not self._assistant_audio_started.is_set():
+            return
         if self._barge_vad_unavailable:
             return
         if self.vad_gate is None:
@@ -17193,6 +17471,8 @@ class _DuplexSession:
                 pipeline.submit(tts_buffer)
             if not _finish_pipeline():
                 return None, None
+            if not full_reply.strip():
+                raise _InstantLaneUnavailable("instant voice lane returned an empty response")
             self._emit_sync({"type": "instant_done", "text": full_reply})
             return full_reply, None
         finally:

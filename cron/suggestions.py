@@ -49,6 +49,7 @@ import os
 import tempfile
 import threading
 import uuid
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -145,6 +146,40 @@ def load_suggestions() -> List[Dict[str, Any]]:
 def list_pending() -> List[Dict[str, Any]]:
     """Return pending suggestions in creation order (oldest first)."""
     return [s for s in load_suggestions() if s.get("status") == _STATUS_PENDING]
+
+
+def list_suggestions_created_after(
+    since_iso: str, *, source: Optional[str] = None
+) -> List[Dict[str, Any]]:
+    """Return suggestions (any status) created at or after ``since_iso``.
+
+    Used by the subconscious-tick activity log (``cron/scheduler.py``) to
+    classify a tick's outcome as ``"suggestion"`` when the run registered a
+    new automation proposal via ``suggest_automation`` rather than staying
+    silent. Best-effort: a malformed/missing ``since_iso`` or per-record
+    ``created_at`` is skipped defensively rather than raising — this is a
+    classification helper, not a source of truth for the suggestion store
+    itself.
+    """
+    try:
+        since_dt = datetime.fromisoformat(since_iso)
+    except (ValueError, TypeError):
+        return []
+
+    matches: List[Dict[str, Any]] = []
+    for s in load_suggestions():
+        if source is not None and s.get("source") != source:
+            continue
+        created_at = s.get("created_at")
+        if not created_at:
+            continue
+        try:
+            created_dt = datetime.fromisoformat(created_at)
+        except (ValueError, TypeError):
+            continue
+        if created_dt >= since_dt:
+            matches.append(s)
+    return matches
 
 
 def add_suggestion(

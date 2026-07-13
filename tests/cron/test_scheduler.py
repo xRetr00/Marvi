@@ -2915,6 +2915,383 @@ class TestRunJobWakeGate:
         agent_cls.assert_called_once()
 
 
+class TestRunJobSubconsciousActivityLog:
+    """cron/scheduler.py's background-thinking activity log — the missing
+    visibility surface (a quiet tick and a dead one otherwise look
+    identical). ``run_job`` appends one JSON line per run to
+    HERMES_HOME/subconscious/activity.jsonl at the points a run's outcome
+    becomes known: the wake-gate short-circuit, the empty-script no-op, and
+    agent completion (success or failure). Scoped to ONLY the tracked
+    background-thinking jobs (subconscious tick, presence distiller,
+    matched by name) — every other cron job's run_job call must be a
+    complete no-op here. Also covers the ``diff``/``thought`` text fields
+    and the idle-trigger source marker.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _stub_runtime_provider(self):
+        fake_runtime = {
+            "provider": "openrouter",
+            "api_mode": "chat_completions",
+            "base_url": "https://openrouter.ai/api/v1",
+            "api_key": "test-key",
+            "source": "stub",
+            "requested_provider": None,
+        }
+        with patch(
+            "hermes_cli.runtime_provider.resolve_runtime_provider",
+            return_value=fake_runtime,
+        ):
+            yield
+
+    def _activity_lines(self):
+        from hermes_constants import get_hermes_home
+
+        path = get_hermes_home() / "subconscious" / "activity.jsonl"
+        if not path.exists():
+            return []
+        return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+
+    def _make_subconscious_job(self, script="check.py"):
+        return {
+            "id": "job_subconscious",
+            "name": "Subconscious tick",  # must match cron.subconscious.JOB_NAME
+            "prompt": "Do a thing",
+            "schedule": "*/20 * * * *",
+            "script": script,
+        }
+
+    def test_wake_gate_false_logs_no_change(self):
+        import cron.scheduler as scheduler
+
+        with patch.object(scheduler, "_run_job_script", return_value=(True, "NO_CHANGE")), \
+             patch("run_agent.AIAgent") as agent_cls:
+            scheduler.run_job(self._make_subconscious_job())
+
+        agent_cls.assert_not_called()
+        lines = self._activity_lines()
+        assert len(lines) == 1
+        assert lines[0]["outcome"] == "no_change"
+        assert lines[0]["job_id"] == "job_subconscious"
+
+    def test_wake_gate_false_does_not_log_for_other_jobs(self):
+        """The hook must be a no-op for every cron job except the one
+        tracked subconscious tick — matched by name, not by having a
+        script/wake-gate at all (many ordinary jobs have those too)."""
+        import cron.scheduler as scheduler
+
+        job = self._make_subconscious_job()
+        job["name"] = "some other cron job"
+        with patch.object(scheduler, "_run_job_script", return_value=(True, "NO_CHANGE")), \
+             patch("run_agent.AIAgent") as agent_cls:
+            scheduler.run_job(job)
+
+        agent_cls.assert_not_called()
+        assert self._activity_lines() == []
+
+    def test_agent_completion_logs_message_outcome(self):
+        import cron.scheduler as scheduler
+
+        agent = MagicMock()
+        agent.run_conversation = MagicMock(return_value={
+            "final_response": "Heads up: something happened", "messages": []
+        })
+        with patch.object(scheduler, "_run_job_script", return_value=(True, "gmail: 1 new message")), \
+             patch("run_agent.AIAgent", return_value=agent):
+            success, doc, final, err = scheduler.run_job(self._make_subconscious_job())
+
+        assert success is True
+        lines = self._activity_lines()
+        assert len(lines) == 1
+        assert lines[0]["outcome"] == "message"
+        assert lines[0]["summary"] == "Heads up: something happened"
+
+    def test_agent_completion_logs_diff_silent_outcome(self):
+        import cron.scheduler as scheduler
+
+        agent = MagicMock()
+        agent.run_conversation = MagicMock(return_value={"final_response": "[SILENT]", "messages": []})
+        with patch.object(scheduler, "_run_job_script", return_value=(True, "gmail: 1 new message")), \
+             patch("run_agent.AIAgent", return_value=agent):
+            scheduler.run_job(self._make_subconscious_job())
+
+        lines = self._activity_lines()
+        assert len(lines) == 1
+        assert lines[0]["outcome"] == "diff_silent"
+        assert lines[0]["summary"] is None
+
+    def test_agent_completion_logs_suggestion_outcome_when_one_was_registered(self):
+        """When the tick calls suggest_automation (cron/suggestions.py) mid-run
+        and then ends silently per its prompt contract, the activity log
+        should reflect "suggestion", not a plain quiet tick."""
+        import cron.scheduler as scheduler
+        from cron.suggestions import add_suggestion
+
+        def _run_conversation(*args, **kwargs):
+            add_suggestion(
+                title="Weekly report",
+                description="desc",
+                source="subconscious",
+                job_spec={"prompt": "do it", "schedule": "every 7d"},
+                dedup_key="weekly-report",
+            )
+            return {"final_response": "[SILENT]", "messages": []}
+
+        agent = MagicMock()
+        agent.run_conversation = MagicMock(side_effect=_run_conversation)
+        with patch.object(scheduler, "_run_job_script", return_value=(True, "gmail: 1 new message")), \
+             patch("run_agent.AIAgent", return_value=agent):
+            scheduler.run_job(self._make_subconscious_job())
+
+        lines = self._activity_lines()
+        assert len(lines) == 1
+        assert lines[0]["outcome"] == "suggestion"
+        assert "Weekly report" in lines[0]["summary"]
+
+    def test_agent_failure_logs_error_outcome(self):
+        import cron.scheduler as scheduler
+
+        with patch.object(scheduler, "_run_job_script", return_value=(True, "gmail: 1 new message")), \
+             patch("run_agent.AIAgent", side_effect=RuntimeError("model exploded")):
+            success, doc, final, err = scheduler.run_job(self._make_subconscious_job())
+
+        assert success is False
+        lines = self._activity_lines()
+        assert len(lines) == 1
+        assert lines[0]["outcome"] == "error"
+        assert "model exploded" in lines[0]["summary"]
+
+    def test_rotation_caps_at_max_lines(self):
+        import cron.scheduler as scheduler
+        from hermes_constants import get_hermes_home
+
+        path = get_hermes_home() / "subconscious" / "activity.jsonl"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            "\n".join(
+                json.dumps({"at": "x", "job_id": "j", "outcome": "no_change"})
+                for _ in range(scheduler._SUBCONSCIOUS_ACTIVITY_MAX_LINES + 10)
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+        with patch.object(scheduler, "_run_job_script", return_value=(True, "NO_CHANGE")), \
+             patch("run_agent.AIAgent") as agent_cls:
+            scheduler.run_job(self._make_subconscious_job())
+
+        assert len(self._activity_lines()) == scheduler._SUBCONSCIOUS_ACTIVITY_MAX_LINES
+
+    def test_no_change_entry_carries_the_diff_that_triggered_it(self):
+        """The wake-gate 'no_change' entry stores the stage-1 script output
+        (even though it's the literal NO_CHANGE token) as ``diff``, so the
+        UI's "what changed" expand view has something to show."""
+        import cron.scheduler as scheduler
+
+        with patch.object(scheduler, "_run_job_script", return_value=(True, "NO_CHANGE")), \
+             patch("run_agent.AIAgent") as agent_cls:
+            scheduler.run_job(self._make_subconscious_job())
+
+        agent_cls.assert_not_called()
+        lines = self._activity_lines()
+        assert lines[0]["diff"] == "NO_CHANGE"
+        assert lines[0]["thought"] is None
+        assert lines[0]["source"] == "tick"
+
+    def test_message_entry_carries_diff_and_full_thought(self):
+        """A woken, non-silent tick stores BOTH the stage-1 diff that woke it
+        and the stage-2 agent's raw final response (the 'thought') — not
+        just the truncated one-line summary."""
+        import cron.scheduler as scheduler
+
+        agent = MagicMock()
+        agent.run_conversation = MagicMock(return_value={
+            "final_response": "Heads up: something happened", "messages": []
+        })
+        with patch.object(scheduler, "_run_job_script", return_value=(True, "gmail: 3 new messages")), \
+             patch("run_agent.AIAgent", return_value=agent):
+            scheduler.run_job(self._make_subconscious_job())
+
+        lines = self._activity_lines()
+        assert lines[0]["diff"] == "gmail: 3 new messages"
+        assert lines[0]["thought"] == "Heads up: something happened"
+
+    def test_diff_silent_entry_still_records_the_bare_silent_thought(self):
+        """Even when the agent's ENTIRE reply is the bare "[SILENT]" marker
+        (no extra reasoning text produced), that IS what Marvi thought —
+        record it honestly rather than nulling it out."""
+        import cron.scheduler as scheduler
+
+        agent = MagicMock()
+        agent.run_conversation = MagicMock(return_value={"final_response": "[SILENT]", "messages": []})
+        with patch.object(scheduler, "_run_job_script", return_value=(True, "gmail: 1 new message")), \
+             patch("run_agent.AIAgent", return_value=agent):
+            scheduler.run_job(self._make_subconscious_job())
+
+        lines = self._activity_lines()
+        assert lines[0]["outcome"] == "diff_silent"
+        assert lines[0]["thought"] == "[SILENT]"
+
+    def test_diff_silent_entry_records_reasoning_text_before_the_marker(self):
+        """A longer reply that ENDS in the [SILENT] sentinel (the documented
+        cron pattern) still suppresses delivery, but the reasoning text
+        before it is real "thought" content worth showing."""
+        import cron.scheduler as scheduler
+
+        agent = MagicMock()
+        agent.run_conversation = MagicMock(return_value={
+            "final_response": "Checked gmail and calendar, nothing new worth a nudge.\n\n[SILENT]",
+            "messages": []
+        })
+        with patch.object(scheduler, "_run_job_script", return_value=(True, "gmail: 1 new message")), \
+             patch("run_agent.AIAgent", return_value=agent):
+            scheduler.run_job(self._make_subconscious_job())
+
+        lines = self._activity_lines()
+        assert lines[0]["outcome"] == "diff_silent"
+        assert "nothing new worth a nudge" in lines[0]["thought"]
+
+    def test_diff_and_thought_are_capped_at_4000_chars(self):
+        import cron.scheduler as scheduler
+
+        huge_diff = "x" * 5000
+        huge_thought = "y" * 5000
+        agent = MagicMock()
+        agent.run_conversation = MagicMock(return_value={"final_response": huge_thought, "messages": []})
+        with patch.object(scheduler, "_run_job_script", return_value=(True, huge_diff)), \
+             patch("run_agent.AIAgent", return_value=agent):
+            scheduler.run_job(self._make_subconscious_job())
+
+        lines = self._activity_lines()
+        assert len(lines[0]["diff"]) == scheduler._ACTIVITY_TEXT_CAP
+        assert len(lines[0]["thought"]) == scheduler._ACTIVITY_TEXT_CAP
+
+    def test_idle_triggered_run_is_logged_with_idle_trigger_source(self):
+        """cron.subconscious.trigger_tick(reason="idle") leaves a short-lived
+        marker; the very next subconscious-job run_job call should consume it
+        and log source="idle_trigger" instead of the default "tick"."""
+        import cron.scheduler as scheduler
+        from cron.subconscious import _mark_pending_trigger_reason
+
+        _mark_pending_trigger_reason("idle")
+
+        with patch.object(scheduler, "_run_job_script", return_value=(True, "NO_CHANGE")), \
+             patch("run_agent.AIAgent") as agent_cls:
+            scheduler.run_job(self._make_subconscious_job())
+
+        agent_cls.assert_not_called()
+        lines = self._activity_lines()
+        assert lines[0]["source"] == "idle_trigger"
+
+    def test_marker_is_consumed_so_the_next_regular_tick_is_not_mislabeled(self):
+        import cron.scheduler as scheduler
+        from cron.subconscious import _mark_pending_trigger_reason
+
+        _mark_pending_trigger_reason("idle")
+
+        with patch.object(scheduler, "_run_job_script", return_value=(True, "NO_CHANGE")), \
+             patch("run_agent.AIAgent"):
+            scheduler.run_job(self._make_subconscious_job())
+            scheduler.run_job(self._make_subconscious_job())
+
+        lines = self._activity_lines()
+        assert lines[0]["source"] == "idle_trigger"
+        assert lines[1]["source"] == "tick"
+
+    def test_stale_marker_is_ignored(self):
+        import cron.scheduler as scheduler
+        from hermes_constants import get_hermes_home
+
+        marker_path = get_hermes_home() / "subconscious" / "pending_trigger_reason.json"
+        marker_path.parent.mkdir(parents=True, exist_ok=True)
+        stale_at = "2000-01-01T00:00:00+00:00"
+        marker_path.write_text(json.dumps({"reason": "idle", "at": stale_at}), encoding="utf-8")
+
+        with patch.object(scheduler, "_run_job_script", return_value=(True, "NO_CHANGE")), \
+             patch("run_agent.AIAgent"):
+            scheduler.run_job(self._make_subconscious_job())
+
+        lines = self._activity_lines()
+        assert lines[0]["source"] == "tick"
+
+    def test_presence_distiller_job_is_logged_with_distiller_source(self):
+        """The presence distiller (a separate cron job, matched by
+        hermes_cli.presence_cmd.DISTILL_JOB_NAME) shares the same activity
+        feed under source="distiller" — not the tick's "tick"/"idle_trigger"."""
+        import cron.scheduler as scheduler
+        from hermes_cli.presence_cmd import DISTILL_JOB_NAME
+
+        job = {
+            "id": "job_distiller",
+            "name": DISTILL_JOB_NAME,
+            "prompt": "Distill",
+            "schedule": "0 3 * * *",
+            "script": "presence_distill.py",
+        }
+        agent = MagicMock()
+        agent.run_conversation = MagicMock(return_value={"final_response": "[SILENT]", "messages": []})
+        with patch.object(scheduler, "_run_job_script", return_value=(True, "App usage since last check:\n  - vscode: 2h")), \
+             patch("run_agent.AIAgent", return_value=agent):
+            scheduler.run_job(job)
+
+        lines = self._activity_lines()
+        assert len(lines) == 1
+        assert lines[0]["source"] == "distiller"
+        assert lines[0]["job_id"] == "job_distiller"
+        assert lines[0]["outcome"] == "diff_silent"
+
+    def test_distiller_empty_digest_logs_no_change(self):
+        """An empty script output (nothing to distill tonight) takes the
+        "script produced no output" path in run_job, not the wake-gate path
+        (the distiller's script has no wakeAgent/NO_CHANGE convention) — it
+        must still be logged as a quiet no-op."""
+        import cron.scheduler as scheduler
+        from hermes_cli.presence_cmd import DISTILL_JOB_NAME
+
+        job = {
+            "id": "job_distiller",
+            "name": DISTILL_JOB_NAME,
+            "prompt": "Distill",
+            "schedule": "0 3 * * *",
+            "script": "presence_distill.py",
+        }
+        with patch.object(scheduler, "_run_job_script", return_value=(True, "")), \
+             patch("run_agent.AIAgent") as agent_cls:
+            scheduler.run_job(job)
+
+        agent_cls.assert_not_called()
+        lines = self._activity_lines()
+        assert len(lines) == 1
+        assert lines[0]["outcome"] == "no_change"
+        assert lines[0]["source"] == "distiller"
+
+    def test_output_path_is_attached_after_run_one_job_saves_it(self):
+        """The output-file path is unknown inside run_job (save_job_output
+        only runs later, in run_one_job) — verify the post-hoc attach helper
+        patches the just-written entry once the path is known."""
+        import cron.scheduler as scheduler
+
+        job = self._make_subconscious_job()
+        with patch.object(scheduler, "_run_job_script", return_value=(True, "NO_CHANGE")), \
+             patch("run_agent.AIAgent"):
+            scheduler.run_job(job)
+
+        lines_before = self._activity_lines()
+        assert "output_path" not in lines_before[0]
+
+        scheduler._attach_subconscious_output_path(job, "/tmp/cron/output/job_subconscious/2026-07-13_00-00-00.md")
+
+        lines_after = self._activity_lines()
+        assert lines_after[0]["output_path"] == "/tmp/cron/output/job_subconscious/2026-07-13_00-00-00.md"
+
+    def test_output_path_attach_is_a_no_op_for_other_jobs(self):
+        import cron.scheduler as scheduler
+
+        scheduler._attach_subconscious_output_path({"id": "x", "name": "other job"}, "/tmp/whatever.md")
+
+        assert self._activity_lines() == []
+
+
 class TestBuildJobPromptMissingSkill:
     """Verify that a missing skill logs a warning and does not crash the job."""
 

@@ -25,11 +25,13 @@ config.yaml per Contract 3.
 
 from __future__ import annotations
 
+import json
 import logging
 from pathlib import Path
 from typing import Any, Dict, Optional
 
 from hermes_constants import get_hermes_home
+from hermes_time import now as _hermes_now
 
 logger = logging.getLogger(__name__)
 
@@ -268,6 +270,33 @@ def _should_defer_for_resource_policy() -> bool:
         return False
 
 
+def _pending_trigger_marker_path() -> Path:
+    return get_hermes_home() / "subconscious" / "pending_trigger_reason.json"
+
+
+def _mark_pending_trigger_reason(reason: str) -> None:
+    """Best-effort marker so the activity log (cron/scheduler.py) can
+    attribute the next fired tick run to WHY it fired (idle silence vs the
+    normal schedule) instead of always logging a plain "tick" source.
+
+    Consumed (read-and-deleted) by
+    ``cron.scheduler._consume_pending_trigger_reason`` the moment that run
+    completes its wake-gate/agent-completion hook. A stale marker (the
+    consumer enforces a max age) is simply ignored rather than mis-attributing
+    a later, unrelated regular tick — this is a visibility nicety, never
+    allowed to affect the tick itself.
+    """
+    try:
+        path = _pending_trigger_marker_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            json.dumps({"reason": reason, "at": _hermes_now().isoformat()}),
+            encoding="utf-8",
+        )
+    except Exception:
+        logger.debug("subconscious: failed to write pending-trigger marker", exc_info=True)
+
+
 def trigger_tick(reason: str = "idle") -> bool:
     """Fire the subconscious tick job once, immediately.
 
@@ -292,4 +321,5 @@ def trigger_tick(reason: str = "idle") -> bool:
         return False
     if job:
         logger.info("subconscious: tick triggered (reason=%s)", reason)
+        _mark_pending_trigger_reason(reason)
     return bool(job)

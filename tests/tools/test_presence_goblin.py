@@ -324,3 +324,60 @@ class TestNotifyStuckDedupAndDebounce:
 
         assert notify_stuck(_finding()) is False
         assert harness.create_job.calls == []
+
+
+def _activity_lines():
+    import json
+
+    from hermes_constants import get_hermes_home
+
+    path = get_hermes_home() / "subconscious" / "activity.jsonl"
+    if not path.exists():
+        return []
+    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+
+
+class TestNotifyStuckActivityLog:
+    """A shoulder tap firing should show up in the same shared
+    HERMES_HOME/subconscious/activity.jsonl feed the tick/distiller write to
+    (cron/scheduler.py's record_subconscious_activity) — see
+    apps/desktop/src/app/settings/subconscious's Activity panel. Uses the
+    REAL cron.scheduler.record_subconscious_activity (only cron.jobs.create_job
+    is mocked, same as every other notify_stuck test in this file) so this
+    exercises the actual guarded append path, not a stand-in.
+    """
+
+    def test_records_a_goblin_activity_entry_on_success(self, monkeypatch):
+        harness = _GoblinNotifyHarness(monkeypatch)
+
+        assert notify_stuck(_finding()) is True
+
+        lines = _activity_lines()
+        assert len(lines) == 1
+        assert lines[0]["source"] == "goblin"
+        assert lines[0]["outcome"] == "message"
+        assert lines[0]["job_id"] == "fake-job-id"
+        assert "stuck" in lines[0]["summary"].lower()
+        assert "TypeError" in lines[0]["summary"] or "Code.exe" in lines[0]["summary"]
+
+    def test_no_activity_entry_when_job_creation_is_skipped(self, monkeypatch):
+        """Debounced / no-target / pending-job skips never create a job, so
+        there is nothing to log — the activity feed must stay empty too."""
+        harness = _GoblinNotifyHarness(monkeypatch)
+        harness.set_should_notify(False)
+
+        assert notify_stuck(_finding()) is False
+        assert _activity_lines() == []
+
+    def test_activity_log_failure_does_not_break_notify_stuck(self, monkeypatch):
+        """record_subconscious_activity is best-effort — a failure inside it
+        must never surface as a notify_stuck failure (the real notification
+        already succeeded by that point)."""
+        harness = _GoblinNotifyHarness(monkeypatch)
+        monkeypatch.setattr(
+            "cron.scheduler.record_subconscious_activity",
+            lambda **kwargs: (_ for _ in ()).throw(RuntimeError("boom")),
+        )
+
+        assert notify_stuck(_finding()) is True
+        assert harness.marked_notified is True

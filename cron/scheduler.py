@@ -19,6 +19,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 
@@ -32,7 +33,7 @@ except ImportError:
     except ImportError:
         msvcrt = None
 from pathlib import Path
-from typing import Any, List, Optional
+from typing import Any, Dict, List, Optional
 
 # Add parent directory to path for imports BEFORE repo-level imports.
 # Without this, standalone invocations (e.g. after `hermes update` reloads
@@ -44,6 +45,7 @@ from hermes_cli._subprocess_compat import windows_hide_flags
 from hermes_cli.config import load_config, _expand_env_vars
 from hermes_cli.fallback_config import get_fallback_chain
 from hermes_time import now as _hermes_now
+from utils import atomic_replace
 
 logger = logging.getLogger(__name__)
 
@@ -288,6 +290,294 @@ def _is_cron_silence_response(text: str) -> bool:
     if upper.startswith("[SILENT]"):
         return True
     return False
+
+
+# ---------------------------------------------------------------------------
+# Subconscious activity log — visibility surface for the desktop Activity
+# panel (apps/desktop/src/app/settings/subconscious). A quiet tick and a
+# dead ticker are otherwise indistinguishable: jobs.json only ever holds the
+# MOST RECENT run per job, so there is no history to show. This appends one
+# JSON line per background-thinking event to
+# HERMES_HOME/subconscious/activity.jsonl (capped + rotated, ONE shared feed
+# across every source) — from the three points in run_job where a tracked
+# job's outcome becomes known (wake-gate short-circuit, empty-script
+# no-op, and agent completion), plus direct calls from other background
+# surfaces (tools/presence/goblin.py's shoulder-tap notifier). Guarded and
+# best-effort throughout — a logging failure must never affect the real
+# work. Scoped by job identity: every cron job that ISN'T one of the
+# tracked surfaces is a complete no-op here.
+#
+# Record shape (superset — fields are None/absent when not applicable):
+#   at, source ("tick"|"idle_trigger"|"distiller"|"goblin"), job_id,
+#   outcome ("no_change"|"diff_silent"|"message"|"suggestion"|"error"),
+#   summary (<=200 chars, one-line preview), diff (<=4000 chars, the
+#   stage-1 script output / world-diff that woke the run), thought (<=4000
+#   chars, the stage-2 agent's raw final response — even a bare "[SILENT]"
+#   is recorded, since that IS the full extent of "what Marvi thought" when
+#   nothing more was produced), output_path (the full, untruncated cron
+#   output .md file for deep-dive, attached post-hoc once
+#   cron/jobs.py::save_job_output knows the filename).
+# ---------------------------------------------------------------------------
+
+_SUBCONSCIOUS_ACTIVITY_MAX_LINES = 500
+_ACTIVITY_TEXT_CAP = 4000
+_ACTIVITY_SUMMARY_CAP = 200
+# Generous vs the idle-trigger watcher's poll cadence and the ticker's ~60s
+# loop — just needs to comfortably outlast the window between trigger_tick()
+# firing and the ticker actually picking the job up, while still expiring a
+# marker abandoned by a run that crashed before consuming it.
+_PENDING_TRIGGER_MARKER_MAX_AGE_SECONDS = 180
+
+
+def _activity_source_for_job(job: dict) -> Optional[str]:
+    """Return the activity-log ``source`` tag for a completed cron job, or
+    ``None`` if this job isn't one of the tracked background-thinking
+    surfaces — every other cron job's run_job call is then a no-op for the
+    activity log.
+
+    The subconscious tick additionally distinguishes ``"idle_trigger"`` from
+    a plain ``"tick"`` via a short-lived marker (see
+    ``cron.subconscious.trigger_tick`` / ``_consume_pending_trigger_reason``
+    below) since idle-fired and normally-scheduled runs are otherwise
+    indistinguishable at this point (both just look like a due job).
+    Guarded imports so this module never gains a hard load-time dependency
+    on cron.subconscious / hermes_cli.presence_cmd.
+    """
+    name = str(job.get("name") or "")
+
+    try:
+        from cron.subconscious import JOB_NAME as _tick_job_name
+    except Exception:
+        _tick_job_name = None
+    if _tick_job_name and name == _tick_job_name:
+        return _consume_pending_trigger_reason() or "tick"
+
+    try:
+        from hermes_cli.presence_cmd import DISTILL_JOB_NAME as _distill_job_name
+    except Exception:
+        _distill_job_name = None
+    if _distill_job_name and name == _distill_job_name:
+        return "distiller"
+
+    return None
+
+
+def _pending_trigger_marker_path() -> Path:
+    return get_hermes_home() / "subconscious" / "pending_trigger_reason.json"
+
+
+def _consume_pending_trigger_reason() -> Optional[str]:
+    """Read-and-delete ``cron.subconscious``'s pending-trigger marker if
+    fresh, mapping ``reason="idle"`` to the activity-log source
+    ``"idle_trigger"``. Returns ``None`` (falls back to a plain ``"tick"``)
+    when the marker is absent, stale, or unreadable — best-effort, never
+    raises.
+    """
+    try:
+        path = _pending_trigger_marker_path()
+        if not path.exists():
+            return None
+        data = json.loads(path.read_text(encoding="utf-8"))
+        try:
+            path.unlink()
+        except OSError:
+            pass
+        at = data.get("at")
+        if not at:
+            return None
+        from datetime import datetime as _datetime
+
+        marker_dt = _datetime.fromisoformat(at)
+        age = (_hermes_now() - marker_dt).total_seconds()
+        if age < 0 or age > _PENDING_TRIGGER_MARKER_MAX_AGE_SECONDS:
+            return None
+        return "idle_trigger" if data.get("reason") == "idle" else None
+    except Exception:
+        return None
+
+
+def _subconscious_activity_path() -> Path:
+    return get_hermes_home() / "subconscious" / "activity.jsonl"
+
+
+def _rotate_subconscious_activity(path: Path) -> None:
+    """Cap the activity log at ``_SUBCONSCIOUS_ACTIVITY_MAX_LINES`` lines.
+
+    Best-effort: any failure here must not affect the caller. Uses the same
+    tempfile + atomic_replace pattern as cron/jobs.py so a concurrent reader
+    (the web_server activity endpoint) never sees a torn file.
+    """
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+        if len(lines) <= _SUBCONSCIOUS_ACTIVITY_MAX_LINES:
+            return
+        kept = lines[-_SUBCONSCIOUS_ACTIVITY_MAX_LINES:]
+        fd, tmp_path = tempfile.mkstemp(dir=str(path.parent), suffix=".tmp", prefix=".activity_")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                f.write("\n".join(kept) + "\n")
+            atomic_replace(tmp_path, path)
+        except BaseException:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+            raise
+    except Exception:
+        logger.debug("subconscious activity log rotation failed", exc_info=True)
+
+
+def _cap_activity_text(value: Optional[str], limit: int) -> Optional[str]:
+    if not value:
+        return None
+    text = str(value).strip()
+    return text[:limit] or None
+
+
+def _append_activity_record(record: dict) -> None:
+    """Low-level append + rotate for one activity-log record. Best-effort:
+    disk-full, permissions, or path errors are swallowed — this is a
+    visibility nicety, never allowed to fail (or slow down) the caller.
+    """
+    try:
+        path = _subconscious_activity_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(record, ensure_ascii=False) + "\n")
+        _rotate_subconscious_activity(path)
+    except Exception:
+        logger.debug("subconscious activity log append failed", exc_info=True)
+
+
+def record_subconscious_activity(
+    *,
+    source: str,
+    outcome: Optional[str] = None,
+    job_id: Optional[str] = None,
+    summary: Optional[str] = None,
+    diff: Optional[str] = None,
+    thought: Optional[str] = None,
+    output_path: Optional[Any] = None,
+) -> None:
+    """Append one line to the shared subconscious activity feed.
+
+    Public, guarded entry point any background-thinking source (the
+    subconscious tick and presence distiller via run_job below, goblin
+    shoulder-tap notifications directly from tools/presence/goblin.py) can
+    call to record itself in the same feed the desktop Activity panel reads
+    (``GET /api/subconscious/activity``, hermes_cli/web_server.py). Never
+    raises — a logging failure must never affect the caller's real work.
+    """
+    try:
+        record: Dict[str, Any] = {
+            "at": _hermes_now().isoformat(),
+            "source": source,
+            "job_id": job_id,
+            "outcome": outcome,
+            "summary": _cap_activity_text(summary, _ACTIVITY_SUMMARY_CAP),
+            "diff": _cap_activity_text(diff, _ACTIVITY_TEXT_CAP),
+            "thought": _cap_activity_text(thought, _ACTIVITY_TEXT_CAP),
+        }
+        if output_path:
+            record["output_path"] = str(output_path)
+        _append_activity_record(record)
+    except Exception:
+        logger.debug("record_subconscious_activity failed", exc_info=True)
+
+
+def _append_subconscious_activity(
+    job: dict,
+    outcome: str,
+    *,
+    summary: Optional[str] = None,
+    diff: Optional[str] = None,
+    thought: Optional[str] = None,
+) -> None:
+    """Append one activity record for a completed run of a tracked
+    background-thinking cron job (subconscious tick or presence distiller).
+
+    Silently a no-op for any other job — see ``_activity_source_for_job``.
+    """
+    source = _activity_source_for_job(job)
+    if source is None:
+        return
+    record_subconscious_activity(
+        source=source,
+        outcome=outcome,
+        job_id=job.get("id"),
+        summary=summary,
+        diff=diff,
+        thought=thought,
+    )
+
+
+def _attach_subconscious_output_path(job: dict, output_file: Any) -> None:
+    """Best-effort: attach the just-saved cron output file's path to the
+    most recently appended activity-log line for this job.
+
+    ``run_job`` logs outcome/diff/thought (already truncated for the jsonl)
+    at completion time, but the untruncated full doc — the actual saved
+    ``cron/output/<job_id>/<timestamp>.md`` — is only known one layer up in
+    ``run_one_job``, AFTER ``cron.jobs.save_job_output`` picks its filename.
+    Rather than thread that path back down into run_job (which would change
+    its long-standing 4-tuple return contract), this patches the entry
+    run_job just wrote. Safe in practice: the subconscious tick and the
+    presence distiller are each a single serialized job, so no other run's
+    entry for the same job_id can land between the append and this patch.
+    A no-op for any job outside the tracked surfaces, or if no matching
+    path-less entry is found in the recent tail of the log.
+    """
+    if _activity_source_for_job(job) is None:
+        return
+    try:
+        path = _subconscious_activity_path()
+        if not path.exists():
+            return
+        lines = path.read_text(encoding="utf-8").splitlines()
+        job_id = job.get("id")
+        window_start = max(0, len(lines) - 20)
+        for i in range(len(lines) - 1, window_start - 1, -1):
+            raw = lines[i].strip()
+            if not raw:
+                continue
+            try:
+                record = json.loads(raw)
+            except json.JSONDecodeError:
+                continue
+            if record.get("job_id") == job_id and "output_path" not in record:
+                record["output_path"] = str(output_file)
+                lines[i] = json.dumps(record, ensure_ascii=False)
+                path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+                return
+    except Exception:
+        logger.debug("subconscious activity log output-path attach failed", exc_info=True)
+
+
+def _subconscious_tick_outcome_for_success(job: dict, final_response: str, started_at: str) -> tuple[str, Optional[str]]:
+    """Classify a successfully-completed tracked background-job run.
+
+    Distinguishes a genuinely quiet reasoning pass (``diff_silent`` — the
+    agent woke, looked, and had nothing to say) from one that registered a
+    new automation suggestion during the run (``suggestion``) from one that
+    proactively messaged the user (``message``). Called after the agent has
+    already returned — never affects the delivery decision itself, purely a
+    classification for the activity log. The suggestion check is harmless
+    (always empty) for jobs other than the subconscious tick — nothing else
+    calls ``suggest_automation``.
+    """
+    if final_response.strip() and not _is_cron_silence_response(final_response):
+        return "message", final_response
+    try:
+        from cron.suggestions import list_suggestions_created_after
+
+        new_suggestions = list_suggestions_created_after(started_at, source="subconscious")
+    except Exception:
+        new_suggestions = []
+    if new_suggestions:
+        titles = ", ".join(s.get("title", "?") for s in new_suggestions)
+        return "suggestion", titles
+    return "diff_silent", None
+
 
 # ---------------------------------------------------------------------------
 # Persistent thread pool for parallel cron jobs.
@@ -2632,6 +2922,11 @@ def run_job(
     except Exception as e:
         logger.debug("Job '%s': SQLite session store not available: %s", job.get("id", "?"), e)
 
+    # Captured before the wake-gate check so the subconscious activity log
+    # (below) can later tell whether a suggestion was registered DURING this
+    # tick's agent run. Cheap (one clock read) and unused for every other job.
+    _tick_started_at = _hermes_now().isoformat()
+
     # Wake-gate: if this job has a pre-check script, run it BEFORE building
     # the prompt so a ``{"wakeAgent": false}`` response can short-circuit
     # the whole agent run. We pass the result into _build_job_prompt so
@@ -2652,6 +2947,7 @@ def run_job(
                 f"**Run Time:** {_hermes_now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
                 "Script gate returned `wakeAgent=false` — agent skipped.\n"
             )
+            _append_subconscious_activity(job, "no_change", diff=_script_output)
             return True, silent_doc, SILENT_MARKER, None
 
     try:
@@ -2681,6 +2977,11 @@ def run_job(
         return False, blocked_doc, "", str(block_exc)
     if prompt is None:
         logger.info("Job '%s': script produced no output, skipping AI call.", job_name)
+        # Empty script output (e.g. the presence distiller's digest is empty
+        # on a quiet day) — a "nothing to report" no-op equivalent to the
+        # wake-gate short-circuit above, just via a different contract
+        # (no wakeAgent/NO_CHANGE convention, just literally nothing to say).
+        _append_subconscious_activity(job, "no_change")
         return True, "", SILENT_MARKER, None
     origin = _resolve_origin(job)
     _cron_session_id = f"cron_{job_id}_{_hermes_now().strftime('%Y%m%d_%H%M%S')}"
@@ -3300,12 +3601,20 @@ def run_job(
 """
         
         logger.info("Job '%s' completed successfully", job_name)
+        _outcome, _summary = _subconscious_tick_outcome_for_success(job, final_response, _tick_started_at)
+        _append_subconscious_activity(
+            job,
+            _outcome,
+            summary=_summary,
+            diff=(prerun_script[1] if prerun_script else None),
+            thought=final_response,
+        )
         return True, output, final_response, None
-        
+
     except Exception as e:
         error_msg = f"{type(e).__name__}: {str(e)}"
         logger.exception("Job '%s' failed: %s", job_name, error_msg)
-        
+
         output = f"""# Cron Job: {job_name} (FAILED)
 
 **Job ID:** {job_id}
@@ -3322,6 +3631,12 @@ def run_job(
 {error_msg}
 ```
 """
+        _append_subconscious_activity(
+            job,
+            "error",
+            summary=error_msg,
+            diff=(prerun_script[1] if prerun_script else None),
+        )
         return False, output, "", error_msg
 
     finally:
@@ -3485,6 +3800,7 @@ def run_one_job(job: dict, *, adapters=None, loop=None, verbose: bool = False) -
             output_file = save_job_output(job["id"], output)
             if verbose:
                 logger.info("Output saved to: %s", output_file)
+            _attach_subconscious_output_path(job, output_file)
 
             # If the gateway shutdown killed this job's tool subprocess
             # mid-flight (#60432), the agent may still have produced a

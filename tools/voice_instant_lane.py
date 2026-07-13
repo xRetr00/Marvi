@@ -71,6 +71,7 @@ import os
 import queue
 import re
 import threading
+import time
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, Iterator, List, Optional, Tuple
 
@@ -97,8 +98,15 @@ INSTANT_LANE_TOOL_WHITELIST = frozenset(
     }
 )
 # Toolset-level gate for tool-definition generation (cache-prefix parity,
-# mirrors background_review.py's enabled_toolsets usage). The whitelist
-# above is the real enforcement boundary.
+# mirrors background_review.py's enabled_toolsets usage). Deliberately
+# broader than INSTANT_LANE_TOOL_WHITELIST at the toolset level (e.g. "file"
+# also resolves write_file/patch/search_files) -- run_agent.AIAgent's
+# ``allowed_tool_names`` param (passed below in _new_instant_agent) is what
+# actually intersects the resolved set down to the whitelist BEFORE
+# registry.get_definitions() runs any check_fn, so construction never probes
+# a check_fn for a tool this lane can't call anyway. set_thread_tool_whitelist
+# (see stream_instant_reply) remains the real per-CALL enforcement boundary;
+# allowed_tool_names is defense in depth on the tool-DEFINITION path only.
 INSTANT_LANE_TOOLSETS = ["file", "web", "memory", "session_search"]
 # ~2 tool calls (tool call -> result -> tool call -> result) then an answer.
 INSTANT_LANE_MAX_ITERATIONS = 4
@@ -128,6 +136,11 @@ class RollingTranscript:
     _deferred_context: str = field(default="", init=False, repr=False)
     _deferred_context_loading: bool = field(default=False, init=False, repr=False)
     _deferred_context_lock: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)
+    # Wall-clock duration of the deferred-context background load, in ms --
+    # set once _load() (see _start_deferred_context_load) finishes. None
+    # until a load has completed at least once. Read by [VOICE-PERF] logging
+    # (hermes_cli.web_server) to report deferred_context=ready load_ms=N.
+    _deferred_context_load_ms: Optional[float] = field(default=None, init=False, repr=False)
 
     def add(self, role: str, text: str) -> None:
         text = (text or "").strip()
@@ -704,14 +717,33 @@ def _start_deferred_context_load(
         transcript._deferred_context_loading = True
 
     def _load() -> None:
+        start = time.monotonic()
         try:
             transcript._deferred_context = _build_deferred_context(cfg)
         except Exception:
             logger.debug("voice_instant_lane: deferred personal context failed", exc_info=True)
         finally:
             transcript._deferred_context_loading = False
+            transcript._deferred_context_load_ms = (time.monotonic() - start) * 1000.0
 
     threading.Thread(target=_load, name="voice-instant-context", daemon=True).start()
+
+
+def deferred_context_status(transcript: RollingTranscript) -> Tuple[str, Optional[float]]:
+    """Snapshot of the deferred personal-context load for [VOICE-PERF]
+    logging: ``("ready"|"loading"|"absent", load_ms)``.
+
+    ``load_ms`` is only populated once a load has completed ("ready");
+    ``None`` while still "loading" or if a load was never kicked off
+    ("absent" -- e.g. memory/skills disabled in config, or this turn ran
+    before :func:`_start_deferred_context_load`/:func:`warm_instant_lane`
+    ever fired).
+    """
+    if transcript._deferred_context:
+        return "ready", transcript._deferred_context_load_ms
+    if transcript._deferred_context_loading:
+        return "loading", None
+    return "absent", None
 
 
 def _runtime_key(runtime: Dict[str, Any], max_tokens: int) -> Tuple[Any, ...]:
@@ -736,6 +768,7 @@ def _new_instant_agent(runtime: Dict[str, Any], max_tokens: int):
         max_tokens=max_tokens,
         max_iterations=INSTANT_LANE_MAX_ITERATIONS,
         enabled_toolsets=INSTANT_LANE_TOOLSETS,
+        allowed_tool_names=INSTANT_LANE_TOOL_WHITELIST,
         reasoning_config=runtime.get("reasoning_config"),
         quiet_mode=True,
         platform="voice",
@@ -753,6 +786,58 @@ def _new_instant_agent(runtime: Dict[str, Any], max_tokens: int):
     return agent
 
 
+def warm_instant_lane(
+    transcript: RollingTranscript, cfg: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """Resolve + construct the instant-lane ``AIAgent`` and cache it onto
+    ``transcript`` ahead of the first utterance, and kick the deferred
+    personal-context load immediately instead of waiting for first audio.
+
+    Meant to run on a background thread right at duplex session open (see
+    ``hermes_cli.web_server._DuplexSession.start``), so the first real
+    utterance finds both the agent AND the deferred context already warm
+    (or well underway) instead of paying construction latency on the
+    critical path of the user's first turn.
+
+    This only PRE-POPULATES the same cache slot :func:`stream_instant_reply`
+    already reads (``transcript._instant_agent`` / ``_instant_agent_key``)
+    -- it never gates anything. If this hasn't finished (or failed) by the
+    time the first utterance arrives, :func:`stream_instant_reply`'s own
+    lazy construct-if-missing path is the fallback and behaves exactly as it
+    did before this function existed.
+
+    Returns timing/outcome info for the session-open [VOICE-PERF] line:
+    ``{"ok": True, "construct_ms": float, "provider": str, "model": str}``
+    on success, or ``{"ok": False, "error": str, "construct_ms": float}``
+    on failure (e.g. :class:`InstantLaneUnavailable` -- logged here at
+    WARNING and swallowed, since a failed warm-up must not crash session
+    open; the first real utterance will simply hit the same failure again
+    through the normal error-handling path).
+    """
+    start = time.monotonic()
+    try:
+        runtime = resolve_instant_runtime(cfg)
+        max_tokens = _resolve_instant_max_tokens(cfg)
+        key = _runtime_key(runtime, max_tokens)
+        agent = _new_instant_agent(runtime, max_tokens)
+        construct_ms = (time.monotonic() - start) * 1000.0
+        # Extremely unlikely this early in the session's life, but don't
+        # clobber a slot something else already raced ahead and populated.
+        if transcript._instant_agent is None:
+            transcript._instant_agent = agent
+            transcript._instant_agent_key = key
+        _start_deferred_context_load(transcript, cfg)
+        return {
+            "ok": True,
+            "construct_ms": construct_ms,
+            "provider": runtime.get("provider"),
+            "model": runtime.get("model"),
+        }
+    except Exception as exc:
+        logger.warning("voice_instant_lane: session warm-up failed: %s", exc)
+        return {"ok": False, "error": str(exc), "construct_ms": (time.monotonic() - start) * 1000.0}
+
+
 def stream_instant_reply(
     transcript: RollingTranscript,
     utterance: str,
@@ -760,6 +845,7 @@ def stream_instant_reply(
     allow_escalation: bool = True,
     cfg: Optional[Dict[str, Any]] = None,
     activity_callback: Optional[Callable[[Dict[str, str]], None]] = None,
+    warm_status_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
 ) -> Iterator[str]:
     """Run one capped, tool-armed instant-lane agent turn and stream its text
     deltas.
@@ -789,6 +875,15 @@ def stream_instant_reply(
     "instant model unreachable -> fall back to the main agent" behavior from
     the duplex spec. A failure AFTER at least one delta streamed is logged
     and swallowed -- the caller already has a partial answer to work with.
+
+    ``warm_status_callback``, when given, fires exactly once per call
+    (before any delta) with ``{"hit": bool, "construct_ms": float|None}`` --
+    ``hit=True`` means :func:`warm_instant_lane` (or a prior turn) had
+    already cached a matching agent, so this turn paid no construction
+    latency; ``hit=False`` means this call had to construct one (or two, in
+    the barge-in shadow-agent race below) and ``construct_ms`` is the total
+    time spent doing so. Used by ``hermes_cli.web_server`` for
+    [VOICE-PERF] per-turn logging.
     """
     from agent.iteration_budget import IterationBudget
     from hermes_cli.plugins import clear_thread_tool_whitelist, set_thread_tool_whitelist
@@ -800,15 +895,35 @@ def stream_instant_reply(
 
     key = _runtime_key(runtime, max_tokens)
     cached_agent = transcript._instant_agent
-    if cached_agent is None or transcript._instant_agent_key != key:
+    cache_hit = cached_agent is not None and transcript._instant_agent_key == key
+    construct_ms: Optional[float] = None
+    if not cache_hit:
+        _construct_start = time.monotonic()
         cached_agent = _new_instant_agent(runtime, max_tokens)
+        construct_ms = (time.monotonic() - _construct_start) * 1000.0
         transcript._instant_agent = cached_agent
         transcript._instant_agent_key = key
 
     # Barge-in can leave a cancelled provider call finishing in its worker.
     # Never share an AIAgent concurrently or make the new utterance wait.
     owns_cached_agent = transcript._instant_agent_lock.acquire(blocking=False)
-    agent = cached_agent if owns_cached_agent else _new_instant_agent(runtime, max_tokens)
+    if owns_cached_agent:
+        agent = cached_agent
+    else:
+        # A second, concurrent turn (barge-in race) needs its own shadow
+        # agent -- counts as a miss too since it pays full construction cost.
+        _shadow_start = time.monotonic()
+        agent = _new_instant_agent(runtime, max_tokens)
+        shadow_ms = (time.monotonic() - _shadow_start) * 1000.0
+        cache_hit = False
+        construct_ms = shadow_ms if construct_ms is None else construct_ms + shadow_ms
+
+    if warm_status_callback:
+        try:
+            warm_status_callback({"hit": cache_hit, "construct_ms": construct_ms})
+        except Exception:
+            logger.debug("voice_instant_lane: warm_status_callback failed", exc_info=True)
+
     agent.ephemeral_system_prompt = system_message
     if transcript._deferred_context:
         agent.ephemeral_system_prompt += "\n\n" + transcript._deferred_context

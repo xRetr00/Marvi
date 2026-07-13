@@ -12,6 +12,7 @@ enforcement are exercised without a real agent turn.
 from __future__ import annotations
 
 import threading
+import time
 
 import pytest
 
@@ -571,6 +572,15 @@ class TestStreamInstantReply:
         assert kwargs["load_soul_identity"] is True
         assert kwargs["skip_memory"] is True
 
+    def test_constructs_agent_with_allowed_tool_names_hard_cap(self, fake_agent_cls):
+        """Defense in depth: the tool-DEFINITION path is bounded to the same
+        whitelist set_thread_tool_whitelist enforces at dispatch time, so a
+        future toolset change can't silently widen what check_fn runs for."""
+        list(vil.stream_instant_reply(vil.RollingTranscript(), "hi", cfg={}))
+
+        kwargs = fake_agent_cls.last_instance.kwargs
+        assert kwargs["allowed_tool_names"] == vil.INSTANT_LANE_TOOL_WHITELIST
+
     def test_reuses_warm_agent_and_adds_deferred_context(self, fake_agent_cls):
         transcript = vil.RollingTranscript()
         list(vil.stream_instant_reply(transcript, "hi", cfg={}))
@@ -707,3 +717,169 @@ class TestStreamInstantReply:
         # The whitelist is thread-local to the agent's own worker thread; the
         # calling (test) thread must never have it set.
         assert getattr(plugins._thread_tool_whitelist, "allowed", None) is None
+
+    def test_warm_status_callback_reports_hit_on_pre_warmed_agent(self, fake_agent_cls):
+        transcript = vil.RollingTranscript()
+        list(vil.stream_instant_reply(transcript, "hi", cfg={}))  # first turn: cold miss, warms the cache
+
+        statuses = []
+        list(
+            vil.stream_instant_reply(
+                transcript, "again", cfg={}, warm_status_callback=statuses.append,
+            )
+        )
+
+        assert statuses == [{"hit": True, "construct_ms": None}]
+
+    def test_warm_status_callback_reports_miss_with_construct_ms_when_cold(self, fake_agent_cls):
+        transcript = vil.RollingTranscript()
+        statuses = []
+
+        list(
+            vil.stream_instant_reply(
+                transcript, "hi", cfg={}, warm_status_callback=statuses.append,
+            )
+        )
+
+        assert len(statuses) == 1
+        assert statuses[0]["hit"] is False
+        assert isinstance(statuses[0]["construct_ms"], float)
+        assert statuses[0]["construct_ms"] >= 0.0
+
+    def test_warm_status_callback_failure_does_not_break_the_turn(self, monkeypatch, fake_agent_cls):
+        def boom(_status):
+            raise RuntimeError("callback exploded")
+
+        deltas = list(
+            vil.stream_instant_reply(
+                vil.RollingTranscript(), "hi", cfg={}, warm_status_callback=boom,
+            )
+        )
+        assert deltas == ["Hi", " there."]
+
+
+# ---------------------------------------------------------------------------
+# warm_instant_lane -- session-open pre-warm (called from
+# hermes_cli.web_server._DuplexSession.start on WS connect).
+# ---------------------------------------------------------------------------
+
+
+class TestWarmInstantLane:
+    @pytest.fixture(autouse=True)
+    def _stub_runtime(self, monkeypatch):
+        monkeypatch.setattr(
+            vil,
+            "resolve_instant_runtime",
+            lambda cfg=None: {
+                "provider": "test-provider",
+                "model": "test-model",
+                "base_url": None,
+                "api_key": None,
+                "api_mode": None,
+                "reasoning_config": None,
+            },
+        )
+
+    def test_constructs_and_caches_the_agent(self, fake_agent_cls):
+        transcript = vil.RollingTranscript()
+
+        result = vil.warm_instant_lane(transcript, cfg={})
+
+        assert result["ok"] is True
+        assert isinstance(result["construct_ms"], float)
+        assert result["provider"] == "test-provider"
+        assert result["model"] == "test-model"
+        assert transcript._instant_agent is fake_agent_cls.last_instance
+        assert transcript._instant_agent_key is not None
+
+    def test_kicks_off_the_deferred_context_load(self, fake_agent_cls, monkeypatch):
+        started = threading.Event()
+
+        def fake_build(cfg):
+            started.set()
+            return "some context"
+
+        monkeypatch.setattr(vil, "_build_deferred_context", fake_build)
+
+        transcript = vil.RollingTranscript()
+        vil.warm_instant_lane(transcript, cfg={})
+
+        assert started.wait(timeout=2.0)
+
+    def test_first_turn_after_warmup_reuses_the_warmed_agent(self, fake_agent_cls):
+        transcript = vil.RollingTranscript()
+        vil.warm_instant_lane(transcript, cfg={})
+        warmed_agent = fake_agent_cls.last_instance
+
+        statuses = []
+        deltas = list(
+            vil.stream_instant_reply(
+                transcript, "hello", cfg={}, warm_status_callback=statuses.append,
+            )
+        )
+
+        assert deltas == ["Hi", " there."]
+        assert fake_agent_cls.last_instance is warmed_agent
+        assert statuses == [{"hit": True, "construct_ms": None}]
+
+    def test_does_not_clobber_an_agent_already_cached(self, fake_agent_cls):
+        """Extremely unlikely race (something else warmed the slot first),
+        but warm_instant_lane must never stomp on it."""
+        transcript = vil.RollingTranscript()
+        sentinel = object()
+        transcript._instant_agent = sentinel
+        transcript._instant_agent_key = ("already", "warm")
+
+        vil.warm_instant_lane(transcript, cfg={})
+
+        assert transcript._instant_agent is sentinel
+
+    def test_failure_is_caught_and_reported_not_raised(self, monkeypatch):
+        def boom(cfg=None):
+            raise vil.InstantLaneUnavailable("no instant model configured")
+
+        monkeypatch.setattr(vil, "resolve_instant_runtime", boom)
+        transcript = vil.RollingTranscript()
+
+        result = vil.warm_instant_lane(transcript, cfg={})
+
+        assert result["ok"] is False
+        assert "no instant model configured" in result["error"]
+        assert transcript._instant_agent is None
+
+
+# ---------------------------------------------------------------------------
+# deferred_context_status
+# ---------------------------------------------------------------------------
+
+
+class TestDeferredContextStatus:
+    def test_absent_before_any_load_starts(self):
+        transcript = vil.RollingTranscript()
+        assert vil.deferred_context_status(transcript) == ("absent", None)
+
+    def test_loading_while_in_flight(self):
+        transcript = vil.RollingTranscript()
+        transcript._deferred_context_loading = True
+        assert vil.deferred_context_status(transcript) == ("loading", None)
+
+    def test_ready_with_load_ms_once_complete(self):
+        transcript = vil.RollingTranscript()
+        transcript._deferred_context = "some context"
+        transcript._deferred_context_load_ms = 42.5
+        assert vil.deferred_context_status(transcript) == ("ready", 42.5)
+
+    def test_start_deferred_context_load_populates_load_ms(self, monkeypatch):
+        monkeypatch.setattr(vil, "_build_deferred_context", lambda cfg: "built context")
+        transcript = vil.RollingTranscript()
+
+        vil._start_deferred_context_load(transcript, {})
+
+        # Poll briefly for the background thread to finish.
+        start = time.monotonic()
+        while time.monotonic() - start < 2.0 and transcript._deferred_context_loading:
+            time.sleep(0.01)
+
+        status, load_ms = vil.deferred_context_status(transcript)
+        assert status == "ready"
+        assert load_ms is not None and load_ms >= 0.0

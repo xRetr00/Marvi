@@ -1,6 +1,7 @@
 import { atom, computed } from 'nanostores'
 
 import { getProfiles, setApiRequestProfile, STARTUP_REQUEST_TIMEOUT_MS } from '@/hermes'
+import { logPingRoundTrip } from '@/lib/conn-perf'
 import { queryClient } from '@/lib/query-client'
 import {
   arraysEqual,
@@ -399,9 +400,18 @@ export function requestProfileCreate(): void {
 // Keepalive ping for the active pool backend so the main-process idle reaper
 // (which can't see the direct renderer↔backend WS) spares it. No-op for the
 // primary/default backend, which is never pooled.
+//
+// This is also the closest thing to an existing "ping/health mechanism" for
+// the gateway connection path, so [CONN-PERF] reuses its round trip as the
+// periodic connection-health probe (see lib/conn-perf.ts) rather than
+// standing up a separate WS ping protocol.
 export function touchActiveGatewayBackend(): void {
   // Always ping: the main process no-ops for non-pool (primary) backends, so we
   // don't need to know which profile is primary from here.
   const target = normalizeProfileKey($activeGatewayProfile.get())
-  void window.hermesDesktop?.touchBackend?.(target).catch(() => undefined)
+  const start = performance.now()
+  void window.hermesDesktop
+    ?.touchBackend?.(target)
+    .then(() => logPingRoundTrip(performance.now() - start, true, target))
+    .catch(() => logPingRoundTrip(performance.now() - start, false, target))
 }

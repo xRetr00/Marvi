@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import struct
+import threading
 import time
 
 import pytest
@@ -201,9 +202,17 @@ def identify_speaker(monkeypatch):
 
 @pytest.fixture
 def instant_reply(monkeypatch):
-    state = {"deltas": ["Hi", " there."], "raises": None, "delay": 0.0, "activity": None}
+    state = {
+        "deltas": ["Hi", " there."], "raises": None, "delay": 0.0, "activity": None,
+        "warm_status": {"hit": True, "construct_ms": None}, "warm_calls": [],
+    }
 
-    def fake_stream(transcript, utterance, *, allow_escalation, activity_callback=None):
+    def fake_stream(
+        transcript, utterance, *, allow_escalation, activity_callback=None, warm_status_callback=None,
+    ):
+        if warm_status_callback is not None:
+            state["warm_calls"].append(state["warm_status"])
+            warm_status_callback(state["warm_status"])
         if state["raises"] is not None:
             raise state["raises"]
         if state["activity"] and activity_callback:
@@ -259,7 +268,22 @@ def deep_task(monkeypatch):
 
 
 @pytest.fixture
-def full_fakes(stt_session, identify_speaker, instant_reply, tts_chunks, vad_gate, deep_task):
+def warm_lane(monkeypatch):
+    state = {
+        "calls": [],
+        "result": {"ok": True, "construct_ms": 12.5, "provider": "fake-provider", "model": "fake-model"},
+    }
+
+    def fake_warm(transcript, cfg):
+        state["calls"].append({"transcript": transcript, "cfg": cfg})
+        return state["result"]
+
+    monkeypatch.setattr(web_server, "_duplex_warm_instant_lane", fake_warm)
+    return state
+
+
+@pytest.fixture
+def full_fakes(stt_session, identify_speaker, instant_reply, tts_chunks, vad_gate, deep_task, warm_lane):
     return {
         "stt": stt_session,
         "identify": identify_speaker,
@@ -267,6 +291,7 @@ def full_fakes(stt_session, identify_speaker, instant_reply, tts_chunks, vad_gat
         "tts": tts_chunks,
         "vad": vad_gate,
         "deep": deep_task,
+        "warm": warm_lane,
     }
 
 
@@ -744,3 +769,300 @@ def test_instant_lane_down_and_non_owner_still_only_errors_once(duplex_client, f
 
         time.sleep(0.05)
         assert full_fakes["deep"]["calls"] == []
+
+
+# ---------------------------------------------------------------------------
+# Instant-lane warm-up at session open
+# ---------------------------------------------------------------------------
+
+
+def test_warmup_runs_on_connect_before_first_utterance(duplex_client, full_fakes):
+    """The instant lane must warm up as soon as the WS connects -- not
+    lazily on the first utterance."""
+    with duplex_client.websocket_connect(_duplex_url()) as conn:
+        assert conn.receive_json() == {"type": "ready"}
+
+    deadline = time.monotonic() + 2.0
+    while time.monotonic() < deadline and not full_fakes["warm"]["calls"]:
+        time.sleep(0.01)
+    assert len(full_fakes["warm"]["calls"]) == 1
+
+
+def test_warmup_does_not_block_the_ready_event(duplex_client, full_fakes, monkeypatch):
+    """Warm-up runs on a background thread; a slow warm-up must not delay
+    ``ready``."""
+    def slow_warm(transcript, cfg):
+        time.sleep(2.0)
+        return {"ok": True, "construct_ms": 2000.0}
+
+    monkeypatch.setattr(web_server, "_duplex_warm_instant_lane", slow_warm)
+
+    start = time.monotonic()
+    with duplex_client.websocket_connect(_duplex_url()) as conn:
+        assert conn.receive_json() == {"type": "ready"}
+    assert time.monotonic() - start < 1.0
+
+
+def test_first_utterance_finds_pre_warmed_agent(duplex_client, full_fakes):
+    """A turn arriving after warm-up completed must reuse the same warm
+    state rather than re-triggering construction from scratch -- exercised
+    here via the seam: warm-up ran once at connect, and the instant-reply
+    fake reports the warm hit it was told to report."""
+    full_fakes["instant"]["warm_status"] = {"hit": True, "construct_ms": None}
+    stt = full_fakes["stt"]
+    stt.queue_response("", True)
+    stt.final_text = "hello"
+
+    with duplex_client.websocket_connect(_duplex_url()) as conn:
+        conn.receive_json()  # ready
+        conn.send_json(_audio_msg(_pcm16_chunk()))
+        _recv_until(conn, "tts_end")
+
+    assert full_fakes["instant"]["warm_calls"] == [{"hit": True, "construct_ms": None}]
+
+
+def test_lazy_fallback_still_works_when_warmup_reports_a_miss(duplex_client, full_fakes):
+    """If warm-up hasn't finished (or failed), the instant lane's own lazy
+    construct-if-missing path is the documented fallback -- the turn still
+    completes normally, just reporting a cache miss."""
+    full_fakes["warm"]["result"] = {"ok": False, "error": "not ready yet", "construct_ms": 5.0}
+    full_fakes["instant"]["warm_status"] = {"hit": False, "construct_ms": 812.0}
+    stt = full_fakes["stt"]
+    stt.queue_response("", True)
+    stt.final_text = "hello"
+
+    with duplex_client.websocket_connect(_duplex_url()) as conn:
+        conn.receive_json()  # ready
+        conn.send_json(_audio_msg(_pcm16_chunk()))
+        frames = _drain_until(conn, {"tts_end"})
+        deltas = [f["text"] for f in frames if f["type"] == "instant_delta"]
+        assert deltas == ["Hi", " there."]
+
+
+# ---------------------------------------------------------------------------
+# [VOICE-PERF] structured logging
+# ---------------------------------------------------------------------------
+
+
+def _read_voice_perf_lines(timeout: float = 5.0) -> list[str]:
+    from hermes_constants import get_hermes_home
+
+    path = get_hermes_home() / "logs" / "voice-perf.log"
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if path.exists():
+            text = path.read_text(encoding="utf-8")
+            if text.strip():
+                return [line for line in text.splitlines() if line.strip()]
+        time.sleep(0.02)
+    return []
+
+
+def test_session_open_perf_line_is_emitted(duplex_client, full_fakes):
+    with duplex_client.websocket_connect(_duplex_url()) as conn:
+        conn.receive_json()  # ready
+
+    lines = _read_voice_perf_lines()
+    session_lines = [l for l in lines if "session_open" in l]
+    assert session_lines, f"no session_open [VOICE-PERF] line found in {lines!r}"
+    line = session_lines[0]
+    assert "[VOICE-PERF] session_open" in line
+    assert "session_id=" in line
+    assert "agent_warm_ok=true" in line
+    assert "agent_warm_construct_ms=12" in line
+    assert "provider=fake-provider" in line
+    assert "model=fake-model" in line
+
+
+def test_turn_perf_line_has_all_documented_fields(duplex_client, full_fakes):
+    stt = full_fakes["stt"]
+    stt.queue_response("", True)
+    stt.final_text = "what time is it"
+
+    with duplex_client.websocket_connect(_duplex_url()) as conn:
+        conn.receive_json()  # ready
+        conn.send_json(_audio_msg(_pcm16_chunk()))
+        _recv_until(conn, "tts_end")
+
+    lines = _read_voice_perf_lines()
+    turn_lines = [l for l in lines if " turn " in l]
+    assert turn_lines, f"no turn [VOICE-PERF] line found in {lines!r}"
+    line = turn_lines[-1]
+    assert line.startswith("[VOICE-PERF] turn") or "[VOICE-PERF] turn" in line
+    for field in (
+        "session_id=", "utterance_id=", "eou_to_instant_start_ms=",
+        "instant_first_delta_ms=", "first_delta_to_first_tts_chunk_ms=",
+        "total_first_audio_ms=", "agent_warm=", "agent_warm_construct_ms=",
+        "deferred_context=", "deferred_context_load_ms=", "tts_max_gap_ms=",
+        "escalated=",
+    ):
+        assert field in line, f"missing {field!r} in perf line: {line!r}"
+    assert "escalated=false" in line
+
+
+def test_turn_perf_line_marks_escalated_turns(duplex_client, full_fakes):
+    full_fakes["instant"]["deltas"] = ["[ESCALATE] On it, one sec."]
+    full_fakes["deep"]["text"] = "Here's what I found."
+    stt = full_fakes["stt"]
+    stt.queue_response("", True)
+    stt.final_text = "plan my whole week"
+
+    with duplex_client.websocket_connect(_duplex_url()) as conn:
+        conn.receive_json()  # ready
+        conn.send_json(_audio_msg(_pcm16_chunk()))
+        _recv_until(conn, "deep_result", timeout=10.0)
+
+    lines = _read_voice_perf_lines()
+    turn_lines = [l for l in lines if " turn " in l]
+    assert any("escalated=true" in l for l in turn_lines)
+
+
+# ---------------------------------------------------------------------------
+# TTS synth-ahead pipeline
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def ordered_tts_chunks(monkeypatch):
+    """Unlike the generic ``tts_chunks`` fixture, echoes the synthesized
+    sentence back in the chunk's ``audio`` field (base64) so a test can
+    verify chunks were emitted in submission order even though synthesis
+    itself may run concurrently across sentences."""
+    calls: list[str] = []
+
+    def fake_stream(text):
+        calls.append(text)
+        payload = base64.b64encode(text.encode("utf-8")).decode("ascii")
+        return [
+            {"type": "start", "sample_rate": 24000},
+            {"type": "chunk", "audio": payload},
+            {"type": "end"},
+        ]
+
+    monkeypatch.setattr(web_server, "_duplex_stream_tts_chunks", fake_stream)
+    return calls
+
+
+def test_synth_ahead_preserves_sentence_order_on_the_wire(
+    duplex_client, stt_session, identify_speaker, ordered_tts_chunks, vad_gate, deep_task, warm_lane, monkeypatch,
+):
+    """Sentences synthesize with bounded lookahead (possibly out of synthesis
+    order across the two workers), but chunks must still land on the wire in
+    submission order."""
+    def fake_stream(transcript, utterance, *, allow_escalation, activity_callback=None, warm_status_callback=None):
+        for d in ["First sentence. ", "Second sentence. ", "Third sentence."]:
+            yield d
+
+    monkeypatch.setattr(web_server, "_duplex_stream_instant_reply", fake_stream)
+
+    stt_session.queue_response("", True)
+    stt_session.final_text = "tell me three things"
+
+    with duplex_client.websocket_connect(_duplex_url()) as conn:
+        conn.receive_json()  # ready
+        conn.send_json(_audio_msg(_pcm16_chunk()))
+        _recv_until(conn, "utterance")
+
+        frames = _drain_until(conn, {"tts_end"})
+
+    chunks = [f for f in frames if f["type"] == "tts_chunk"]
+    decoded = [base64.b64decode(f["data"]).decode("utf-8") for f in chunks]
+    assert decoded == ["First sentence.", "Second sentence.", "Third sentence."]
+    # seq is monotonically increasing across the whole turn, not reset
+    # per-sentence -- proves all three shared one tts_start/tts_end cycle.
+    assert [f["seq"] for f in chunks] == [1, 2, 3]
+
+
+def test_synth_ahead_reports_gap_between_sentences_in_perf_line(
+    duplex_client, stt_session, identify_speaker, vad_gate, deep_task, warm_lane, monkeypatch,
+):
+    """A synthesis backend with a deliberate per-call delay produces a
+    measurable tts_max_gap_ms in the turn's [VOICE-PERF] line."""
+    def fake_tts_stream(text):
+        time.sleep(0.05)
+        return [{"type": "start", "sample_rate": 24000}, {"type": "chunk", "audio": "AAA="}, {"type": "end"}]
+
+    def fake_instant_stream(transcript, utterance, *, allow_escalation, activity_callback=None, warm_status_callback=None):
+        for d in ["First. ", "Second."]:
+            yield d
+
+    monkeypatch.setattr(web_server, "_duplex_stream_tts_chunks", fake_tts_stream)
+    monkeypatch.setattr(web_server, "_duplex_stream_instant_reply", fake_instant_stream)
+
+    stt_session.queue_response("", True)
+    stt_session.final_text = "tell me two things"
+
+    with duplex_client.websocket_connect(_duplex_url()) as conn:
+        conn.receive_json()  # ready
+        conn.send_json(_audio_msg(_pcm16_chunk()))
+        _recv_until(conn, "tts_end")
+
+    lines = _read_voice_perf_lines()
+    turn_lines = [l for l in lines if " turn " in l]
+    assert turn_lines
+    # Some non-trivial gap value was recorded (a plain int, not the "-"
+    # placeholder used when unavailable).
+    import re
+
+    m = re.search(r"tts_max_gap_ms=(\S+)", turn_lines[-1])
+    assert m is not None
+    assert m.group(1) != "-"
+
+
+# ---------------------------------------------------------------------------
+# Barge-in cancels the TTS pipeline promptly
+# ---------------------------------------------------------------------------
+
+
+def test_barge_in_drops_queued_but_unemitted_sentences(
+    duplex_client, stt_session, identify_speaker, vad_gate, deep_task, warm_lane, monkeypatch,
+):
+    """A sentence still queued/mid-synthesis in the pipeline when barge-in
+    fires must never reach the wire."""
+    release = threading.Event()
+
+    def slow_tts_stream(text):
+        # First sentence's synthesis blocks until released -- gives the test
+        # time to trigger barge-in while a second sentence is still queued
+        # behind it, unsynthesized.
+        if "First" in text:
+            release.wait(timeout=5.0)
+        return [{"type": "start", "sample_rate": 24000}, {"type": "chunk", "audio": "AAA="}, {"type": "end"}]
+
+    def fake_instant_stream(transcript, utterance, *, allow_escalation, activity_callback=None, warm_status_callback=None):
+        for d in ["First. ", "Second. ", "Third."]:
+            yield d
+
+    monkeypatch.setattr(web_server, "_duplex_stream_tts_chunks", slow_tts_stream)
+    monkeypatch.setattr(web_server, "_duplex_stream_instant_reply", fake_instant_stream)
+
+    stt_session.queue_response("", True)
+    stt_session.final_text = "tell me three things"
+
+    with duplex_client.websocket_connect(_duplex_url()) as conn:
+        conn.receive_json()  # ready
+        conn.send_json(_audio_msg(_pcm16_chunk()))
+        _recv_until(conn, "utterance")
+
+        # Trigger barge-in while the first sentence's synthesis is still
+        # blocked (so "Second"/"Third" are queued but never emitted).
+        vad_gate.speaking = True
+        for _ in range(30):
+            conn.send_json(_audio_msg(_pcm16_chunk()))
+        barge_in = _recv_until(conn, "barge_in", timeout=10.0)
+        assert barge_in == {"type": "barge_in"}
+        release.set()
+
+        # Send a second, immediately-final utterance right after barge-in --
+        # `conn.receive_json()` has no per-call timeout, so rather than
+        # polling for "nothing else arrives" (unbounded if it never does),
+        # bound the wait on a frame that MUST eventually arrive and inspect
+        # everything collected along the way.
+        vad_gate.speaking = False
+        stt_session.queue_response("", True)
+        stt_session.final_text = "second utterance"
+        conn.send_json(_audio_msg(_pcm16_chunk()))
+        frames = _drain_until(conn, {"utterance"}, timeout=10.0)
+
+        assert not any(f["type"] in ("tts_chunk", "tts_start") for f in frames)
+        assert frames[-1]["text"] == "second utterance"

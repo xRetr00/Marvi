@@ -134,6 +134,83 @@ describe('DuplexSessionMachine', () => {
     })
   })
 
+  describe('phase-downgrade guard (no flapping while audio plays/queues)', () => {
+    it('instant_delta arriving after tts_start accumulates replyText but does not knock phase down to replying', () => {
+      const machine = new DuplexSessionMachine()
+      machine.applyEvent({ type: 'tts_start' })
+      machine.applyEvent({ type: 'tts_chunk', data: 'AAAA', seq: 0 })
+
+      // Next sentence's text streams in while the current sentence's audio is
+      // still playing/queued — this used to flip phase to 'replying' ("[phase]
+      // thinking") even though audio kept playing underneath it.
+      machine.applyEvent({ type: 'instant_delta', text: 'And another thing, ' })
+
+      expect(machine.state.phase).toBe('speaking')
+      expect(machine.state.replyText).toBe('And another thing, ')
+
+      machine.applyEvent({ type: 'instant_delta', text: 'the sky is blue.' })
+      expect(machine.state.phase).toBe('speaking')
+      expect(machine.state.replyText).toBe('And another thing, the sky is blue.')
+    })
+
+    it('instant_done arriving after tts_start replaces replyText but does not knock phase down to replying', () => {
+      const machine = new DuplexSessionMachine()
+      machine.applyEvent({ type: 'tts_start' })
+
+      machine.applyEvent({ type: 'instant_done', text: 'Final sentence text.' })
+
+      expect(machine.state.phase).toBe('speaking')
+      expect(machine.state.replyText).toBe('Final sentence text.')
+      expect(machine.state.replySource).toBe('instant')
+    })
+
+    it('covers a full TTS-sentence-gap turn: tts_end, then next sentence text streams in before the next tts_start, phase never leaves speaking until playback drains', () => {
+      const machine = new DuplexSessionMachine()
+      machine.applyEvent({ type: 'tts_start' })
+      machine.applyEvent({ type: 'tts_chunk', data: 'AAAA', seq: 0 })
+      machine.applyEvent({ type: 'tts_end' })
+      expect(machine.state.phase).toBe('speaking')
+
+      // Server gap between sentences: next sentence's reply text arrives
+      // before its tts_start, while the previous sentence's audio may still
+      // be draining in the audio transport.
+      machine.applyEvent({ type: 'instant_delta', text: 'Next sentence...' })
+      expect(machine.state.phase).toBe('speaking')
+
+      machine.applyEvent({ type: 'tts_start' })
+      expect(machine.state.phase).toBe('speaking')
+
+      // Only once THIS sentence's playback actually drains (its own tts_end
+      // fires the watch tts_start above reset) does the phase leave speaking.
+      machine.applyEvent({ type: 'tts_end' })
+      const commands = machine.notifyPlaybackFinished()
+      expect(commands).toEqual([{ type: 'send_playback_done' }])
+      expect(machine.state.phase).toBe('listening')
+    })
+
+    it('a barge_in still tears speaking down to listening immediately even mid-guard', () => {
+      const machine = new DuplexSessionMachine()
+      machine.applyEvent({ type: 'tts_start' })
+      machine.applyEvent({ type: 'instant_delta', text: 'partial next sentence' })
+      expect(machine.state.phase).toBe('speaking')
+
+      const commands = machine.applyEvent({ type: 'barge_in' })
+
+      expect(commands).toEqual([{ type: 'reset_playback' }])
+      expect(machine.state.phase).toBe('listening')
+      expect(machine.state.replyText).toBeNull()
+    })
+
+    it('instant_delta before any tts_start (normal reply flow, not speaking yet) still enters replying as before', () => {
+      const machine = new DuplexSessionMachine()
+      machine.applyEvent({ type: 'utterance', text: 'hi', speaker: 'owner' })
+      machine.applyEvent({ type: 'instant_delta', text: 'Hello' })
+
+      expect(machine.state.phase).toBe('replying')
+      expect(machine.state.replyText).toBe('Hello')
+    })
+  })
+
   describe('barge-in', () => {
     it('kills playback and returns to listening immediately, clearing the in-flight reply', () => {
       const machine = new DuplexSessionMachine()

@@ -141,8 +141,17 @@ export class DuplexSessionMachine {
         return []
 
       case 'instant_delta':
+        // Guard against the "phase flapping" bug: once tts_start has moved us
+        // to 'speaking', an instant_delta for the NEXT sentence (multi-sentence
+        // replies stream reply-text and audio concurrently, so text for the
+        // next chunk can easily arrive before this chunk's audio has drained)
+        // must not knock the presented phase back down to 'replying' while
+        // audio is still playing/queued. Text keeps accumulating either way —
+        // only the phase (and therefore the `[phase]` log + island UI) holds
+        // at 'speaking' until playback actually drains (notifyPlaybackFinished)
+        // or a barge_in tears it down.
         this.patch({
-          phase: 'replying',
+          phase: this._state.phase === 'speaking' ? 'speaking' : 'replying',
           replySource: this._state.replySource ?? 'instant',
           replyText: (this._state.replyText ?? '') + event.text
         })
@@ -150,7 +159,13 @@ export class DuplexSessionMachine {
         return []
 
       case 'instant_done':
-        this.patch({ phase: 'replying', replySource: 'instant', replyText: event.text, activity: null })
+        // Same guard as instant_delta above — see comment there.
+        this.patch({
+          phase: this._state.phase === 'speaking' ? 'speaking' : 'replying',
+          replySource: 'instant',
+          replyText: event.text,
+          activity: null
+        })
 
         return []
 

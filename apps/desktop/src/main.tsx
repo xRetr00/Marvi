@@ -8,6 +8,7 @@ import { createRoot } from 'react-dom/client'
 import { HashRouter } from 'react-router-dom'
 
 import App from './app'
+import { startPerfMonitor } from './app/perf-monitor'
 import { ErrorBoundary } from './components/error-boundary'
 import { HapticsProvider } from './components/haptics-provider'
 import { I18nProvider } from './i18n'
@@ -36,6 +37,9 @@ if (win === 'overlay') {
 } else if (win === 'island') {
   void import('./app/voice-island/island-root').then(({ mountVoiceIsland }) => mountVoiceIsland())
 } else {
+  // Primary window only — longtask/freeze instrumentation, see app/perf-monitor.ts.
+  startPerfMonitor()
+
   createRoot(document.getElementById('root')!).render(
     <StrictMode>
       <ErrorBoundary label="root">

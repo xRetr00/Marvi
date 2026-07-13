@@ -20493,7 +20493,12 @@ async def start_gateway(config: Optional[GatewayConfig] = None, replace: bool = 
                 if not _pid_exists(existing_pid):
                     old_gateway_exited = True
                     break  # Process is gone
-                time.sleep(0.5)
+                # start_gateway() is a coroutine on the process's single
+                # event loop; a synchronous time.sleep() here would block it
+                # (harmless today since nothing else runs this early in
+                # startup, but asyncio.sleep() costs nothing and removes the
+                # foot-gun if that ever changes).
+                await asyncio.sleep(0.5)
             else:
                 # Still alive after 10s — force kill
                 logger.warning(
@@ -20517,7 +20522,7 @@ async def start_gateway(config: Optional[GatewayConfig] = None, replace: bool = 
                         if not _pid_exists(existing_pid):
                             old_gateway_exited = True
                             break
-                        time.sleep(0.25)
+                        await asyncio.sleep(0.25)
                 if not old_gateway_exited:
                     logger.error(
                         "Old gateway (PID %d) still appears alive after SIGKILL; "
@@ -20865,6 +20870,18 @@ async def start_gateway(config: Optional[GatewayConfig] = None, replace: bool = 
             raise SystemExit(runner.exit_code)
         return True
     
+    # Event-loop lag watchdog (gateway/loop_watchdog.py) — mirrors how
+    # gateway.memory_monitor is started from hermes_cli/web_server.py: a
+    # best-effort background thread, guarded so a failure to start never
+    # blocks gateway startup. Must start here (inside the running
+    # start_gateway coroutine, before the long wait_for_shutdown() below)
+    # so it binds to the actual serving loop.
+    try:
+        from gateway.loop_watchdog import start_loop_watchdog
+        start_loop_watchdog()
+    except Exception:
+        logger.debug("Could not start event-loop lag watchdog", exc_info=True)
+
     # Start the background cron scheduler via the resolved provider so
     # scheduled jobs fire automatically. The built-in provider is the
     # historical in-process 60s ticker; an external provider (e.g. chronos)
@@ -20896,6 +20913,12 @@ async def start_gateway(config: Optional[GatewayConfig] = None, replace: bool = 
     
     # Wait for shutdown
     await runner.wait_for_shutdown()
+
+    try:
+        from gateway.loop_watchdog import stop_loop_watchdog
+        stop_loop_watchdog()
+    except Exception:
+        pass
 
     try:
         from hermes_cli.nous_auth_keepalive import stop_nous_auth_keepalive

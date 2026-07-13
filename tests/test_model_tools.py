@@ -587,3 +587,72 @@ class TestDisabledToolsetsPostureToolset:
             )
         }
         assert "write_file" not in no_file
+
+
+class TestAllowedToolNames:
+    """``allowed_tool_names`` -- the minimal opt-in hard cap intersected
+    with resolved toolsets BEFORE registry.get_definitions() (and therefore
+    check_fn) ever sees the name set. Added for tools/voice_instant_lane.py's
+    instant lane (see its module docstring / INSTANT_LANE_TOOLSETS comment)."""
+
+    def test_intersects_resolved_toolset_down_to_the_allowed_set(self):
+        from model_tools import get_tool_definitions
+
+        tools = get_tool_definitions(
+            enabled_toolsets=["file", "memory", "session_search"],
+            allowed_tool_names={"read_file", "memory", "session_search"},
+            quiet_mode=True,
+        )
+        names = {t["function"]["name"] for t in tools}
+        assert names == {"read_file", "memory", "session_search"}
+        assert "write_file" not in names
+        assert "patch" not in names
+        assert "search_files" not in names
+
+    def test_never_widens_beyond_what_toolsets_resolved(self):
+        """allowed_tool_names is a cap, not an addition -- a name outside
+        the resolved toolsets never appears just because it's listed."""
+        from model_tools import get_tool_definitions
+
+        tools = get_tool_definitions(
+            enabled_toolsets=["memory"],
+            allowed_tool_names={"memory", "terminal", "kanban_show"},
+            quiet_mode=True,
+        )
+        names = {t["function"]["name"] for t in tools}
+        assert names == {"memory"}
+
+    def test_omitted_keeps_full_toolset_resolution_unchanged(self):
+        """Behavior-preserving default: callers that don't pass
+        allowed_tool_names see exactly what toolset resolution alone would
+        give them, same as before this parameter existed."""
+        from model_tools import get_tool_definitions
+
+        tools = get_tool_definitions(enabled_toolsets=["file"], quiet_mode=True)
+        names = {t["function"]["name"] for t in tools}
+        assert {"read_file", "write_file", "patch", "search_files"} <= names
+
+    def test_registry_get_definitions_only_receives_the_allowed_names(self, monkeypatch):
+        """The real assertion behind "check_fn never runs for an excluded
+        tool": registry.get_definitions() -- the ONLY place check_fn is
+        invoked (tools/registry.py) -- must never even be called with a
+        name outside allowed_tool_names."""
+        import model_tools
+
+        captured = {}
+
+        def fake_get_definitions(tool_names, quiet=False):
+            captured["tool_names"] = set(tool_names)
+            return []
+
+        monkeypatch.setattr(model_tools.registry, "get_definitions", fake_get_definitions)
+
+        model_tools.get_tool_definitions(
+            enabled_toolsets=["file", "web", "memory", "session_search"],
+            allowed_tool_names={"read_file", "web_search", "memory", "session_search"},
+            quiet_mode=False,  # bypass the memoization cache so this always recomputes
+        )
+
+        assert captured["tool_names"] == {"read_file", "web_search", "memory", "session_search"}
+        assert "write_file" not in captured["tool_names"]
+        assert "web_extract" not in captured["tool_names"]

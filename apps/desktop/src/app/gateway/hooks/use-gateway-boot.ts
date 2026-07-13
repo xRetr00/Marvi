@@ -4,6 +4,7 @@ import { useEffect, useRef } from 'react'
 import type { HermesConnection } from '@/global'
 import { HermesGateway } from '@/hermes'
 import { translateNow } from '@/i18n'
+import { logConnectDuration, logReconnectAttempt, noteReconnectRate } from '@/lib/conn-perf'
 import { desktopDefaultCwd } from '@/lib/desktop-fs'
 import {
   $desktopBoot,
@@ -123,6 +124,22 @@ export function useGatewayBoot({
     // genuinely changes between reads).
     const gatewayOpen = () => gateway.connectionState === 'open'
 
+    // [CONN-PERF] connect start → ready (or start → failed) duration, for
+    // every dial site (boot / reconnect / soft-switch) — see lib/conn-perf.ts.
+    // gateway.connect() resolves exactly at 'open', so its own start/settle
+    // IS the "connect start → ready" window; no separate start-line is logged.
+    const timedConnect = async (label: string, wsUrl: string): Promise<void> => {
+      const startedAt = performance.now()
+
+      try {
+        await gateway.connect(wsUrl)
+        logConnectDuration(label, performance.now() - startedAt, true)
+      } catch (err) {
+        logConnectDuration(label, performance.now() - startedAt, false, err instanceof Error ? err.message : String(err))
+        throw err
+      }
+    }
+
     const clearReconnectTimer = () => {
       if (reconnectTimer !== null) {
         clearTimeout(reconnectTimer)
@@ -130,12 +147,14 @@ export function useGatewayBoot({
       }
     }
 
-    const attemptReconnect = async () => {
+    const attemptReconnect = async (reason: string) => {
       if (cancelled || reconnecting || gatewayOpen() || $gatewaySwitching.get()) {
         return
       }
 
       reconnecting = true
+      logReconnectAttempt(reconnectAttempt, reason)
+      noteReconnectRate(reason, performance.now())
 
       try {
         // Drop a stale REMOTE backend cache before re-dialing. After sleep/wake a
@@ -160,7 +179,7 @@ export function useGatewayBoot({
         // than connecting with a stale one). For local/token gateways the URL
         // carries a long-lived token and the re-mint is a cheap no-op.
         const wsUrl = await resolveGatewayWsUrl(desktop, conn)
-        await gateway.connect(wsUrl)
+        await timedConnect('reconnect', wsUrl)
 
         if (cancelled) {
           return
@@ -188,12 +207,12 @@ export function useGatewayBoot({
             failDesktopBoot(translateNow('boot.errors.gatewayConnectionLost'))
           }
 
-          scheduleReconnect()
+          scheduleReconnect('retry-backoff')
         }
       }
     }
 
-    function scheduleReconnect() {
+    function scheduleReconnect(reason: string) {
       if (cancelled || reconnecting || reconnectTimer !== null || gatewayOpen() || $gatewaySwitching.get()) {
         return
       }
@@ -203,11 +222,11 @@ export function useGatewayBoot({
       reconnectAttempt += 1
       reconnectTimer = setTimeout(() => {
         reconnectTimer = null
-        void attemptReconnect()
+        void attemptReconnect(reason)
       }, delay)
     }
 
-    const reconnectNow = () => {
+    const reconnectNow = (reason: string) => {
       if (cancelled || !bootCompleted || $gatewaySwitching.get()) {
         return
       }
@@ -218,7 +237,7 @@ export function useGatewayBoot({
       reconnectSecondaryGateways()
 
       if (!gatewayOpen()) {
-        void attemptReconnect()
+        void attemptReconnect(reason)
       }
     }
 
@@ -276,7 +295,7 @@ export function useGatewayBoot({
 
         publish(conn)
         const wsUrl = await resolveGatewayWsUrl(desktop, conn)
-        await gateway.connect(wsUrl)
+        await timedConnect('soft-switch', wsUrl)
 
         if (cancelled) {
           return
@@ -313,6 +332,7 @@ export function useGatewayBoot({
 
       applyDesktopBootProgress(payload)
     })
+
     void desktop
       .getBootProgress()
       .then(snapshot => applyDesktopBootProgress(snapshot))
@@ -352,7 +372,7 @@ export function useGatewayBoot({
       } else if (bootCompleted && !$gatewaySwitching.get() && (st === 'closed' || st === 'error')) {
         // The socket dropped after a healthy boot (typically sleep/wake). Try
         // to bring it back instead of leaving the composer stuck disabled.
-        scheduleReconnect()
+        scheduleReconnect(`socket-${st}`)
       }
     })
 
@@ -360,14 +380,14 @@ export function useGatewayBoot({
 
     // Wake signals: power resume (macOS/Windows), network coming back, and the
     // window regaining focus/visibility. Each nudges an immediate reconnect.
-    const offPowerResume = desktop.onPowerResume?.(() => reconnectNow())
+    const offPowerResume = desktop.onPowerResume?.(() => reconnectNow('power-resume'))
     const offConnectionApplied = desktop.onConnectionApplied?.(() => void softSwitch())
 
-    const onOnline = () => reconnectNow()
+    const onOnline = () => reconnectNow('network-online')
 
     const onVisible = () => {
       if (document.visibilityState === 'visible') {
-        reconnectNow()
+        reconnectNow('window-visible')
       }
     }
 
@@ -447,7 +467,7 @@ export function useGatewayBoot({
         // failure, throws a reauth error rather than connecting with a dead
         // ticket (which would surface as an opaque "connection closed").
         const wsUrl = await resolveGatewayWsUrl(desktop, conn)
-        await gateway.connect(wsUrl)
+        await timedConnect('boot', wsUrl)
 
         if (cancelled) {
           return

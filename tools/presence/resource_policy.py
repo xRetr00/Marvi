@@ -323,7 +323,13 @@ async def watch(gateway, *, interval: float = DEFAULT_WATCH_INTERVAL_SECONDS) ->
             await asyncio.sleep(interval)
             if not getattr(gateway, "_running", True):
                 return
-            enforce()
+            # enforce() -> is_heavy_foreground() -> _foreground_app_name()
+            # does synchronous ActivityWatch HTTP probes (requests, up to
+            # DEFAULT_TIMEOUT_SECONDS) plus Win32 ctypes calls. Every 60s
+            # tick would otherwise block the gateway's single event loop --
+            # and therefore every in-flight message/delivery -- for the
+            # length of that probe. Off-load to a worker thread.
+            await asyncio.to_thread(enforce)
         except asyncio.CancelledError:
             raise
         except Exception:  # noqa: BLE001 - the watcher must never crash the gateway

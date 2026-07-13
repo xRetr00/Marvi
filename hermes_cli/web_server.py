@@ -49,7 +49,7 @@ import zipfile
 from hermes_cli._subprocess_compat import windows_detach_flags, windows_hide_flags
 import urllib.request
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import yaml
 
@@ -565,6 +565,18 @@ async def _lifespan(app: "FastAPI"):
     # event loop during lifespan startup — see _get_event_state's docstring.
     app.state.chat_argv_lock = asyncio.Lock()
 
+    # Event-loop lag watchdog — runs for every dashboard/desktop backend
+    # start (not gated on HERMES_DESKTOP, unlike the voice-warmup-triggered
+    # memory monitor below) since a frozen loop is user-visible regardless
+    # of desktop vs. `hermes dashboard` mode. Must start here (inside the
+    # running lifespan coroutine) so it binds to the actual serving loop —
+    # see gateway.loop_watchdog.start_loop_watchdog's docstring.
+    try:
+        from gateway.loop_watchdog import start_loop_watchdog
+        start_loop_watchdog()
+    except Exception:
+        _log.debug("Could not start event-loop lag watchdog", exc_info=True)
+
     # Fire hermes_cli.gateway import into a background thread so the event
     # loop is not blocked and HERMES_DASHBOARD_READY fires without delay.
     # On a cold Windows install the module chain triggers .pyc compilation
@@ -600,6 +612,11 @@ async def _lifespan(app: "FastAPI"):
         await PTY_REGISTRY.close_all()
         if cron_stop is not None:
             cron_stop.set()
+        try:
+            from gateway.loop_watchdog import stop_loop_watchdog
+            stop_loop_watchdog()
+        except Exception:
+            pass
 
 
 def _get_event_state(app: "FastAPI"):
@@ -705,6 +722,63 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# ---------------------------------------------------------------------------
+# Slow-request logging — flags any HTTP request taking >500ms with a single
+# grep-friendly "[REQ-SLOW] ..." line, and notes whether the event-loop lag
+# watchdog (gateway/loop_watchdog.py) fired during the request's lifetime —
+# the two signals together distinguish "this endpoint is just slow" from
+# "something else blocked the loop while this request was in flight".
+#
+# WebSocket connections don't go through HTTP middleware (ASGI only invokes
+# it for the "http" scope), so voice/chat WS timing is intentionally out of
+# scope here.
+# ---------------------------------------------------------------------------
+
+_SLOW_REQUEST_THRESHOLD_MS = 500.0
+_SLOW_REQUEST_LOG_THROTTLE_SECONDS = 5.0
+_slow_request_log_lock = threading.Lock()
+_slow_request_last_logged: Dict[str, float] = {}  # "METHOD path" -> monotonic log time
+
+
+@app.middleware("http")
+async def _slow_request_logging_middleware(request: "Request", call_next):
+    start = time.monotonic()
+    response = await call_next(request)
+    duration_ms = (time.monotonic() - start) * 1000.0
+    if duration_ms <= _SLOW_REQUEST_THRESHOLD_MS:
+        return response
+
+    # Prefer the matched route's path *pattern* (e.g. "/api/cron/jobs/{job_id}")
+    # over the resolved URL so requests to the same endpoint with different
+    # path params throttle together instead of each getting their own budget.
+    route = request.scope.get("route")
+    route_path = getattr(route, "path", None) or request.url.path
+    key = f"{request.method} {route_path}"
+
+    now = time.monotonic()
+    with _slow_request_log_lock:
+        last = _slow_request_last_logged.get(key)
+        if last is not None and (now - last) < _SLOW_REQUEST_LOG_THROTTLE_SECONDS:
+            return response
+        _slow_request_last_logged[key] = now
+
+    loop_lag_fired = False
+    try:
+        from gateway.loop_watchdog import lag_fired_since
+        loop_lag_fired = lag_fired_since(start)
+    except Exception:
+        pass
+
+    _log.warning(
+        "[REQ-SLOW] method=%s route=%s duration_ms=%.0f loop_lag=%s",
+        request.method,
+        route_path,
+        duration_ms,
+        loop_lag_fired,
+    )
+    return response
+
 
 # ---------------------------------------------------------------------------
 # Endpoints that do NOT require the session token.  Everything else under
@@ -16019,6 +16093,119 @@ _DUPLEX_ACTIVITY_CUES = {
     "delegation": "The sub-agent is working on it.",
 }
 
+# ---------------------------------------------------------------------------
+# [VOICE-PERF] structured, grep-friendly timing lines -- mirrors
+# gateway/memory_monitor.py's single-line "[TAG] key=value ..." style
+# (see that module's docstring). Logged via the normal ``_log`` logger (so
+# it lands in agent.log/errors.log routing like any other record) AND
+# appended to a dedicated ~/.hermes/logs/voice-perf.log so a slow turn is
+# diagnosable with one grep, without wading through unrelated log noise.
+# One line per turn (_log_voice_perf_turn) and one line per session open
+# with warm-up timings (_log_voice_perf_session_open).
+# ---------------------------------------------------------------------------
+
+_VOICE_PERF_FILE_LOCK = threading.Lock()
+
+
+def _voice_perf_log_path() -> Path:
+    return get_hermes_home() / "logs" / "voice-perf.log"
+
+
+def _append_voice_perf_line(line: str) -> None:
+    """Best-effort append to the dedicated voice-perf.log.
+
+    Never raises -- a logging hiccup must not take down a live voice turn.
+    Uses a plain locked append rather than the shared rotating-handler/queue
+    machinery in hermes_logging.py: this file is small, append-only, and
+    purely a diagnostic convenience seam, not part of the main log-routing
+    contract.
+    """
+    try:
+        path = _voice_perf_log_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+        with _VOICE_PERF_FILE_LOCK:
+            with path.open("a", encoding="utf-8") as f:
+                f.write(f"{ts} {line}\n")
+    except Exception:
+        _log.debug("Voice duplex: failed to append to voice-perf.log", exc_info=True)
+
+
+def _fmt_ms(value: Optional[float]) -> str:
+    """Render a millisecond timing for a [VOICE-PERF] line: an int-rounded
+    value, or ``"-"`` when unavailable -- keeps every line the same shape
+    for easy ``awk`` field-splitting even when a stage was skipped/unknown."""
+    return "-" if value is None else str(int(round(value)))
+
+
+def _log_voice_perf_turn(
+    *,
+    session_id: str,
+    utterance_id: str,
+    eou_to_instant_start_ms: Optional[float],
+    instant_first_delta_ms: Optional[float],
+    first_delta_to_first_tts_chunk_ms: Optional[float],
+    total_first_audio_ms: Optional[float],
+    agent_warm_hit: Optional[bool],
+    agent_warm_construct_ms: Optional[float],
+    deferred_context_status: str,
+    deferred_context_load_ms: Optional[float],
+    tts_max_gap_ms: Optional[float],
+    escalated: bool,
+) -> None:
+    """One line per finalized voice-duplex turn -- see this module's
+    [VOICE-PERF] header comment. Field order matches the latency pipeline
+    end-to-end (EOU -> instant lane -> first TTS audio) so a slow turn's
+    bottleneck is visible by eyeballing which field is large, without any
+    further correlation across log lines.
+    """
+    agent_warm = "unknown" if agent_warm_hit is None else ("hit" if agent_warm_hit else "miss")
+    line = (
+        "[VOICE-PERF] turn session_id=%s utterance_id=%s "
+        "eou_to_instant_start_ms=%s instant_first_delta_ms=%s "
+        "first_delta_to_first_tts_chunk_ms=%s total_first_audio_ms=%s "
+        "agent_warm=%s agent_warm_construct_ms=%s "
+        "deferred_context=%s deferred_context_load_ms=%s "
+        "tts_max_gap_ms=%s escalated=%s"
+    ) % (
+        session_id,
+        utterance_id,
+        _fmt_ms(eou_to_instant_start_ms),
+        _fmt_ms(instant_first_delta_ms),
+        _fmt_ms(first_delta_to_first_tts_chunk_ms),
+        _fmt_ms(total_first_audio_ms),
+        agent_warm,
+        _fmt_ms(agent_warm_construct_ms),
+        deferred_context_status,
+        _fmt_ms(deferred_context_load_ms),
+        _fmt_ms(tts_max_gap_ms),
+        "true" if escalated else "false",
+    )
+    _log.info(line)
+    _append_voice_perf_line(line)
+
+
+def _log_voice_perf_session_open(*, session_id: str, warmup: Dict[str, Any], stt_ready: bool) -> None:
+    """One line per duplex session open, once instant-lane warm-up (see
+    ``_DuplexSession._start_instant_lane_warmup``) finishes -- reports
+    whether it succeeded and how long agent construction took, so a session
+    whose FIRST turn is still slow is distinguishable from "warm-up never
+    got a chance to finish" vs. "warm-up itself failed"."""
+    line = (
+        "[VOICE-PERF] session_open session_id=%s agent_warm_ok=%s "
+        "agent_warm_construct_ms=%s provider=%s model=%s stt_ready=%s"
+    ) % (
+        session_id,
+        "true" if warmup.get("ok") else "false",
+        _fmt_ms(warmup.get("construct_ms")),
+        warmup.get("provider") or "-",
+        warmup.get("model") or "-",
+        "true" if stt_ready else "false",
+    )
+    _log.info(line)
+    _append_voice_perf_line(line)
+
+
 _SENTENCE_END_CHARS = ".!?\n"
 
 
@@ -16098,8 +16285,17 @@ def _duplex_identify_speaker(pcm16_bytes: bytes) -> Tuple[str, float, Optional[s
     return identify_details(pcm16_bytes)
 
 
+def _duplex_warm_instant_lane(transcript, cfg) -> Dict[str, Any]:
+    """Seam: tests monkeypatch this instead of constructing a real AIAgent.
+    See ``_DuplexSession._start_instant_lane_warmup``."""
+    from tools.voice_instant_lane import warm_instant_lane
+
+    return warm_instant_lane(transcript, cfg)
+
+
 def _duplex_stream_instant_reply(
     transcript, utterance: str, *, allow_escalation: bool, activity_callback=None,
+    warm_status_callback=None,
 ):
     from tools.voice_instant_lane import stream_instant_reply
 
@@ -16108,6 +16304,7 @@ def _duplex_stream_instant_reply(
         utterance,
         allow_escalation=allow_escalation,
         activity_callback=activity_callback,
+        warm_status_callback=warm_status_callback,
     )
 
 
@@ -16268,13 +16465,23 @@ class _DuplexTtsCycle:
     ``stream_text_to_speech_chunks``, whose own per-call "start"/"end"
     framing events are intentionally swallowed here. Their ``sample_rate``
     payload is NOT swallowed, though — see :data:`_DUPLEX_DEFAULT_TTS_SAMPLE_RATE`.
+
+    ``speak()`` synthesizes AND emits a single sentence inline (used for
+    one-off utterances: activity cues, escalation acks, background replies).
+    ``emit_events()`` is the split-out emission half, reused by
+    :class:`_DuplexTtsPipeline` (see below) so its synthesis workers can
+    hand back pre-collected event lists to be emitted strictly in order,
+    without duplicating the tts_start/tts_chunk framing logic.
     """
 
-    def __init__(self, session: "_DuplexSession") -> None:
+    def __init__(
+        self, session: "_DuplexSession", *, on_first_chunk: Optional[Callable[[], None]] = None,
+    ) -> None:
         self._session = session
         self._started = False
         self._seq = 0
         self._sample_rate: Optional[int] = None
+        self._on_first_chunk = on_first_chunk
 
     def speak(self, text: str, cancel_event: threading.Event) -> bool:
         """Synthesize + emit ``text``. Returns False if cancelled mid-flight."""
@@ -16286,6 +16493,13 @@ class _DuplexTtsCycle:
         except Exception as exc:
             _log.warning("Voice duplex: TTS unavailable: %s", exc)
             return True  # degrade silently — no audio, don't kill the turn
+        return self.emit_events(events, cancel_event)
+
+    def emit_events(self, events, cancel_event: threading.Event) -> bool:
+        """Emit a (possibly already fully-materialized) sequence of TTS
+        stream events -- ``tools.tts_tool.stream_text_to_speech_chunks``'s
+        ``start``/``sample_rate``/``chunk`` shape. Returns False if
+        cancelled mid-flight."""
         try:
             for event in events:
                 if cancel_event.is_set():
@@ -16317,6 +16531,11 @@ class _DuplexTtsCycle:
                         }
                     )
                     self._started = True
+                    if self._on_first_chunk is not None:
+                        try:
+                            self._on_first_chunk()
+                        except Exception:
+                            _log.debug("Voice duplex: on_first_chunk callback failed", exc_info=True)
                 self._seq += 1
                 self._session._emit_sync(
                     {"type": "tts_chunk", "data": event.get("audio"), "seq": self._seq}
@@ -16330,6 +16549,149 @@ class _DuplexTtsCycle:
             self._session._emit_sync({"type": "tts_end"})
             self._started = False
             self._seq = 0
+
+
+class _DuplexTtsPipeline:
+    """Pipelines TTS synthesis across a turn's sentences so text -> speech
+    has no "wait for TTS after this sentence before even starting the next"
+    serialization gap -- the audible speaking/thinking/speaking flap seen in
+    voice-presence.log.
+
+    Producer/consumer split:
+
+    - ``submit(sentence)`` is called by the caller (the instant-lane delta
+      loop) as soon as a sentence's text is ready. Synthesis for that
+      sentence is handed to a small bounded thread pool (``_LOOKAHEAD``
+      workers, default 2) -- so up to two sentences can be mid-synthesis
+      concurrently, meaning sentence N+1's synthesis can already be running
+      WHILE sentence N's audio is being emitted/played, instead of only
+      starting once N's TTS call (and emission) has fully returned.
+    - A dedicated emitter thread drains completed syntheses STRICTLY IN
+      SUBMISSION ORDER (even though synthesis itself may finish
+      out-of-order across the two workers) and streams their chunks over
+      the WS via a single shared :class:`_DuplexTtsCycle` -- so ordering on
+      the wire is never at risk from the concurrency underneath.
+
+    Each worker synthesizes into a fully-materialized list of events rather
+    than emitting directly (unlike :meth:`_DuplexTtsCycle.speak`) --
+    necessary so two concurrent workers never race to call ``_emit_sync``
+    for different sentences at once, which would scramble chunk order on
+    the wire. The tradeoff is that one sentence's own chunks aren't
+    streamed until its whole synthesis call returns; the win is eliminating
+    the gap BETWEEN sentences, which is what was actually audible.
+
+    Barge-in: :meth:`cancel` stops future submissions from being emitted;
+    ``cancel_event`` (shared with the rest of the turn) is checked before
+    submitting, inside the emitter's drain loop, and inside
+    ``_DuplexTtsCycle.emit_events`` itself -- so emission stops within one
+    chunk's latency. An in-flight synthesis call on the executor may keep
+    running to completion in the background (raw threads can't be
+    preempted), but its result is simply discarded by the emitter once
+    cancelled -- the same "let it finish harmlessly, don't wait for it"
+    pattern ``tools/voice_instant_lane.py`` already uses for a cancelled
+    provider call.
+    """
+
+    _LOOKAHEAD = 2
+
+    def __init__(
+        self,
+        session: "_DuplexSession",
+        cancel_event: threading.Event,
+        *,
+        on_first_chunk: Optional[Callable[[], None]] = None,
+    ) -> None:
+        self._session = session
+        self._cancel_event = cancel_event
+        self._tts = _DuplexTtsCycle(session, on_first_chunk=on_first_chunk)
+        self._executor = concurrent.futures.ThreadPoolExecutor(
+            max_workers=self._LOOKAHEAD, thread_name_prefix="voice-tts-synth",
+        )
+        self._pending: "queue.Queue[Optional[concurrent.futures.Future]]" = queue.Queue()
+        self._emit_windows: List[Tuple[float, float]] = []
+        self._closed = False
+        self._emit_error = False
+        self._emitter = threading.Thread(target=self._emit_loop, name="voice-tts-emit", daemon=True)
+        self._emitter.start()
+
+    def submit(self, sentence: str) -> None:
+        """Queue ``sentence`` for (possibly concurrent) synthesis. Bounded
+        lookahead: the executor has only ``_LOOKAHEAD`` worker threads, so a
+        3rd+ submission naturally waits for a worker slot -- this IS the
+        "bounded lookahead of 1-2 sentences" the caller doesn't need to
+        manage explicitly."""
+        sentence = (sentence or "").strip()
+        if not sentence or self._closed or self._cancel_event.is_set():
+            return
+        future = self._executor.submit(self._synthesize, sentence)
+        self._pending.put(future)
+
+    @staticmethod
+    def _synthesize(sentence: str) -> list:
+        """Runs on the executor: fully materialize this sentence's TTS
+        stream events (see the class docstring for why this can't emit
+        directly). Mirrors ``_DuplexTtsCycle.speak``'s own degrade-silently
+        error handling."""
+        try:
+            return list(_duplex_stream_tts_chunks(sentence))
+        except Exception as exc:
+            _log.warning("Voice duplex: TTS unavailable: %s", exc)
+            return []
+
+    def _emit_loop(self) -> None:
+        while True:
+            future = self._pending.get()
+            if future is None:
+                return  # close() sentinel
+            if self._cancel_event.is_set():
+                future.cancel()  # no-op if already running; harmless either way
+                continue
+            try:
+                events = future.result()
+            except Exception as exc:
+                _log.warning("Voice duplex: TTS synthesis failed: %s", exc)
+                continue
+            if self._cancel_event.is_set():
+                continue
+            window_start = time.monotonic()
+            ok = self._tts.emit_events(events, self._cancel_event)
+            self._emit_windows.append((window_start, time.monotonic()))
+            if not ok:
+                self._emit_error = True
+
+    def finish(self, *, cancelled: bool = False) -> Tuple[bool, Optional[float]]:
+        """Idempotent end-of-turn cleanup -- call exactly once (from a
+        ``finally`` block covering every exit path of the caller's turn) so
+        pending work is always drained/cancelled and the executor/emitter
+        thread never leaks.
+
+        Drains remaining submissions in submission order, waits (bounded)
+        for the emitter to finish, and closes out the shared TTS cycle
+        (``tts_end``) if any audio was actually emitted and the turn wasn't
+        cancelled. Safe to call when nothing was ever submitted (no-op
+        ``tts_end``) and safe to call more than once.
+
+        Returns ``(ok, max_gap_ms)`` -- ``ok`` mirrors
+        :meth:`_DuplexTtsCycle.speak`'s "not cancelled" contract;
+        ``max_gap_ms`` is the largest gap between consecutive sentences'
+        emission windows (``None`` if fewer than two sentences were
+        emitted), reported by callers as ``tts_max_gap_ms`` in [VOICE-PERF]
+        turn logging.
+        """
+        if not self._closed:
+            self._closed = True
+            self._pending.put(None)
+        self._emitter.join(timeout=30.0)
+        self._executor.shutdown(wait=False, cancel_futures=True)
+        cancelled = cancelled or self._cancel_event.is_set()
+        if not cancelled and not self._emit_error:
+            self._tts.end()
+        max_gap_ms: Optional[float] = None
+        for i in range(1, len(self._emit_windows)):
+            gap = (self._emit_windows[i][0] - self._emit_windows[i - 1][1]) * 1000.0
+            if max_gap_ms is None or gap > max_gap_ms:
+                max_gap_ms = gap
+        return (not cancelled and not self._emit_error), max_gap_ms
 
 
 class _DuplexSession:
@@ -16377,13 +16739,44 @@ class _DuplexSession:
         self._deep_tasks_lock = threading.Lock()
         self._background_speech_lock = asyncio.Lock()
         self._task_counter = 0
+        self._utterance_counter = 0
         self._closed = False
         self._stt_slot_acquired = False
+        # [VOICE-PERF] correlation id + warm-up bookkeeping (see
+        # _start_instant_lane_warmup / _log_voice_perf_session_open).
+        self._session_id = secrets.token_hex(4)
+        self._warmup_result: Optional[Dict[str, Any]] = None
+        self._last_eou_monotonic: Optional[float] = None
+
+    def _start_instant_lane_warmup(self) -> None:
+        """Resolve + construct the instant-lane agent AND kick the deferred
+        personal-context load on a background thread, right at WS connect --
+        ahead of (not blocking) the ``ready`` event. Previously both only
+        happened lazily on the FIRST utterance (agent construction) or after
+        first audio (deferred context), stalling early turns. If this
+        hasn't finished by the time the first utterance arrives,
+        ``stream_instant_reply``'s own lazy construct-if-missing path is the
+        fallback -- unchanged from before this method existed.
+        """
+        def _run() -> None:
+            result = _duplex_warm_instant_lane(self.transcript, self.cfg)
+            self._warmup_result = result
+            _log_voice_perf_session_open(
+                session_id=self._session_id,
+                warmup=result,
+                stt_ready=self.stt_session is not None,
+            )
+
+        threading.Thread(target=_run, name="voice-instant-warmup", daemon=True).start()
 
     async def start(self) -> None:
         from tools.voice_instant_lane import RollingTranscript
 
         self.transcript = RollingTranscript(max_turns=_DUPLEX_ROLLING_TURNS)
+        # Kick warm-up immediately -- before the STT concurrency-budget wait
+        # below, so construction/deferred-context loading overlaps with the
+        # rest of session setup instead of waiting for it.
+        self._start_instant_lane_warmup()
 
         # Share the SAME streaming-STT concurrency budget as
         # transcribe_audio_stream_ws (see _STREAMING_STT_MAX_CONCURRENT) --
@@ -16504,6 +16897,10 @@ class _DuplexSession:
             await self._finalize_utterance()
 
     async def _finalize_utterance(self) -> None:
+        # [VOICE-PERF]: end-of-utterance timestamp -- the reference point
+        # every downstream turn-latency field (eou_to_instant_start_ms,
+        # total_first_audio_ms, ...) is measured from.
+        self._last_eou_monotonic = time.monotonic()
         try:
             text = (await asyncio.to_thread(self.stt_session.finish) or "").strip()
         except Exception as exc:
@@ -16624,9 +17021,11 @@ class _DuplexSession:
 
     async def _run_turn(self, utterance_text: str, speaker_label: str, cancel_event: threading.Event) -> None:
         allow_escalation = self._escalation_allowed(speaker_label)
+        self._utterance_counter += 1
+        utterance_id = f"utt-{self._utterance_counter}"
         try:
             result_text, _task_id = await asyncio.to_thread(
-                self._drive_instant_lane_sync, utterance_text, allow_escalation, cancel_event
+                self._drive_instant_lane_sync, utterance_text, allow_escalation, cancel_event, utterance_id,
             )
         except _InstantLaneUnavailable as exc:
             await self._send({"type": "error", "error": str(exc)})
@@ -16644,15 +17043,54 @@ class _DuplexSession:
             self.state = "listening"
 
     def _drive_instant_lane_sync(
-        self, utterance_text: str, allow_escalation: bool, cancel_event: threading.Event,
+        self,
+        utterance_text: str,
+        allow_escalation: bool,
+        cancel_event: threading.Event,
+        utterance_id: str = "utt-0",
     ) -> Tuple[Optional[str], Optional[str]]:
-        from tools.voice_instant_lane import EscalationStream
+        from tools.voice_instant_lane import EscalationStream, deferred_context_status
+
+        # [VOICE-PERF] absolute monotonic timestamps -- deltas between these
+        # are computed once, in the `finally` block, so every exit path
+        # (normal reply, escalation, mid-turn failure, barge-in cancel)
+        # emits exactly one turn line. See _log_voice_perf_turn.
+        t_eou = self._last_eou_monotonic
+        t_instant_start = time.monotonic()
+        t_first_delta: Optional[float] = None
+        t_first_tts_chunk: Optional[float] = None
+        warm_status: Dict[str, Any] = {}
+        escalated = False
+        tts_max_gap_ms: Optional[float] = None
+
+        def _on_warm_status(status: Dict[str, Any]) -> None:
+            warm_status.update(status)
+
+        def _on_first_tts_chunk() -> None:
+            nonlocal t_first_tts_chunk
+            if t_first_tts_chunk is None:
+                t_first_tts_chunk = time.monotonic()
 
         parser = EscalationStream()
-        tts = _DuplexTtsCycle(self)
+        pipeline = _DuplexTtsPipeline(self, cancel_event, on_first_chunk=_on_first_tts_chunk)
         tts_buffer = ""
         full_reply = ""
         got_any_delta = False
+        pipeline_result: Dict[str, Any] = {}
+
+        def _finish_pipeline() -> bool:
+            # Exactly one real pipeline.finish() call no matter which exit
+            # path runs it first (normal completion, an early return, or the
+            # `finally` safety net below) -- callers that need the "did
+            # emission complete cleanly" bool call this; `finally` always
+            # calls it too (a cheap no-op if already computed) purely to
+            # guarantee tts_max_gap_ms is populated for logging even on a
+            # cancelled/errored turn that never reached the normal-path call.
+            if "ok" not in pipeline_result:
+                ok, gap_ms = pipeline.finish(cancelled=cancel_event.is_set())
+                pipeline_result["ok"] = ok
+                pipeline_result["gap_ms"] = gap_ms
+            return pipeline_result["ok"]
 
         def _activity(event: Dict[str, str]) -> None:
             payload = {"type": "activity", **event}
@@ -16663,60 +17101,96 @@ class _DuplexSession:
                     self._speak_full_sync(cue, cancel_event)
 
         try:
-            deltas = _duplex_stream_instant_reply(
-                self.transcript,
-                utterance_text,
-                allow_escalation=allow_escalation,
-                activity_callback=_activity,
-            )
-            for delta in deltas:
-                if cancel_event.is_set():
-                    return None, None
-                if not delta:
-                    continue
-                got_any_delta = True
-                reply_piece = parser.feed(delta)
-                if not reply_piece:
-                    continue
-                full_reply += reply_piece
-                self._emit_sync({"type": "instant_delta", "text": reply_piece})
-                tts_buffer += reply_piece
-                ready, tts_buffer = _split_ready_sentences(tts_buffer)
-                for sentence in ready:
-                    if cancel_event.is_set() or not tts.speak(sentence, cancel_event):
+            try:
+                deltas = _duplex_stream_instant_reply(
+                    self.transcript,
+                    utterance_text,
+                    allow_escalation=allow_escalation,
+                    activity_callback=_activity,
+                    warm_status_callback=_on_warm_status,
+                )
+                for delta in deltas:
+                    if cancel_event.is_set():
                         return None, None
-        except Exception as exc:
-            if got_any_delta:
-                _log.warning("Voice duplex: instant lane failed mid-reply: %s", exc)
-            else:
-                raise _InstantLaneUnavailable(f"instant voice lane unavailable: {exc}") from exc
+                    if not delta:
+                        continue
+                    if t_first_delta is None:
+                        t_first_delta = time.monotonic()
+                    got_any_delta = True
+                    reply_piece = parser.feed(delta)
+                    if not reply_piece:
+                        continue
+                    full_reply += reply_piece
+                    self._emit_sync({"type": "instant_delta", "text": reply_piece})
+                    tts_buffer += reply_piece
+                    ready, tts_buffer = _split_ready_sentences(tts_buffer)
+                    for sentence in ready:
+                        if cancel_event.is_set():
+                            return None, None
+                        pipeline.submit(sentence)
+            except Exception as exc:
+                if got_any_delta:
+                    _log.warning("Voice duplex: instant lane failed mid-reply: %s", exc)
+                else:
+                    raise _InstantLaneUnavailable(f"instant voice lane unavailable: {exc}") from exc
 
-        if cancel_event.is_set():
-            return None, None
-
-        result = parser.finish()
-        if result.escalate and allow_escalation:
-            self._task_counter += 1
-            task_id = f"voice-{self._task_counter}"
-            self._emit_sync({"type": "instant_done", "text": ""})
-            mode = result.mode or "thinking"
-            self._emit_sync({"type": "escalated", "task_id": task_id, "ack_text": result.text, "mode": mode})
-            ack_cycle = _DuplexTtsCycle(self)
-            ack_cycle.speak(result.text, cancel_event)
-            ack_cycle.end()
-            self._start_deep_task_sync(task_id, utterance_text, cancel_event, mode=mode)
-            return None, task_id
-
-        if result.escalate:
-            full_reply = result.text
-            tts_buffer = result.text
-
-        if tts_buffer.strip():
-            if not tts.speak(tts_buffer, cancel_event):
+            if cancel_event.is_set():
                 return None, None
-        tts.end()
-        self._emit_sync({"type": "instant_done", "text": full_reply})
-        return full_reply, None
+
+            result = parser.finish()
+            if result.escalate and allow_escalation:
+                escalated = True
+                self._task_counter += 1
+                task_id = f"voice-{self._task_counter}"
+                self._emit_sync({"type": "instant_done", "text": ""})
+                mode = result.mode or "thinking"
+                self._emit_sync({"type": "escalated", "task_id": task_id, "ack_text": result.text, "mode": mode})
+                ack_cycle = _DuplexTtsCycle(self)
+                ack_cycle.speak(result.text, cancel_event)
+                ack_cycle.end()
+                self._start_deep_task_sync(task_id, utterance_text, cancel_event, mode=mode)
+                return None, task_id
+
+            if result.escalate:
+                full_reply = result.text
+                tts_buffer = result.text
+
+            if tts_buffer.strip():
+                pipeline.submit(tts_buffer)
+            if not _finish_pipeline():
+                return None, None
+            self._emit_sync({"type": "instant_done", "text": full_reply})
+            return full_reply, None
+        finally:
+            _finish_pipeline()  # safety net: guarantees tts_max_gap_ms below is populated even on an early-return/exception exit path
+            tts_max_gap_ms = pipeline_result.get("gap_ms")
+            dctx_status, dctx_load_ms = deferred_context_status(self.transcript)
+            _log_voice_perf_turn(
+                session_id=self._session_id,
+                utterance_id=utterance_id,
+                eou_to_instant_start_ms=(
+                    (t_instant_start - t_eou) * 1000.0 if t_eou is not None else None
+                ),
+                instant_first_delta_ms=(
+                    (t_first_delta - t_instant_start) * 1000.0 if t_first_delta is not None else None
+                ),
+                first_delta_to_first_tts_chunk_ms=(
+                    (t_first_tts_chunk - t_first_delta) * 1000.0
+                    if t_first_tts_chunk is not None and t_first_delta is not None
+                    else None
+                ),
+                total_first_audio_ms=(
+                    (t_first_tts_chunk - t_eou) * 1000.0
+                    if t_first_tts_chunk is not None and t_eou is not None
+                    else None
+                ),
+                agent_warm_hit=warm_status.get("hit"),
+                agent_warm_construct_ms=warm_status.get("construct_ms"),
+                deferred_context_status=dctx_status,
+                deferred_context_load_ms=dctx_load_ms,
+                tts_max_gap_ms=tts_max_gap_ms,
+                escalated=escalated,
+            )
 
     def _start_deep_task_sync(
         self,

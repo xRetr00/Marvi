@@ -119,7 +119,12 @@ async def watch(gateway, *, interval: float = DEFAULT_WATCH_INTERVAL_SECONDS) ->
             )
             if not fire:
                 continue
-            if _should_defer_for_resource_policy():
+            # _should_defer_for_resource_policy() -> should_defer_background_work()
+            # can fall through its TTL cache into a synchronous ActivityWatch
+            # HTTP probe + Win32 foreground-window check (see
+            # tools/presence/resource_policy.py). Off-load so a slow/
+            # unreachable AW server doesn't stall the gateway's event loop.
+            if await asyncio.to_thread(_should_defer_for_resource_policy):
                 logger.debug(
                     "idle-trigger: idle window elapsed but deferring (heavy foreground app)"
                 )

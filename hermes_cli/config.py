@@ -2855,6 +2855,20 @@ DEFAULT_CONFIG = {
         "level": "INFO",       # Minimum level for agent.log: DEBUG, INFO, WARNING
         "max_size_mb": 5,      # Max size per log file before rotation
         "backup_count": 3,     # Number of rotated backup files to keep
+
+        # Event-loop lag watchdog (gateway/loop_watchdog.py). Both the
+        # desktop backend (hermes_cli/web_server.py) and the gateway
+        # (gateway/run.py) run a single asyncio event loop each; a
+        # synchronous blocking call anywhere on it freezes every concurrent
+        # WebSocket/HTTP request. The watchdog samples the loop thread's
+        # stack the moment a stall is detected and logs a single
+        # grep-friendly "[LOOP-LAG] ..." line naming the blocking function.
+        "loop_watchdog": {
+            "enabled": True,
+            # Drift beyond this many milliseconds (past the expected 500ms
+            # heartbeat tick) is logged as a stall.
+            "threshold_ms": 250,
+        },
     },
 
     # Remotely-hosted model catalog manifest.  When enabled, the CLI fetches

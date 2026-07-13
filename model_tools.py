@@ -27,7 +27,7 @@ import asyncio
 import logging
 import threading
 import time
-from typing import Dict, Any, List, Optional, Tuple
+from typing import Dict, Any, Iterable, List, Optional, Tuple
 
 from tools.registry import discover_builtin_tools, registry
 from toolsets import resolve_toolset, validate_toolset
@@ -281,6 +281,7 @@ def get_tool_definitions(
     disabled_toolsets: Optional[List[str]] = None,
     quiet_mode: bool = False,
     skip_tool_search_assembly: bool = False,
+    allowed_tool_names: Optional[Iterable[str]] = None,
 ) -> List[Dict[str, Any]]:
     """
     Get tool definitions for model API calls with toolset-based filtering.
@@ -296,6 +297,21 @@ def get_tool_definitions(
             tool_search / tool_describe bridge handlers so they can read the
             real catalog, not the already-collapsed one. Public callers should
             leave this False.
+        allowed_tool_names: Optional minimal opt-in hard cap on top of
+            toolset resolution. When provided, the resolved tool-name set is
+            intersected with this collection BEFORE it reaches
+            ``registry.get_definitions`` -- so ``check_fn`` is invoked ONLY
+            for names in this set, never for every tool a broader toolset
+            would otherwise resolve to (e.g. ``write_file``/``patch``/
+            ``search_files`` alongside ``read_file`` under the ``file``
+            toolset). Existing callers that omit this keep today's behavior
+            unchanged -- toolset resolution alone decides which check_fns
+              run. Added for callers like the voice instant lane
+            (``tools/voice_instant_lane.py``) that already runtime-enforce a
+            tool whitelist via ``hermes_cli.plugins.set_thread_tool_whitelist``
+            and want the tool-DEFINITION construction path bounded to that
+            same whitelist too, as defense in depth against a future toolset
+            change silently widening what gets probed.
 
     Returns:
         Filtered list of OpenAI-format tool definitions.
@@ -319,6 +335,7 @@ def get_tool_definitions(
         cache_key = (
             frozenset(enabled_toolsets) if enabled_toolsets is not None else None,
             frozenset(disabled_toolsets) if disabled_toolsets else None,
+            frozenset(allowed_tool_names) if allowed_tool_names is not None else None,
             registry._generation,
             cfg_fp,
             bool(os.environ.get("HERMES_KANBAN_TASK")),
@@ -335,7 +352,8 @@ def get_tool_definitions(
             return list(cached)
 
     result = _compute_tool_definitions(enabled_toolsets, disabled_toolsets, quiet_mode,
-                                       skip_tool_search_assembly=skip_tool_search_assembly)
+                                       skip_tool_search_assembly=skip_tool_search_assembly,
+                                       allowed_tool_names=allowed_tool_names)
     if quiet_mode:
         # Cache the freshly-computed list, but hand callers a shallow copy so
         # downstream mutations (e.g. run_agent appending memory/LCM tool
@@ -359,6 +377,7 @@ def _compute_tool_definitions(
     disabled_toolsets: Optional[List[str]] = None,
     quiet_mode: bool = False,
     skip_tool_search_assembly: bool = False,
+    allowed_tool_names: Optional[Iterable[str]] = None,
 ) -> List[Dict[str, Any]]:
     """Uncached implementation of :func:`get_tool_definitions`."""
     # Determine which tool names the caller wants
@@ -440,6 +459,13 @@ def _compute_tool_definitions(
     # all check the tool registry for plugin-provided toolsets.  No bypass
     # needed; plugins respect enabled_toolsets / disabled_toolsets like any
     # other toolset.
+
+    # Minimal opt-in hard cap: intersect BEFORE the registry sees the name
+    # set, so registry.get_definitions() (and therefore check_fn) is never
+    # invoked for a tool outside this set, no matter how broad the resolved
+    # toolsets were. See this function's/get_tool_definitions' docstring.
+    if allowed_tool_names is not None:
+        tools_to_include &= set(allowed_tool_names)
 
     # Ask the registry for schemas (only returns tools whose check_fn passes)
     filtered_tools = registry.get_definitions(tools_to_include, quiet=quiet_mode)

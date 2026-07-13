@@ -25,9 +25,8 @@ interface DynamicIslandProps {
   onSummonCancel?: () => void
 }
 
-const SEED_HEIGHT = 26
-const SEED_RADIUS = 13
-const SEED_MIN_WIDTH = 56
+const SEED_HEIGHT = 8
+const SEED_MIN_WIDTH = 76
 
 const IDLE_HEIGHT = 44
 const IDLE_RADIUS = 22
@@ -42,9 +41,6 @@ const SUMMON_HEIGHT = 44
 
 const PAD_Y = 10
 const PAD_X = 18
-
-const SEED_PAD_Y = 6
-const SEED_PAD_X = 10
 
 const PILL_SHADOW = [
   'inset 0 1px 0 rgba(255,255,255,0.08)',
@@ -133,7 +129,7 @@ function resolveView(
     return 'expanded'
   }
 
-  if (state.phase === 'listening' || state.phase === 'speaking') {
+  if (state.phase === 'wake' || state.phase === 'listening' || state.phase === 'speaking') {
     return 'expanded'
   }
 
@@ -174,7 +170,10 @@ export function DynamicIsland({
   const view = resolveView(state, card, summoned, caption)
 
   const active =
-    state.phase === 'listening' || state.phase === 'speaking' || (duplexDriven && state.phase === 'thinking')
+    state.phase === 'wake' ||
+    state.phase === 'listening' ||
+    state.phase === 'speaking' ||
+    (duplexDriven && state.phase === 'thinking')
 
   const color = phaseColor(state.phase)
   const level = state.level
@@ -204,18 +203,19 @@ export function DynamicIsland({
 
   const minHeight = view === 'seed' ? SEED_HEIGHT : view === 'summon' ? SUMMON_HEIGHT : IDLE_HEIGHT
 
-  const radius =
-    view === 'seed' ? SEED_RADIUS : view === 'idle' ? IDLE_RADIUS : view === 'summon' ? SUMMON_RADIUS : EXPANDED_RADIUS
+  const radius = view === 'idle' ? IDLE_RADIUS : view === 'summon' ? SUMMON_RADIUS : EXPANDED_RADIUS
 
-  const padY = view === 'seed' ? SEED_PAD_Y : PAD_Y
-  const padX = view === 'seed' ? SEED_PAD_X : PAD_X
+  const padY = view === 'seed' ? 0 : PAD_Y
+  const padX = view === 'seed' ? 0 : PAD_X
 
   return (
     <motion.div
       layout
+      animate={{ y: view === 'seed' ? -3 : 0, opacity: view === 'seed' ? 0.88 : 1 }}
+      initial={reducedMotion ? false : { y: -18, opacity: 0 }}
       style={{
         transformOrigin: 'center top',
-        marginTop: 10,
+        marginTop: view === 'seed' ? 0 : 10,
         display: 'flex',
         flexDirection: 'column',
         alignItems: 'stretch',
@@ -223,7 +223,7 @@ export function DynamicIsland({
         minWidth,
         maxWidth: view === 'expanded' ? EXPANDED_MAX_WIDTH : view === 'summon' ? SUMMON_WIDTH : undefined,
         minHeight,
-        borderRadius: radius,
+        borderRadius: view === 'seed' ? '0 0 8px 8px' : radius,
         background: '#060606',
         boxShadow: PILL_SHADOW,
         padding: `${padY}px ${padX}px`,
@@ -254,7 +254,15 @@ export function DynamicIsland({
             style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}
             transition={contentTransition}
           >
-            <SeedDot reducedMotion={Boolean(reducedMotion)} />
+            <span
+              style={{
+                width: 54,
+                height: 2,
+                borderRadius: 999,
+                background: 'rgba(255,255,255,0.12)',
+                boxShadow: '0 2px 10px rgba(0,0,0,0.9)'
+              }}
+            />
           </motion.div>
         ) : view === 'idle' ? (
           <motion.div
@@ -307,27 +315,6 @@ export function DynamicIsland({
         )}
       </AnimatePresence>
     </motion.div>
-  )
-}
-
-// Resting-seed indicator: a single dim dot with a slow, soft pulse — no
-// waveform, no rAF. This is the "Marvi is here, quietly present" mark shown
-// whenever there's nothing active to report.
-function SeedDot({ reducedMotion }: { reducedMotion: boolean }) {
-  return (
-    <motion.span
-      animate={reducedMotion ? { opacity: 1, scale: 1 } : { opacity: [0.35, 0.75, 0.35], scale: [0.9, 1, 0.9] }}
-      style={{
-        display: 'inline-block',
-        width: 6,
-        height: 6,
-        borderRadius: '50%',
-        background: 'radial-gradient(circle at 32% 28%, #fff, #8b7cff 38%, #242033 76%)',
-        boxShadow: '0 0 10px rgba(139,124,255,0.55)',
-        flexShrink: 0
-      }}
-      transition={reducedMotion ? undefined : { duration: 2.6, repeat: Infinity, ease: 'easeInOut' }}
-    />
   )
 }
 

@@ -7498,7 +7498,9 @@ function spawnIslandWindow() {
   const STAGE_W = 460
   const STAGE_H = 240
   const stageX = Math.round(area.x + (area.width - STAGE_W) / 2)
-  const stageY = Math.round(area.y + 8)
+  // Recess the resting island into the display edge; active content grows
+  // downward inside the existing transparent stage.
+  const stageY = Math.round(area.y - 6)
 
   const win = new BrowserWindow({
     x: stageX,

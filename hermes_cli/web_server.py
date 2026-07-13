@@ -5758,8 +5758,8 @@ async def update_memory_provider_config(name: str, body: MemoryProviderConfigUpd
 
 
 @app.get("/api/config")
-async def get_config(profile: Optional[str] = None):
-    with _profile_scope(profile):
+def get_config(profile: Optional[str] = None):
+    with _config_profile_scope(profile):
         config = _normalize_config_for_web(load_config())
     # Strip internal keys that the frontend shouldn't see or send back
     return {k: v for k, v in config.items() if not k.startswith("_")}
@@ -5794,7 +5794,7 @@ def get_model_info(profile: Optional[str] = None):
     Also returns model capabilities (vision, reasoning, tools) when available.
     """
     try:
-        with _profile_scope(profile):
+        with _config_profile_scope(profile):
             cfg = load_config()
         model_cfg = cfg.get("model", "")
 
@@ -5920,7 +5920,7 @@ def get_model_options(
         # configured. Onboarding opts into the full provider universe via
         # include_unconfigured=1 so it can still render setup affordances for
         # providers that are not yet authenticated.
-        with _profile_scope(profile):
+        with _config_profile_scope(profile):
             return build_models_payload(
                 load_picker_context(),
                 explicit_only=bool(explicit_only),
@@ -5931,7 +5931,11 @@ def get_model_options(
                 capabilities=True,
                 refresh=bool(refresh),
                 probe_custom_providers=bool(refresh),
-                probe_current_custom_provider=not bool(refresh),
+                # Normal app renders use cached/configured rows. A live custom
+                # provider probe costs seconds on some endpoints; the explicit
+                # Refresh action remains the one place that performs it.
+                probe_current_custom_provider=False,
+                allow_network_model_discovery=bool(refresh),
             )
     except HTTPException:
         raise
@@ -6030,7 +6034,7 @@ def get_auxiliary_models(profile: Optional[str] = None):
     selected profile's (read/write asymmetry).
     """
     try:
-        with _profile_scope(profile):
+        with _config_profile_scope(profile):
             cfg = load_config()
         aux_cfg = cfg.get("auxiliary", {})
         if not isinstance(aux_cfg, dict):
@@ -6069,7 +6073,7 @@ def get_moa_models(profile: Optional[str] = None):
     try:
         from hermes_cli.moa_config import normalize_moa_config
 
-        with _profile_scope(profile):
+        with _config_profile_scope(profile):
             cfg = load_config()
             return normalize_moa_config(cfg.get("moa") if isinstance(cfg, dict) else {})
     except HTTPException:
@@ -16409,9 +16413,8 @@ def _duplex_run_deep_task(
     assistant" prompt — that's exactly the hallucination risk full system-
     prompt building avoids.
 
-    Instead this constructs a fresh :class:`run_agent.AIAgent` with no
-    explicit provider/model/base_url/api_key override, so it resolves the
-    user's configured MAIN model and builds its full real system prompt
+    Instead this constructs a fresh :class:`run_agent.AIAgent` pinned to the
+    user's configured MAIN runtime and builds its full real system prompt
     (persona, tool definitions, context files, memory) exactly like an
     ordinary top-level ``hermes`` conversation — the same "child gets a real
     agent" shape ``tools/delegate_tool.py`` uses to spawn subagents (goal +
@@ -16425,6 +16428,10 @@ def _duplex_run_deep_task(
     completes; callers run this on a background thread.
     """
     from run_agent import AIAgent
+
+    cfg = load_config()
+    model_cfg = cfg.get("model") if isinstance(cfg, dict) else {}
+    model_cfg = model_cfg if isinstance(model_cfg, dict) else {"default": model_cfg}
 
     history = [dict(m) for m in transcript_messages if isinstance(m, dict) and m.get("content")]
 
@@ -16463,6 +16470,10 @@ def _duplex_run_deep_task(
             activity_callback({"status": "completed", "kind": kind, "label": label, "tool": tool_name})
 
     agent = AIAgent(
+        model=str(model_cfg.get("default") or model_cfg.get("name") or "").strip(),
+        provider=str(model_cfg.get("provider") or "").strip() or None,
+        base_url=str(model_cfg.get("base_url") or "").strip() or None,
+        api_mode=str(model_cfg.get("api_mode") or "").strip() or None,
         quiet_mode=True,
         verbose_logging=False,
         enabled_toolsets=_DUPLEX_DEEP_TASK_TOOLSETS,

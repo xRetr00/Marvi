@@ -276,6 +276,17 @@ def test_build_models_payload_can_probe_only_current_custom_provider():
     assert mock_list.call_args.kwargs["probe_current_custom_provider"] is True
 
 
+def test_build_models_payload_can_disable_network_model_discovery():
+    ctx = _empty_ctx()
+    with patch(
+        "hermes_cli.model_switch.list_authenticated_providers",
+        return_value=[],
+    ) as mock_list:
+        build_models_payload(ctx, allow_network_model_discovery=False)
+
+    assert mock_list.call_args.kwargs["allow_network_model_discovery"] is False
+
+
 def test_list_authenticated_providers_force_fresh_is_keyword_only():
     """``force_fresh_nous_tier`` must be keyword-only on the public listing API.
 

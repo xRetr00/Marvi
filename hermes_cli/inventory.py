@@ -121,6 +121,7 @@ def build_models_payload(
     refresh: bool = False,
     probe_custom_providers: bool = True,
     probe_current_custom_provider: bool = False,
+    allow_network_model_discovery: bool = True,
     max_models: int | None = None,
 ) -> dict:
     """Build the ``{providers, model, provider}`` shape every consumer
@@ -165,6 +166,9 @@ def build_models_payload(
       false, still live-probe the current custom endpoint. This keeps normal
       GUI/TUI picker opens fast while making the active custom provider's model
       list match the classic CLI picker.
+    - ``allow_network_model_discovery``: permit built-in providers to refresh
+      expired/missing model catalogs. Normal GUI renders disable this and use
+      cached or curated models; the explicit Refresh action enables it.
     """
     from hermes_cli.model_switch import list_authenticated_providers
 
@@ -179,6 +183,7 @@ def build_models_payload(
         refresh=refresh,
         probe_custom_providers=probe_custom_providers,
         probe_current_custom_provider=probe_current_custom_provider,
+        allow_network_model_discovery=allow_network_model_discovery,
     )
 
     moa_row = _moa_provider_row(ctx.current_provider)

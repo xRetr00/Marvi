@@ -973,3 +973,31 @@ class TestCodexSoftAcceptPlausibilityGate:
         r = validate_requested_model("gpt-5.5", "openai-codex")
         assert r["accepted"] is True
         assert r["recognized"] is True
+
+
+class TestCachedProviderModelsOfflineRead:
+    def test_network_disabled_uses_stale_matching_cache(self):
+        entry = {"openrouter": {"fp": "same", "at": 0, "models": ["cached/model"]}}
+        with (
+            patch("hermes_cli.models._load_provider_models_cache", return_value=entry),
+            patch("hermes_cli.models._credential_fingerprint", return_value="same"),
+            patch("hermes_cli.models.provider_model_ids") as live,
+        ):
+            result = _models_mod.cached_provider_model_ids(
+                "openrouter", allow_network=False
+            )
+
+        assert result == ["cached/model"]
+        live.assert_not_called()
+
+    def test_network_disabled_returns_empty_on_cache_miss(self):
+        with (
+            patch("hermes_cli.models._load_provider_models_cache", return_value={}),
+            patch("hermes_cli.models.provider_model_ids") as live,
+        ):
+            result = _models_mod.cached_provider_model_ids(
+                "openrouter", allow_network=False
+            )
+
+        assert result == []
+        live.assert_not_called()

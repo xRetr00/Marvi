@@ -20,11 +20,11 @@ const KEY = 'hermes.desktop.background.v1'
 const BACKGROUND_IDS = Object.keys(BACKGROUNDS) as BackgroundId[]
 
 const storedMode = () => storedString(KEY)
-const isBackgroundMode = (value: string | null): value is BackgroundMode => value === 'auto' || value in BACKGROUNDS
+const isBackgroundMode = (value: string | null): value is BackgroundMode =>
+  value !== null && (value === 'auto' || value in BACKGROUNDS)
+const initialMode = typeof window === 'undefined' ? null : storedMode()
 
-export const $backgroundMode = atom<BackgroundMode>(
-  typeof window === 'undefined' || !isBackgroundMode(storedMode()) ? 'electricGaze' : storedMode()
-)
+export const $backgroundMode = atom<BackgroundMode>(isBackgroundMode(initialMode) ? initialMode : 'electricGaze')
 
 export function setBackgroundMode(mode: BackgroundMode): void {
   $backgroundMode.set(mode)

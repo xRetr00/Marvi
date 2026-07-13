@@ -1480,6 +1480,7 @@ def list_authenticated_providers(
     refresh: bool = False,
     probe_custom_providers: bool = True,
     probe_current_custom_provider: bool = False,
+    allow_network_model_discovery: bool = True,
 ) -> List[dict]:
     """Detect which providers have credentials and list their curated models.
 
@@ -1550,6 +1551,12 @@ def list_authenticated_providers(
 
     def _can_probe_custom_provider(*, row_is_current: bool) -> bool:
         return bool(probe_custom_providers or (probe_current_custom_provider and row_is_current))
+
+    def _cached_model_ids(provider: str) -> list[str]:
+        return cached_provider_model_ids(
+            provider,
+            allow_network=allow_network_model_discovery,
+        )
 
     # Effective base URLs of every built-in row we emit (normalized lower+rstrip).
     # Section 4 uses this to hide ``custom_providers`` entries that point at the
@@ -1737,7 +1744,7 @@ def list_authenticated_providers(
         # /model picker sees the SAME list `hermes model` would build, with
         # disk caching to keep the picker open snappy. Falls back to the
         # curated static list when the live fetcher returns nothing.
-        model_ids = cached_provider_model_ids(hermes_id)
+        model_ids = _cached_model_ids(hermes_id)
         if not model_ids:
             model_ids = curated.get(hermes_id, [])
             if hermes_id in _MODELS_DEV_PREFERRED:
@@ -1865,12 +1872,12 @@ def list_authenticated_providers(
             # catalog. ``cached_provider_model_ids()`` falls back to the
             # curated list when the live endpoint is unreachable, so this
             # is safe for unauthenticated and offline cases too.
-            model_ids = cached_provider_model_ids(hermes_slug)
+            model_ids = _cached_model_ids(hermes_slug)
         # For aws_sdk providers (bedrock), use live discovery so the list
         # reflects the active region (eu.*, ap.*) not the static us.* list.
         elif overlay.auth_type == "aws_sdk":
             try:
-                _ids = cached_provider_model_ids(hermes_slug)
+                _ids = _cached_model_ids(hermes_slug)
                 model_ids = _ids if _ids else (curated.get(hermes_slug, []) or curated.get(pid, []))
             except Exception:
                 model_ids = curated.get(hermes_slug, []) or curated.get(pid, [])
@@ -1915,7 +1922,7 @@ def list_authenticated_providers(
             # Unified pathway — see Section 1 rationale. Fall back to the
             # curated dict (with models.dev merge for preferred providers)
             # when the live fetcher comes up empty.
-            model_ids = cached_provider_model_ids(hermes_slug)
+            model_ids = _cached_model_ids(hermes_slug)
             if not model_ids:
                 model_ids = curated.get(hermes_slug, []) or curated.get(pid, [])
                 if hermes_slug in _MODELS_DEV_PREFERRED:
@@ -1987,13 +1994,13 @@ def list_authenticated_providers(
         # region (eu.*, us.*, ap.*) instead of the hardcoded us.* static list.
         if _cp_config and getattr(_cp_config, "auth_type", "") == "aws_sdk":
             try:
-                _ids = cached_provider_model_ids(_cp.slug)
+                _ids = _cached_model_ids(_cp.slug)
                 _cp_model_ids = _ids if _ids else curated.get(_cp.slug, [])
             except Exception:
                 _cp_model_ids = curated.get(_cp.slug, [])
         else:
             # Unified pathway — same as sections 1 and 2.
-            _cp_model_ids = cached_provider_model_ids(_cp.slug)
+            _cp_model_ids = _cached_model_ids(_cp.slug)
             if not _cp_model_ids:
                 _cp_model_ids = curated.get(_cp.slug, [])
         _cp_total = len(_cp_model_ids)

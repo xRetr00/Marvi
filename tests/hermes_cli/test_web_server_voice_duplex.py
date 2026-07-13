@@ -485,6 +485,18 @@ def test_deep_worker_mode_gets_execution_tools_and_verification_prompt(monkeypat
             return {"final_response": "I finished the work and verification passed."}
 
     monkeypatch.setattr(run_agent, "AIAgent", FakeAgent)
+    monkeypatch.setattr(
+        web_server,
+        "load_config",
+        lambda: {
+            "model": {
+                "default": "deepseek-v4-flash",
+                "provider": "opencode-go",
+                "base_url": "https://opencode.ai/zen/go/v1",
+                "api_mode": "chat_completions",
+            }
+        },
+    )
     activity = []
 
     result = web_server._duplex_run_deep_task(
@@ -498,6 +510,8 @@ def test_deep_worker_mode_gets_execution_tools_and_verification_prompt(monkeypat
     assert "terminal" in captured["enabled_toolsets"]
     assert "verify" in captured["ephemeral_system_prompt"].lower()
     assert captured["platform"] == "voice-subagent"
+    assert captured["model"] == "deepseek-v4-flash"
+    assert captured["provider"] == "opencode-go"
     assert [event["status"] for event in activity] == ["started", "completed"]
 
 

@@ -1,5 +1,12 @@
 import type { VoicePhase } from '@/store/voice-presence'
 
+/** Keep the wake bloom visible while the duplex socket takes over the mic. */
+export const WAKE_HANDOFF_MS = 2500
+
+export function shouldHoldWakeHandoff(previous: VoicePhase, next: VoicePhase): boolean {
+  return previous === 'wake' && next === 'off'
+}
+
 /** Target island amplitude (0..1) for a phase + current mic level. */
 export function targetAmplitude(phase: VoicePhase, level: number): number {
   switch (phase) {

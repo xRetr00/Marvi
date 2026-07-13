@@ -7498,9 +7498,9 @@ function spawnIslandWindow() {
   const STAGE_W = 460
   const STAGE_H = 240
   const stageX = Math.round(area.x + (area.width - STAGE_W) / 2)
-  // Recess the resting island into the display edge; active content grows
-  // downward inside the existing transparent stage.
-  const stageY = Math.round(area.y - 6)
+  // The renderer recesses the compact capsule inside this transparent stage.
+  // Keep the native window on-screen so Windows doesn't clamp or relocate it.
+  const stageY = Math.round(area.y)
 
   const win = new BrowserWindow({
     x: stageX,

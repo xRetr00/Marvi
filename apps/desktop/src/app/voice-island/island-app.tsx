@@ -1,9 +1,10 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 import type { IslandCard } from '@/lib/island-queue'
 import type { VoiceState } from '@/store/voice-presence'
 
 import { DynamicIsland } from './dynamic-island'
+import { shouldHoldWakeHandoff, WAKE_HANDOFF_MS } from './island-motion'
 
 type CardAction = { type: 'dismiss'; id?: string } | { type: 'submit'; text: string }
 
@@ -28,13 +29,37 @@ const INITIAL_STATE: VoiceState = {
 // effect with a focused, native-feeling pill.
 export function VoiceIslandApp() {
   const [state, setState] = useState<VoiceState>(INITIAL_STATE)
+  const stateRef = useRef(state)
+  const wakeHandoffRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [card, setCard] = useState<IslandCard | null>(null)
   const [activity, setActivity] = useState<string | null>(null)
 
   useEffect(() => {
-    const unsub = window.hermesDesktop?.islandOverlay?.onState(payload => setState(payload))
+    const unsub = window.hermesDesktop?.islandOverlay?.onState(payload => {
+      if (shouldHoldWakeHandoff(stateRef.current.phase, payload.phase)) {
+        wakeHandoffRef.current ??= setTimeout(() => {
+          wakeHandoffRef.current = null
+          stateRef.current = payload
+          setState(payload)
+        }, WAKE_HANDOFF_MS)
+        return
+      }
 
-    return () => unsub?.()
+      if (wakeHandoffRef.current) {
+        clearTimeout(wakeHandoffRef.current)
+        wakeHandoffRef.current = null
+      }
+
+      stateRef.current = payload
+      setState(payload)
+    })
+
+    return () => {
+      unsub?.()
+      if (wakeHandoffRef.current) {
+        clearTimeout(wakeHandoffRef.current)
+      }
+    }
   }, [])
 
   useEffect(() => {

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { islandFlowMs, targetAmplitude } from './island-motion'
+import { islandFlowMs, shouldHoldWakeHandoff, targetAmplitude, WAKE_HANDOFF_MS } from './island-motion'
 
 describe('targetAmplitude', () => {
   it('is zero when off', () => {
@@ -42,5 +42,14 @@ describe('islandFlowMs', () => {
 
   it('drifts slowly while transcribing', () => {
     expect(islandFlowMs('transcribing')).toBe(14000)
+  })
+})
+
+describe('wake handoff', () => {
+  it('bridges only the transient wake-to-off gap while duplex connects', () => {
+    expect(WAKE_HANDOFF_MS).toBeGreaterThan(2000)
+    expect(shouldHoldWakeHandoff('wake', 'off')).toBe(true)
+    expect(shouldHoldWakeHandoff('wake', 'listening')).toBe(false)
+    expect(shouldHoldWakeHandoff('speaking', 'off')).toBe(false)
   })
 })

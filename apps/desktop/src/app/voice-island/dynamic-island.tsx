@@ -25,8 +25,8 @@ interface DynamicIslandProps {
   onSummonCancel?: () => void
 }
 
-const SEED_HEIGHT = 8
-const SEED_MIN_WIDTH = 76
+const SEED_HEIGHT = 34
+const SEED_MIN_WIDTH = 112
 
 const IDLE_HEIGHT = 44
 const IDLE_RADIUS = 22
@@ -48,15 +48,15 @@ const PILL_SHADOW = [
   'inset 0 -1px 0 rgba(255,255,255,0.02)'
 ].join(', ')
 
-const SPRING = { type: 'spring', stiffness: 400, damping: 30 } as const
+const SPRING = { type: 'spring', stiffness: 460, damping: 38, mass: 0.8 } as const
 
-const CONTENT_TRANSITION_MOTION = { duration: 0.22, ease: 'easeOut' } as const
+const CONTENT_TRANSITION_MOTION = { duration: 0.16, ease: 'easeOut' } as const
 const CONTENT_TRANSITION_INSTANT = { duration: 0 } as const
 
 function phaseLabel(phase: VoicePhase): string {
   switch (phase) {
     case 'wake':
-      return 'Listening'
+      return 'Waking…'
 
     case 'listening':
 
@@ -129,7 +129,7 @@ function resolveView(
     return 'expanded'
   }
 
-  if (state.phase === 'wake' || state.phase === 'listening' || state.phase === 'speaking') {
+  if (state.phase === 'listening' || state.phase === 'speaking') {
     return 'expanded'
   }
 
@@ -140,8 +140,6 @@ function resolveView(
   }
 
   if (state.phase === 'off') {
-    // Nothing happening — rest as a tiny ambient seed rather than the fuller
-    // idle pill, so Marvi reads as present-but-quiet between turns.
     return 'seed'
   }
 
@@ -177,6 +175,7 @@ export function DynamicIsland({
 
   const color = phaseColor(state.phase)
   const level = state.level
+  const displayLevel = state.phase === 'wake' ? 0.65 : level
   // While thinking, narrate the agent's current tool action instead of the
   // static "Thinking" label — falls back to it once activity clears (between
   // tools) or for phases that don't carry an activity. Duplex's own labels
@@ -203,19 +202,20 @@ export function DynamicIsland({
 
   const minHeight = view === 'seed' ? SEED_HEIGHT : view === 'summon' ? SUMMON_HEIGHT : IDLE_HEIGHT
 
-  const radius = view === 'idle' ? IDLE_RADIUS : view === 'summon' ? SUMMON_RADIUS : EXPANDED_RADIUS
+  const radius =
+    view === 'seed' ? 18 : view === 'idle' ? IDLE_RADIUS : view === 'summon' ? SUMMON_RADIUS : EXPANDED_RADIUS
 
   const padY = view === 'seed' ? 0 : PAD_Y
   const padX = view === 'seed' ? 0 : PAD_X
 
   return (
     <motion.div
+      animate={{ y: view === 'seed' ? -15 : 8, opacity: 1 }}
+      initial={reducedMotion ? false : { y: -34, opacity: 0.7, scale: 0.92 }}
       layout
-      animate={{ y: view === 'seed' ? -3 : 0, opacity: view === 'seed' ? 0.88 : 1 }}
-      initial={reducedMotion ? false : { y: -18, opacity: 0 }}
       style={{
         transformOrigin: 'center top',
-        marginTop: view === 'seed' ? 0 : 10,
+        marginTop: 0,
         display: 'flex',
         flexDirection: 'column',
         alignItems: 'stretch',
@@ -223,8 +223,8 @@ export function DynamicIsland({
         minWidth,
         maxWidth: view === 'expanded' ? EXPANDED_MAX_WIDTH : view === 'summon' ? SUMMON_WIDTH : undefined,
         minHeight,
-        borderRadius: view === 'seed' ? '0 0 8px 8px' : radius,
-        background: '#060606',
+        borderRadius: radius,
+        background: '#000',
         boxShadow: PILL_SHADOW,
         padding: `${padY}px ${padX}px`,
         overflow: 'hidden',
@@ -233,7 +233,7 @@ export function DynamicIsland({
       }}
       transition={springTransition}
     >
-      <AnimatePresence mode="wait">
+      <AnimatePresence mode="sync">
         {view === 'summon' ? (
           <motion.div
             animate={{ scale: 1, opacity: 1, filter: 'blur(0px)' }}
@@ -256,11 +256,11 @@ export function DynamicIsland({
           >
             <span
               style={{
-                width: 54,
+                width: 48,
                 height: 2,
                 borderRadius: 999,
-                background: 'rgba(255,255,255,0.12)',
-                boxShadow: '0 2px 10px rgba(0,0,0,0.9)'
+                background:
+                  'linear-gradient(90deg, transparent, rgba(110,168,255,0.28), rgba(181,126,255,0.22), transparent)'
               }}
             />
           </motion.div>
@@ -274,7 +274,7 @@ export function DynamicIsland({
             transition={contentTransition}
           >
             <StateDot active={active} color={color} reducedMotion={Boolean(reducedMotion)} />
-            <IslandWaveform active={active} height={24} level={level} width={64} />
+            <IslandWaveform active={active} height={24} level={displayLevel} width={64} />
             <span style={{ fontSize: 12, fontWeight: 500, color: 'rgba(255,255,255,0.72)', whiteSpace: 'nowrap' }}>
               {label}
             </span>
@@ -291,7 +291,7 @@ export function DynamicIsland({
               <CardContent card={card} onCardAction={onCardAction} />
             ) : (
               <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6 }}>
-                <IslandWaveform active={active} height={72} level={level} width={300} />
+                <IslandWaveform active={active} height={72} level={displayLevel} width={300} />
                 {showActivityLabel ? (
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                     <StateDot active={active} color={color} reducedMotion={Boolean(reducedMotion)} />

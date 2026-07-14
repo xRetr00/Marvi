@@ -135,7 +135,9 @@ export class DuplexSessionMachine {
           partialCaption: null,
           replyText: null,
           replySource: null,
-          phase: 'listening'
+          // The server has finalized the user's speech and is now running
+          // the instant lane. Present that wait as Thinking, not Listening.
+          phase: 'replying'
         })
 
         return []

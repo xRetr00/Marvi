@@ -39,6 +39,7 @@ contextBridge.exposeInMainWorld('hermesDesktop', {
     // Main renderer → main process: open/close the island window.
     open: () => ipcRenderer.invoke('hermes:island:open'),
     close: () => ipcRenderer.invoke('hermes:island:close'),
+    setPosition: position => ipcRenderer.send('hermes:island:set-position', position),
     // Main renderer → island window (forwarded by main): push the latest voice state.
     pushState: payload => ipcRenderer.send('hermes:island:state', payload),
     // Island overlay window subscribes to state pushes.

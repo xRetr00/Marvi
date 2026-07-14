@@ -54,6 +54,7 @@ declare global {
       islandOverlay: {
         open: () => Promise<{ ok: boolean }>
         close: () => Promise<{ ok: boolean }>
+        setPosition: (position: 'left' | 'center' | 'right') => void
         pushState: (payload: VoiceState) => void
         onState: (callback: (payload: VoiceState) => void) => () => void
         pushCard: (card: IslandCard | null) => void

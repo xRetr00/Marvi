@@ -3,7 +3,7 @@ import { vpLog } from '@/lib/voice-presence-log'
 import { $islandActivity } from './island-activity'
 import { $islandCards } from './island-cards'
 import { $voiceState, type VoicePhase } from './voice-presence'
-import { $islandEnabled, $presenceEnabled } from './voice-presence-settings'
+import { $islandEnabled, $islandPosition, $presenceEnabled } from './voice-presence-settings'
 
 /**
  * Main-renderer controller for the voice presence island window. The island window
@@ -18,6 +18,7 @@ let unsub: (() => void) | null = null
 let unsubCards: (() => void) | null = null
 let unsubActivity: (() => void) | null = null
 let unsubIsland: (() => void) | null = null
+let unsubPosition: (() => void) | null = null
 let unsubPresence: (() => void) | null = null
 let open = false
 let retryAfter = 0
@@ -41,6 +42,7 @@ function ensureOpen(): void {
 
   open = true
   vpLog('window', 'open')
+  overlay.setPosition($islandPosition.get())
   void overlay
     .open()
     .then(() => {
@@ -117,6 +119,7 @@ export function initVoiceIslandBridge(): () => void {
   unsubCards = $islandCards.subscribe(() => evaluate())
   unsubActivity = $islandActivity.subscribe(() => evaluate())
   unsubIsland = $islandEnabled.subscribe(() => evaluate())
+  unsubPosition = $islandPosition.subscribe(position => window.hermesDesktop?.islandOverlay?.setPosition(position))
   unsubPresence = $presenceEnabled.subscribe(() => evaluate())
 
   return () => {
@@ -128,6 +131,8 @@ export function initVoiceIslandBridge(): () => void {
     unsubActivity = null
     unsubIsland?.()
     unsubIsland = null
+    unsubPosition?.()
+    unsubPosition = null
     unsubPresence?.()
     unsubPresence = null
     cancelClose()

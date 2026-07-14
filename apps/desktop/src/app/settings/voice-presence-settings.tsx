@@ -3,16 +3,19 @@ import { useEffect, useRef, useState } from 'react'
 
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { SegmentedControl } from '@/components/ui/segmented-control'
 import { enrollVoiceSpeaker, getVoiceSpeakers, removeVoiceSpeaker, type VoiceSpeaker } from '@/hermes'
 import { triggerHaptic } from '@/lib/haptics'
 import { Loader2, Mic, Settings2, Trash2 } from '@/lib/icons'
 import { notifyError } from '@/store/notifications'
 import {
   $islandEnabled,
+  $islandPosition,
   $presenceCardsEnabled,
   $presenceEnabled,
   $voicePresenceDebug,
   setIslandEnabled,
+  setIslandPosition,
   setPresenceCardsEnabled,
   setPresenceEnabled,
   setVoicePresenceDebug
@@ -40,6 +43,7 @@ export function VoicePresenceSettings({
 }) {
   const presenceEnabled = useStore($presenceEnabled)
   const islandEnabled = useStore($islandEnabled)
+  const islandPosition = useStore($islandPosition)
   const cardsEnabled = useStore($presenceCardsEnabled)
   const debugEnabled = useStore($voicePresenceDebug)
   const [speakerName, setSpeakerName] = useState('Owner')
@@ -123,6 +127,26 @@ export function VoicePresenceSettings({
         description="Show the Dynamic Island during wake-word presence and explicit voice conversations."
         label="Show island"
         onChange={setIslandEnabled}
+      />
+
+      <ListRow
+        action={
+          <SegmentedControl
+            className="w-full"
+            onChange={position => {
+              triggerHaptic('selection')
+              setIslandPosition(position)
+            }}
+            options={[
+              { id: 'left', label: 'Left' },
+              { id: 'center', label: 'Center' },
+              { id: 'right', label: 'Right' }
+            ]}
+            value={islandPosition}
+          />
+        }
+        description="Choose where the island docks along the top edge of this display."
+        title="Island position"
       />
 
       <ToggleRow

@@ -698,7 +698,9 @@ def test_barge_in_cancels_tts_and_instant_stream(duplex_client, full_fakes):
     # the "speaking" state long enough for the barge-in audio below to land
     # (the fakes would otherwise finish the whole turn in well under a
     # millisecond, closing the barge-in window before any chunk arrives).
-    full_fakes["instant"]["deltas"] = ["This ", "is ", "a ", "long ", "reply ", "that ", "keeps ", "going."]
+    full_fakes["instant"]["deltas"] = [
+        "First sentence. ", "This ", "is ", "a ", "long ", "reply ", "that ", "keeps ", "going."
+    ]
     full_fakes["instant"]["delay"] = 0.05
     stt = full_fakes["stt"]
     stt.queue_response("", True)
@@ -708,6 +710,7 @@ def test_barge_in_cancels_tts_and_instant_stream(duplex_client, full_fakes):
         conn.receive_json()  # ready
         conn.send_json(_audio_msg(_pcm16_chunk()))
         _recv_until(conn, "utterance")
+        _recv_until(conn, "tts_start", timeout=10.0)
 
         # Flip the VAD gate to "speaking" and feed enough chunks to cross
         # the sustained-speech threshold (_DUPLEX_BARGE_IN_STREAK_MS).
@@ -726,6 +729,26 @@ def test_barge_in_cancels_tts_and_instant_stream(duplex_client, full_fakes):
         conn.send_json(_audio_msg(_pcm16_chunk()))
         utterance = _recv_until(conn, "utterance", timeout=10.0)
         assert utterance["text"] == "second utterance"
+
+
+def test_speech_before_assistant_playback_does_not_false_barge_in(duplex_client, full_fakes):
+    full_fakes["instant"]["deltas"] = ["This ", "reply ", "starts ", "after ", "a delay."]
+    full_fakes["instant"]["delay"] = 0.05
+    stt = full_fakes["stt"]
+    stt.queue_response("", True)
+    stt.final_text = "are you doing great"
+
+    with duplex_client.websocket_connect(_duplex_url()) as conn:
+        conn.receive_json()  # ready
+        conn.send_json(_audio_msg(_pcm16_chunk()))
+        _recv_until(conn, "utterance")
+
+        full_fakes["vad"].speaking = True
+        for _ in range(30):
+            conn.send_json(_audio_msg(_pcm16_chunk()))
+
+        frames = _drain_until(conn, {"tts_start"}, timeout=10.0)
+        assert not any(frame["type"] == "barge_in" for frame in frames)
 
 
 # ---------------------------------------------------------------------------
@@ -762,6 +785,24 @@ def test_instant_lane_down_falls_back_to_deep_task_with_one_error(duplex_client,
                 break
             frame = conn.receive_json()
         assert seen_error_again is False
+
+
+def test_empty_instant_reply_falls_back_instead_of_leaving_listening_ui(duplex_client, full_fakes):
+    full_fakes["instant"]["deltas"] = []
+    full_fakes["deep"]["text"] = "Fallback answer."
+    stt = full_fakes["stt"]
+    stt.queue_response("", True)
+    stt.final_text = "hello marvi"
+
+    with duplex_client.websocket_connect(_duplex_url()) as conn:
+        conn.receive_json()  # ready
+        conn.send_json(_audio_msg(_pcm16_chunk()))
+
+        _recv_until(conn, "utterance")
+        error = _recv_until(conn, "error", timeout=10.0)
+        assert "empty response" in error["error"]
+        deep_result = _recv_until(conn, "deep_result", timeout=10.0)
+        assert deep_result["text"] == "Fallback answer."
 
 
 def test_instant_lane_down_and_non_owner_still_only_errors_once(duplex_client, full_fakes):
@@ -1036,10 +1077,9 @@ def test_barge_in_drops_queued_but_unemitted_sentences(
     release = threading.Event()
 
     def slow_tts_stream(text):
-        # First sentence's synthesis blocks until released -- gives the test
-        # time to trigger barge-in while a second sentence is still queued
-        # behind it, unsynthesized.
-        if "First" in text:
+        # Let the first sentence start playback, then hold the second so the
+        # test can interrupt while later synthesis is still queued.
+        if "Second" in text:
             release.wait(timeout=5.0)
         return [{"type": "start", "sample_rate": 24000}, {"type": "chunk", "audio": "AAA="}, {"type": "end"}]
 
@@ -1056,10 +1096,10 @@ def test_barge_in_drops_queued_but_unemitted_sentences(
     with duplex_client.websocket_connect(_duplex_url()) as conn:
         conn.receive_json()  # ready
         conn.send_json(_audio_msg(_pcm16_chunk()))
-        _recv_until(conn, "utterance")
+        _recv_until(conn, "tts_start", timeout=10.0)
 
-        # Trigger barge-in while the first sentence's synthesis is still
-        # blocked (so "Second"/"Third" are queued but never emitted).
+        # Trigger barge-in after first playback starts but while the remaining
+        # sentences are blocked/queued and must never be emitted.
         vad_gate.speaking = True
         for _ in range(30):
             conn.send_json(_audio_msg(_pcm16_chunk()))

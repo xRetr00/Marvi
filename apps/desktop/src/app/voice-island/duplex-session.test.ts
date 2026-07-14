@@ -32,7 +32,7 @@ describe('DuplexSessionMachine', () => {
 
     expect(machine.state).toMatchObject({
       partialCaption: null,
-      phase: 'listening',
+      phase: 'replying',
       replySource: null,
       replyText: null,
       speaker: 'owner',

@@ -7475,6 +7475,33 @@ function closePetOverlay() {
 // Apple-Intelligence-style edge island. The main renderer pushes $voiceState into
 // it; it never needs clicks (ignore-mouse stays on). Loaded via `?win=island`.
 let islandWindow = null
+let islandPosition = 'center'
+
+const ISLAND_STAGE_W = 460
+const ISLAND_STAGE_H = 240
+const ISLAND_EDGE_MARGIN = 24
+
+function islandStageX(area, position) {
+  if (position === 'left') {
+    return Math.round(area.x + ISLAND_EDGE_MARGIN)
+  }
+  if (position === 'right') {
+    return Math.round(area.x + area.width - ISLAND_STAGE_W - ISLAND_EDGE_MARGIN)
+  }
+  return Math.round(area.x + (area.width - ISLAND_STAGE_W) / 2)
+}
+
+function setIslandPosition(position) {
+  if (!['left', 'center', 'right'].includes(position)) {
+    return
+  }
+  islandPosition = position
+  if (!islandWindow || islandWindow.isDestroyed()) {
+    return
+  }
+  const display = screen.getDisplayMatching(islandWindow.getBounds())
+  islandWindow.setPosition(islandStageX(display.workArea, position), Math.round(display.workArea.y), false)
+}
 
 // Global "summon Marvi from anywhere" hotkey. Alt+Space collides with the
 // Windows system menu, so we use a chord that's free on both platforms.
@@ -7495,9 +7522,7 @@ function spawnIslandWindow() {
   // window itself stays a fixed, mostly-transparent, click-through stage so we
   // never resize the OS window mid-animation (which is janky on Windows).
   const area = display.workArea
-  const STAGE_W = 460
-  const STAGE_H = 240
-  const stageX = Math.round(area.x + (area.width - STAGE_W) / 2)
+  const stageX = islandStageX(area, islandPosition)
   // The renderer recesses the compact capsule inside this transparent stage.
   // Keep the native window on-screen so Windows doesn't clamp or relocate it.
   const stageY = Math.round(area.y)
@@ -7505,8 +7530,8 @@ function spawnIslandWindow() {
   const win = new BrowserWindow({
     x: stageX,
     y: stageY,
-    width: STAGE_W,
-    height: STAGE_H,
+    width: ISLAND_STAGE_W,
+    height: ISLAND_STAGE_H,
     frame: false,
     transparent: true,
     resizable: false,
@@ -7611,6 +7636,9 @@ ipcMain.handle('hermes:island:open', async () => {
 ipcMain.handle('hermes:island:close', async () => {
   closeIslandWindow()
   return { ok: true }
+})
+ipcMain.on('hermes:island:set-position', (_event, position) => {
+  setIslandPosition(position)
 })
 // Main renderer → island window: forward the latest voice state.
 ipcMain.on('hermes:island:state', (_event, payload) => {

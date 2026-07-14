@@ -376,7 +376,8 @@ export function useGatewayBoot({
       }
     })
 
-    const offEvent = gateway.onEvent(event => callbacksRef.current.handleGatewayEvent(event))
+    const sourceProfile = normalizeProfileKey($activeGatewayProfile.get())
+    const offEvent = gateway.onEvent(event => callbacksRef.current.handleGatewayEvent({ ...event, profile: sourceProfile }))
 
     // Wake signals: power resume (macOS/Windows), network coming back, and the
     // window regaining focus/visibility. Each nudges an immediate reconnect.

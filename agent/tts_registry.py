@@ -55,6 +55,7 @@ _BUILTIN_NAMES = frozenset({
     "gemini",
     "piper",
     "pockettts",
+    "deepinfra",
 })
 
 

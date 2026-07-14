@@ -117,6 +117,7 @@ function sandboxPreflight(unpackedDir, statSync) {
   if (!unpackedDir) {
     return { ok: false, reason: 'no-unpacked-dir', path: null }
   }
+
   const sandboxPath = path.join(unpackedDir, 'chrome-sandbox')
   let st
 

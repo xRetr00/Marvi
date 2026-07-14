@@ -265,6 +265,7 @@ export function DesktopController() {
   const {
     activeSessionIdRef,
     ensureSessionState,
+    resetViewSync,
     runtimeIdByStoredSessionIdRef,
     selectedStoredSessionIdRef,
     sessionStateByRuntimeIdRef,
@@ -656,6 +657,7 @@ export function DesktopController() {
     getRouteToken,
     navigate,
     requestGateway,
+    resetViewSync,
     runtimeIdByStoredSessionIdRef,
     selectedStoredSessionId,
     selectedStoredSessionIdRef,

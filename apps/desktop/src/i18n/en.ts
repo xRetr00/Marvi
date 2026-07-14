@@ -1594,6 +1594,9 @@ export const en: Translations = {
       newWorktreeTitle: 'New worktree',
       newWorktreeDesc: 'Name the branch for this worktree.',
       branchPlaceholder: 'e.g. my-feature',
+      branchOff: () => ({ after: '', before: 'branch off ' }),
+      baseBranchPlaceholder: 'Search branches…',
+      baseBranchNone: 'No branches found',
       startWorkFailed: 'Could not create worktree',
       convertBranch: 'Convert a branch…',
       convertBranchTitle: 'Convert a branch',
@@ -2076,6 +2079,16 @@ export const en: Translations = {
       recentActivity: 'Recent activity',
       viewAllLogs: 'View all logs →',
       messagingPlatforms: 'Messaging platforms'
+    },
+    approvalMode: {
+      title: 'Approval mode',
+      ariaLabel: mode => `Approval mode: ${mode}`,
+      manual: 'Manual',
+      manualDescription: 'Ask before actions that require approval',
+      smart: 'Smart',
+      smartDescription: 'Automatically assess actions and ask when needed',
+      off: 'Off',
+      offDescription: 'Run without approval prompts'
     },
     statusbar: {
       unknown: 'unknown',

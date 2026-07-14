@@ -9,6 +9,7 @@ import { triggerHaptic } from '@/lib/haptics'
 import {
   Archive,
   Bell,
+  Box,
   Brain,
   Download,
   Globe,
@@ -38,6 +39,7 @@ import { NotificationsSettings } from './notifications-settings'
 import { PresenceSettings } from './presence'
 import { PROVIDER_VIEWS, ProvidersSettings, type ProviderView } from './providers-settings'
 import { SessionsSettings } from './sessions-settings'
+import { SmartRoomSettings } from './smart-room-settings'
 import type { SettingsPageProps, SettingsView as SettingsViewId } from './types'
 
 const SETTINGS_VIEWS: readonly SettingsViewId[] = [
@@ -47,6 +49,7 @@ const SETTINGS_VIEWS: readonly SettingsViewId[] = [
   'keys',
   'notifications',
   'presence',
+  'smart-room',
   'sessions',
   'about'
 ]
@@ -153,6 +156,13 @@ export function SettingsView({ onClose, onConfigSaved, onMainModelChanged }: Set
       id: 'presence',
       label: 'Presence',
       onSelect: () => setActiveView('presence')
+    },
+    {
+      active: activeView === 'smart-room',
+      icon: Box,
+      id: 'smart-room',
+      label: 'Smart Room',
+      onSelect: () => setActiveView('smart-room')
     },
     {
       active: activeView === 'providers',
@@ -286,6 +296,8 @@ export function SettingsView({ onClose, onConfigSaved, onMainModelChanged }: Set
               onOpenModelConfig={() => setActiveView('config:model')}
               onOpenVoiceConfig={() => setActiveView('config:voice')}
             />
+          ) : activeView === 'smart-room' ? (
+            <SmartRoomSettings />
           ) : (
             <SessionsSettings />
           )}

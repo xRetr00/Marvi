@@ -12,6 +12,7 @@ export type SettingsView =
   | 'presence'
   | 'providers'
   | 'sessions'
+  | 'smart-room'
   | `config:${string}`
 export type EnvPatch = Partial<Pick<EnvVarInfo, 'is_set' | 'redacted_value'>>
 

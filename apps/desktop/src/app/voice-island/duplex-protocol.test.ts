@@ -40,6 +40,29 @@ describe('parseDuplexServerEvent', () => {
       kind: 'web',
       label: 'Searching'
     })
+    expect(
+      parseDuplexServerEvent({
+        type: 'card_show',
+        card: {
+          id: 'c1',
+          kind: 'result',
+          title: 'Weather',
+          body: 'Sunny',
+          duration: 5000,
+          actions: [{ id: 'details', label: 'Details', value: 'Show details' }]
+        }
+      })
+    ).toEqual({
+      type: 'card_show',
+      card: {
+        id: 'c1',
+        kind: 'result',
+        title: 'Weather',
+        body: 'Sunny',
+        duration: 5000,
+        actions: [{ id: 'details', label: 'Details', value: 'Show details' }]
+      }
+    })
     expect(parseDuplexServerEvent({ type: 'deep_result', task_id: 't1', text: 'result' })).toEqual({
       type: 'deep_result',
       task_id: 't1',
@@ -93,5 +116,6 @@ describe('parseDuplexServerEvent', () => {
     expect(parseDuplexServerEvent({ type: 'escalated', ack_text: 'ack' })).toBeNull()
     expect(parseDuplexServerEvent({ type: 'deep_result', task_id: 't1' })).toBeNull()
     expect(parseDuplexServerEvent({ type: 'deep_result', text: 'x' })).toBeNull()
+    expect(parseDuplexServerEvent({ type: 'card_show', card: { id: 'c1' } })).toBeNull()
   })
 })

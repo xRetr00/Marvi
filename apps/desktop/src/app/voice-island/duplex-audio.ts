@@ -122,6 +122,24 @@ export async function startDuplexMicCapture(options: DuplexMicCaptureOptions): P
   }
 
   const audioContext = new AudioContextCtor()
+  const tracks = stream.getTracks()
+  let stopped = false
+
+  const reportTrackEnded = () => {
+    if (!stopped) {
+      options.onError?.(new Error('Microphone capture ended unexpectedly'))
+    }
+  }
+
+  tracks.forEach(track => track.addEventListener('ended', reportTrackEnded))
+
+  const keepContextRunning = () => {
+    if (!stopped && audioContext.state === 'suspended') {
+      void audioContext.resume?.()?.catch?.(() => undefined)
+    }
+  }
+
+  audioContext.addEventListener('statechange', keepContextRunning)
 
   if (audioContext.state === 'suspended') {
     void audioContext.resume?.()?.catch?.(() => undefined)
@@ -176,6 +194,7 @@ export async function startDuplexMicCapture(options: DuplexMicCaptureOptions): P
 
   return {
     stop: () => {
+      stopped = true
       if (levelRaf !== null) {
         window.cancelAnimationFrame(levelRaf)
         levelRaf = null
@@ -195,8 +214,10 @@ export async function startDuplexMicCapture(options: DuplexMicCaptureOptions): P
         // already disconnected
       }
 
+      audioContext.removeEventListener('statechange', keepContextRunning)
+      tracks.forEach(track => track.removeEventListener('ended', reportTrackEnded))
       void audioContext.close?.()?.catch?.(() => undefined)
-      stream.getTracks().forEach(track => track.stop())
+      tracks.forEach(track => track.stop())
     }
   }
 }

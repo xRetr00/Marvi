@@ -18,7 +18,7 @@ function readingTimeMs(text: string | undefined): number {
   return Math.min(12000, Math.max(2500, 2200 + words * 220))
 }
 
-export function showIslandCard(card: IslandCard): void {
+export function showIslandCard(card: IslandCard, options: { allowWhenFocused?: boolean } = {}): void {
   // Respect the desktop presence master switch and the "show cards" preference.
   if (!$presenceEnabled.get() || !$presenceCardsEnabled.get()) {
     return
@@ -27,7 +27,7 @@ export function showIslandCard(card: IslandCard): void {
   // Don't surface island cards when the user is already looking at the main
   // Marvi window — the answer is right there in the chat. The card is for when
   // they're hands-free or in another app. (Minimized/unfocused → still show.)
-  if ($mainWindowFocused.get()) {
+  if ($mainWindowFocused.get() && !options.allowWhenFocused) {
     vpLog('card', 'suppressed', { id: card.id, reason: 'main-window-focused' })
     return
   }

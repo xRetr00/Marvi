@@ -7,6 +7,7 @@ import {
   startDuplexMicCapture
 } from './duplex-audio'
 import { type DuplexCommand, DuplexSessionMachine, type DuplexSessionState } from './duplex-session'
+import { type DuplexCard, parseDuplexServerEvent } from './duplex-protocol'
 
 const CONNECT_TIMEOUT_MS = 8000
 
@@ -30,6 +31,8 @@ export interface DuplexConnectOptions {
   onUnavailable: (reason: string) => void
   /** Fires after Marvi has spoken a model-requested voice-session goodbye. */
   onConversationEnd?: () => void
+  /** Surfaces a model-requested card through the shared voice island. */
+  onCard?: (card: DuplexCard) => void
 
   // Test seams — production callers rely on the defaults below.
   getConnection?: () => Promise<DuplexGatewayConnection | null>
@@ -224,11 +227,16 @@ export async function connectDuplexVoice(options: DuplexConnectOptions): Promise
       return
     }
 
+    const parsedEvent = parseDuplexServerEvent(payload)
     const wasReady = machine.state.phase !== 'connecting'
     runCommands(machine.applyRawEvent(payload))
     emitState()
 
-    if (typeof payload === 'object' && payload !== null && 'type' in payload && payload.type === 'conversation_end') {
+    if (parsedEvent?.type === 'card_show') {
+      options.onCard?.(parsedEvent.card)
+    }
+
+    if (parsedEvent?.type === 'conversation_end') {
       stopped = true
       mic?.stop()
       mic = null

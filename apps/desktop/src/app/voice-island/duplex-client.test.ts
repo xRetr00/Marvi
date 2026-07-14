@@ -257,6 +257,27 @@ describe('connectDuplexVoice', () => {
     expect(player.reset).toHaveBeenCalledTimes(1)
   })
 
+  it('forwards voice cards from the shared duplex socket', async () => {
+    const gate = socketGate()
+    const onCard = vi.fn()
+    const connectPromise = connectDuplexVoice({
+      audioPlayerFactory: fakeAudioPlayer,
+      createWebSocket: gate.createWebSocket,
+      getConnection: async () => DEFAULT_CONNECTION,
+      micCaptureFactory: fakeMicCapture().factory,
+      onCard,
+      onState: vi.fn(),
+      onUnavailable: vi.fn()
+    })
+    const socket = await gate.ready
+    socket.open()
+    await connectPromise
+
+    socket.message({ type: 'card_show', card: { id: 'c1', kind: 'result', title: 'Weather', body: 'Sunny' } })
+
+    expect(onCard).toHaveBeenCalledWith({ id: 'c1', kind: 'result', title: 'Weather', body: 'Sunny' })
+  })
+
   it('ends cleanly when the voice model requests conversation_end', async () => {
     const player = fakeAudioPlayer()
     const gate = socketGate()

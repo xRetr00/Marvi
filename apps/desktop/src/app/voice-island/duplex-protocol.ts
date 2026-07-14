@@ -101,6 +101,20 @@ export interface DuplexActivityEvent {
   task_id?: string
 }
 
+export interface DuplexCard {
+  id: string
+  kind: 'info' | 'result' | 'approval'
+  title?: string
+  body: string
+  duration?: number
+  actions?: Array<{ id: string; label: string; value?: string }>
+}
+
+export interface DuplexCardShowEvent {
+  type: 'card_show'
+  card: DuplexCard
+}
+
 export interface DuplexDeepResultEvent {
   type: 'deep_result'
   task_id: string
@@ -125,6 +139,7 @@ export type DuplexServerEvent =
   | DuplexConversationEndEvent
   | DuplexEscalatedEvent
   | DuplexActivityEvent
+  | DuplexCardShowEvent
   | DuplexDeepResultEvent
   | DuplexErrorEvent
 
@@ -144,6 +159,32 @@ function asActivityKind(value: unknown): DuplexActivityKind {
   return value === 'web' || value === 'file' || value === 'memory' || value === 'session' || value === 'delegation'
     ? value
     : 'thinking'
+}
+
+function asCard(value: unknown): DuplexCard | null {
+  if (!isRecord(value) || typeof value.id !== 'string' || typeof value.body !== 'string') {
+    return null
+  }
+
+  const kind = value.kind === 'result' || value.kind === 'approval' ? value.kind : 'info'
+  const actions = Array.isArray(value.actions)
+    ? value.actions.flatMap(action => {
+        if (!isRecord(action) || typeof action.id !== 'string' || typeof action.label !== 'string') {
+          return []
+        }
+
+        return [{ id: action.id, label: action.label, ...(typeof action.value === 'string' ? { value: action.value } : {}) }]
+      })
+    : undefined
+
+  return {
+    id: value.id,
+    kind,
+    body: value.body,
+    ...(typeof value.title === 'string' ? { title: value.title } : {}),
+    ...(typeof value.duration === 'number' && value.duration > 0 ? { duration: value.duration } : {}),
+    ...(actions?.length ? { actions } : {})
+  }
 }
 
 /**
@@ -226,6 +267,12 @@ export function parseDuplexServerEvent(raw: unknown): DuplexServerEvent | null {
             ...(typeof raw.task_id === 'string' ? { task_id: raw.task_id } : {})
           }
         : null
+
+    case 'card_show': {
+      const card = asCard(raw.card)
+
+      return card ? { type: 'card_show', card } : null
+    }
 
     case 'deep_result':
       return typeof raw.task_id === 'string' && typeof raw.text === 'string'

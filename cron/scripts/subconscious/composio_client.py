@@ -271,6 +271,16 @@ class ComposioClient:
                 pass
         return {"data": result}
 
+    @staticmethod
+    def _call_with_optional_user_id(method, *, user_id: str = "default", **kwargs):
+        """Call SDK resources across versions that added/removed ``user_id``."""
+        try:
+            return method(user_id=user_id, **kwargs)
+        except TypeError as exc:
+            if "user_id" not in str(exc):
+                raise
+            return method(**kwargs)
+
     def execute_action(
         self,
         action: str,
@@ -297,17 +307,30 @@ class ComposioClient:
                 # version not specified" (SDK >= 0.17). Older SDKs without the
                 # kwarg raise TypeError -> retry without it.
                 try:
-                    result = tools.execute(
+                    result = self._call_with_optional_user_id(
+                        tools.execute,
+                        user_id=user_id,
                         slug=action,
                         arguments=params or {},
-                        user_id=user_id,
                         dangerously_skip_version_check=True,
                     )
-                except TypeError:
-                    result = tools.execute(slug=action, arguments=params or {}, user_id=user_id)
+                except TypeError as exc:
+                    if "dangerously_skip_version_check" not in str(exc):
+                        raise
+                    result = self._call_with_optional_user_id(
+                        tools.execute,
+                        user_id=user_id,
+                        slug=action,
+                        arguments=params or {},
+                    )
             else:
                 actions = getattr(client, "actions")
-                result = actions.execute(action=action, params=params or {}, user_id=user_id)
+                result = self._call_with_optional_user_id(
+                    actions.execute,
+                    user_id=user_id,
+                    action=action,
+                    params=params or {},
+                )
         except (
             ComposioRateLimited,
             ComposioAuthError,
@@ -330,7 +353,7 @@ class ComposioClient:
         client = self._client()
         try:
             connect = getattr(client, "connected_accounts", None) or getattr(client, "connections", None)
-            result = connect.initiate(app=app, user_id=user_id)
+            result = self._call_with_optional_user_id(connect.initiate, user_id=user_id, app=app)
         except (ComposioRateLimited, ComposioAuthError, ComposioTransientError):
             raise
         except Exception as e:
@@ -345,7 +368,7 @@ class ComposioClient:
         client = self._client()
         try:
             connect = getattr(client, "connected_accounts", None) or getattr(client, "connections", None)
-            result = connect.get(app=app, user_id=user_id)
+            result = self._call_with_optional_user_id(connect.get, user_id=user_id, app=app)
         except (ComposioRateLimited, ComposioAuthError, ComposioTransientError):
             raise
         except Exception as e:
@@ -368,13 +391,13 @@ class ComposioClient:
         try:
             connect = getattr(client, "connected_accounts", None) or getattr(client, "connections", None)
             if connect is not None and hasattr(connect, "list"):
-                connect.list(user_id="default")
+                self._call_with_optional_user_id(connect.list)
             return True
         except (ComposioRateLimited, ComposioAuthError, ComposioTransientError):
             raise
         except Exception as e:
             self._classify_and_raise(e)
-            raise ComposioAuthError(f"Composio auth check failed: {e}") from e
+            raise ComposioTransientError(f"Composio auth check could not run: {e}") from e
 
 
 def unwrap_payload(payload: Any) -> Any:

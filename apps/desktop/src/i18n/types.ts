@@ -1680,6 +1680,9 @@ export interface Translations {
       keyTitle: string
       keyDescription: string
       keyPlaceholder: string
+      consumerKeyTitle: string
+      consumerKeyDescription: string
+      consumerKeyPlaceholder: string
       saveKey: string
       saving: string
       keyConfigured: string
@@ -1703,6 +1706,7 @@ export interface Translations {
       loadFailed: string
       saveFailed: string
       catalogFailed: string
+      connect: string
     }
   }
 

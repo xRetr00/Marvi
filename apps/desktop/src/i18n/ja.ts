@@ -1984,11 +1984,13 @@ export const ja = defineLocale({
       title: '接続済みアプリ',
       description:
         'Composio Connect は、コアツールを増やさずに、対応するすべてのアプリを Marvi が安全に利用できるようにします。',
-      keyTitle: 'Composio API キー',
-      keyDescription:
-        'config.yaml ではなく Marvi のシークレットファイルに保存され、公式 Composio Connect MCP も有効になります。',
-      keyPlaceholder: 'Composio API キーを貼り付け',
-      saveKey: '保存して有効化',
+      keyTitle: 'プロジェクト API キー（SDK）',
+      keyDescription: 'プロアクティブ・スナップショットとインテグレーション一覧にのみ使用します。',
+      keyPlaceholder: 'プロジェクト API キーを貼り付け',
+      consumerKeyTitle: 'AI Clients キー（MCP）',
+      consumerKeyDescription: '公式 Composio Connect MCP サーバーにのみ使用します。',
+      consumerKeyPlaceholder: 'Consumer API キーを貼り付け',
+      saveKey: 'キーを保存',
       saving: '保存中…',
       keyConfigured: 'キー設定済み',
       keyMissing: 'キーが必要',
@@ -2010,10 +2012,11 @@ export const ja = defineLocale({
       askTitle: '自然な言葉で使えます',
       askDescription:
         '新しいチャットで「Gmailを確認して」または一覧のアプリ名を指定してください。未認証なら Marvi が接続を案内します。',
-      saved: 'Composio ツールを有効にしました',
+      saved: 'Composio キーを保存しました',
       loadFailed: 'Composio を読み込めませんでした',
       saveFailed: 'Composio キーを保存できませんでした',
-      catalogFailed: 'Composio インテグレーションを読み込めませんでした'
+      catalogFailed: 'Composio インテグレーションを読み込めませんでした',
+      connect: '接続'
     }
   },
 

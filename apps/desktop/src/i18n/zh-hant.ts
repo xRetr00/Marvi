@@ -1918,10 +1918,13 @@ export const zhHant = defineLocale({
     composio: {
       title: '已連接應用程式',
       description: 'Composio Connect 讓 Marvi 透過安全的工具路由器使用所有支援的應用程式，不必增加核心工具。',
-      keyTitle: 'Composio API 金鑰',
-      keyDescription: '金鑰儲存在 Marvi 的祕密檔案，而非 config.yaml；儲存後也會啟用官方 Composio Connect MCP。',
-      keyPlaceholder: '貼上 Composio API 金鑰',
-      saveKey: '儲存並啟用',
+      keyTitle: '專案 API 金鑰（SDK）',
+      keyDescription: '僅用於主動快照和整合目錄。',
+      keyPlaceholder: '貼上專案 API 金鑰',
+      consumerKeyTitle: 'AI Clients 金鑰（MCP）',
+      consumerKeyDescription: '僅供官方 Composio Connect MCP 伺服器使用。',
+      consumerKeyPlaceholder: '貼上 Consumer API 金鑰',
+      saveKey: '儲存金鑰',
       saving: '正在儲存…',
       keyConfigured: '金鑰已設定',
       keyMissing: '需要金鑰',
@@ -1942,10 +1945,11 @@ export const zhHant = defineLocale({
       askTitle: '自然表達即可使用',
       askDescription:
         '開啟新聊天並說「檢查我的 Gmail」，或說出清單中的其他應用程式。若尚未授權，Marvi 會引導你完成連線。',
-      saved: 'Composio 工具已啟用',
+      saved: 'Composio 金鑰已儲存',
       loadFailed: '無法載入 Composio',
       saveFailed: '無法儲存 Composio 金鑰',
-      catalogFailed: '無法載入 Composio 整合'
+      catalogFailed: '無法載入 Composio 整合',
+      connect: '連線'
     }
   },
 

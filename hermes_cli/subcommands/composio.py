@@ -28,16 +28,23 @@ def build_composio_parser(subparsers, *, cmd_composio: Callable) -> None:
     composio_sub = composio_parser.add_subparsers(dest="composio_action")
 
     connect_p = composio_sub.add_parser(
-        "connect", help="Connect (or re-verify) a Composio surface, e.g. gmail or github"
+        "connect",
+        help="Connect (or re-verify) a Composio surface, e.g. gmail or github",
     )
     connect_p.add_argument("app", help="Surface/app name, e.g. gmail, github")
     connect_p.add_argument(
         "--api-key",
         help="Composio API key (otherwise prompts interactively, or reads COMPOSIO_API_KEY)",
     )
+    connect_p.add_argument(
+        "--consumer-api-key",
+        help="AI Clients key for Connect MCP (otherwise reads COMPOSIO_CONSUMER_API_KEY)",
+    )
 
     composio_sub.add_parser(
-        "list", aliases=["ls"], help="List connected surfaces, auth status, and sync freshness"
+        "list",
+        aliases=["ls"],
+        help="List connected surfaces, auth status, and sync freshness",
     )
 
     composio_parser.set_defaults(func=cmd_composio)

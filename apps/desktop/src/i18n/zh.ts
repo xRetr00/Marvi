@@ -2207,10 +2207,13 @@ export const zh: Translations = {
     composio: {
       title: '已连接应用',
       description: 'Composio Connect 让 Marvi 通过一个安全的工具路由器使用所有受支持应用，无需增加核心工具。',
-      keyTitle: 'Composio API 密钥',
-      keyDescription: '密钥保存在 Marvi 的秘密文件中，而不是 config.yaml；保存后也会启用官方 Composio Connect MCP。',
-      keyPlaceholder: '粘贴 Composio API 密钥',
-      saveKey: '保存并启用',
+      keyTitle: '项目 API 密钥（SDK）',
+      keyDescription: '仅用于主动快照和集成目录。',
+      keyPlaceholder: '粘贴项目 API 密钥',
+      consumerKeyTitle: 'AI Clients 密钥（MCP）',
+      consumerKeyDescription: '仅供官方 Composio Connect MCP 服务器使用。',
+      consumerKeyPlaceholder: '粘贴 Consumer API 密钥',
+      saveKey: '保存密钥',
       saving: '正在保存…',
       keyConfigured: '密钥已配置',
       keyMissing: '需要密钥',
@@ -2230,10 +2233,11 @@ export const zh: Translations = {
       totalApps: count => `${count} 个支持的应用`,
       askTitle: '自然表达即可使用',
       askDescription: '新建聊天后说“检查我的 Gmail”，或说出列表中的其他应用。若尚未授权，Marvi 会引导你完成连接。',
-      saved: 'Composio 工具已启用',
+      saved: 'Composio 密钥已保存',
       loadFailed: '无法加载 Composio',
       saveFailed: '无法保存 Composio 密钥',
-      catalogFailed: '无法加载 Composio 集成'
+      catalogFailed: '无法加载 Composio 集成',
+      connect: '连接'
     }
   },
 

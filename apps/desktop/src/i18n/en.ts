@@ -2049,11 +2049,13 @@ export const en: Translations = {
       title: 'Connected apps',
       description:
         'Composio Connect gives Marvi one secure tool router for every supported app instead of adding permanent core tools.',
-      keyTitle: 'Composio API key',
-      keyDescription:
-        'Stored in the Marvi secret file, never in config.yaml. Saving also enables the official Composio Connect MCP server.',
-      keyPlaceholder: 'Paste Composio API key',
-      saveKey: 'Save and enable',
+      keyTitle: 'Project API key (SDK)',
+      keyDescription: 'Used only for proactive snapshots and the integration catalog.',
+      keyPlaceholder: 'Paste project API key',
+      consumerKeyTitle: 'AI Clients key (MCP)',
+      consumerKeyDescription: 'Used only by the official Composio Connect MCP server.',
+      consumerKeyPlaceholder: 'Paste consumer API key',
+      saveKey: 'Save keys',
       saving: 'Saving…',
       keyConfigured: 'Key configured',
       keyMissing: 'Key required',
@@ -2075,10 +2077,11 @@ export const en: Translations = {
       askTitle: 'Use it naturally',
       askDescription:
         'Start a new chat and ask “Check my Gmail” or name another listed app. Marvi can find the right tool and guide connection when authorization is still needed.',
-      saved: 'Composio tools enabled',
+      saved: 'Composio keys saved',
       loadFailed: 'Failed to load Composio',
       saveFailed: 'Failed to save Composio key',
-      catalogFailed: 'Failed to load Composio integrations'
+      catalogFailed: 'Failed to load Composio integrations',
+      connect: 'Connect'
     }
   },
 

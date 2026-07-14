@@ -16,7 +16,9 @@ from hermes_cli.config import get_env_value, load_config, read_raw_config
 
 
 class FakeClient:
-    def __init__(self, api_key=None, *, auth_ok=True, connect_result=None, connect_error=None):
+    def __init__(
+        self, api_key=None, *, auth_ok=True, connect_result=None, connect_error=None
+    ):
         self.api_key = api_key
         self._auth_ok = auth_ok
         self._connect_result = connect_result or {"status": "active"}
@@ -43,11 +45,15 @@ def fake_sdk(monkeypatch):
     state = {"auth_ok": True, "connect_error": None}
 
     def _factory(api_key):
-        return FakeClient(api_key, auth_ok=state["auth_ok"], connect_error=state["connect_error"])
+        return FakeClient(
+            api_key, auth_ok=state["auth_ok"], connect_error=state["connect_error"]
+        )
 
     monkeypatch.setattr(composio_client_mod, "is_sdk_installed", lambda: True)
     monkeypatch.setattr(composio_client_mod, "ComposioClient", _factory)
-    monkeypatch.setattr(composio_client_mod, "get_client", lambda api_key=None: _factory(api_key or "x"))
+    monkeypatch.setattr(
+        composio_client_mod, "get_client", lambda api_key=None: _factory(api_key or "x")
+    )
     return state
 
 
@@ -59,7 +65,9 @@ class TestConnect:
         assert exc.value.code == 1
         assert "Usage" in capsys.readouterr().out
 
-    def test_connect_without_api_key_and_non_interactive_fails(self, monkeypatch, fake_sdk):
+    def test_connect_without_api_key_and_non_interactive_fails(
+        self, monkeypatch, fake_sdk
+    ):
         monkeypatch.setattr("sys.stdin.isatty", lambda: False)
         args = SimpleNamespace(app="gmail", api_key=None)
         with pytest.raises(SystemExit) as exc:
@@ -71,14 +79,18 @@ class TestConnect:
         monkeypatch.setattr(
             composio_client_mod,
             "ensure_sdk_installed",
-            lambda **kw: (_ for _ in ()).throw(composio_client_mod.ComposioUnavailable("nope, no network")),
+            lambda **kw: (_ for _ in ()).throw(
+                composio_client_mod.ComposioUnavailable("nope, no network")
+            ),
         )
         args = SimpleNamespace(app="gmail", api_key="k123")
         with pytest.raises(SystemExit) as exc:
             composio_cmd.cmd_composio_connect(args)
         assert exc.value.code == 1
 
-    def test_connect_auto_installs_missing_sdk_then_connects(self, monkeypatch, fake_sdk, capsys):
+    def test_connect_auto_installs_missing_sdk_then_connects(
+        self, monkeypatch, fake_sdk, capsys
+    ):
         # is_sdk_installed() reports missing up front, but ensure_sdk_installed()
         # (the lazy auto-install path) succeeds -- connect should proceed
         # instead of asking the user to install it themselves.
@@ -93,7 +105,9 @@ class TestConnect:
         args = SimpleNamespace(app="gmail", api_key="k123")
         composio_cmd.cmd_composio_connect(args)
 
-        assert calls, "ensure_sdk_installed should have been called instead of just printing a hint"
+        assert calls, (
+            "ensure_sdk_installed should have been called instead of just printing a hint"
+        )
         assert calls[0].get("prompt") is True  # interactive CLI call site prompts
         out = capsys.readouterr().out
         assert "installing" in out.lower()
@@ -107,10 +121,14 @@ class TestConnect:
         config = load_config()
         assert "api_key" not in config["composio"]
         assert get_env_value("COMPOSIO_API_KEY") == "k123"
-        assert config["mcp_servers"]["composio"]["url"] == "https://connect.composio.dev/mcp"
+        assert (
+            config["mcp_servers"]["composio"]["url"]
+            == "https://connect.composio.dev/mcp"
+        )
         assert read_raw_config()["mcp_servers"]["composio"]["headers"] == {
-            "x-consumer-api-key": "${COMPOSIO_API_KEY}"
+            "x-consumer-api-key": "${COMPOSIO_CONSUMER_API_KEY}"
         }
+        assert config["mcp_servers"]["composio"]["enabled"] is False
         assert "gmail" in config["composio"]["surfaces"]
         assert "Marvi is now set up to watch 'gmail'" in capsys.readouterr().out
 
@@ -133,7 +151,9 @@ class TestConnect:
         config = load_config()
         assert "gmail" not in (config.get("composio", {}) or {}).get("surfaces", [])
 
-    def test_connect_warns_on_unimplemented_surface_but_still_connects(self, fake_sdk, capsys):
+    def test_connect_warns_on_unimplemented_surface_but_still_connects(
+        self, fake_sdk, capsys
+    ):
         args = SimpleNamespace(app="notion", api_key="k123")
         composio_cmd.cmd_composio_connect(args)
 
@@ -142,11 +162,19 @@ class TestConnect:
         config = load_config()
         assert "notion" in config["composio"]["surfaces"]
 
-    def test_connect_prints_redirect_url_when_present(self, fake_sdk, capsys, monkeypatch):
+    def test_connect_prints_redirect_url_when_present(
+        self, fake_sdk, capsys, monkeypatch
+    ):
         fake_client = FakeClient(
-            "k123", connect_result={"status": "pending", "redirect_url": "https://composio.dev/auth/abc"}
+            "k123",
+            connect_result={
+                "status": "pending",
+                "redirect_url": "https://composio.dev/auth/abc",
+            },
         )
-        monkeypatch.setattr(composio_client_mod, "ComposioClient", lambda api_key: fake_client)
+        monkeypatch.setattr(
+            composio_client_mod, "ComposioClient", lambda api_key: fake_client
+        )
 
         args = SimpleNamespace(app="gmail", api_key="k123")
         composio_cmd.cmd_composio_connect(args)

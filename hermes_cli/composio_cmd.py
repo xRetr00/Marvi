@@ -2,8 +2,9 @@
 
 Connects and reports on the Composio-backed account-awareness surfaces
 (Gmail, GitHub, ...) that feed Marvi's subconscious sync (Workstream C of the
-2026-07-09 subconscious+presence design). The credential lives in the secret
-store as ``COMPOSIO_API_KEY``; non-secret snapshot settings live under
+2026-07-09 subconscious+presence design). The SDK credential lives in the
+secret store as ``COMPOSIO_API_KEY``; the separate Connect MCP credential uses
+``COMPOSIO_CONSUMER_API_KEY``. Non-secret snapshot settings live under
 ``composio.surfaces``. The actual delta
 fetchers and snapshot cursors live in ``cron/scripts/subconscious/``.
 
@@ -17,7 +18,14 @@ from __future__ import annotations
 import sys
 from typing import Any, Dict, List, Optional
 
-from hermes_cli.cli_output import print_error, print_header, print_info, print_success, print_warning, prompt
+from hermes_cli.cli_output import (
+    print_error,
+    print_header,
+    print_info,
+    print_success,
+    print_warning,
+    prompt,
+)
 
 
 def composio_command(args: Any) -> None:
@@ -119,9 +127,13 @@ def cmd_composio_connect(args: Any) -> None:
         print_error(f"Composio rejected this API key: {e}")
         sys.exit(1)
     except (ComposioRateLimited, ComposioTransientError) as e:
-        print_warning(f"Could not verify the Composio API key right now ({e}); saving it anyway.")
+        print_warning(
+            f"Could not verify the Composio API key right now ({e}); saving it anyway."
+        )
     except Exception as e:  # pragma: no cover - defensive
-        print_warning(f"Unexpected error verifying the Composio API key ({e}); saving it anyway.")
+        print_warning(
+            f"Unexpected error verifying the Composio API key ({e}); saving it anyway."
+        )
 
     redirect_url = None
     try:
@@ -137,16 +149,25 @@ def cmd_composio_connect(args: Any) -> None:
         print_error(f"Composio rejected this API key while connecting {app}: {e}")
         sys.exit(1)
     except (ComposioRateLimited, ComposioTransientError, ComposioUnavailable) as e:
-        print_warning(f"Could not initiate the Composio connection for {app} right now ({e}).")
-        print_info("The surface will still be added to your config; retry `hermes composio list` later.")
+        print_warning(
+            f"Could not initiate the Composio connection for {app} right now ({e})."
+        )
+        print_info(
+            "The surface will still be added to your config; retry `hermes composio list` later."
+        )
     except Exception as e:  # pragma: no cover - defensive
-        print_warning(f"Unexpected error initiating the Composio connection for {app} ({e}).")
+        print_warning(
+            f"Unexpected error initiating the Composio connection for {app} ({e})."
+        )
 
     # Persist the credential in .env, configure the official Composio Connect
     # MCP server, and keep only non-secret snapshot settings in config.yaml.
     from hermes_cli.composio_config import configure_composio_connect
 
-    configure_composio_connect(api_key)
+    configure_composio_connect(
+        api_key=api_key,
+        consumer_api_key=getattr(args, "consumer_api_key", None),
+    )
     config = read_raw_config()
     composio_cfg = config.setdefault("composio", {})
     if not isinstance(composio_cfg, dict):
@@ -164,7 +185,9 @@ def cmd_composio_connect(args: Any) -> None:
 
     print_success(f"Marvi is now set up to watch '{app}' via Composio.")
     if redirect_url:
-        print_info("Finish the authorization link above, then check `hermes composio list`.")
+        print_info(
+            "Finish the authorization link above, then check `hermes composio list`."
+        )
 
 
 # ─── list ─────────────────────────────────────────────────────────────────
@@ -188,7 +211,11 @@ def _surface_auth_status(app: str, config: Dict[str, Any]) -> str:
     try:
         client = get_client()
         status = client.get_connection_status(app)
-        return "connected" if status.get("connected") else f"not connected ({status.get('status')})"
+        return (
+            "connected"
+            if status.get("connected")
+            else f"not connected ({status.get('status')})"
+        )
     except ComposioAuthError:
         return "auth error"
     except ComposioRateLimited:
@@ -218,13 +245,21 @@ def cmd_composio_list(args: Any) -> None:
     config = load_config()
     composio_cfg = config.get("composio") or {}
     surfaces: List[str] = []
-    if isinstance(composio_cfg, dict) and isinstance(composio_cfg.get("surfaces"), list):
-        surfaces = [str(s).strip().lower() for s in composio_cfg["surfaces"] if str(s or "").strip()]
+    if isinstance(composio_cfg, dict) and isinstance(
+        composio_cfg.get("surfaces"), list
+    ):
+        surfaces = [
+            str(s).strip().lower()
+            for s in composio_cfg["surfaces"]
+            if str(s or "").strip()
+        ]
 
     print_header("Marvi account-awareness surfaces (Composio)")
 
     if not surfaces:
-        print_info("No surfaces connected yet. Run `hermes composio connect gmail` (or github) to add one.")
+        print_info(
+            "No surfaces connected yet. Run `hermes composio connect gmail` (or github) to add one."
+        )
         return
 
     from cron.scripts.subconscious.snapshot_store import open_store

@@ -27,8 +27,12 @@ from __future__ import annotations
 
 import json
 import logging
+import os
+import re
+import tempfile
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from hermes_constants import get_hermes_home
 from hermes_time import now as _hermes_now
@@ -36,7 +40,9 @@ from hermes_time import now as _hermes_now
 logger = logging.getLogger(__name__)
 
 JOB_NAME = "Subconscious tick"
+REFLECTION_JOB_NAME = "Subconscious reflection"
 DEFAULT_INTERVAL = "20m"
+DEFAULT_REFLECTION_SCHEDULE = "30 3 * * *"
 DEFAULT_IDLE_TRIGGER_MINUTES = 15
 SNAPSHOT_SHIM_NAME = "subconscious_snapshot.py"
 
@@ -57,6 +63,13 @@ _REAL_SNAPSHOT_SCRIPT = Path(__file__).resolve().parent / "scripts" / "subconsci
 # gives the tick the ability to actually look something up while deciding
 # whether a diff item is worth surfacing.
 _TICK_TOOLSETS = ["goals", "subconscious", "memory", "web"]
+
+NARRATIVE_CAP = 8_000
+_NARRATIVE_RE = re.compile(r"<narrative>\s*(.*?)\s*</narrative>", re.DOTALL | re.IGNORECASE)
+_INITIATIVES_RE = re.compile(r"<initiatives>\s*(.*?)\s*</initiatives>", re.DOTALL | re.IGNORECASE)
+_INITIATIVE_RESULTS_RE = re.compile(
+    r"<initiative-results>\s*(.*?)\s*</initiative-results>", re.DOTALL | re.IGNORECASE
+)
 
 _TICK_PROMPT = (
     "[Subconscious tick] You woke up on your own schedule, not because the "
@@ -79,8 +92,159 @@ _TICK_PROMPT = (
     "only auto-creates when the user pre-approved the category as an "
     "'auto' tier in subconscious.tiers.\n"
     "Never invent activity that isn't supported by the diff, your goals, or "
-    "your memory."
+    "your memory. End with one compact <narrative>...</narrative> block that "
+    "updates your durable working model. You may also emit JSON arrays inside "
+    "<initiatives>...</initiatives> and <initiative-results>...</initiative-results>. "
+    "These blocks are persisted and removed before anything is shown to the user."
 )
+
+_REFLECTION_PROMPT = (
+    "[Nightly subconscious reflection] Quietly consolidate the supplied narrative, "
+    "recent activity, goals, suggestions, rhythm and durable memory. Improve the "
+    "working model without inventing facts. Infer useful goals from repeated behavior "
+    "or memory only as consent-first goal suggestions. If essential intent is uncertain, "
+    "ask one short clarifying question in normal prose and do not propose that goal yet. "
+    "Never activate a goal without acceptance. Return the refreshed model in exactly one "
+    "<narrative>...</narrative> block. Optionally return up to five follow-ups as a JSON "
+    "array in <initiatives>...</initiatives>. Once per calendar week, also review "
+    "active goals for progress, staleness, duplication, or completion and propose any "
+    "change rather than applying it silently."
+)
+
+
+def _subconscious_dir() -> Path:
+    return get_hermes_home() / "subconscious"
+
+
+def narrative_path() -> Path:
+    return _subconscious_dir() / "narrative.md"
+
+
+def read_narrative() -> str:
+    try:
+        return narrative_path().read_text(encoding="utf-8")[:NARRATIVE_CAP]
+    except OSError:
+        return ""
+
+
+def write_narrative(text: str) -> None:
+    """Atomically persist the bounded narrative and retain three revisions."""
+    value = (text or "").strip()[-NARRATIVE_CAP:]
+    path = narrative_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    for index in range(3, 0, -1):
+        source = path if index == 1 else path.with_name(f"{path.name}.{index - 1}")
+        target = path.with_name(f"{path.name}.{index}")
+        if source.exists():
+            try:
+                os.replace(source, target)
+            except OSError:
+                logger.debug("narrative rotation failed", exc_info=True)
+    fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=".narrative_", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(value)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp, path)
+        try:
+            os.chmod(path, 0o600)
+        except OSError:
+            pass
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
+def _json_blocks(pattern: re.Pattern[str], text: str) -> List[Dict[str, Any]]:
+    matches = pattern.findall(text or "")
+    if not matches:
+        return []
+    try:
+        value = json.loads(matches[-1])
+    except (TypeError, json.JSONDecodeError):
+        return []
+    return [item for item in value if isinstance(item, dict)] if isinstance(value, list) else []
+
+
+def process_background_output(text: str) -> Tuple[str, bool]:
+    """Persist well-formed private blocks and return delivery-safe prose."""
+    raw = text or ""
+    narratives = _NARRATIVE_RE.findall(raw)
+    updated = False
+    if narratives:
+        write_narrative(narratives[-1])
+        updated = True
+    from cron.subconscious_initiatives import add_initiatives, apply_results
+
+    add_initiatives(_json_blocks(_INITIATIVES_RE, raw))
+    apply_results(_json_blocks(_INITIATIVE_RESULTS_RE, raw))
+    clean = _NARRATIVE_RE.sub("", raw)
+    clean = _INITIATIVES_RE.sub("", clean)
+    clean = _INITIATIVE_RESULTS_RE.sub("", clean)
+    return clean.strip(), updated
+
+
+def _recent_activity_summary(hours: int = 24) -> str:
+    path = _subconscious_dir() / "activity.jsonl"
+    if not path.exists():
+        return "No recent background activity."
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
+    rows: List[str] = []
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return "No recent background activity."
+    for line in lines[-200:]:
+        try:
+            item = json.loads(line)
+            at = datetime.fromisoformat(str(item.get("at") or "").replace("Z", "+00:00"))
+        except (ValueError, TypeError, json.JSONDecodeError):
+            continue
+        if at.tzinfo is None:
+            at = at.replace(tzinfo=timezone.utc)
+        if at >= cutoff:
+            rows.append(f"- {item.get('source', 'tick')}: {item.get('summary') or item.get('outcome') or 'completed'}")
+    return "\n".join(rows[-30:]) or "No recent background activity."
+
+
+def build_runtime_context(job_name: str) -> str:
+    """Build run-time context without mutating any long-lived chat prefix."""
+    from agent.goal_store import format_active_goals_for_prompt
+    from cron.subconscious_initiatives import due_initiatives
+    from cron.suggestions import list_pending
+
+    narrative = read_narrative() or "No durable narrative yet."
+    due = due_initiatives()
+    parts = [f"## Durable narrative\n{narrative}"]
+    if due:
+        parts.append("## Due initiatives\n" + json.dumps(due, ensure_ascii=False))
+    if job_name == REFLECTION_JOB_NAME:
+        try:
+            from tools.presence.rhythm import rhythm_summary_line
+
+            rhythm = rhythm_summary_line() or "No learned rhythm yet."
+        except Exception:
+            rhythm = "Rhythm unavailable."
+        try:
+            from tools.presence.distill import build_digest
+
+            presence_digest = build_digest()[:6000]
+        except Exception:
+            presence_digest = "Presence digest unavailable."
+        parts.extend(
+            [
+                f"## Last 24 hours\n{_recent_activity_summary()}",
+                f"## Presence digest\n{presence_digest}",
+                f"## Rhythm\n{rhythm}",
+                format_active_goals_for_prompt() or "## Active goals\nNone",
+                "## Pending suggestions\n" + json.dumps(list_pending(), ensure_ascii=False)[:6000],
+            ]
+        )
+    return "\n\n".join(parts)
 
 
 def _subconscious_cfg(cfg: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
@@ -100,6 +264,8 @@ def _subconscious_cfg(cfg: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         ),
         "tiers": dict(tiers) if isinstance(tiers, dict) else {},
         "job_id": section.get("job_id"),
+        "reflection_job_id": section.get("reflection_job_id"),
+        "reflection_schedule": str(section.get("reflection_schedule") or DEFAULT_REFLECTION_SCHEDULE),
     }
 
 
@@ -204,10 +370,29 @@ def enable(interval: Optional[str] = None) -> Dict[str, Any]:
             except Exception:
                 logger.debug("subconscious enable: schedule update failed", exc_info=True)
 
+    reflection_id = section.get("reflection_job_id")
+    reflection = get_job(reflection_id) if reflection_id else None
+    reflection_schedule = str(section.get("reflection_schedule") or DEFAULT_REFLECTION_SCHEDULE)
+    if reflection is None:
+        reflection = create_job(
+            prompt=_REFLECTION_PROMPT,
+            schedule=reflection_schedule,
+            name=REFLECTION_JOB_NAME,
+            deliver="local",
+            enabled_toolsets=list(_TICK_TOOLSETS),
+        )
+        section["reflection_job_id"] = reflection["id"]
+    else:
+        if reflection.get("state") == "paused":
+            reflection = resume_job(reflection["id"]) or reflection
+        if reflection.get("schedule_display") != reflection_schedule:
+            update_job(reflection["id"], {"schedule": reflection_schedule})
+
     section["enabled"] = True
     section["interval"] = resolved_interval
     section.setdefault("idle_trigger_minutes", DEFAULT_IDLE_TRIGGER_MINUTES)
     section.setdefault("tiers", {})
+    section.setdefault("reflection_schedule", DEFAULT_REFLECTION_SCHEDULE)
     cfg["subconscious"] = section
     save_config(cfg)
     return status()
@@ -221,8 +406,9 @@ def disable() -> Dict[str, Any]:
 
     cfg = load_config()
     section = dict(cfg.get("subconscious") or {})
-    job_id = section.get("job_id")
-    if job_id:
+    for job_id in (section.get("job_id"), section.get("reflection_job_id")):
+        if not job_id:
+            continue
         try:
             pause_job(job_id, reason="subconscious disabled")
         except Exception:
@@ -239,6 +425,7 @@ def status() -> Dict[str, Any]:
 
     section = _subconscious_cfg()
     job = get_job(section["job_id"]) if section.get("job_id") else None
+    reflection = get_job(section["reflection_job_id"]) if section.get("reflection_job_id") else None
     return {
         "enabled": section["enabled"],
         "interval": section["interval"],
@@ -248,6 +435,11 @@ def status() -> Dict[str, Any]:
         "job_state": job.get("state") if job else None,
         "last_run_at": job.get("last_run_at") if job else None,
         "next_run_at": job.get("next_run_at") if job else None,
+        "reflection_schedule": section["reflection_schedule"],
+        "reflection_job_id": section.get("reflection_job_id"),
+        "reflection_job_state": reflection.get("state") if reflection else None,
+        "reflection_last_run_at": reflection.get("last_run_at") if reflection else None,
+        "reflection_next_run_at": reflection.get("next_run_at") if reflection else None,
     }
 
 

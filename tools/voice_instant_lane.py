@@ -95,6 +95,7 @@ INSTANT_LANE_TOOL_WHITELIST = frozenset(
         "web_search",
         "memory",
         "session_search",
+        "recall_files",
     }
 )
 # Toolset-level gate for tool-definition generation (cache-prefix parity,

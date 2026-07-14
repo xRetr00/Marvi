@@ -35,7 +35,9 @@ DISTILL_SYSTEM_NOTE = (
     "machine. Extract only DURABLE observations worth remembering "
     "long-term about the user -- recurring projects, tools, working "
     "habits, interests -- never moment-to-moment noise. Use the memory "
-    "tool (target='user') to record anything genuinely new and durable. "
+    "tool (target='user') to record anything genuinely new and durable, "
+    "using a compact topic such as projects/<name>, preferences/tools, "
+    "rhythm/work, or interests/<area> so Mind can organize it. "
     "If there is nothing meaningful and new to record, reply with exactly "
     "[SILENT] and nothing else."
 )

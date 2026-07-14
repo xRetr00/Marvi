@@ -163,6 +163,40 @@ def _handle_suggest_automation(args: dict, **kw) -> str:
     return _ok(registered=True, auto_created=False, suggestion=record)
 
 
+def _handle_suggest_goal(args: dict, **kw) -> str:
+    action = str(args.get("action") or "add")
+    title = str(args.get("title") or "").strip()
+    dedup_key = str(args.get("dedup_key") or "").strip()
+    goal_id = str(args.get("goal_id") or "").strip()
+    if action not in {"add", "pause", "done"}:
+        return tool_error("action must be add, pause, or done")
+    if not dedup_key or (action == "add" and not title) or (action != "add" and not (goal_id or title)):
+        return tool_error("dedup_key plus a title (add) or goal_id/title (pause/done) are required")
+    display_title = title or f"{action.title()} goal {goal_id}"
+    try:
+        from cron.suggestions import add_suggestion
+
+        record = add_suggestion(
+            title=display_title,
+            description=str(args.get("description") or args.get("detail") or ""),
+            source="subconscious",
+            kind="goal",
+            goal_spec={
+                "action": action,
+                "goal_id": goal_id or None,
+                "title": title,
+                "detail": str(args.get("detail") or ""),
+                "horizon": str(args.get("horizon") or "short"),
+            },
+            dedup_key=dedup_key,
+            category="goal",
+        )
+    except Exception as exc:
+        logger.exception("suggest_goal failed")
+        return tool_error(f"suggest_goal: {exc}")
+    return _ok(registered=record is not None, suggestion=record)
+
+
 # ---------------------------------------------------------------------------
 # Schemas
 # ---------------------------------------------------------------------------
@@ -294,6 +328,28 @@ SUGGEST_AUTOMATION_SCHEMA = {
     },
 }
 
+SUGGEST_GOAL_SCHEMA = {
+    "name": "suggest_goal",
+    "description": (
+        "Propose a standing goal inferred from repeated behavior or durable memory. "
+        "This is always consent-first: the goal stays pending in Mind until the user accepts it. "
+        "If intent or success criteria are uncertain, ask one short question instead of calling this tool."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "action": {"type": "string", "enum": ["add", "pause", "done"], "description": "Defaults to add."},
+            "goal_id": {"type": "string", "description": "Existing goal id for pause/done."},
+            "title": {"type": "string", "description": "Required for add; may identify an existing goal for pause/done."},
+            "detail": {"type": "string"},
+            "description": {"type": "string", "description": "Why this was inferred and would help."},
+            "horizon": {"type": "string", "enum": sorted(VALID_HORIZONS)},
+            "dedup_key": {"type": "string", "description": "Stable key such as subconscious:goal:learn-spanish."},
+        },
+        "required": ["dedup_key"],
+    },
+}
+
 
 # ---------------------------------------------------------------------------
 # Registration
@@ -330,4 +386,13 @@ registry.register(
     handler=_handle_suggest_automation,
     check_fn=_subconscious_toolset_enabled,
     emoji="💡",
+)
+
+registry.register(
+    name="suggest_goal",
+    toolset="subconscious",
+    schema=SUGGEST_GOAL_SCHEMA,
+    handler=_handle_suggest_goal,
+    check_fn=_subconscious_toolset_enabled,
+    emoji="🎯",
 )

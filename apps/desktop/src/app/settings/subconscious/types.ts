@@ -36,4 +36,5 @@ export interface KnowledgeEntry {
   summary: string
   source: 'presence' | 'subconscious'
   createdAt: string
+  topic?: string
 }

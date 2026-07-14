@@ -17,6 +17,7 @@ export interface MarviKnowledgeApiEntry {
   text: string
   source: string
   timestamp: null | string
+  topic?: string
 }
 
 interface MarviKnowledgeResponse {
@@ -37,7 +38,8 @@ export function mapKnowledgeEntries(rows: MarviKnowledgeApiEntry[]): KnowledgeEn
       id: row.id,
       summary: row.text,
       source: row.source === 'presence' ? 'presence' : 'subconscious',
-      createdAt: row.timestamp ?? new Date(0).toISOString()
+      createdAt: row.timestamp ?? new Date(0).toISOString(),
+      ...(row.topic ? { topic: row.topic } : {})
     }))
 }
 

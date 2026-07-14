@@ -28,6 +28,7 @@ import logging
 import os
 import tempfile
 import time
+import re
 from contextlib import contextmanager
 from pathlib import Path
 from hermes_constants import get_hermes_home
@@ -57,6 +58,26 @@ def get_memory_dir() -> Path:
     return get_hermes_home() / "memories"
 
 ENTRY_DELIMITER = "\n§\n"
+TOPIC_RE = re.compile(r"^\[([a-z0-9][a-z0-9 _/-]{0,79})\]\s+(.+)$", re.DOTALL | re.IGNORECASE)
+
+
+def normalize_topic(topic: Optional[str]) -> str:
+    value = re.sub(r"\s+", " ", str(topic or "").strip().strip("/"))
+    if not value or ".." in value or not re.fullmatch(r"[A-Za-z0-9 _/-]+", value):
+        return ""
+    return value[:80]
+
+
+def split_topic(entry: str) -> tuple[str, str]:
+    match = TOPIC_RE.match(entry or "")
+    return (match.group(1), match.group(2)) if match else ("Uncategorized", entry)
+
+
+def _with_topic(content: Optional[str], topic: Optional[str]) -> Optional[str]:
+    if content is None or not topic:
+        return content
+    normalized = normalize_topic(topic)
+    return f"[{normalized}] {content}" if normalized else content
 
 
 # ---------------------------------------------------------------------------
@@ -962,6 +983,7 @@ def memory_tool(
     content: str = None,
     old_text: str = None,
     operations: Optional[List[Dict[str, Any]]] = None,
+    topic: str = None,
     store: Optional[MemoryStore] = None,
 ) -> str:
     """
@@ -993,6 +1015,10 @@ def memory_tool(
         gate_result = _apply_batch_write_gate(target, operations)
         if gate_result is not None:
             return gate_result
+        operations = [
+            {**operation, "content": _with_topic(operation.get("content"), operation.get("topic"))}
+            for operation in operations
+        ]
         result = store.apply_batch(target, operations)
         return json.dumps(result, ensure_ascii=False)
 
@@ -1020,7 +1046,7 @@ def memory_tool(
         return gate_result
 
     if action == "add":
-        result = store.add(target, content)
+        result = store.add(target, _with_topic(content, topic))
 
     elif action == "replace":
         result = store.replace(target, old_text, content)
@@ -1102,6 +1128,10 @@ MEMORY_SCHEMA = {
                 "type": "string",
                 "description": "The entry content. Required for 'add' and 'replace' (single-op shape)."
             },
+            "topic": {
+                "type": "string",
+                "description": "Optional hierarchy such as preferences/communication. Stored as [topic/path] before the entry."
+            },
             "old_text": {
                 "type": "string",
                 "description": "REQUIRED for 'replace' and 'remove' (single-op shape): a short unique substring identifying the existing entry to modify. Omit only for 'add'."
@@ -1118,6 +1148,7 @@ MEMORY_SCHEMA = {
                     "properties": {
                         "action": {"type": "string", "enum": ["add", "replace", "remove"]},
                         "content": {"type": "string", "description": "Entry content for add/replace."},
+                        "topic": {"type": "string", "description": "Optional topic/path for add."},
                         "old_text": {"type": "string", "description": "Substring identifying the entry for replace/remove."},
                     },
                     "required": ["action"],
@@ -1142,6 +1173,7 @@ registry.register(
         content=args.get("content"),
         old_text=args.get("old_text"),
         operations=args.get("operations"),
+        topic=args.get("topic"),
         store=kw.get("store")),
     check_fn=check_memory_requirements,
     emoji="🧠",

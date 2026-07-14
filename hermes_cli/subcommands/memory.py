@@ -50,4 +50,6 @@ def build_memory_parser(subparsers, *, cmd_memory: Callable) -> None:
         default="all",
         help="Which store to reset: 'all' (default), 'memory', or 'user'",
     )
+    organize = memory_sub.add_parser("organize", help="Preview topic labels for uncategorized built-in memory")
+    organize.add_argument("--apply", action="store_true", help="Apply the proposed topic labels")
     memory_parser.set_defaults(func=cmd_memory)

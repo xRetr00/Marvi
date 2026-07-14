@@ -43,6 +43,39 @@ VALID_HORIZONS = frozenset({"short", "long"})
 DEFAULT_STATUS = "active"
 DEFAULT_HORIZON = "short"
 
+# Small, editable starters rather than a second goal schema. The UI copies
+# one of these through the same add_goal path as a hand-written goal.
+GOAL_TEMPLATES = (
+    {
+        "id": "ship-project",
+        "title": "Ship a project",
+        "detail": "Keep the next milestone moving, surface blockers early, and notice concrete progress.",
+        "horizon": "short",
+    },
+    {
+        "id": "learn-skill",
+        "title": "Build a new skill",
+        "detail": "Turn repeated practice into a sustainable routine and track meaningful improvement.",
+        "horizon": "long",
+    },
+    {
+        "id": "health-routine",
+        "title": "Protect a healthy routine",
+        "detail": "Notice schedule pressure and help preserve the routine without nagging.",
+        "horizon": "long",
+    },
+    {
+        "id": "weekly-review",
+        "title": "Run a weekly review",
+        "detail": "Review wins, loose ends, priorities, and one realistic next step each week.",
+        "horizon": "short",
+    },
+)
+
+
+def list_goal_templates() -> List[Dict[str, Any]]:
+    return [dict(item) for item in GOAL_TEMPLATES]
+
 
 def _secure_file(path: Path) -> None:
     try:

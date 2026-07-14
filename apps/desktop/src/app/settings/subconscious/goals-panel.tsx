@@ -29,10 +29,17 @@ const STATUS_ORDER: GoalStatus[] = ['active', 'paused', 'done']
 const STATUS_LABEL: Record<GoalStatus, string> = { active: 'Active', paused: 'Paused', done: 'Done' }
 const HORIZON_LABEL: Record<GoalHorizon, string> = { short: 'Short-term', long: 'Long-term' }
 
-type EditorState = { mode: 'closed' } | { mode: 'create' } | { goal: Goal; mode: 'edit' }
+export interface GoalTemplate {
+  id: string
+  title: string
+  detail: string
+  horizon: GoalHorizon
+}
+
+type EditorState = { mode: 'closed' } | { mode: 'create'; template?: GoalTemplate } | { goal: Goal; mode: 'edit' }
 
 /** Goals panel: list/add/edit/complete goals backed by ~/.hermes/goals.json. */
-export function GoalsPanel() {
+export function GoalsPanel({ templates = [] }: { templates?: GoalTemplate[] }) {
   const [goals, setGoals] = useState<Goal[] | null>(null)
   const [loadError, setLoadError] = useState(false)
   const [editor, setEditor] = useState<EditorState>({ mode: 'closed' })
@@ -192,6 +199,22 @@ export function GoalsPanel() {
         Add goal
       </Button>
 
+      {templates.length > 0 && (
+        <div className="grid gap-2 sm:grid-cols-2">
+          {templates.map(template => (
+            <button
+              className="rounded-lg border border-(--ui-stroke-secondary) p-3 text-left transition-colors hover:bg-(--ui-control-hover-background)"
+              key={template.id}
+              onClick={() => setEditor({ mode: 'create', template })}
+              type="button"
+            >
+              <div className="text-xs font-medium text-foreground">{template.title}</div>
+              <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">{template.detail}</p>
+            </button>
+          ))}
+        </div>
+      )}
+
       <GoalEditorDialog editor={editor} onClose={() => setEditor({ mode: 'closed' })} onSave={handleEditorSave} />
 
       <Dialog onOpenChange={open => !open && setPendingDelete(null)} open={pendingDelete !== null}>
@@ -308,7 +331,7 @@ function GoalEditorDialog({
 }) {
   const open = editor.mode !== 'closed'
   const isEdit = editor.mode === 'edit'
-  const initial = isEdit ? editor.goal : null
+  const initial = isEdit ? editor.goal : editor.mode === 'create' ? editor.template : null
 
   const [title, setTitle] = useState('')
   const [detail, setDetail] = useState('')

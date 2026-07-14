@@ -346,11 +346,14 @@ def _activity_source_for_job(job: dict) -> Optional[str]:
     name = str(job.get("name") or "")
 
     try:
-        from cron.subconscious import JOB_NAME as _tick_job_name
+        from cron.subconscious import JOB_NAME as _tick_job_name, REFLECTION_JOB_NAME as _reflection_job_name
     except Exception:
         _tick_job_name = None
+        _reflection_job_name = None
     if _tick_job_name and name == _tick_job_name:
         return _consume_pending_trigger_reason() or "tick"
+    if _reflection_job_name and name == _reflection_job_name:
+        return "reflection"
 
     try:
         from hermes_cli.presence_cmd import DISTILL_JOB_NAME as _distill_job_name
@@ -458,6 +461,7 @@ def record_subconscious_activity(
     diff: Optional[str] = None,
     thought: Optional[str] = None,
     output_path: Optional[Any] = None,
+    narrative_updated: bool = False,
 ) -> None:
     """Append one line to the shared subconscious activity feed.
 
@@ -477,6 +481,7 @@ def record_subconscious_activity(
             "summary": _cap_activity_text(summary, _ACTIVITY_SUMMARY_CAP),
             "diff": _cap_activity_text(diff, _ACTIVITY_TEXT_CAP),
             "thought": _cap_activity_text(thought, _ACTIVITY_TEXT_CAP),
+            "narrative_updated": bool(narrative_updated),
         }
         if output_path:
             record["output_path"] = str(output_path)
@@ -492,6 +497,7 @@ def _append_subconscious_activity(
     summary: Optional[str] = None,
     diff: Optional[str] = None,
     thought: Optional[str] = None,
+    narrative_updated: bool = False,
 ) -> None:
     """Append one activity record for a completed run of a tracked
     background-thinking cron job (subconscious tick or presence distiller).
@@ -508,6 +514,7 @@ def _append_subconscious_activity(
         summary=summary,
         diff=diff,
         thought=thought,
+        narrative_updated=narrative_updated,
     )
 
 
@@ -2472,6 +2479,13 @@ def _build_job_prompt(job: dict, prerun_script: Optional[tuple] = None) -> str:
     """
     user_prompt = str(job.get("prompt") or "")
     prompt = user_prompt
+    try:
+        from cron.subconscious import JOB_NAME, REFLECTION_JOB_NAME, build_runtime_context
+
+        if str(job.get("name") or "") in {JOB_NAME, REFLECTION_JOB_NAME}:
+            prompt = f"{build_runtime_context(str(job.get('name') or ''))}\n\n{prompt}"
+    except Exception:
+        logger.debug("subconscious runtime context unavailable", exc_info=True)
     skills = job.get("skills")
     # True when runtime-collected DATA (script stdout, upstream-job output)
     # has been injected into the prompt. Data content legitimately quotes
@@ -3639,6 +3653,22 @@ def run_job(
                     turn_exit_reason,
                 )
                 final_response = ""
+        # Private subconscious blocks update durable state but never leak into
+        # local delivery or saved output.
+        _narrative_updated = False
+        try:
+            from cron.subconscious import JOB_NAME as _subconscious_name, REFLECTION_JOB_NAME as _reflection_name
+            _is_subconscious_run = str(job.get("name") or "") in {_subconscious_name, _reflection_name}
+        except Exception:
+            _is_subconscious_run = False
+        if _is_subconscious_run:
+            try:
+                from cron.subconscious import process_background_output
+
+                final_response, _narrative_updated = process_background_output(final_response)
+            except Exception:
+                logger.debug("subconscious output processing failed", exc_info=True)
+
         # Use a separate variable for log display; keep final_response clean
         # for delivery logic (empty response = no delivery).
         logged_response = final_response if final_response else "(No response generated)"
@@ -3666,6 +3696,7 @@ def run_job(
             summary=_summary,
             diff=(prerun_script[1] if prerun_script else None),
             thought=final_response,
+            narrative_updated=_narrative_updated,
         )
         return True, output, final_response, None
 

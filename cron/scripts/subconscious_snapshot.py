@@ -109,14 +109,49 @@ def run() -> str:
     from cron.scripts.subconscious.base import get_fetcher, known_surfaces
     from cron.scripts.subconscious.snapshot_store import open_store
 
+    initiative_sections: List[str] = []
+    try:
+        from cron.subconscious_initiatives import due_initiatives
+
+        presence = None
+        rhythm = None
+        try:
+            from tools.presence.aw_client import AWClient
+
+            afk = AWClient(timeout=0.5).get_afk_state()
+            presence = "idle" if afk == "afk" else "active" if afk == "not-afk" else None
+        except Exception:
+            pass
+        try:
+            from hermes_time import now as _now
+            from tools.presence.rhythm import get_rhythm
+
+            learned = get_rhythm() or {}
+            day = (learned.get("weekdays") or {}).get(str(_now().weekday())) or {}
+            minute = _now().hour * 60 + _now().minute
+            for window in day.get("deep_work_windows") or []:
+                start_h, start_m = map(int, window[0].split(":"))
+                end_h, end_m = map(int, window[1].split(":"))
+                if start_h * 60 + start_m <= minute <= end_h * 60 + end_m:
+                    rhythm = "deep_work"
+                    break
+        except Exception:
+            pass
+
+        due = due_initiatives(rhythm=rhythm, presence=presence)
+        if due:
+            initiative_sections.append("## Due initiatives\n" + json.dumps(due, ensure_ascii=False))
+    except Exception as exc:
+        _eprint(f"subconscious_snapshot: initiative evaluation failed ({exc})")
+
     composio_cfg = _load_composio_config()
     surfaces = _configured_surfaces(composio_cfg)
     if not surfaces:
-        return NO_CHANGE_MARKER
+        return "\n\n".join(initiative_sections) if initiative_sections else NO_CHANGE_MARKER
 
     min_interval = _min_interval_seconds(composio_cfg)
     quiet_backoff_max = _quiet_backoff_max(composio_cfg)
-    sections: List[str] = []
+    sections: List[str] = list(initiative_sections)
 
     for surface in surfaces:
         fetcher = get_fetcher(surface)

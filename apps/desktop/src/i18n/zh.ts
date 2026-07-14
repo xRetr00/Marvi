@@ -1706,6 +1706,7 @@ export const zh: Translations = {
       'new-session': '新建会话',
       skills: '技能与工具',
       messaging: '消息平台',
+      mind: '心智',
       artifacts: '产物'
     },
     searchAria: '搜索会话',

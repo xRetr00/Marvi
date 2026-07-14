@@ -34,6 +34,10 @@ def _print_status(info: dict) -> None:
             print(f"  Next run:            {info.get('next_run_at')}")
     else:
         print("  Tick job:            (none yet — run `hermes subconscious enable`)")
+    reflection_id = info.get("reflection_job_id")
+    if reflection_id:
+        print(f"  Reflection job:      {reflection_id} ({info.get('reflection_job_state') or 'unknown'})")
+        print(f"  Reflection schedule: {info.get('reflection_schedule')}")
 
 
 def subconscious_command(args) -> int:

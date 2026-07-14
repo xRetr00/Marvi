@@ -1535,6 +1535,7 @@ export const en: Translations = {
       'new-session': 'New session',
       skills: 'Capabilities',
       messaging: 'Messaging',
+      mind: 'Mind',
       artifacts: 'Artifacts'
     },
     searchAria: 'Search sessions',

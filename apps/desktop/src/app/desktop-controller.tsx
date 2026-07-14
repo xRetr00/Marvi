@@ -142,6 +142,7 @@ const CommandCenterView = lazy(async () => ({ default: (await import('./command-
 const CronView = lazy(async () => ({ default: (await import('./cron')).CronView }))
 const StarmapView = lazy(async () => ({ default: (await import('./starmap')).StarmapView }))
 const MessagingView = lazy(async () => ({ default: (await import('./messaging')).MessagingView }))
+const MindView = lazy(async () => ({ default: (await import('./mind')).MindView }))
 const ProfilesView = lazy(async () => ({ default: (await import('./profiles')).ProfilesView }))
 const SettingsView = lazy(async () => ({ default: (await import('./settings')).SettingsView }))
 const SkillsView = lazy(async () => ({ default: (await import('./skills')).SkillsView }))
@@ -1455,6 +1456,14 @@ export function DesktopController() {
         <Routes>
           <Route element={chatView} index />
           <Route element={chatView} path=":sessionId" />
+          <Route
+            element={
+              <Suspense fallback={null}>
+                <MindView />
+              </Suspense>
+            }
+            path="mind"
+          />
           <Route
             element={
               <Suspense fallback={null}>

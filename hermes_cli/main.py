@@ -285,6 +285,7 @@ from typing import Optional
 from hermes_cli.subcommands._shared import add_accept_hooks_flag as _add_accept_hooks_flag
 from hermes_cli.subcommands.cron import build_cron_parser
 from hermes_cli.subcommands.subconscious import build_subconscious_parser
+from hermes_cli.subcommands.brain import build_brain_parser
 from hermes_cli.subcommands.gateway import build_gateway_parser
 from hermes_cli.subcommands.profile import build_profile_parser
 from hermes_cli.subcommands.model import build_model_parser
@@ -4276,6 +4277,13 @@ def cmd_subconscious(args):
     from hermes_cli.subconscious import subconscious_command
 
     return subconscious_command(args)
+
+
+def cmd_brain(args):
+    """Private local full-text recall."""
+    from hermes_cli.brain_cmd import brain_command
+
+    return brain_command(args)
 
 
 def cmd_webhook(args):
@@ -12672,6 +12680,38 @@ def _try_termux_fast_tui_launch() -> bool:
 
 def cmd_memory(args):
     sub = getattr(args, "memory_command", None)
+    if sub == "organize":
+        from tools.memory_tool import MemoryStore, split_topic
+
+        store = MemoryStore()
+        store.load_from_disk()
+        proposals = []
+        keyword_topics = (
+            (("prefer", "like", "style"), "preferences/general"),
+            (("project", "repo", "code"), "projects/general"),
+            (("work", "schedule", "morning", "night"), "rhythm/work"),
+            (("tool", "uses", "windows", "linux"), "environment/tools"),
+        )
+        for target, entries in (("user", store.user_entries), ("memory", store.memory_entries)):
+            for entry in entries:
+                topic, _ = split_topic(entry)
+                if topic != "Uncategorized":
+                    continue
+                lowered = entry.casefold()
+                suggested = next((label for words, label in keyword_topics if any(word in lowered for word in words)), f"{target}/general")
+                proposals.append((target, suggested, entry))
+        if not proposals:
+            print("Memory is already organized.")
+            return 0
+        for target, topic, entry in proposals:
+            print(f"[{target}] [{topic}] {entry[:100]}")
+        if getattr(args, "apply", False):
+            for target, topic, entry in proposals:
+                store.replace(target, entry, f"[{topic}] {entry}")
+            print(f"Applied {len(proposals)} topic labels.")
+        else:
+            print("Preview only. Re-run with --apply to save these labels.")
+        return 0
     if sub == "off":
         from hermes_cli.config import load_config, save_config
 
@@ -13106,6 +13146,9 @@ def main():
     # subconscious command  (parser built in hermes_cli/subcommands/subconscious.py)
     # =========================================================================
     build_subconscious_parser(subparsers, cmd_subconscious=cmd_subconscious)
+
+    # Local full-text Brain index.
+    build_brain_parser(subparsers, cmd_brain=cmd_brain)
 
     # =========================================================================
     # webhook command  (parser built in hermes_cli/subcommands/webhook.py)

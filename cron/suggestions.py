@@ -187,7 +187,9 @@ def add_suggestion(
     title: str,
     description: str,
     source: str,
-    job_spec: Dict[str, Any],
+    job_spec: Optional[Dict[str, Any]] = None,
+    kind: str = "job",
+    goal_spec: Optional[Dict[str, Any]] = None,
     dedup_key: str,
     category: str = DEFAULT_CATEGORY,
 ) -> Optional[Dict[str, Any]]:
@@ -208,6 +210,12 @@ def add_suggestion(
     """
     if source not in VALID_SOURCES:
         raise ValueError(f"unknown suggestion source: {source!r}")
+    if kind not in {"job", "goal"}:
+        raise ValueError("kind must be 'job' or 'goal'")
+    if kind == "job" and not isinstance(job_spec, dict):
+        raise ValueError("job_spec is required for job suggestions")
+    if kind == "goal" and not isinstance(goal_spec, dict):
+        raise ValueError("goal_spec is required for goal suggestions")
     if not title.strip() or not dedup_key.strip():
         raise ValueError("title and dedup_key are required")
     category = (category or DEFAULT_CATEGORY).strip() or DEFAULT_CATEGORY
@@ -235,7 +243,9 @@ def add_suggestion(
             "description": description.strip(),
             "source": source,
             "category": category,
+            "kind": kind,
             "job_spec": job_spec,
+            "goal_spec": goal_spec,
             "dedup_key": dedup_key.strip(),
             "status": _STATUS_PENDING,
             "created_at": _hermes_now().isoformat(),
@@ -300,6 +310,27 @@ def accept_suggestion(ref: str, *, origin: Optional[Dict[str, Any]] = None) -> O
     if not s or s.get("status") != _STATUS_PENDING:
         return None
 
+    if s.get("kind", "job") == "goal":
+        from agent.goal_store import add_goal, update_goal
+
+        spec = dict(s.get("goal_spec") or {})
+        action = str(spec.pop("action", "add"))
+        if action == "add":
+            result = add_goal(
+                title=str(spec.get("title") or s.get("title") or ""),
+                detail=str(spec.get("detail") or ""),
+                horizon=str(spec.get("horizon") or "short"),
+            )
+        elif action in {"pause", "done"}:
+            ref_value = str(spec.get("goal_id") or spec.get("title") or "")
+            result = update_goal(ref_value, status="paused" if action == "pause" else "done")
+            if result is None:
+                return None
+        else:
+            raise ValueError(f"unknown goal suggestion action: {action!r}")
+        _set_status(s["id"], _STATUS_ACCEPTED)
+        return result
+
     from cron.jobs import create_job
 
     spec = dict(s.get("job_spec") or {})
@@ -362,6 +393,8 @@ def resolve_tier(category: str, *, tiers: Optional[Dict[str, str]] = None) -> st
     ever silently granting "auto".
     """
     category = (category or DEFAULT_CATEGORY).strip() or DEFAULT_CATEGORY
+    if category == "goal":
+        return "propose"
     source = tiers if tiers is not None else get_tiers_config()
     tier = str(source.get(category, DEFAULT_TIER)).strip().lower()
     return tier if tier in VALID_TIERS else DEFAULT_TIER

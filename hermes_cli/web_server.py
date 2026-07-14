@@ -6852,14 +6852,14 @@ async def reveal_env_var(
 _PLATFORM_OVERRIDES: dict[str, dict[str, Any]] = {
     "telegram": {
         "name": "Telegram",
-        "description": "Run Hermes from Telegram DMs, groups, and topics.",
+        "description": "Run Marvi from Telegram DMs, groups, and topics.",
         "docs_url": "https://core.telegram.org/bots/features#botfather",
         "env_vars": ("TELEGRAM_BOT_TOKEN", "TELEGRAM_ALLOWED_USERS", "TELEGRAM_PROXY"),
         "required_env": ("TELEGRAM_BOT_TOKEN",),
     },
     "discord": {
         "name": "Discord",
-        "description": "Connect Hermes to Discord DMs, channels, and threads.",
+        "description": "Connect Marvi to Discord DMs, channels, and threads.",
         "docs_url": "https://discord.com/developers/applications",
         "env_vars": (
             "DISCORD_BOT_TOKEN",
@@ -6870,21 +6870,21 @@ _PLATFORM_OVERRIDES: dict[str, dict[str, Any]] = {
     },
     "slack": {
         "name": "Slack",
-        "description": "Use Hermes from Slack via Socket Mode. Add allowed Slack member IDs so connected bots can respond.",
+        "description": "Use Marvi from Slack via Socket Mode. Add allowed Slack member IDs so connected bots can respond.",
         "docs_url": "https://api.slack.com/apps",
         "env_vars": ("SLACK_BOT_TOKEN", "SLACK_APP_TOKEN", "SLACK_ALLOWED_USERS"),
         "required_env": ("SLACK_BOT_TOKEN", "SLACK_APP_TOKEN"),
     },
     "mattermost": {
         "name": "Mattermost",
-        "description": "Connect Hermes to Mattermost channels and direct messages.",
+        "description": "Connect Marvi to Mattermost channels and direct messages.",
         "docs_url": "https://mattermost.com/deploy/",
         "env_vars": ("MATTERMOST_URL", "MATTERMOST_TOKEN", "MATTERMOST_ALLOWED_USERS"),
         "required_env": ("MATTERMOST_URL", "MATTERMOST_TOKEN"),
     },
     "matrix": {
         "name": "Matrix",
-        "description": "Use Hermes in Matrix rooms and direct messages.",
+        "description": "Use Marvi in Matrix rooms and direct messages.",
         "docs_url": "https://matrix.org/ecosystem/servers/",
         "env_vars": (
             "MATRIX_HOMESERVER",
@@ -6903,7 +6903,7 @@ _PLATFORM_OVERRIDES: dict[str, dict[str, Any]] = {
     },
     "whatsapp": {
         "name": "WhatsApp",
-        "description": "Use Hermes through the bundled WhatsApp bridge with QR-based auth.",
+        "description": "Use Marvi through the bundled WhatsApp bridge with QR-based auth.",
         "docs_url": "https://github.com/tulir/whatsmeow",
         "env_vars": (
             "WHATSAPP_ENABLED",
@@ -6915,14 +6915,14 @@ _PLATFORM_OVERRIDES: dict[str, dict[str, Any]] = {
     },
     "homeassistant": {
         "name": "Home Assistant",
-        "description": "Control your smart home from Hermes via Home Assistant.",
+        "description": "Control your smart home from Marvi via Home Assistant.",
         "docs_url": "https://www.home-assistant.io/docs/authentication/",
         "env_vars": ("HASS_URL", "HASS_TOKEN"),
         "required_env": ("HASS_URL", "HASS_TOKEN"),
     },
     "email": {
         "name": "Email",
-        "description": "Talk to Hermes through an IMAP/SMTP mailbox.",
+        "description": "Talk to Marvi through an IMAP/SMTP mailbox.",
         "docs_url": "https://github.com/xRetr00/Marvi/docs/user-guide/messaging/",
         "env_vars": (
             "EMAIL_ADDRESS",
@@ -6946,14 +6946,14 @@ _PLATFORM_OVERRIDES: dict[str, dict[str, Any]] = {
     },
     "dingtalk": {
         "name": "DingTalk",
-        "description": "Connect Hermes to DingTalk groups (钉钉).",
+        "description": "Connect Marvi to DingTalk groups (钉钉).",
         "docs_url": "https://open.dingtalk.com/document/orgapp/the-robot-development-process",
         "env_vars": ("DINGTALK_CLIENT_ID", "DINGTALK_CLIENT_SECRET"),
         "required_env": ("DINGTALK_CLIENT_ID", "DINGTALK_CLIENT_SECRET"),
     },
     "feishu": {
         "name": "Feishu / Lark",
-        "description": "Use Hermes inside Feishu / Lark.",
+        "description": "Use Marvi inside Feishu / Lark.",
         "docs_url": "https://open.feishu.cn/document/uAjLw4CM/ukTMukTMukTM/reference/im-v1/intro",
         "env_vars": (
             "FEISHU_APP_ID",
@@ -6965,7 +6965,7 @@ _PLATFORM_OVERRIDES: dict[str, dict[str, Any]] = {
     },
     "google_chat": {
         "name": "Google Chat",
-        "description": "Connect Hermes to Google Chat via Cloud Pub/Sub.",
+        "description": "Connect Marvi to Google Chat via Cloud Pub/Sub.",
         "docs_url": "https://github.com/xRetr00/Marvi/docs/user-guide/messaging/google_chat",
     },
     "wecom": {
@@ -7001,7 +7001,7 @@ _PLATFORM_OVERRIDES: dict[str, dict[str, Any]] = {
     },
     "bluebubbles": {
         "name": "BlueBubbles (iMessage)",
-        "description": "Use Hermes through iMessage via a BlueBubbles server.",
+        "description": "Use Marvi through iMessage via a BlueBubbles server.",
         "docs_url": "https://bluebubbles.app/",
         "env_vars": (
             "BLUEBUBBLES_SERVER_URL",
@@ -7012,7 +7012,7 @@ _PLATFORM_OVERRIDES: dict[str, dict[str, Any]] = {
     },
     "qqbot": {
         "name": "QQ Bot",
-        "description": "Connect Hermes to a QQ Bot from the QQ Open Platform.",
+        "description": "Connect Marvi to a QQ Bot from the QQ Open Platform.",
         "docs_url": "https://q.qq.com",
         "env_vars": ("QQ_APP_ID", "QQ_CLIENT_SECRET", "QQ_ALLOWED_USERS"),
         "required_env": ("QQ_APP_ID", "QQ_CLIENT_SECRET"),
@@ -7025,13 +7025,13 @@ _PLATFORM_OVERRIDES: dict[str, dict[str, Any]] = {
     },
     "yuanbao": {
         "name": "Yuanbao (元宝)",
-        "description": "Connect Hermes to Tencent Yuanbao.",
+        "description": "Connect Marvi to Tencent Yuanbao.",
         "docs_url": "",
         "required_env": (),
     },
     "api_server": {
         "name": "API server",
-        "description": "Expose Hermes as an OpenAI-compatible HTTP API for tools like Open WebUI.",
+        "description": "Expose Marvi as an OpenAI-compatible HTTP API for tools like Open WebUI.",
         "docs_url": "https://github.com/xRetr00/Marvi/docs/user-guide/messaging/",
         "env_vars": (
             "API_SERVER_ENABLED",
@@ -12623,6 +12623,7 @@ def _read_subconscious_activity_sync(limit: int) -> Dict[str, Any]:
                     "thought": record.get("thought"),
                     "output_path": record.get("output_path"),
                     "duration_ms": record.get("duration_ms"),
+                    "narrative_updated": bool(record.get("narrative_updated", False)),
                 }
             )
             if len(runs) >= limit:
@@ -12760,6 +12761,8 @@ def _read_subconscious_suggestions_sync() -> Dict[str, Any]:
                 "category": category,
                 "tier": resolve_tier(category),
                 "created": s.get("created_at"),
+                "kind": s.get("kind", "job"),
+                "goal_spec": s.get("goal_spec"),
             }
         )
     return {"suggestions": out}
@@ -12911,7 +12914,7 @@ _KNOWLEDGE_NOTE = (
 
 
 def _read_marvi_knowledge_entries() -> Dict[str, Any]:
-    from tools.memory_tool import ENTRY_DELIMITER, get_memory_dir
+    from tools.memory_tool import ENTRY_DELIMITER, get_memory_dir, split_topic
 
     mem_dir = get_memory_dir()
     entries: List[Dict[str, Any]] = []
@@ -12937,10 +12940,12 @@ def _read_marvi_knowledge_entries() -> Dict[str, Any]:
 
         parsed = [e.strip() for e in raw.split(ENTRY_DELIMITER) if e.strip()]
         for idx, text in enumerate(parsed):
+            topic, body = split_topic(text)
             entries.append(
                 {
                     "id": f"{filename}:{idx}",
-                    "text": text,
+                    "text": body,
+                    "topic": topic,
                     "source": source,
                     "timestamp": timestamp,
                     "_sort_key": (mtime, idx),
@@ -12965,6 +12970,90 @@ async def get_marvi_knowledge():
     except Exception:
         _log.exception("GET /api/marvi/knowledge failed")
         raise HTTPException(status_code=500, detail="Failed to read Marvi's memory")
+
+
+def _mind_state_sync() -> Dict[str, Any]:
+    from agent.goal_store import list_goal_templates
+    from cron.subconscious import read_narrative, status
+    from cron.subconscious_initiatives import list_initiatives
+    from tools.brain.indexer import brain_config, ensure_index_job
+    from tools.brain.store import BrainStore
+
+    store = BrainStore()
+    try:
+        brain = {**brain_config(), **store.status()}
+    finally:
+        store.close()
+    return {
+        "subconscious": status(),
+        "narrative": read_narrative(),
+        "initiatives": list_initiatives(),
+        "goal_templates": list_goal_templates(),
+        "brain": brain,
+    }
+
+
+@app.get("/api/mind")
+async def get_mind_state():
+    try:
+        return {"ok": True, **await run_in_threadpool(_mind_state_sync)}
+    except Exception:
+        _log.exception("GET /api/mind failed")
+        raise HTTPException(status_code=500, detail="Failed to read Mind state")
+
+
+@app.post("/api/mind/initiatives/{initiative_id}/cancel")
+async def cancel_mind_initiative(initiative_id: str):
+    from cron.subconscious_initiatives import cancel_initiative
+
+    if not await run_in_threadpool(cancel_initiative, initiative_id):
+        raise HTTPException(status_code=404, detail="Initiative not found")
+    return {"ok": True}
+
+
+@app.get("/api/brain/search")
+async def search_brain(q: str, limit: int = 8):
+    from tools.brain.store import BrainStore
+
+    def _search():
+        store = BrainStore()
+        try:
+            return store.search(q, limit)
+        finally:
+            store.close()
+
+    return {"ok": True, "results": await run_in_threadpool(_search)}
+
+
+@app.post("/api/brain/index")
+async def index_brain():
+    from tools.brain.indexer import index_configured_folders
+
+    return await run_in_threadpool(index_configured_folders)
+
+
+@app.put("/api/brain/config")
+async def update_brain_config(body: Dict[str, Any]):
+    from hermes_cli.config import load_config, save_config
+    from tools.brain.indexer import brain_config
+
+    def _update():
+        cfg = load_config()
+        current = dict(cfg.get("brain") or {})
+        for key in ("enabled", "folders", "exclude", "schedule"):
+            if key in body:
+                current[key] = body[key]
+        cfg["brain"] = current
+        if current.get("enabled"):
+            ensure_index_job(cfg)
+        elif current.get("job_id"):
+            from cron.jobs import pause_job
+
+            pause_job(current["job_id"], reason="Brain disabled")
+        save_config(cfg)
+        return brain_config(cfg)
+
+    return {"ok": True, "brain": await run_in_threadpool(_update)}
 
 
 # ---------------------------------------------------------------------------

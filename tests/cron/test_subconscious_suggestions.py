@@ -110,18 +110,21 @@ class TestSubconsciousConfig:
         assert subconscious.idle_trigger_minutes() == subconscious.DEFAULT_IDLE_TRIGGER_MINUTES
 
     def test_enable_creates_job_and_persists_config(self, subconscious):
-        created = {}
+        created = []
 
         def fake_create_job(**kwargs):
-            created.update(kwargs)
-            return {"id": "job123", "name": kwargs.get("name"), "schedule_display": "every 20m"}
+            created.append(kwargs)
+            return {"id": f"job{len(created)}", "name": kwargs.get("name"), "schedule_display": kwargs["schedule"]}
 
         with patch("cron.jobs.create_job", fake_create_job):
             info = subconscious.enable()
 
         assert info["enabled"] is True
-        assert created["schedule"] == "every 20m"
-        assert created["script"] == subconscious.SNAPSHOT_SHIM_NAME
+        tick = next(job for job in created if job["name"] == subconscious.JOB_NAME)
+        reflection = next(job for job in created if job["name"] == subconscious.REFLECTION_JOB_NAME)
+        assert tick["schedule"] == "every 20m"
+        assert tick["script"] == subconscious.SNAPSHOT_SHIM_NAME
+        assert reflection["schedule"] == subconscious.DEFAULT_REFLECTION_SCHEDULE
         assert subconscious.is_enabled() is True
 
     def test_enable_is_idempotent_no_second_job(self, subconscious):
@@ -129,14 +132,14 @@ class TestSubconsciousConfig:
 
         def fake_create_job(**kwargs):
             calls["create"] += 1
-            return {"id": "job123", "name": kwargs.get("name"), "schedule_display": "every 20m"}
+            return {"id": f"job{calls['create']}", "name": kwargs.get("name"), "schedule_display": kwargs["schedule"]}
 
         with patch("cron.jobs.create_job", fake_create_job), \
              patch("cron.jobs.get_job", lambda jid: {"id": jid, "state": "scheduled", "schedule_display": "every 20m"}):
             subconscious.enable()
             subconscious.enable()
 
-        assert calls["create"] == 1
+        assert calls["create"] == 2
 
     def test_tick_toolsets_are_all_registered(self, subconscious):
         """Regression guard: every name in _TICK_TOOLSETS must be a real,
@@ -158,7 +161,7 @@ class TestSubconsciousConfig:
         with patch("cron.jobs.pause_job") as mock_pause:
             info = subconscious.disable()
 
-        mock_pause.assert_called_once()
+        assert mock_pause.call_count == 2
         assert info["enabled"] is False
 
     def test_snapshot_shim_written_under_hermes_home(self, subconscious):

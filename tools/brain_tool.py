@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Dict
 
-from tools import registry
+from tools.registry import registry
 from tools.brain.indexer import brain_config
 from tools.brain.store import BrainStore
 

@@ -144,6 +144,26 @@ def run() -> str:
     except Exception as exc:
         _eprint(f"subconscious_snapshot: initiative evaluation failed ({exc})")
 
+    # ActivityWatch is a first-class local world-diff source. It establishes a
+    # silent baseline on first run, then wakes the proactive pass only when the
+    # stable foreground/AFK/media context changes. presence.enabled is the
+    # privacy boundary: paused presence performs no ActivityWatch read.
+    try:
+        from tools.presence.common import get_presence_config
+
+        if get_presence_config().get("enabled"):
+            from cron.scripts.subconscious.desktop import fetch_delta as fetch_desktop_delta
+
+            desktop_store = open_store("desktop", min_interval_seconds=0, quiet_backoff_max=1)
+            desktop_store.mark_attempt()
+            desktop_diff = fetch_desktop_delta(desktop_store)
+            desktop_store.record_success(changed=bool(desktop_diff))
+            desktop_store.save()
+            if desktop_diff:
+                initiative_sections.append(f"## desktop\n{desktop_diff}")
+    except Exception as exc:
+        _eprint(f"subconscious_snapshot: desktop context fetch failed ({exc})")
+
     composio_cfg = _load_composio_config()
     surfaces = _configured_surfaces(composio_cfg)
     if not surfaces:

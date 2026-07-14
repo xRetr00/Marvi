@@ -1672,6 +1672,40 @@ export interface Translations {
     addProvider: string
   }
 
+  mind: {
+    proactiveTitle: string
+    composio: {
+      title: string
+      description: string
+      keyTitle: string
+      keyDescription: string
+      keyPlaceholder: string
+      saveKey: string
+      saving: string
+      keyConfigured: string
+      keyMissing: string
+      mcpReady: string
+      mcpMissing: string
+      snapshotTitle: string
+      snapshotDescription: string
+      snapshotsSaved: string
+      snapshotsFailed: string
+      catalogTitle: string
+      catalogDescription: string
+      searchPlaceholder: string
+      loading: string
+      empty: string
+      allApps: string
+      totalApps: (count: number) => string
+      askTitle: string
+      askDescription: string
+      saved: string
+      loadFailed: string
+      saveFailed: string
+      catalogFailed: string
+    }
+  }
+
   shell: {
     windowControls: string
     paneControls: string

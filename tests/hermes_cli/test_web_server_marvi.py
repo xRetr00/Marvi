@@ -97,6 +97,49 @@ class TestSubconsciousEndpoints:
         assert resp.status_code == 500
         assert "boom" not in resp.json()["detail"]
 
+
+class TestComposioEndpoints:
+    def test_setup_stores_secret_and_enables_connect_mcp(self, client):
+        from hermes_cli.config import get_env_value, load_config, read_raw_config
+
+        response = client.post("/api/composio/setup", json={"api_key": "secret-key"})
+        assert response.status_code == 200
+        config = load_config()
+        assert get_env_value("COMPOSIO_API_KEY") == "secret-key"
+        assert "api_key" not in (config.get("composio") or {})
+        assert read_raw_config()["mcp_servers"]["composio"]["headers"] == {
+            "x-consumer-api-key": "${COMPOSIO_API_KEY}"
+        }
+
+    def test_status_migrates_legacy_plaintext_key(self, client):
+        from hermes_cli.config import get_env_value, load_config, save_config
+
+        save_config({"composio": {"api_key": "legacy", "surfaces": ["gmail"]}})
+        response = client.get("/api/composio/status")
+        assert response.status_code == 200
+        config = load_config()
+        assert get_env_value("COMPOSIO_API_KEY") == "legacy"
+        assert "api_key" not in config["composio"]
+        assert response.json()["mcp_enabled"] is True
+        assert response.json()["legacy_key_present"] is False
+
+    def test_snapshot_surfaces_are_validated_and_saved(self, client):
+        response = client.put("/api/composio/snapshots", json={"surfaces": ["gmail", "slack"]})
+        assert response.status_code == 200
+        assert response.json()["snapshot_surfaces"] == ["gmail", "slack"]
+
+        rejected = client.put("/api/composio/snapshots", json={"surfaces": ["notion"]})
+        assert rejected.status_code == 400
+
+    def test_toolkit_catalog_response_is_forwarded(self, client):
+        fake = {"toolkits": [{"slug": "gmail", "name": "Gmail", "description": "", "categories": []}], "total": 1}
+        with patch("hermes_cli.web_server._composio_toolkits_sync", return_value=fake):
+            response = client.get("/api/composio/toolkits?search=gmail")
+        assert response.status_code == 200
+        assert response.json()["toolkits"][0]["slug"] == "gmail"
+
+
+class TestSubconsciousStatusEndpoints:
     def test_status_calls_cron_subconscious_status(self, client):
         fake_status = {"enabled": True, "interval": "20m", "idle_trigger_minutes": 15,
                         "tiers": {"email": "notify"}, "job_id": "job-1", "job_state": "active",

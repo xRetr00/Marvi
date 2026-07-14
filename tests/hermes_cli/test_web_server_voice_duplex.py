@@ -80,8 +80,9 @@ class FakeVadGate:
         self.speaking = False
         self.accepted: list[list[float]] = []
 
-    def accept(self, samples) -> None:
+    def accept(self, samples) -> bool:
         self.accepted.append(list(samples))
+        return self.speaking
 
     def has_recent_speech(self, within_ms: int = 1200) -> bool:
         return self.speaking
@@ -124,6 +125,24 @@ def _drain_until(conn, frame_types, *, timeout: float = 5.0) -> list[dict]:
         if frame.get("type") in frame_types:
             return out
     raise AssertionError(f"Timed out waiting for one of {frame_types!r}; got {out!r}")
+
+
+def _finish_playback(conn, *, timeout: float = 5.0) -> list[dict]:
+    frames = _drain_until(conn, {"tts_end"}, timeout=timeout)
+    conn.send_json({"type": "playback_done"})
+    return frames
+
+
+def _recv_with_playback_acks(conn, frame_type: str, *, timeout: float = 10.0) -> dict:
+    """Receive until frame_type while acknowledging every completed TTS cycle."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        frame = conn.receive_json()
+        if frame.get("type") == "tts_end":
+            conn.send_json({"type": "playback_done"})
+        if frame.get("type") == frame_type:
+            return frame
+    raise AssertionError(f"Timed out waiting for {frame_type!r}")
 
 
 # ---------------------------------------------------------------------------
@@ -372,6 +391,66 @@ def test_moonshine_pause_waits_for_smart_turn(monkeypatch):
     asyncio.run(run())
 
 
+def test_ten_vad_finishes_after_smart_turn_rejects_and_silence_continues(monkeypatch):
+    from tools import semantic_turn
+
+    monkeypatch.setattr(semantic_turn, "pipecat_smart_turn_complete", lambda chunks, rate: False)
+
+    async def run():
+        class FakeWs:
+            async def send_json(self, _payload):
+                return None
+
+        session = web_server._DuplexSession(
+            FakeWs(),
+            {
+                "stt": {"streaming": {"provider": "moonshine"}},
+                "voice": {"semantic_turn": True, "smart_turn_vad_fallback_ms": 250},
+            },
+        )
+        session.stt_session = FakeSttSession()
+        gate = FakeVadGate()
+        session.turn_vad_gate = gate
+        gate.speaking = True
+        session.stt_session.queue_response("unfinished", True)
+        finalized = 0
+
+        async def finalize():
+            nonlocal finalized
+            finalized += 1
+
+        session._finalize_utterance = finalize
+        await session._feed_stt(_pcm16_chunk())
+        assert finalized == 0
+
+        gate.speaking = False
+        session._smart_turn_rejected_at = time.monotonic() - 1.0
+        await session._feed_stt(_pcm16_chunk())
+        assert finalized == 1
+
+    asyncio.run(run())
+
+
+def test_playback_done_is_the_server_listening_boundary():
+    async def run():
+        class FakeWs:
+            async def send_json(self, _payload):
+                return None
+
+        session = web_server._DuplexSession(FakeWs(), {})
+        session.state = "speaking"
+        session._playback_pending.set()
+        session._assistant_audio_started.set()
+
+        await session.on_playback_done()
+
+        assert session.state == "listening"
+        assert session._playback_pending.is_set() is False
+        assert session._assistant_audio_started.is_set() is False
+
+    asyncio.run(run())
+
+
 def test_barge_in_does_not_wait_for_cancelled_speaking_task():
     async def run():
         class FakeWs:
@@ -594,7 +673,7 @@ def test_escalation_event_order(duplex_client, full_fakes):
 
         # Ack TTS cycle.
         assert conn.receive_json() == {"type": "tts_start", "sample_rate": 24000}
-        _recv_until(conn, "tts_end")
+        _finish_playback(conn)
 
         deep_result = _recv_until(conn, "deep_result", timeout=10.0)
         assert deep_result["task_id"] == task_id
@@ -602,7 +681,7 @@ def test_escalation_event_order(duplex_client, full_fakes):
 
         # Deep-result TTS cycle.
         assert conn.receive_json() == {"type": "tts_start", "sample_rate": 24000}
-        _recv_until(conn, "tts_end")
+        _finish_playback(conn)
 
 
 def test_delegation_routes_work_to_background_subagent(duplex_client, full_fakes):
@@ -617,6 +696,7 @@ def test_delegation_routes_work_to_background_subagent(duplex_client, full_fakes
         escalated = _recv_until(conn, "escalated")
         assert escalated["mode"] == "delegating"
         assert "sub-agent" in escalated["ack_text"]
+        _finish_playback(conn)
         _recv_until(conn, "deep_result", timeout=10.0)
 
     assert full_fakes["deep"]["modes"] == ["delegating"]
@@ -653,9 +733,10 @@ def test_long_background_work_keeps_talking_until_result(duplex_client, full_fak
         conn.receive_json()
         conn.send_json(_audio_msg(_pcm16_chunk()))
         _recv_until(conn, "escalated")
-        activity = _recv_until(conn, "activity", timeout=5.0)
+        _finish_playback(conn)
+        activity = _recv_with_playback_acks(conn, "activity", timeout=5.0)
         assert activity["label"] == "Sub-agent is still working"
-        result = _recv_until(conn, "deep_result", timeout=10.0)
+        result = _recv_with_playback_acks(conn, "deep_result", timeout=10.0)
         assert result["text"] == "Deep answer."
 
     assert any("still working" in text for text in full_fakes["tts"])
@@ -673,7 +754,7 @@ def test_escalation_deep_task_failure_speaks_apology_and_errors(duplex_client, f
 
         _recv_until(conn, "escalated")
         assert conn.receive_json() == {"type": "tts_start", "sample_rate": 24000}
-        _recv_until(conn, "tts_end")
+        _finish_playback(conn)
 
         error = _recv_until(conn, "error", timeout=10.0)
         assert "agent blew up" in error["error"]
@@ -682,7 +763,7 @@ def test_escalation_deep_task_failure_speaks_apology_and_errors(duplex_client, f
         assert deep_result["text"]  # spoken apology, non-empty
 
         assert conn.receive_json() == {"type": "tts_start", "sample_rate": 24000}
-        _recv_until(conn, "tts_end")
+        _finish_playback(conn)
 
 
 def test_non_owner_never_escalates(duplex_client, full_fakes):
@@ -1020,6 +1101,8 @@ def test_turn_perf_line_marks_escalated_turns(duplex_client, full_fakes):
     with duplex_client.websocket_connect(_duplex_url()) as conn:
         conn.receive_json()  # ready
         conn.send_json(_audio_msg(_pcm16_chunk()))
+        _recv_until(conn, "escalated", timeout=10.0)
+        _finish_playback(conn)
         _recv_until(conn, "deep_result", timeout=10.0)
 
     lines = _read_voice_perf_lines()

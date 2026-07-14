@@ -554,8 +554,7 @@ export const en: Translations = {
       remoteTitle: 'Remote gateway',
       remoteDesc:
         'Connect this desktop shell to a remote Marvi backend. Hosted gateways use OAuth or a username and password; self-hosted ones may use a session token.',
-      remoteAuthHint:
-        'Hosted gateways use OAuth or a username and password; self-hosted ones may use a session token.',
+      remoteAuthHint: 'Hosted gateways use OAuth or a username and password; self-hosted ones may use a session token.',
       cloudTitle: 'Marvi Cloud',
       cloudDesc: 'Sign in once to Marvi Cloud and pick from the agents on your account — no URL to paste.',
       cloudSignInTitle: 'Marvi Cloud',
@@ -1718,7 +1717,7 @@ export const en: Translations = {
       '/resume': 'resume a prior session',
       '/details': 'control transcript detail level',
       '/copy': 'copy selection or last assistant message',
-      '/quit': 'exit Marvi (close the app)',
+      '/quit': 'exit Marvi (close the app)'
     },
     hotkeyDescs: {
       'composer.mention': 'reference files, folders, urls, git',
@@ -2042,6 +2041,45 @@ export const en: Translations = {
     search: 'Search models',
     noAuthenticatedProviders: 'No authenticated providers.',
     addProvider: 'Add provider…'
+  },
+
+  mind: {
+    proactiveTitle: 'Marvi noticed something',
+    composio: {
+      title: 'Connected apps',
+      description:
+        'Composio Connect gives Marvi one secure tool router for every supported app instead of adding permanent core tools.',
+      keyTitle: 'Composio API key',
+      keyDescription:
+        'Stored in the Marvi secret file, never in config.yaml. Saving also enables the official Composio Connect MCP server.',
+      keyPlaceholder: 'Paste Composio API key',
+      saveKey: 'Save and enable',
+      saving: 'Saving…',
+      keyConfigured: 'Key configured',
+      keyMissing: 'Key required',
+      mcpReady: 'Agent tools enabled',
+      mcpMissing: 'Agent tools not enabled',
+      snapshotTitle: 'Proactive snapshots',
+      snapshotDescription:
+        'Optional low-cost delta polling for the four adapters Marvi can watch proactively today. All catalog apps remain available to the agent through MCP.',
+      snapshotsSaved: 'Proactive snapshots updated',
+      snapshotsFailed: 'Failed to update proactive snapshots',
+      catalogTitle: 'Supported integrations',
+      catalogDescription:
+        'Live from Composio’s toolkit catalog. This is not limited to the four apps used by proactive snapshot polling.',
+      searchPlaceholder: 'Search Composio integrations',
+      loading: 'Loading integrations…',
+      empty: 'Save a key or try another search.',
+      allApps: 'All supported apps',
+      totalApps: count => `${count} supported apps`,
+      askTitle: 'Use it naturally',
+      askDescription:
+        'Start a new chat and ask “Check my Gmail” or name another listed app. Marvi can find the right tool and guide connection when authorization is still needed.',
+      saved: 'Composio tools enabled',
+      loadFailed: 'Failed to load Composio',
+      saveFailed: 'Failed to save Composio key',
+      catalogFailed: 'Failed to load Composio integrations'
+    }
   },
 
   shell: {

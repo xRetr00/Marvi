@@ -260,6 +260,7 @@ _CONFIG_LOCK = threading.RLock()
 _EXTRA_ENV_KEYS = frozenset({
     "OPENAI_API_KEY", "OPENAI_BASE_URL",
     "ANTHROPIC_API_KEY", "ANTHROPIC_TOKEN",
+    "COMPOSIO_API_KEY",
     "DISCORD_HOME_CHANNEL", "DISCORD_HOME_CHANNEL_NAME",
     "TELEGRAM_HOME_CHANNEL", "TELEGRAM_HOME_CHANNEL_NAME",
     "SLACK_HOME_CHANNEL", "SLACK_HOME_CHANNEL_NAME",
@@ -2187,6 +2188,10 @@ DEFAULT_CONFIG = {
         "max_recording_seconds": 120,
         "auto_tts": False,
         "semantic_turn": True,
+        # Smart Turn remains primary. If it rejects an endpoint and TEN VAD
+        # then observes this much uninterrupted silence, finalize as a safety
+        # net so a voice session cannot remain listening forever.
+        "smart_turn_vad_fallback_ms": 1500,
         "barge_in": True,
         "escalation": {
             "enabled": True,

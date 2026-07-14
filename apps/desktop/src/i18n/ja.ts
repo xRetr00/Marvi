@@ -97,7 +97,8 @@ export const ja = defineLocale({
       remoteSignInHint: signInLabel =>
         `保存済みのリモートブラウザセッションからサインアウトし、${signInLabel}を開きます。代わりにバンドルされたバックエンドに切り替えるには「ローカルゲートウェイを使用」を選択してください。`,
       signOutAndSignIn: 'サインアウトして再サインイン',
-      remoteFailureHint: '「ゲートウェイ設定」でゲートウェイの URL とサインインを確認するか、ローカルゲートウェイに切り替えてください。',
+      remoteFailureHint:
+        '「ゲートウェイ設定」でゲートウェイの URL とサインインを確認するか、ローカルゲートウェイに切り替えてください。',
       hideRecentLogs: '最近のログを非表示',
       showRecentLogs: '最近のログを表示',
       signedInTitle: 'サインインしました',
@@ -1977,6 +1978,45 @@ export const ja = defineLocale({
     addProvider: 'プロバイダーを追加…'
   },
 
+  mind: {
+    proactiveTitle: 'Marvi が大切な変化に気づきました',
+    composio: {
+      title: '接続済みアプリ',
+      description:
+        'Composio Connect は、コアツールを増やさずに、対応するすべてのアプリを Marvi が安全に利用できるようにします。',
+      keyTitle: 'Composio API キー',
+      keyDescription:
+        'config.yaml ではなく Marvi のシークレットファイルに保存され、公式 Composio Connect MCP も有効になります。',
+      keyPlaceholder: 'Composio API キーを貼り付け',
+      saveKey: '保存して有効化',
+      saving: '保存中…',
+      keyConfigured: 'キー設定済み',
+      keyMissing: 'キーが必要',
+      mcpReady: 'エージェントツール有効',
+      mcpMissing: 'エージェントツール未設定',
+      snapshotTitle: 'プロアクティブ・スナップショット',
+      snapshotDescription:
+        '現在 Marvi が低コストで差分監視できる4つのアダプターです。カタログ内の全アプリは MCP 経由で引き続き利用できます。',
+      snapshotsSaved: 'プロアクティブ監視を更新しました',
+      snapshotsFailed: 'プロアクティブ監視を更新できませんでした',
+      catalogTitle: '対応インテグレーション',
+      catalogDescription:
+        'Composio のツールキット一覧をリアルタイム表示します。プロアクティブ同期の4アプリだけに限定されません。',
+      searchPlaceholder: 'Composio インテグレーションを検索',
+      loading: 'インテグレーションを読み込み中…',
+      empty: 'キーを保存するか、別の検索語をお試しください。',
+      allApps: 'すべての対応アプリ',
+      totalApps: count => `${count} 個の対応アプリ`,
+      askTitle: '自然な言葉で使えます',
+      askDescription:
+        '新しいチャットで「Gmailを確認して」または一覧のアプリ名を指定してください。未認証なら Marvi が接続を案内します。',
+      saved: 'Composio ツールを有効にしました',
+      loadFailed: 'Composio を読み込めませんでした',
+      saveFailed: 'Composio キーを保存できませんでした',
+      catalogFailed: 'Composio インテグレーションを読み込めませんでした'
+    }
+  },
+
   shell: {
     windowControls: 'ウィンドウコントロール',
     paneControls: 'ペインコントロール',
@@ -2207,8 +2247,7 @@ export const ja = defineLocale({
       showConsole: 'プレビューコンソールを表示',
       hideDevTools: 'プレビュー DevTools を非表示',
       openDevTools: 'プレビュー DevTools を開く',
-      finishedRestarting: message =>
-        `Marvi がプレビューサーバーの再起動を完了しました${message ? `: ${message}` : ''}`,
+      finishedRestarting: message => `Marvi がプレビューサーバーの再起動を完了しました${message ? `: ${message}` : ''}`,
       failedRestarting: message => `サーバーの再起動に失敗しました: ${message}`,
       unknownError: '不明なエラー',
       restartedTitle: 'プレビューサーバーが再起動しました',

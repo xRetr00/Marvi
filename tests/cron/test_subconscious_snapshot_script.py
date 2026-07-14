@@ -32,6 +32,40 @@ def test_no_surfaces_configured_is_no_change(monkeypatch):
     assert script.run() == script.NO_CHANGE_MARKER
 
 
+def test_activitywatch_context_change_wakes_tick(monkeypatch):
+    from tools.presence import common as presence_common
+    from tools.presence import context as presence_context
+
+    _set_composio_config(monkeypatch, surfaces=[])
+    monkeypatch.setattr(presence_common, "get_presence_config", lambda: {"enabled": True})
+    contexts = iter(
+        [
+            {"available": True, "afk": "not-afk", "window": {"app": "Code.exe", "workspace": "marvi"}},
+            {"available": True, "afk": "not-afk", "window": {"app": "chrome.exe"}},
+        ]
+    )
+    monkeypatch.setattr(presence_context, "desktop_context", lambda mode="now": next(contexts))
+
+    assert script.run() == script.NO_CHANGE_MARKER  # silent baseline
+    output = script.run()
+    assert "## desktop" in output
+    assert "ActivityWatch desktop context changed" in output
+
+
+def test_paused_presence_does_not_read_activitywatch(monkeypatch):
+    from tools.presence import common as presence_common
+    from tools.presence import context as presence_context
+
+    _set_composio_config(monkeypatch, surfaces=[])
+    monkeypatch.setattr(presence_common, "get_presence_config", lambda: {"enabled": False})
+    monkeypatch.setattr(
+        presence_context,
+        "desktop_context",
+        lambda mode="now": pytest.fail("paused presence must not read ActivityWatch"),
+    )
+    assert script.run() == script.NO_CHANGE_MARKER
+
+
 def test_config_load_failure_is_no_change(monkeypatch):
     def _boom():
         raise RuntimeError("config unreadable")

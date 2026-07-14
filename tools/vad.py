@@ -60,16 +60,18 @@ class SpeechGate:
     def available(self) -> bool:
         return self._vad is not None
 
-    def accept(self, samples) -> None:
+    def accept(self, samples) -> bool:
+        """Process samples and return whether this batch contained speech."""
         if self._vad is None:
-            return
+            return False
         arr = np.asarray(samples, dtype=np.float32)
         if arr.size == 0:
-            return
+            return False
         pcm16 = np.clip(arr, -1.0, 1.0)
         pcm16 = (pcm16 * 32767.0).astype(np.int16)
         self._buf = np.concatenate([self._buf, pcm16]) if self._buf.size else pcm16
 
+        speech_in_batch = False
         while self._buf.shape[0] >= _HOP:
             frame = self._buf[:_HOP]
             self._buf = self._buf[_HOP:]
@@ -79,12 +81,19 @@ class SpeechGate:
                 # A broken VAD must never wedge detection — disable + fall back.
                 logger.exception("TEN VAD process failed; disabling")
                 self._vad = None
-                return
+                return False
+            speech_in_batch = speech_in_batch or bool(flag)
             self._hops_since_speech = 0 if flag else self._hops_since_speech + 1
+        return speech_in_batch
 
     def has_recent_speech(self, within_ms: int = 1200) -> bool:
         within_hops = max(1, int(within_ms / 16))
         return self._hops_since_speech <= within_hops
+
+    def reset(self) -> None:
+        """Forget buffered audio and speech history for a new utterance."""
+        self._buf = np.empty(0, dtype=np.int16)
+        self._hops_since_speech = 1_000_000
 
 
 def make_speech_gate(threshold: float = 0.5) -> Optional[SpeechGate]:

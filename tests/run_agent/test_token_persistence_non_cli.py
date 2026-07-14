@@ -93,3 +93,23 @@ def test_session_search_lazily_opens_db_when_entrypoint_did_not_pass_one(monkeyp
     assert captured["db"] is sentinel_db
     assert captured["query"] == "Hermes"
     assert agent._session_db is sentinel_db
+
+
+def test_persistence_disabled_agent_can_explicitly_allow_read_only_recall(monkeypatch):
+    sentinel_db = object()
+
+    class FakeSessionDB:
+        def __new__(cls):
+            return sentinel_db
+
+    hermes_state = ModuleType("hermes_state")
+    hermes_state.SessionDB = FakeSessionDB
+    monkeypatch.setitem(sys.modules, "hermes_state", hermes_state)
+
+    agent = _make_agent(None, platform="voice")
+    agent._persist_disabled = True
+    assert agent._get_session_db_for_recall() is None
+
+    agent._recall_allowed_while_persist_disabled = True
+    assert agent._get_session_db_for_recall() is sentinel_db
+    assert agent._session_db_created is False

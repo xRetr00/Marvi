@@ -5,6 +5,10 @@ implementation, against a mocked AWClient (no real ActivityWatch needed).
 import tools.presence.context as context_mod
 
 
+def _enable_presence(monkeypatch):
+    monkeypatch.setattr(context_mod, "get_presence_config", lambda: {"enabled": True})
+
+
 class FakeAWClient:
     """Minimal stand-in for AWClient exposing exactly what context.py uses."""
 
@@ -51,7 +55,17 @@ def _install_fake_client(monkeypatch, fake):
 
 
 class TestDesktopContextUnavailable:
+    def test_paused_presence_blocks_activitywatch_read(self, monkeypatch):
+        fake = FakeAWClient(available=True)
+        _install_fake_client(monkeypatch, fake)
+        monkeypatch.setattr(context_mod, "get_presence_config", lambda: {"enabled": False})
+        assert context_mod.desktop_context("now") == {
+            "available": False,
+            "error": "desktop presence is paused",
+        }
+
     def test_unavailable_reports_clear_message(self, monkeypatch):
+        _enable_presence(monkeypatch)
         fake = FakeAWClient(available=False)
         _install_fake_client(monkeypatch, fake)
         result = context_mod.desktop_context("now")
@@ -59,6 +73,7 @@ class TestDesktopContextUnavailable:
         assert "ActivityWatch" in result["error"]
 
     def test_invalid_mode(self, monkeypatch):
+        _enable_presence(monkeypatch)
         fake = FakeAWClient(available=True)
         _install_fake_client(monkeypatch, fake)
         result = context_mod.desktop_context("nonsense")
@@ -68,6 +83,7 @@ class TestDesktopContextUnavailable:
 
 class TestDesktopContextNow:
     def test_now_returns_parsed_vscode_window_and_media(self, monkeypatch):
+        _enable_presence(monkeypatch)
         window_event = {
             "data": {"app": "Code.exe", "title": "main.py - hermes-agent - Visual Studio Code"},
         }
@@ -96,6 +112,7 @@ class TestDesktopContextNow:
         assert result["session_length_seconds"] == 120
 
     def test_now_afk(self, monkeypatch):
+        _enable_presence(monkeypatch)
         fake = FakeAWClient(available=True, afk="afk", window=None, media=None)
         _install_fake_client(monkeypatch, fake)
         result = context_mod.desktop_context("now")
@@ -103,6 +120,7 @@ class TestDesktopContextNow:
         assert "window" not in result
 
     def test_now_with_no_media_playing(self, monkeypatch):
+        _enable_presence(monkeypatch)
         fake = FakeAWClient(available=True, media={"data": {"title": ""}})
         _install_fake_client(monkeypatch, fake)
         result = context_mod.desktop_context("now")
@@ -111,6 +129,7 @@ class TestDesktopContextNow:
 
 class TestDesktopContextAggregate:
     def test_today_top_apps_and_workspace_totals(self, monkeypatch):
+        _enable_presence(monkeypatch)
         window_events = [
             {"data": {"app": "Code.exe", "title": "a.py - proj1 - Visual Studio Code"}, "duration": 3600},
             {"data": {"app": "Code.exe", "title": "b.py - proj2 - Visual Studio Code"}, "duration": 1800},
@@ -143,6 +162,7 @@ class TestDesktopContextAggregate:
         assert "Track B" in titles
 
     def test_week_mode_uses_same_shape(self, monkeypatch):
+        _enable_presence(monkeypatch)
         fake = FakeAWClient(available=True, window_events=[], media_events=[])
         _install_fake_client(monkeypatch, fake)
         result = context_mod.desktop_context("week")
@@ -151,6 +171,7 @@ class TestDesktopContextAggregate:
         assert result["coding_time_by_workspace"] == []
 
     def test_denylist_strips_matching_events(self, monkeypatch):
+        _enable_presence(monkeypatch)
         from tools.presence import common as common_mod
 
         monkeypatch.setattr(common_mod, "get_denylist", lambda: ["proj1"])

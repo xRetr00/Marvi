@@ -1,14 +1,11 @@
-import { Link as LinkIcon } from '@/lib/icons'
+import { LoadingState, SettingsContent } from '../primitives'
 
-import { LoadingState, SectionHeading, SettingsContent } from '../primitives'
-
-import { ConnectedAccounts } from './connected-accounts'
 import { SubconsciousCoreSettings } from './core-settings'
 import { useMarviConfig } from './use-marvi-config'
 
-// Marvi's proactive-agent surface: subconscious tick, goals, a read-only
-// memory viewer, and Composio accounts — one scrolling settings page,
-// rendered as the "Subconscious" tab of Settings → Presence (see
+// Marvi's proactive-agent settings surface. Composio account/tool management
+// lives in its own Mind tab so this page stays focused on activation policy.
+// It is rendered as the "Subconscious" tab of Settings → Presence (see
 // ../presence/index.tsx). Desktop Presence (ActivityWatch/flow-gating) and
 // Voice presence live in their own sibling tabs there instead of here.
 export function SubconsciousSettings() {
@@ -34,11 +31,6 @@ export function SubconsciousSettings() {
   return (
     <SettingsContent>
       <SubconsciousCoreSettings marvi={marvi} />
-
-      <div className="my-4 h-px bg-border/30" />
-
-      <SectionHeading icon={LinkIcon} title="Connected accounts" />
-      <ConnectedAccounts marvi={marvi} />
     </SettingsContent>
   )
 }

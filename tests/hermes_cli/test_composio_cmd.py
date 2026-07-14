@@ -12,7 +12,7 @@ import pytest
 
 import cron.scripts.subconscious.composio_client as composio_client_mod
 from hermes_cli import composio_cmd
-from hermes_cli.config import load_config
+from hermes_cli.config import get_env_value, load_config, read_raw_config
 
 
 class FakeClient:
@@ -100,12 +100,17 @@ class TestConnect:
         config = load_config()
         assert "gmail" in config["composio"]["surfaces"]
 
-    def test_connect_success_persists_api_key_and_surface(self, fake_sdk, capsys):
+    def test_connect_success_persists_secret_mcp_and_surface(self, fake_sdk, capsys):
         args = SimpleNamespace(app="gmail", api_key="k123")
         composio_cmd.cmd_composio_connect(args)
 
         config = load_config()
-        assert config["composio"]["api_key"] == "k123"
+        assert "api_key" not in config["composio"]
+        assert get_env_value("COMPOSIO_API_KEY") == "k123"
+        assert config["mcp_servers"]["composio"]["url"] == "https://connect.composio.dev/mcp"
+        assert read_raw_config()["mcp_servers"]["composio"]["headers"] == {
+            "x-consumer-api-key": "${COMPOSIO_API_KEY}"
+        }
         assert "gmail" in config["composio"]["surfaces"]
         assert "Marvi is now set up to watch 'gmail'" in capsys.readouterr().out
 
@@ -129,13 +134,13 @@ class TestConnect:
         assert "gmail" not in (config.get("composio", {}) or {}).get("surfaces", [])
 
     def test_connect_warns_on_unimplemented_surface_but_still_connects(self, fake_sdk, capsys):
-        args = SimpleNamespace(app="slack", api_key="k123")
+        args = SimpleNamespace(app="notion", api_key="k123")
         composio_cmd.cmd_composio_connect(args)
 
         out = capsys.readouterr().out
         assert "no delta-fetcher implemented" in out
         config = load_config()
-        assert "slack" in config["composio"]["surfaces"]
+        assert "notion" in config["composio"]["surfaces"]
 
     def test_connect_prints_redirect_url_when_present(self, fake_sdk, capsys, monkeypatch):
         fake_client = FakeClient(

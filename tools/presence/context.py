@@ -28,6 +28,7 @@ from tools.presence.aw_client import (
 from tools.presence.common import (
     filter_denylisted_events,
     get_denylist,
+    get_presence_config,
     is_vscode_app,
     matches_denylist,
     redact_if_denylisted,
@@ -186,6 +187,8 @@ def desktop_context(mode: str = "now") -> Dict[str, Any]:
     mode = (mode or "now").strip().lower()
     if mode not in VALID_MODES:
         return {"available": False, "error": f"invalid mode {mode!r}; expected one of {VALID_MODES}"}
+    if not get_presence_config().get("enabled"):
+        return {"available": False, "error": "desktop presence is paused"}
 
     client = aw_client
     if not client.is_available():

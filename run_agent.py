@@ -574,11 +574,12 @@ class AIAgent:
         opening the default state DB instead of making the advertised
         ``session_search`` tool unusable.
         """
-        # Persistence-isolated forks (background review) must not lazily open the
-        # canonical state DB: doing so would re-arm _flush_messages_to_session_db
-        # to write the fork's harness turn into the user's real session. Recall
-        # degrades to None for them (they don't use session_search anyway).
-        if getattr(self, "_persist_disabled", False):
+        # Persistence-isolated forks normally must not open the canonical DB.
+        # A caller may explicitly opt into read-only recall while writes stay
+        # blocked by _persist_disabled in _ensure_db_session and the flush path.
+        if getattr(self, "_persist_disabled", False) and not getattr(
+            self, "_recall_allowed_while_persist_disabled", False
+        ):
             return None
         if self._session_db is not None:
             return self._session_db

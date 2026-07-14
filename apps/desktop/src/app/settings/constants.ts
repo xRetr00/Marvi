@@ -368,6 +368,7 @@ export const FIELD_LABELS: Record<string, string> = defineFieldCopy({
     maxRecordingSeconds: 'Max Recording Length',
     autoTts: 'Read Responses Aloud',
     semanticTurn: 'Smart Turn',
+    smartTurnVadFallbackMs: 'Smart Turn VAD Fallback',
     bargeIn: 'Barge-In',
     wakeWord: {
       enabled: 'Wake Word',
@@ -540,6 +541,8 @@ export const FIELD_DESCRIPTIONS: Record<string, string> = defineFieldCopy({
   voice: {
     autoTts: 'Automatically speak assistant responses.',
     semanticTurn: 'Use Pipecat Smart Turn when available to avoid cutting off unfinished speech after VAD silence.',
+    smartTurnVadFallbackMs:
+      'After Smart Turn says speech is unfinished, let TEN VAD finish the turn after this many milliseconds of continued silence.',
     bargeIn: 'Allow sustained user speech to interrupt hands-free TTS playback.',
     wakeWord: {
       enabled: 'Listen for a local wake phrase and submit one spoken command, then return to wake-only mode.',
@@ -719,6 +722,7 @@ export const SECTIONS: DesktopConfigSection[] = [
       'voice.record_key',
       'voice.max_recording_seconds',
       'voice.semantic_turn',
+      'voice.smart_turn_vad_fallback_ms',
       'voice.barge_in',
       'voice.escalation.enabled',
       'auxiliary.voice_instant.max_tokens'

@@ -48,16 +48,17 @@ import {
   setPetOverlaySubmitHandler
 } from '../store/pet-overlay'
 import { $filePreviewTarget, $previewTarget, closeActiveRightRailTab } from '../store/preview'
+import { startProactiveDeliveryPolling, stopProactiveDeliveryPolling } from '../store/proactive-delivery'
 import { $activeGatewayProfile, $freshSessionRequest, $profileScope, refreshActiveProfile } from '../store/profile'
 import { $startWorkSessionRequest, followActiveSessionCwd } from '../store/projects'
 import { $reviewOpen, REVIEW_PANE_ID } from '../store/review'
 import {
   $activeSessionId,
   $attentionSessionIds,
+  $busy,
   $currentCwd,
   $freshDraftReady,
   $gatewayState,
-  $busy,
   $messages,
   $messagingSessions,
   $resumeExhaustedSessionId,
@@ -76,11 +77,11 @@ import {
 import { onSessionsChanged } from '../store/session-sync'
 import { clearSessionTodos, setSessionTodos, todosForHydration } from '../store/todos'
 import { openUpdatesWindow, startUpdatePoller, stopUpdatePoller } from '../store/updates'
-import { $voicePlayback } from '../store/voice-playback'
-import { $voiceWarmup, startVoiceWarmupPolling } from '../store/voice-warmup'
 import { initVoiceIslandBridge } from '../store/voice-island'
+import { $voicePlayback } from '../store/voice-playback'
 import { $conversation, publishWakeStatus } from '../store/voice-presence'
 import { $presenceEnabled, setPresenceEnabled } from '../store/voice-presence-settings'
+import { $voiceWarmup, startVoiceWarmupPolling } from '../store/voice-warmup'
 import { initWindowPresence } from '../store/window-presence'
 import { isSecondaryWindow } from '../store/windows'
 
@@ -289,10 +290,12 @@ export function DesktopController() {
 
   useEffect(() => {
     startUpdatePoller()
+    startProactiveDeliveryPolling()
     const unsubscribe = window.hermesDesktop?.onOpenUpdatesRequested?.(() => openUpdatesWindow())
 
     return () => {
       unsubscribe?.()
+      stopProactiveDeliveryPolling()
       stopUpdatePoller()
     }
   }, [])
@@ -880,10 +883,8 @@ export function DesktopController() {
   const voicePipelineStatusItem = useMemo<StatusbarItem>(() => {
     const sttActive =
       sttEnabled &&
-      (streamingSttEnabled ||
-        wake.status === 'woken' ||
-        wake.status === 'listening' ||
-        wake.status === 'transcribing')
+      (streamingSttEnabled || wake.status === 'woken' || wake.status === 'listening' || wake.status === 'transcribing')
+
     const ttsActive = ttsProvider === 'pockettts' && voicePlayback.status !== 'idle'
     const streamingLabel = streamingSttEnabled ? streamingSttProvider || 'on' : 'off'
 
@@ -942,6 +943,7 @@ export function DesktopController() {
 
     setPetOverlaySubmitHandler(text => void submitTextRef.current(text))
     setIslandCardSubmitHandler(text => void submitTextRef.current(text))
+
     const offCardAction = window.hermesDesktop?.islandOverlay?.onCardAction(payload => {
       if (payload.type === 'dismiss') {
         dismissIslandCard(payload.id)
@@ -949,6 +951,7 @@ export function DesktopController() {
         void submitTextRef.current(payload.text)
       }
     })
+
     // Alt+wheel resize from the popped-out pet — persist it through this
     // window's gateway (the overlay has none) so it survives restart.
     setPetOverlayScaleHandler(scale => setPetScale(requestGatewayRef.current, scale))
@@ -1108,6 +1111,7 @@ export function DesktopController() {
 
   const wakeStatusItem = useMemo<StatusbarItem>(() => {
     const listening = wake.status === 'woken' || wake.status === 'listening'
+
     const label = !presenceEnabled
       ? 'Presence off'
       : listening
@@ -1274,8 +1278,8 @@ export function DesktopController() {
 
   const chatView = (
     <ChatView
-      gateway={gatewayRef.current}
       bargeInEnabled={voiceBargeInEnabled}
+      gateway={gatewayRef.current}
       maxVoiceRecordingSeconds={voiceMaxRecordingSeconds}
       modelMenuContent={modelMenuContent}
       onAddContextRef={composer.addContextRefAttachment}

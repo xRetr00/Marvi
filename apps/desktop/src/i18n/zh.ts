@@ -2202,6 +2202,41 @@ export const zh: Translations = {
     addProvider: '添加提供方…'
   },
 
+  mind: {
+    proactiveTitle: 'Marvi 发现了值得注意的变化',
+    composio: {
+      title: '已连接应用',
+      description: 'Composio Connect 让 Marvi 通过一个安全的工具路由器使用所有受支持应用，无需增加核心工具。',
+      keyTitle: 'Composio API 密钥',
+      keyDescription: '密钥保存在 Marvi 的秘密文件中，而不是 config.yaml；保存后也会启用官方 Composio Connect MCP。',
+      keyPlaceholder: '粘贴 Composio API 密钥',
+      saveKey: '保存并启用',
+      saving: '正在保存…',
+      keyConfigured: '密钥已配置',
+      keyMissing: '需要密钥',
+      mcpReady: '代理工具已启用',
+      mcpMissing: '代理工具未启用',
+      snapshotTitle: '主动快照',
+      snapshotDescription:
+        '可选的低成本差量轮询，目前 Marvi 可主动监控这四个适配器。目录中的所有应用仍可通过 MCP 使用。',
+      snapshotsSaved: '主动快照已更新',
+      snapshotsFailed: '无法更新主动快照',
+      catalogTitle: '支持的集成',
+      catalogDescription: '实时读取 Composio 工具包目录，不仅限于主动快照轮询使用的四个应用。',
+      searchPlaceholder: '搜索 Composio 集成',
+      loading: '正在加载集成…',
+      empty: '请先保存密钥或尝试其他搜索词。',
+      allApps: '所有支持的应用',
+      totalApps: count => `${count} 个支持的应用`,
+      askTitle: '自然表达即可使用',
+      askDescription: '新建聊天后说“检查我的 Gmail”，或说出列表中的其他应用。若尚未授权，Marvi 会引导你完成连接。',
+      saved: 'Composio 工具已启用',
+      loadFailed: '无法加载 Composio',
+      saveFailed: '无法保存 Composio 密钥',
+      catalogFailed: '无法加载 Composio 集成'
+    }
+  },
+
   shell: {
     windowControls: '窗口控件',
     paneControls: '面板控件',

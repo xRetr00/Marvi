@@ -249,6 +249,13 @@ def ensure_distill_job(schedule: Optional[str] = None) -> Tuple[bool, str]:
 
     existing = _find_distill_job()
     if existing:
+        if existing.get("state") == "paused" or existing.get("enabled") is False:
+            try:
+                from cron.jobs import resume_job
+
+                existing = resume_job(existing["id"]) or existing
+            except Exception as exc:
+                return False, f"presence distiller job resume failed: {exc}"
         updates: Dict[str, Any] = {}
         if existing.get("schedule_display") != schedule:
             updates["schedule"] = schedule
@@ -280,6 +287,19 @@ def ensure_distill_job(schedule: Optional[str] = None) -> Tuple[bool, str]:
     except Exception as exc:
         return False, f"failed to create presence distiller job: {exc}"
     return True, f"presence distiller job created (id={job.get('id')}, schedule={schedule})"
+
+
+def pause_distill_job() -> Tuple[bool, str]:
+    job = _find_distill_job()
+    if not job:
+        return True, "presence distiller job was not configured"
+    try:
+        from cron.jobs import pause_job
+
+        pause_job(job["id"], reason="presence paused")
+    except Exception as exc:
+        return False, f"failed to pause presence distiller: {exc}"
+    return True, f"presence distiller paused (id={job['id']})"
 
 
 # ---------------------------------------------------------------------------
@@ -343,9 +363,16 @@ def pause_presence() -> Dict[str, Any]:
     Single source of truth for both ``hermes presence pause`` and
     ``POST /api/presence/pause``.
     """
-    ok, msg = stop_watcher()
+    watcher_ok, watcher_msg = stop_watcher()
+    job_ok, job_msg = pause_distill_job()
     _set_presence_enabled(False)
-    return {"ok": ok, "message": msg, "enabled": False}
+    return {
+        "ok": watcher_ok and job_ok,
+        "message": f"{watcher_msg}; {job_msg}",
+        "enabled": False,
+        "watcher_ok": watcher_ok,
+        "job_ok": job_ok,
+    }
 
 
 def resume_presence() -> Dict[str, Any]:
@@ -354,9 +381,16 @@ def resume_presence() -> Dict[str, Any]:
     Single source of truth for both ``hermes presence resume`` and
     ``POST /api/presence/resume``.
     """
-    ok, msg = start_watcher()
+    watcher_ok, watcher_msg = start_watcher()
+    job_ok, job_msg = ensure_distill_job()
     _set_presence_enabled(True)
-    return {"ok": ok, "message": msg, "enabled": True}
+    return {
+        "ok": watcher_ok and job_ok,
+        "message": f"{watcher_msg}; {job_msg}",
+        "enabled": True,
+        "watcher_ok": watcher_ok,
+        "job_ok": job_ok,
+    }
 
 
 def _cmd_setup(args) -> int:

@@ -452,7 +452,7 @@ def session_priming_summary() -> Optional[str]:
     from tools.presence.common import get_presence_config
 
     cfg = get_presence_config()
-    if not cfg.get("goblin", {}).get("session_priming"):
+    if not cfg.get("enabled") or not cfg.get("goblin", {}).get("session_priming"):
         return None
 
     try:

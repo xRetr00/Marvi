@@ -2,8 +2,9 @@
 
 Connects and reports on the Composio-backed account-awareness surfaces
 (Gmail, GitHub, ...) that feed Marvi's subconscious sync (Workstream C of the
-2026-07-09 subconscious+presence design). Config keys live under
-``composio.api_key`` / ``composio.surfaces`` (Contract 3); the actual delta
+2026-07-09 subconscious+presence design). The credential lives in the secret
+store as ``COMPOSIO_API_KEY``; non-secret snapshot settings live under
+``composio.surfaces``. The actual delta
 fetchers and snapshot cursors live in ``cron/scripts/subconscious/``.
 
 Mirrors the dispatcher pattern used by every other ``hermes_cli`` subcommand
@@ -64,7 +65,7 @@ def _resolve_api_key(explicit: Optional[str], config: Dict[str, Any]) -> Optiona
 def cmd_composio_connect(args: Any) -> None:
     """``hermes composio connect <app>`` -- initiate/verify a Composio
     connection for one surface and add it to ``composio.surfaces``."""
-    from hermes_cli.config import load_config, save_config
+    from hermes_cli.config import load_config, read_raw_config, save_config
 
     app = str(getattr(args, "app", "") or "").strip().lower()
     if not app:
@@ -141,17 +142,16 @@ def cmd_composio_connect(args: Any) -> None:
     except Exception as e:  # pragma: no cover - defensive
         print_warning(f"Unexpected error initiating the Composio connection for {app} ({e}).")
 
-    # Persist api_key (only when it didn't already come from env -- env wins
-    # and shouldn't be shadowed/duplicated into config.yaml) and surfaces.
+    # Persist the credential in .env, configure the official Composio Connect
+    # MCP server, and keep only non-secret snapshot settings in config.yaml.
+    from hermes_cli.composio_config import configure_composio_connect
+
+    configure_composio_connect(api_key)
+    config = read_raw_config()
     composio_cfg = config.setdefault("composio", {})
     if not isinstance(composio_cfg, dict):
         composio_cfg = {}
         config["composio"] = composio_cfg
-
-    import os as _os
-
-    if not _os.environ.get("COMPOSIO_API_KEY", "").strip():
-        composio_cfg["api_key"] = api_key
 
     surfaces = composio_cfg.get("surfaces")
     if not isinstance(surfaces, list):

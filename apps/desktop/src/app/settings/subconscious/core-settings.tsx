@@ -45,7 +45,15 @@ export function SubconsciousCoreSettings({ marvi }: { marvi: ReturnType<typeof u
         action={
           <DebouncedField
             disabled={!enabled}
-            onCommit={value => void marvi.patch('subconscious.interval', value.trim() || '20m')}
+            onCommit={value => {
+              const next = value.trim() || '20m'
+              void marvi.activate(
+                'subconscious.interval',
+                next,
+                () => enableSubconscious(next),
+                'Failed to update the subconscious schedule'
+              )
+            }}
             placeholder="20m"
             value={String(interval)}
           />
@@ -109,7 +117,11 @@ export function DesktopPresenceSettings({ marvi }: { marvi: ReturnType<typeof us
       <ListRow
         action={
           <Pill tone={aw.reachable ? 'primary' : 'muted'}>
-            {aw.checking && !aw.checked ? 'Checking…' : aw.reachable ? 'ActivityWatch reachable' : 'ActivityWatch not running'}
+            {aw.checking && !aw.checked
+              ? 'Checking…'
+              : aw.reachable
+                ? 'ActivityWatch reachable'
+                : 'ActivityWatch not running'}
           </Pill>
         }
         description="Marvi's desktop collector, expected at localhost:5600."
@@ -135,7 +147,10 @@ export function DesktopPresenceSettings({ marvi }: { marvi: ReturnType<typeof us
 
               if (!result.ok) {
                 const detail = ('job_message' in result ? result.job_message : result.message) || 'Unknown error'
-                notifyError(new Error(detail), value ? 'Presence setup reported a problem' : 'Failed to stop the presence watcher')
+                notifyError(
+                  new Error(detail),
+                  value ? 'Presence setup reported a problem' : 'Failed to stop the presence watcher'
+                )
               }
             },
             value ? 'Failed to set up presence' : 'Failed to pause presence'

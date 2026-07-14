@@ -242,6 +242,20 @@ def build_runtime_context(job_name: str) -> str:
     narrative = read_narrative() or "No durable narrative yet."
     due = due_initiatives()
     parts = [f"## Durable narrative\n{narrative}"]
+    try:
+        from tools.presence.common import get_presence_config
+
+        if get_presence_config().get("enabled"):
+            from tools.presence.context import desktop_context
+
+            current_desktop = desktop_context("now")
+            if current_desktop.get("available"):
+                parts.append(
+                    "## Current desktop context (ActivityWatch)\n"
+                    + json.dumps(current_desktop, ensure_ascii=False)[:3000]
+                )
+    except Exception:
+        logger.debug("subconscious: current desktop context unavailable", exc_info=True)
     if due:
         parts.append("## Due initiatives\n" + json.dumps(due, ensure_ascii=False))
     if job_name == REFLECTION_JOB_NAME:
@@ -281,7 +295,7 @@ def _subconscious_cfg(cfg: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     return {
         "enabled": bool(section.get("enabled", False)),
         "interval": str(section.get("interval") or DEFAULT_INTERVAL),
-        "idle_trigger_minutes": _coerce_positive_int(
+        "idle_trigger_minutes": _coerce_nonnegative_int(
             section.get("idle_trigger_minutes"), DEFAULT_IDLE_TRIGGER_MINUTES
         ),
         "tiers": dict(tiers) if isinstance(tiers, dict) else {},
@@ -291,10 +305,10 @@ def _subconscious_cfg(cfg: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     }
 
 
-def _coerce_positive_int(value: Any, default: int) -> int:
+def _coerce_nonnegative_int(value: Any, default: int) -> int:
     try:
         parsed = int(value)
-        return parsed if parsed > 0 else default
+        return parsed if parsed >= 0 else default
     except (TypeError, ValueError):
         return default
 

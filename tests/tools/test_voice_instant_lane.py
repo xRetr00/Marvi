@@ -208,6 +208,16 @@ class TestRollingTranscript:
         rt.clear()
         assert len(rt) == 0
 
+    def test_discard_last_only_removes_exact_pending_turn(self):
+        rt = vil.RollingTranscript()
+        rt.add("user", "first")
+        rt.add("assistant", "reply")
+        rt.add("user", "interrupted")
+
+        assert rt.discard_last("user", "different") is False
+        assert rt.discard_last("user", "interrupted") is True
+        assert rt.as_messages()[-1] == {"role": "assistant", "content": "reply"}
+
 
 # ---------------------------------------------------------------------------
 # Voice-mode addendum
@@ -587,6 +597,8 @@ class TestStreamInstantReply:
         assert kwargs["skip_memory"] is True
         assert fake_agent_cls.last_instance._memory_nudge_interval == 0
         assert fake_agent_cls.last_instance._skill_nudge_interval == 0
+        assert not hasattr(fake_agent_cls.last_instance, "_cached_system_prompt")
+        assert fake_agent_cls.last_instance._recall_allowed_while_persist_disabled is True
 
     def test_constructs_agent_with_allowed_tool_names_hard_cap(self, fake_agent_cls):
         """Defense in depth: the tool-DEFINITION path is bounded to the same

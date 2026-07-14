@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import logging
 import os
+import sys
 from typing import Any, Dict, Optional
 
 logger = logging.getLogger(__name__)
@@ -103,6 +104,8 @@ def is_sdk_installed() -> bool:
     -- used by passive CLI status output (``hermes composio list``). Callers
     that actually need the SDK available should go through
     :func:`ensure_sdk_installed` (auto-installs on demand) instead."""
+    if "composio" in sys.modules:
+        return True
     try:
         import composio  # type: ignore  # noqa: F401
     except ImportError:
@@ -165,13 +168,20 @@ def _import_composio_sdk():
 
     ensure_sdk_installed(prompt=False)  # raises ComposioUnavailable on failure
 
-    import composio  # type: ignore  -- just verified importable above
+    if "composio" in sys.modules:
+        return sys.modules["composio"]
+    import composio  # type: ignore  # just verified importable above
     return composio
 
 
 def get_api_key(config: Optional[Dict[str, Any]] = None) -> Optional[str]:
-    """Resolve the Composio API key per Contract 3: config ``composio.api_key``
-    wins, then the ``COMPOSIO_API_KEY`` env var."""
+    """Resolve the Composio credential from the secret store.
+
+    A legacy ``composio.api_key`` is still accepted for compatibility, but a
+    real config read migrates it to ``.env`` and installs the official
+    Composio Connect MCP entry.
+    """
+    loaded_from_disk = config is None
     if config is None:
         try:
             from hermes_cli.config import load_config
@@ -180,11 +190,21 @@ def get_api_key(config: Optional[Dict[str, Any]] = None) -> Optional[str]:
         except Exception:
             config = {}
     composio_cfg = (config or {}).get("composio") if isinstance(config, dict) else None
-    key = composio_cfg.get("api_key") if isinstance(composio_cfg, dict) else None
-    if isinstance(key, str) and key.strip():
-        return key.strip()
-    env_key = os.environ.get("COMPOSIO_API_KEY", "").strip()
-    return env_key or None
+    legacy = composio_cfg.get("api_key") if isinstance(composio_cfg, dict) else None
+    if loaded_from_disk and isinstance(legacy, str) and legacy.strip():
+        try:
+            from hermes_cli.composio_config import configure_composio_connect
+
+            configure_composio_connect()
+        except Exception:
+            logger.warning("Could not migrate the legacy Composio key out of config.yaml", exc_info=True)
+    try:
+        from hermes_cli.config import get_env_value_prefer_dotenv
+
+        env_key = str(get_env_value_prefer_dotenv("COMPOSIO_API_KEY") or "").strip()
+    except Exception:
+        env_key = os.environ.get("COMPOSIO_API_KEY", "").strip()
+    return env_key or (legacy.strip() if isinstance(legacy, str) and legacy.strip() else None)
 
 
 class ComposioClient:
@@ -196,9 +216,8 @@ class ComposioClient:
     def __init__(self, api_key: str):
         if not api_key:
             raise ComposioAuthError(
-                "No Composio API key configured. Set `composio.api_key` in "
-                "config.yaml (via `hermes composio connect`) or export "
-                "COMPOSIO_API_KEY."
+                "No Composio API key configured. Save COMPOSIO_API_KEY in "
+                "the Marvi secret store (or run `hermes composio connect`)."
             )
         self._api_key = api_key
         self._sdk_client = None
@@ -375,8 +394,8 @@ def unwrap_payload(payload: Any) -> Any:
 
 
 def get_client(api_key: Optional[str] = None) -> ComposioClient:
-    """Build a :class:`ComposioClient`, resolving the API key from config/env
-    (Contract 3) when not given explicitly.
+    """Build a :class:`ComposioClient`, resolving the API key from the secret
+    store when not given explicitly.
 
     Raises :class:`ComposioAuthError` if no key is configured anywhere.
     """
@@ -384,6 +403,6 @@ def get_client(api_key: Optional[str] = None) -> ComposioClient:
     if not key:
         raise ComposioAuthError(
             "No Composio API key configured. Run `hermes composio connect <app>` "
-            "or set `composio.api_key` in config.yaml / the COMPOSIO_API_KEY env var."
+            "or save COMPOSIO_API_KEY in the Marvi secret store."
         )
     return ComposioClient(key)

@@ -152,6 +152,23 @@ class RollingTranscript:
         if overflow > 0:
             del self.turns[:overflow]
 
+    def discard_last(self, role: str, text: str) -> bool:
+        """Remove the last turn only when it is the exact pending turn.
+
+        Duplex barge-in cancels an assistant response after its user turn was
+        already appended.  Keeping that orphaned user turn would make the
+        next request start with two consecutive user messages and force the
+        core loop to repair history on every later turn.
+        """
+        expected = (text or "").strip()
+        if not self.turns or not expected:
+            return False
+        last = self.turns[-1]
+        if last.get("role") != role or last.get("content") != expected:
+            return False
+        self.turns.pop()
+        return True
+
     def as_messages(self) -> List[Dict[str, str]]:
         return [dict(t) for t in self.turns]
 
@@ -216,7 +233,12 @@ _VOICE_MODE_ADDENDUM = (
     "Fetching/extracting pages, multi-source research, or complex browsing must run in the background.\n"
     "- memory is only for saving an explicit durable preference/fact; your cached memory is already visible. "
     "session_search may recall one simple past detail.\n"
-    "- Use at most two quick tool calls before answering. There is no code execution, delegation, or heavy browsing here."
+    "- Use at most two quick tool calls before answering.\n"
+    "- You are the fast foreground lane of a larger agent. The background lane has the full Marvi "
+    "capability set: deep reasoning, multi-page web research and page extraction, multi-file reading "
+    "and search, terminal and code execution, memory and session recall, and specialist task work. "
+    "You cannot call those heavier capabilities directly in this foreground lane, but you MUST route "
+    "requests that need them with the marker contract below instead of claiming you cannot do them."
 )
 
 _ESCALATION_CONTRACT = (
@@ -756,9 +778,7 @@ def _runtime_key(runtime: Dict[str, Any], max_tokens: int) -> Tuple[Any, ...]:
 
 
 def _new_instant_agent(runtime: Dict[str, Any], max_tokens: int):
-    from agent.prompt_builder import DEFAULT_AGENT_IDENTITY
     from run_agent import AIAgent
-    from run_agent import load_soul_md
 
     agent = AIAgent(
         provider=runtime["provider"],
@@ -778,14 +798,18 @@ def _new_instant_agent(runtime: Dict[str, Any], max_tokens: int):
         skip_memory=True,
     )
     agent._persist_disabled = True
+    # Persistence remains disabled, but session_search is a read-only tool in
+    # this lane and must be allowed to lazily open the canonical SessionDB.
+    agent._recall_allowed_while_persist_disabled = True
     agent._memory_store = _LazyMemoryStore()
     agent._memory_enabled = True
     agent._user_profile_enabled = True
     agent._memory_nudge_interval = 0
     agent._skill_nudge_interval = 0
-    # The normal prompt builder adds project/coding/environment guidance even
-    # when context files are skipped. Voice needs the identity, not that bulk.
-    agent._cached_system_prompt = load_soul_md(None) or DEFAULT_AGENT_IDENTITY
+    # Do not replace _cached_system_prompt with SOUL.md.  Leaving it unset
+    # makes AIAgent build and cache its normal capability/tool guidance on the
+    # first turn.  The actual tool schemas remain restricted above; the voice
+    # addendum explains which heavier capabilities must be handed off.
     return agent
 
 

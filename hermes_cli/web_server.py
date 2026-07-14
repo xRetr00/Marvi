@@ -12671,6 +12671,143 @@ async def get_subconscious_activity(limit: int = 30):
         raise HTTPException(status_code=500, detail="Failed to read subconscious activity")
 
 
+# Composio is an edge capability, exposed through the existing MCP client.
+# The API key is secret state (.env); config.yaml contains only the endpoint
+# and ${COMPOSIO_API_KEY} reference installed by composio_config.py.
+class ComposioSetupRequest(BaseModel):
+    api_key: str
+
+
+class ComposioSnapshotsRequest(BaseModel):
+    surfaces: List[str] = []
+
+
+def _composio_setup_sync(api_key: str) -> Dict[str, Any]:
+    from hermes_cli.composio_config import configure_composio_connect, composio_status
+
+    key = str(api_key or "").strip()
+    if not key:
+        raise ValueError("Composio API key is required")
+    configure_composio_connect(key)
+    return composio_status()
+
+
+def _composio_status_sync() -> Dict[str, Any]:
+    from hermes_cli.composio_config import composio_status
+
+    # Opening the dedicated Mind tab is a safe migration point for installs
+    # that still have the old plaintext composio.api_key setting.
+    return composio_status(migrate=True)
+
+
+def _composio_toolkits_sync(search: str, limit: int) -> Dict[str, Any]:
+    """Fetch the live Composio toolkit catalog instead of hardcoding apps."""
+    from hermes_cli.composio_config import COMPOSIO_ENV_KEY
+    from hermes_cli.config import get_env_value_prefer_dotenv
+
+    key = str(get_env_value_prefer_dotenv(COMPOSIO_ENV_KEY) or "").strip()
+    if not key:
+        raise ValueError("Save a Composio API key first")
+
+    params = {"limit": str(max(1, min(int(limit or 100), 500)))}
+    if search.strip():
+        params["search"] = search.strip()
+    url = "https://backend.composio.dev/api/v3.1/toolkits?" + urllib.parse.urlencode(params)
+    request = urllib.request.Request(
+        url,
+        headers={"Accept": "application/json", "x-api-key": key},
+        method="GET",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=12) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        if exc.code in (401, 403):
+            raise ValueError("Composio rejected this API key") from exc
+        raise RuntimeError(f"Composio toolkit catalog returned HTTP {exc.code}") from exc
+    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
+        raise RuntimeError(f"Composio toolkit catalog is unavailable: {exc}") from exc
+
+    root = payload.get("data") if isinstance(payload, dict) and isinstance(payload.get("data"), dict) else payload
+    raw_items = []
+    if isinstance(root, dict):
+        raw_items = root.get("items") or root.get("toolkits") or []
+    elif isinstance(root, list):
+        raw_items = root
+
+    items: List[Dict[str, Any]] = []
+    for raw in raw_items if isinstance(raw_items, list) else []:
+        if not isinstance(raw, dict):
+            continue
+        slug = raw.get("slug") or raw.get("name") or raw.get("key")
+        if not slug:
+            continue
+        items.append(
+            {
+                "slug": str(slug),
+                "name": str(raw.get("name") or raw.get("display_name") or slug),
+                "description": str(raw.get("description") or ""),
+                "categories": list(raw.get("categories") or []),
+            }
+        )
+    total = root.get("total_items") or root.get("total") if isinstance(root, dict) else None
+    return {"toolkits": items, "total": total, "source": "composio-v3.1"}
+
+
+@app.get("/api/composio/status")
+async def get_composio_status():
+    try:
+        return {"ok": True, **await run_in_threadpool(_composio_status_sync)}
+    except Exception:
+        _log.exception("GET /api/composio/status failed")
+        raise HTTPException(status_code=500, detail="Failed to read Composio status")
+
+
+@app.post("/api/composio/setup")
+async def setup_composio(body: ComposioSetupRequest):
+    try:
+        return {"ok": True, **await run_in_threadpool(_composio_setup_sync, body.api_key)}
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception:
+        _log.exception("POST /api/composio/setup failed")
+        raise HTTPException(status_code=500, detail="Failed to configure Composio")
+
+
+@app.put("/api/composio/snapshots")
+async def update_composio_snapshots(body: ComposioSnapshotsRequest):
+    from cron.scripts.subconscious.base import known_surfaces
+
+    allowed = set(known_surfaces())
+    surfaces = list(dict.fromkeys(str(item).strip().lower() for item in body.surfaces if str(item).strip()))
+    invalid = [item for item in surfaces if item not in allowed]
+    if invalid:
+        raise HTTPException(status_code=400, detail=f"Unsupported proactive snapshot surface: {', '.join(invalid)}")
+    try:
+        config = read_raw_config()
+        section = config.get("composio")
+        if not isinstance(section, dict):
+            section = {}
+        section["surfaces"] = surfaces
+        config["composio"] = section
+        save_config(config)
+        return {"ok": True, **await run_in_threadpool(_composio_status_sync)}
+    except Exception:
+        _log.exception("PUT /api/composio/snapshots failed")
+        raise HTTPException(status_code=500, detail="Failed to update proactive snapshots")
+
+
+@app.get("/api/composio/toolkits")
+async def get_composio_toolkits(search: str = "", limit: int = 100):
+    try:
+        return {"ok": True, **await run_in_threadpool(_composio_toolkits_sync, search, limit)}
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        _log.warning("GET /api/composio/toolkits failed: %s", exc)
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
 def _configured_composio_surfaces(config: Optional[Dict[str, Any]] = None) -> List[str]:
     from hermes_cli.config import load_config
 
@@ -16573,6 +16710,7 @@ async def wake_word_stream_ws(ws: WebSocket) -> None:
 
 _DUPLEX_ROLLING_TURNS = 20
 _DUPLEX_BARGE_IN_STREAK_MS = 180.0
+_DUPLEX_SMART_TURN_VAD_FALLBACK_MS = 1500
 _DUPLEX_UTTERANCE_AUDIO_CAP_CHUNKS = 1000
 # Fallback only -- used when a tts_chunk stream never reports its own
 # sample_rate (shouldn't happen with tools.tts_tool.stream_text_to_speech_chunks,
@@ -17033,6 +17171,10 @@ class _DuplexTtsCycle:
                 if etype != "chunk":
                     continue
                 if not self._started:
+                    # The server must remain in speaking/barge-in mode until
+                    # the desktop confirms that queued audio actually
+                    # drained. Sending the last byte is not playback done.
+                    self._session._playback_pending.set()
                     self._session._assistant_audio_started.set()
                     self._session._emit_sync(
                         {
@@ -17238,10 +17380,15 @@ class _DuplexSession:
         self.state = "listening"
         self.vad_gate = None
         self._barge_vad_unavailable = False
+        self.turn_vad_gate = None
+        self._turn_vad_unavailable = False
+        self._smart_turn_rejected_at: Optional[float] = None
         self._last_barge_log_at = 0.0
         self._barge_streak_ms = 0.0
         self._assistant_audio_started = threading.Event()
+        self._playback_pending = threading.Event()
         self._utterance_audio: List[bytes] = []
+        self._pending_user_text: Optional[str] = None
         self._speaking_task: Optional[asyncio.Task] = None
         self._cancel_speaking = threading.Event()
         self._deep_task_queue: "queue.Queue[Optional[dict]]" = queue.Queue()
@@ -17380,10 +17527,48 @@ class _DuplexSession:
             await self._feed_barge_in(chunk)
 
     async def on_playback_done(self) -> None:
-        # No forced state transition — listening/speaking is driven by the
-        # turn lifecycle + barge-in, not by playback acks. Accepted so the
-        # protocol message isn't treated as unknown.
-        return
+        if not self._playback_pending.is_set():
+            return
+        self._playback_pending.clear()
+        self._assistant_audio_started.clear()
+        self._barge_streak_ms = 0.0
+        self.vad_gate = None
+        if self.state == "speaking":
+            self.state = "listening"
+
+    def _reset_turn_endpoint_state(self) -> None:
+        self._smart_turn_rejected_at = None
+        if self.turn_vad_gate is not None:
+            reset = getattr(self.turn_vad_gate, "reset", None)
+            if callable(reset):
+                reset()
+
+    async def _feed_turn_vad(self, chunk: bytes) -> bool:
+        """Feed TEN VAD and report speech in the current audio frame.
+
+        This gate is independent from the speaking-state barge-in gate. It
+        is only a timeout safety net after Smart Turn rejects an endpoint.
+        """
+        if self._turn_vad_unavailable:
+            return False
+        if self.turn_vad_gate is None:
+            self.turn_vad_gate = await asyncio.to_thread(_duplex_make_vad_gate)
+        if self.turn_vad_gate is None:
+            self._turn_vad_unavailable = True
+            _log.warning("Voice duplex Smart Turn fallback unavailable: TEN VAD did not initialize")
+            return False
+        samples = _duplex_pcm16_to_float32(chunk)
+        speech_in_batch = await asyncio.to_thread(self.turn_vad_gate.accept, samples)
+        if isinstance(speech_in_batch, bool):
+            return speech_in_batch
+        # Compatibility with simple test/dummy gates whose legacy accept()
+        # returns None rather than the production SpeechGate's bool.
+        chunk_ms = max(16, int((len(chunk) / 2.0) / 16000.0 * 1000.0))
+        return bool(
+            await asyncio.to_thread(
+                self.turn_vad_gate.has_recent_speech, max(80, chunk_ms + 40)
+            )
+        )
 
     def _accept_stt_chunk(self, chunk: bytes) -> Tuple[str, bool, float]:
         partial = self.stt_session.accept_bytes(_duplex_pcm16_to_float32_bytes(chunk))
@@ -17395,6 +17580,14 @@ class _DuplexSession:
     async def _feed_stt(self, chunk: bytes) -> None:
         if self.stt_session is None:
             return
+        provider = _streaming_stt_provider(self.stt_cfg)
+        voice_cfg = self.cfg.get("voice") or {}
+        semantic_fallback = provider == "moonshine" and voice_cfg.get("semantic_turn", True) is not False
+        speech_now = await self._feed_turn_vad(chunk) if semantic_fallback else False
+        if speech_now and self._smart_turn_rejected_at is not None:
+            # The user resumed after Smart Turn's rejection. A later STT
+            # pause must start a fresh fallback timer.
+            self._smart_turn_rejected_at = None
         self._utterance_audio.append(chunk)
         if len(self._utterance_audio) > _DUPLEX_UTTERANCE_AUDIO_CAP_CHUNKS:
             self._utterance_audio.pop(0)
@@ -17406,9 +17599,8 @@ class _DuplexSession:
         if partial:
             await self._send({"type": "partial", "text": partial, "eou_prob": eou_prob})
         complete = eou
-        if eou and _streaming_stt_provider(self.stt_cfg) == "moonshine":
-            voice_cfg = self.cfg.get("voice") or {}
-            if voice_cfg.get("semantic_turn", True) is not False:
+        if eou and provider == "moonshine":
+            if semantic_fallback:
                 from tools.semantic_turn import pipecat_smart_turn_complete
 
                 float_chunks = [_duplex_pcm16_to_float32_bytes(part) for part in self._utterance_audio]
@@ -17419,6 +17611,34 @@ class _DuplexSession:
                     int(sum(len(part) for part in self._utterance_audio) / 2 / 16000 * 1000),
                 )
                 complete = smart_turn is not False
+                if smart_turn is False and self._smart_turn_rejected_at is None:
+                    self._smart_turn_rejected_at = time.monotonic()
+
+        if not complete and self._smart_turn_rejected_at is not None and self.turn_vad_gate is not None:
+            voice_cfg = self.cfg.get("voice") or {}
+            try:
+                fallback_ms = max(
+                    250,
+                    int(
+                        voice_cfg.get(
+                            "smart_turn_vad_fallback_ms",
+                            _DUPLEX_SMART_TURN_VAD_FALLBACK_MS,
+                        )
+                    ),
+                )
+            except (TypeError, ValueError):
+                fallback_ms = _DUPLEX_SMART_TURN_VAD_FALLBACK_MS
+            waited_ms = (time.monotonic() - self._smart_turn_rejected_at) * 1000.0
+            if waited_ms >= fallback_ms:
+                speech_recent = await asyncio.to_thread(
+                    self.turn_vad_gate.has_recent_speech, fallback_ms
+                )
+                if not speech_recent:
+                    _log.info(
+                        "Voice duplex Smart Turn TEN VAD fallback complete=true silence_ms=%d",
+                        int(waited_ms),
+                    )
+                    complete = True
         if complete:
             await self._finalize_utterance()
 
@@ -17435,6 +17655,7 @@ class _DuplexSession:
 
         pcm = b"".join(self._utterance_audio)
         self._utterance_audio = []
+        self._reset_turn_endpoint_state()
         try:
             # Re-arm immediately so the next utterance isn't dropped while
             # this one is being answered.
@@ -17468,6 +17689,7 @@ class _DuplexSession:
             }
         )
         self.transcript.add("user", text)
+        self._pending_user_text = text
 
         self.state = "speaking"
         self._assistant_audio_started.clear()
@@ -17512,6 +17734,11 @@ class _DuplexSession:
     async def _trigger_barge_in(self, triggering_chunk: bytes) -> None:
         _log.info("Voice duplex barge-in accepted streak_ms=%d", int(self._barge_streak_ms))
         self._cancel_speaking.set()
+        self._playback_pending.clear()
+        self._assistant_audio_started.clear()
+        if self._pending_user_text and self.transcript is not None:
+            self.transcript.discard_last("user", self._pending_user_text)
+            self._pending_user_text = None
         await self._send({"type": "barge_in"})
         task = self._speaking_task
         if task is not None:
@@ -17520,21 +17747,13 @@ class _DuplexSession:
         self._barge_streak_ms = 0.0
         self.vad_gate = None
         self.state = "listening"
-        self._utterance_audio = [triggering_chunk]
+        self._utterance_audio = []
+        self._reset_turn_endpoint_state()
         if self.stt_session is None:
             return
-        try:
-            partial, eou, eou_prob = await asyncio.to_thread(self._accept_stt_chunk, triggering_chunk)
-        except Exception:
-            return
-        if partial:
-            await self._send({"type": "partial", "text": partial, "eou_prob": eou_prob})
-        if eou:
-            # The triggering chunk itself completed an utterance (e.g. a
-            # short, immediately-final barge-in) — surface it right away
-            # instead of silently discarding the EOU signal and waiting for
-            # a chunk that will never come.
-            await self._finalize_utterance()
+        # Seed the next STT turn through the normal path so TEN VAD and an
+        # immediately-final EOU see the same audio as every other utterance.
+        await self._feed_stt(triggering_chunk)
 
     # -- turn orchestration (instant lane + TTS + escalation) --------------
 
@@ -17553,7 +17772,7 @@ class _DuplexSession:
         self._utterance_counter += 1
         utterance_id = f"utt-{self._utterance_counter}"
         try:
-            result_text, _task_id = await asyncio.to_thread(
+            result_text, task_id = await asyncio.to_thread(
                 self._drive_instant_lane_sync, utterance_text, allow_escalation, cancel_event, utterance_id,
             )
         except _InstantLaneUnavailable as exc:
@@ -17562,13 +17781,23 @@ class _DuplexSession:
                 self._task_counter += 1
                 task_id = f"voice-{self._task_counter}"
                 self._start_deep_task_sync(task_id, utterance_text, cancel_event)
-            if not cancel_event.is_set():
+                self._pending_user_text = None
+            elif self._pending_user_text == utterance_text and self.transcript is not None:
+                self.transcript.discard_last("user", utterance_text)
+                self._pending_user_text = None
+            if not cancel_event.is_set() and not self._playback_pending.is_set():
                 self.state = "listening"
             return
 
         if result_text:
             self.transcript.add("assistant", result_text)
-        if not cancel_event.is_set():
+            if self._pending_user_text == utterance_text:
+                self._pending_user_text = None
+        elif task_id is not None and self._pending_user_text == utterance_text:
+            # The background result will complete this transcript turn;
+            # barge-in on its spoken acknowledgement must not delete it.
+            self._pending_user_text = None
+        if not cancel_event.is_set() and not self._playback_pending.is_set():
             self.state = "listening"
 
     def _drive_instant_lane_sync(
@@ -17735,6 +17964,14 @@ class _DuplexSession:
         # deep task (spec) — this thread is deliberately independent of
         # cancel_event once started.
         transcript_messages = self.transcript.as_messages() if self.transcript is not None else []
+        if (
+            transcript_messages
+            and transcript_messages[-1].get("role") == "user"
+            and transcript_messages[-1].get("content") == utterance_text
+        ):
+            # run_conversation receives utterance_text as its new user turn;
+            # don't also seed that same turn in conversation_history.
+            transcript_messages.pop()
         with self._deep_tasks_lock:
             self._deep_tasks[task_id] = {
                 "mode": mode,
@@ -17859,7 +18096,7 @@ class _DuplexSession:
             self._cancel_speaking = cancel_event
             self.state = "speaking"
             await asyncio.to_thread(self._speak_full_sync, text, cancel_event)
-            if self.state == "speaking":
+            if self.state == "speaking" and not self._playback_pending.is_set():
                 self.state = "listening"
 
     def _speak_full_sync(self, text: str, cancel_event: Optional[threading.Event] = None) -> None:
@@ -17870,6 +18107,7 @@ class _DuplexSession:
     async def close(self) -> None:
         self._closed = True
         self._cancel_speaking.set()
+        self._playback_pending.clear()
         task = self._speaking_task
         if task is not None:
             try:

@@ -1913,6 +1913,42 @@ export const zhHant = defineLocale({
     addProvider: '新增提供方…'
   },
 
+  mind: {
+    proactiveTitle: 'Marvi 發現了值得注意的變化',
+    composio: {
+      title: '已連接應用程式',
+      description: 'Composio Connect 讓 Marvi 透過安全的工具路由器使用所有支援的應用程式，不必增加核心工具。',
+      keyTitle: 'Composio API 金鑰',
+      keyDescription: '金鑰儲存在 Marvi 的祕密檔案，而非 config.yaml；儲存後也會啟用官方 Composio Connect MCP。',
+      keyPlaceholder: '貼上 Composio API 金鑰',
+      saveKey: '儲存並啟用',
+      saving: '正在儲存…',
+      keyConfigured: '金鑰已設定',
+      keyMissing: '需要金鑰',
+      mcpReady: '代理工具已啟用',
+      mcpMissing: '代理工具未啟用',
+      snapshotTitle: '主動快照',
+      snapshotDescription:
+        '可選的低成本差量輪詢，目前 Marvi 可主動監控這四個介面。目錄中的所有應用程式仍可透過 MCP 使用。',
+      snapshotsSaved: '主動快照已更新',
+      snapshotsFailed: '無法更新主動快照',
+      catalogTitle: '支援的整合',
+      catalogDescription: '即時讀取 Composio 工具包目錄，不只限於主動快照輪詢使用的四個應用程式。',
+      searchPlaceholder: '搜尋 Composio 整合',
+      loading: '正在載入整合…',
+      empty: '請先儲存金鑰或嘗試其他搜尋字詞。',
+      allApps: '所有支援的應用程式',
+      totalApps: count => `${count} 個支援的應用程式`,
+      askTitle: '自然表達即可使用',
+      askDescription:
+        '開啟新聊天並說「檢查我的 Gmail」，或說出清單中的其他應用程式。若尚未授權，Marvi 會引導你完成連線。',
+      saved: 'Composio 工具已啟用',
+      loadFailed: '無法載入 Composio',
+      saveFailed: '無法儲存 Composio 金鑰',
+      catalogFailed: '無法載入 Composio 整合'
+    }
+  },
+
   shell: {
     windowControls: '視窗控制項',
     paneControls: '窗格控制項',

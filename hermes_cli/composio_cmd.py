@@ -16,6 +16,7 @@ router keyed by ``args.composio_action``, handlers below.
 from __future__ import annotations
 
 import sys
+import webbrowser
 from typing import Any, Dict, List, Optional
 
 from hermes_cli.cli_output import (
@@ -143,6 +144,12 @@ def cmd_composio_connect(args: Any) -> None:
         if redirect_url:
             print_info(f"Open this link to finish authorizing {app}:")
             print_info(f"  {redirect_url}")
+            try:
+                opened = webbrowser.open(redirect_url)
+            except Exception:
+                opened = False
+            if opened:
+                print_success("Opened the authorization link in your browser.")
         elif status:
             print_info(f"Composio connection status for {app}: {status}")
     except ComposioAuthError as e:

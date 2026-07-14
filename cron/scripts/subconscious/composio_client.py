@@ -352,8 +352,10 @@ class ComposioClient:
         """
         client = self._client()
         try:
-            connect = getattr(client, "connected_accounts", None) or getattr(client, "connections", None)
-            result = self._call_with_optional_user_id(connect.initiate, user_id=user_id, app=app)
+            current = self.get_connection_status(app, user_id=user_id)
+            if current["connected"]:
+                return current
+            result = client.toolkits.authorize(user_id=user_id, toolkit=app)
         except (ComposioRateLimited, ComposioAuthError, ComposioTransientError):
             raise
         except Exception as e:
@@ -361,14 +363,18 @@ class ComposioClient:
             raise ComposioTransientError(
                 f"Could not initiate Composio connection for {app!r}: {e}"
             ) from e
-        return self._to_dict(result)
+        return {
+            "id": getattr(result, "id", None),
+            "status": getattr(result, "status", "pending"),
+            "redirect_url": getattr(result, "redirect_url", None),
+        }
 
     def get_connection_status(self, app: str, *, user_id: str = "default") -> Dict[str, Any]:
         """Return ``{"connected": bool, "status": str}`` for ``app``."""
         client = self._client()
         try:
             connect = getattr(client, "connected_accounts", None) or getattr(client, "connections", None)
-            result = self._call_with_optional_user_id(connect.get, user_id=user_id, app=app)
+            result = connect.list(user_ids=[user_id], toolkit_slugs=[app])
         except (ComposioRateLimited, ComposioAuthError, ComposioTransientError):
             raise
         except Exception as e:
@@ -376,8 +382,16 @@ class ComposioClient:
             raise ComposioTransientError(
                 f"Could not fetch Composio connection status for {app!r}: {e}"
             ) from e
-        payload = self._to_dict(result)
-        status = payload.get("status") or payload.get("connectionStatus") or "unknown"
+        items = getattr(result, "items", None)
+        if items is None and isinstance(result, dict):
+            items = result.get("items")
+        items = list(items or [])
+        active = next(
+            (item for item in items if str(getattr(item, "status", "")).upper() == "ACTIVE"),
+            None,
+        )
+        account = active or (items[0] if items else None)
+        status = getattr(account, "status", "not connected")
         connected = str(status).lower() in {"active", "connected", "success"}
         return {"connected": connected, "status": str(status)}
 
@@ -391,7 +405,7 @@ class ComposioClient:
         try:
             connect = getattr(client, "connected_accounts", None) or getattr(client, "connections", None)
             if connect is not None and hasattr(connect, "list"):
-                self._call_with_optional_user_id(connect.list)
+                connect.list(limit=1)
             return True
         except (ComposioRateLimited, ComposioAuthError, ComposioTransientError):
             raise

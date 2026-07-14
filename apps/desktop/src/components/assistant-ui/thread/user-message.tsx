@@ -30,7 +30,7 @@ export function StickyHumanMessageContainer({
     // while attachments below it scroll away.
     <>
       <div
-        className="group/user-message sticky z-40 -mx-4 flex w-[calc(100%+2rem)] min-w-0 max-w-none flex-col items-stretch gap-0 self-end overflow-visible bg-(--ui-chat-surface-background) px-4 pb-(--conversation-turn-gap) pt-1"
+        className="group/user-message sticky z-40 -mx-4 flex w-[calc(100%+2rem)] min-w-0 max-w-none flex-col items-stretch gap-0 self-end overflow-visible px-4 pb-(--conversation-turn-gap) pt-1"
         data-message-id={messageId}
         data-role="user"
         data-slot="aui_user-message-root"
@@ -43,7 +43,7 @@ export function StickyHumanMessageContainer({
 }
 
 // Shared "user bubble" base. Both the read-only message and the inline
-// edit composer render the same bubble surface (rounded glass card);
+// edit composer render the same bubble surface;
 // they only differ in border weight, cursor, and padding-right (the
 // read-only view reserves room for the restore icon).
 //
@@ -219,7 +219,7 @@ export const UserMessage: FC<{
 
   const bubbleClassName = cn(
     USER_BUBBLE_BASE_CLASS,
-    'cursor-pointer pr-9 text-[length:var(--conversation-text-font-size)] leading-(--dt-line-height) text-foreground/95 transition-colors',
+    'w-fit cursor-pointer bg-transparent pr-9 text-[length:var(--conversation-text-font-size)] leading-(--dt-line-height) text-foreground/95 transition-colors',
     'border-(--ui-stroke-tertiary) hover:border-(--ui-stroke-secondary)'
   )
 
@@ -255,9 +255,9 @@ export const UserMessage: FC<{
         }
         messageId={messageId}
       >
-        <ActionBarPrimitive.Root className="relative w-full max-w-full" data-slot="aui_user-bubble-actions">
-          <div className="human-message-with-todos-wrapper flex w-full flex-col gap-0">
-            <div className="relative w-full">
+        <ActionBarPrimitive.Root className="relative w-fit max-w-full self-start" data-slot="aui_user-bubble-actions">
+          <div className="human-message-with-todos-wrapper flex w-fit max-w-full flex-col gap-0">
+            <div className="relative w-fit max-w-full">
               {readOnly ? (
                 // Spectator transcript: clicking only toggles the clamp so the
                 // full prompt is readable — never opens an edit composer.

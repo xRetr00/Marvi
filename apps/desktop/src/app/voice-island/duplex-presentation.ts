@@ -22,6 +22,8 @@ export interface DuplexPresentation {
   /** Small unobtrusive badge when the server attributes speech to someone other than the owner. */
   speakerBadge: 'owner' | 'guest' | 'unknown' | null
   speakerName: string | null
+  /** Voice focus (spec §4): true when the current caption is a non-owner utterance focus mode filtered out. */
+  captionIgnored: boolean
   /** True while an escalated background task hasn't resolved yet. */
   deepWorking: boolean
   deepMode: DuplexWorkMode | null
@@ -78,6 +80,7 @@ export function resolveDuplexPresentation(state: DuplexSessionState): DuplexPres
     label: resolveLabel(state),
     phase: PHASE_MAP[state.phase],
     speakerBadge: state.speaker,
-    speakerName: state.speakerName
+    speakerName: state.speakerName,
+    captionIgnored: state.utteranceIgnored
   }
 }

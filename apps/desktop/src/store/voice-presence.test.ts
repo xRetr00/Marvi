@@ -73,6 +73,7 @@ describe('$voiceState (computed)', () => {
       label: null,
       speakerBadge: null,
       speakerName: null,
+      captionIgnored: false,
       deepWorking: false,
       deepMode: null
     })
@@ -91,6 +92,7 @@ describe('$voiceState (computed)', () => {
       label: null,
       speakerBadge: null,
       speakerName: null,
+      captionIgnored: false,
       deepWorking: false,
       deepMode: null
     })
@@ -108,6 +110,7 @@ describe('$voiceState (computed)', () => {
       label: null,
       speakerBadge: null,
       speakerName: null,
+      captionIgnored: false,
       deepWorking: false,
       deepMode: null
     })

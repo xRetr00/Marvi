@@ -307,7 +307,12 @@ export function DynamicIsland({
                   </div>
                 ) : null}
                 {caption ? (
-                  <Caption reducedMotion={Boolean(reducedMotion)} text={caption.text} who={caption.who} />
+                  <Caption
+                    ignored={caption.who === 'you' && state.captionIgnored}
+                    reducedMotion={Boolean(reducedMotion)}
+                    text={caption.text}
+                    who={caption.who}
+                  />
                 ) : null}
                 {state.phase === 'speaking' && state.bargeable ? (
                   <InterruptHint reducedMotion={Boolean(reducedMotion)} />
@@ -352,7 +357,20 @@ function StateDot({ color, active, reducedMotion }: { color: string; active: boo
 // "you" affordance. Clamped to two lines so long speech never blows out the
 // pill; fades gently on each change, keyed on who+text so a speaker switch
 // (user -> Marvi) also gets a clean crossfade rather than a jump-cut.
-function Caption({ text, who, reducedMotion }: { text: string; who: 'you' | 'marvi'; reducedMotion: boolean }) {
+function Caption({
+  text,
+  who,
+  reducedMotion,
+  ignored
+}: {
+  text: string
+  who: 'you' | 'marvi'
+  reducedMotion: boolean
+  // Voice focus (spec §4): true when this "you" caption was a non-owner
+  // utterance filtered out by focus mode -- dim it and strike it through so
+  // it reads as "heard but not acted on", not a normal in-flight turn.
+  ignored?: boolean
+}) {
   const isUser = who === 'you'
 
   return (
@@ -383,7 +401,8 @@ function Caption({ text, who, reducedMotion }: { text: string; who: 'you' | 'mar
             margin: 0,
             fontSize: isUser ? 13 : 14,
             lineHeight: 1.4,
-            color: isUser ? '#b9b9c9' : '#e6e6f0',
+            color: ignored ? 'rgba(185,185,201,0.45)' : isUser ? '#b9b9c9' : '#e6e6f0',
+            textDecoration: ignored ? 'line-through' : 'none',
             textAlign: 'center',
             display: '-webkit-box',
             WebkitLineClamp: 2,

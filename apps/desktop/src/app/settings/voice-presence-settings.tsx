@@ -51,7 +51,7 @@ export function VoicePresenceSettings({
   const [enrolling, setEnrolling] = useState(false)
   const captureRef = useRef<DuplexMicCapture | null>(null)
   const speakerIdThreshold = marvi.get('voice.speaker_id.threshold', 0.6)
-  const requireOwnerForEscalation = marvi.get('voice.speaker_id.require_owner_for_escalation', true)
+  const voiceFocusMode = marvi.get<string>('voice.speaker_id.focus_mode', 'owner')
 
   useEffect(() => {
     void Promise.resolve()
@@ -280,10 +280,10 @@ export function VoicePresenceSettings({
       />
 
       <ToggleRow
-        checked={requireOwnerForEscalation}
-        description="Only an enrolled owner may hand a voice request to the tool-enabled reasoning model. Non-owner speech still gets instant-lane answers."
-        label="Require owner for escalation"
-        onChange={value => void marvi.patch('voice.speaker_id.require_owner_for_escalation', value)}
+        checked={voiceFocusMode !== 'off'}
+        description="Focus on the enrolled owner's voice when other people are talking nearby: other speakers' utterances are shown but ignored, and barge-in requires the owner's voice. Not a security or access control -- every speaker can still ask Marvi anything."
+        label="Voice focus"
+        onChange={value => void marvi.patch('voice.speaker_id.focus_mode', value ? 'owner' : 'off')}
       />
     </SettingsContent>
   )

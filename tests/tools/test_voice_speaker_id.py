@@ -270,9 +270,59 @@ class TestEnroll:
 
 
 class TestConfig:
-    def test_require_owner_for_escalation_defaults_true(self):
-        assert vsid.require_owner_for_escalation({}) is True
+    def test_focus_mode_setting_defaults_owner(self):
+        assert vsid.focus_mode_setting({}) == "owner"
 
-    def test_require_owner_for_escalation_respects_config(self):
-        cfg = {"voice": {"speaker_id": {"require_owner_for_escalation": False}}}
-        assert vsid.require_owner_for_escalation(cfg) is False
+    def test_focus_mode_setting_respects_config(self):
+        cfg = {"voice": {"speaker_id": {"focus_mode": "off"}}}
+        assert vsid.focus_mode_setting(cfg) == "off"
+
+    def test_focus_mode_setting_falls_back_on_unknown_value(self):
+        cfg = {"voice": {"speaker_id": {"focus_mode": "nonsense"}}}
+        assert vsid.focus_mode_setting(cfg) == "owner"
+
+    def test_focus_mode_ready_false_with_no_store(self, store_path):
+        assert vsid.focus_mode_ready({}, path=store_path) is False
+
+    def test_focus_mode_ready_false_when_owner_has_no_embeddings(self, store_path):
+        store_path.parent.mkdir(parents=True, exist_ok=True)
+        store_path.write_text(
+            json.dumps({"owner": "alice", "speakers": {"alice": {"display_name": "Alice", "embeddings": []}}}),
+            encoding="utf-8",
+        )
+        assert vsid.focus_mode_ready({}, path=store_path) is False
+
+    def test_focus_mode_ready_true_when_owner_enrolled_and_model_loads(self, store_path, monkeypatch):
+        vsid.enroll_embedding("Alice", [1.0, 0.0], path=store_path)
+        monkeypatch.setattr(vsid, "resolve_speaker_model_path", lambda cfg=None: "model.onnx")
+        monkeypatch.setattr(vsid, "_get_extractor", lambda path: object())
+
+        assert vsid.focus_mode_ready({}, path=store_path) is True
+
+    def test_focus_mode_ready_false_when_model_load_fails(self, store_path, monkeypatch):
+        vsid.enroll_embedding("Alice", [1.0, 0.0], path=store_path)
+
+        def _boom(*a, **k):
+            raise RuntimeError("sherpa exploded")
+
+        monkeypatch.setattr(vsid, "resolve_speaker_model_path", _boom)
+
+        assert vsid.focus_mode_ready({}, path=store_path) is False
+
+    def test_focus_mode_active_false_when_setting_off_even_if_ready(self, store_path, monkeypatch):
+        vsid.enroll_embedding("Alice", [1.0, 0.0], path=store_path)
+        monkeypatch.setattr(vsid, "resolve_speaker_model_path", lambda cfg=None: "model.onnx")
+        monkeypatch.setattr(vsid, "_get_extractor", lambda path: object())
+        cfg = {"voice": {"speaker_id": {"focus_mode": "off"}}}
+
+        assert vsid.focus_mode_active(cfg, path=store_path) is False
+
+    def test_focus_mode_active_false_when_not_ready_even_if_owner_setting(self, store_path):
+        assert vsid.focus_mode_active({}, path=store_path) is False
+
+    def test_focus_mode_active_true_when_owner_setting_and_ready(self, store_path, monkeypatch):
+        vsid.enroll_embedding("Alice", [1.0, 0.0], path=store_path)
+        monkeypatch.setattr(vsid, "resolve_speaker_model_path", lambda cfg=None: "model.onnx")
+        monkeypatch.setattr(vsid, "_get_extractor", lambda path: object())
+
+        assert vsid.focus_mode_active({}, path=store_path) is True

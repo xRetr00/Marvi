@@ -270,6 +270,22 @@ def vad_gate(monkeypatch):
 
 
 @pytest.fixture
+def focus_mode(monkeypatch):
+    """Controls the ``tools.voice_speaker_id.focus_mode_active`` seam.
+
+    Defaults to inactive -- matching a bare install with nothing enrolled
+    -- so every pre-existing test is unaffected unless it opts in.
+    """
+    state = {"active": False}
+
+    def fake_active(cfg):
+        return state["active"]
+
+    monkeypatch.setattr(web_server, "_duplex_focus_mode_active", fake_active)
+    return state
+
+
+@pytest.fixture
 def deep_task(monkeypatch):
     state = {"text": "Deep answer.", "raises": None, "calls": [], "modes": [], "delay": 0.0}
 
@@ -302,7 +318,7 @@ def warm_lane(monkeypatch):
 
 
 @pytest.fixture
-def full_fakes(stt_session, identify_speaker, instant_reply, tts_chunks, vad_gate, deep_task, warm_lane):
+def full_fakes(stt_session, identify_speaker, instant_reply, tts_chunks, vad_gate, deep_task, warm_lane, focus_mode):
     return {
         "stt": stt_session,
         "identify": identify_speaker,
@@ -311,6 +327,7 @@ def full_fakes(stt_session, identify_speaker, instant_reply, tts_chunks, vad_gat
         "vad": vad_gate,
         "deep": deep_task,
         "warm": warm_lane,
+        "focus": focus_mode,
     }
 
 
@@ -733,6 +750,199 @@ def test_partial_events_stream_before_eou(duplex_client, full_fakes):
 
 
 # ---------------------------------------------------------------------------
+# Voice focus mode (speaker ID repurpose: attention, not access control --
+# see docs/superpowers/specs/2026-07-10-marvi-duplex-voice-splitbrain-design.md
+# §4). "focus_mode" active is faked via the `focus_mode` fixture (defaults
+# to inactive, matching a bare/un-enrolled install); "owner"/"guest"/
+# "unknown" speaker labels come from the `identify_speaker` fixture.
+# ---------------------------------------------------------------------------
+
+
+class _RecordingWs:
+    """Minimal fake WebSocket that just records every sent JSON payload --
+    used by the direct ``_DuplexSession`` unit tests below, which need to
+    inspect internal state (transcript, ``_run_turn`` calls) that the
+    WS-protocol ``duplex_client`` fixture can't observe from the wire."""
+
+    def __init__(self):
+        self.sent: list[dict] = []
+
+    async def send_json(self, payload: dict) -> None:
+        self.sent.append(payload)
+
+
+def _make_focus_test_session(cfg=None):
+    from tools.voice_instant_lane import RollingTranscript
+
+    ws = _RecordingWs()
+    session = web_server._DuplexSession(ws, cfg or {})
+    session.transcript = RollingTranscript()
+    session.stt_session = FakeSttSession()
+    return session, ws
+
+
+def test_focus_owner_utterance_passes_through_normally(monkeypatch):
+    """Owner-matching utterances behave exactly as today, even with focus
+    mode active."""
+    monkeypatch.setattr(web_server, "_duplex_identify_speaker", lambda pcm: ("owner", 0.9, "Shereef"))
+    monkeypatch.setattr(web_server, "_duplex_focus_mode_active", lambda cfg: True)
+
+    async def run():
+        session, ws = _make_focus_test_session()
+        session.stt_session.final_text = "what time is it"
+        run_calls = []
+
+        async def fake_run_turn(text, speaker_label, cancel_event):
+            run_calls.append((text, speaker_label))
+
+        session._run_turn = fake_run_turn
+        await session._finalize_utterance()
+        if session._speaking_task is not None:
+            await session._speaking_task
+
+        utterance = next(f for f in ws.sent if f["type"] == "utterance")
+        assert utterance["speaker"] == "owner"
+        assert "ignored" not in utterance
+        assert session.transcript.turns == [{"role": "user", "content": "what time is it"}]
+        assert run_calls == [("what time is it", "owner")]
+        assert session.state == "speaking"
+
+    asyncio.run(run())
+
+
+def test_focus_guest_utterance_ignored_when_focus_active(monkeypatch):
+    monkeypatch.setattr(web_server, "_duplex_identify_speaker", lambda pcm: ("guest", 0.55, "Bob"))
+    monkeypatch.setattr(web_server, "_duplex_focus_mode_active", lambda cfg: True)
+
+    async def run():
+        session, ws = _make_focus_test_session()
+        session.stt_session.final_text = "turn off the lights"
+        run_calls = []
+
+        async def fake_run_turn(text, speaker_label, cancel_event):
+            run_calls.append((text, speaker_label))
+
+        session._run_turn = fake_run_turn
+        await session._finalize_utterance()
+
+        utterance = next(f for f in ws.sent if f["type"] == "utterance")
+        assert utterance["speaker"] == "guest"
+        assert utterance["ignored"] is True
+        # Never reaches the instant lane / TTS turn...
+        assert run_calls == []
+        # ...and never pollutes the owner's rolling transcript.
+        assert session.transcript.turns == []
+        # Session stays listening for the owner to keep talking.
+        assert session.state == "listening"
+
+    asyncio.run(run())
+
+
+def test_focus_unknown_utterance_ignored_when_focus_active(monkeypatch):
+    monkeypatch.setattr(web_server, "_duplex_identify_speaker", lambda pcm: ("unknown", 0.1, None))
+    monkeypatch.setattr(web_server, "_duplex_focus_mode_active", lambda cfg: True)
+
+    async def run():
+        session, ws = _make_focus_test_session()
+        session.stt_session.final_text = "is anybody there"
+        run_calls = []
+
+        async def fake_run_turn(text, speaker_label, cancel_event):
+            run_calls.append((text, speaker_label))
+
+        session._run_turn = fake_run_turn
+        await session._finalize_utterance()
+
+        utterance = next(f for f in ws.sent if f["type"] == "utterance")
+        assert utterance["speaker"] == "unknown"
+        assert utterance["ignored"] is True
+        assert run_calls == []
+        assert session.transcript.turns == []
+        assert session.state == "listening"
+
+    asyncio.run(run())
+
+
+def test_focus_no_enrollment_passes_guest_through(monkeypatch):
+    """No owner enrolled (or model unavailable) -- focus_mode_active is
+    False regardless of the "owner" setting default, so a non-owner speaker
+    must never be filtered on a bare install."""
+    monkeypatch.setattr(web_server, "_duplex_identify_speaker", lambda pcm: ("guest", 0.55, "Bob"))
+    monkeypatch.setattr(web_server, "_duplex_focus_mode_active", lambda cfg: False)
+
+    async def run():
+        session, ws = _make_focus_test_session()
+        session.stt_session.final_text = "turn off the lights"
+        run_calls = []
+
+        async def fake_run_turn(text, speaker_label, cancel_event):
+            run_calls.append((text, speaker_label))
+
+        session._run_turn = fake_run_turn
+        await session._finalize_utterance()
+        if session._speaking_task is not None:
+            await session._speaking_task
+
+        utterance = next(f for f in ws.sent if f["type"] == "utterance")
+        assert "ignored" not in utterance
+        assert run_calls == [("turn off the lights", "guest")]
+        assert session.transcript.turns == [{"role": "user", "content": "turn off the lights"}]
+
+    asyncio.run(run())
+
+
+def test_focus_off_setting_passes_guest_through(duplex_client, full_fakes):
+    """``voice.speaker_id.focus_mode: off`` (simulated here via the
+    focus_mode fixture, since focus_mode_active already folds the setting
+    into one flag) is full passthrough end-to-end over the WS protocol."""
+    full_fakes["focus"]["active"] = False
+    full_fakes["identify"]["label"] = "guest"
+    stt = full_fakes["stt"]
+    stt.queue_response("", True)
+    stt.final_text = "hello"
+
+    with duplex_client.websocket_connect(_duplex_url()) as conn:
+        conn.receive_json()  # ready
+        conn.send_json(_audio_msg(_pcm16_chunk()))
+        utterance = _recv_until(conn, "utterance")
+        assert utterance["speaker"] == "guest"
+        assert "ignored" not in utterance
+
+        # The turn still runs normally (instant lane -> TTS), unlike the
+        # ignored case.
+        _recv_until(conn, "tts_end")
+
+
+def test_focus_ignored_event_over_the_wire_and_no_tts_follows(duplex_client, full_fakes):
+    """End-to-end: an ignored utterance is announced over the WS with
+    ``ignored: true`` but never triggers an instant/TTS cycle."""
+    full_fakes["focus"]["active"] = True
+    full_fakes["identify"]["label"] = "guest"
+    stt = full_fakes["stt"]
+    stt.queue_response("", True)
+    stt.final_text = "hello"
+
+    with duplex_client.websocket_connect(_duplex_url()) as conn:
+        conn.receive_json()  # ready
+        conn.send_json(_audio_msg(_pcm16_chunk()))
+        utterance = _recv_until(conn, "utterance")
+        assert utterance["speaker"] == "guest"
+        assert utterance["ignored"] is True
+
+        # A second, owner utterance proves the session is still alive and
+        # listening normally -- if it never arrives, the prior ignore left
+        # the session wedged.
+        full_fakes["identify"]["label"] = "owner"
+        stt.queue_response("", True)
+        stt.final_text = "what time is it"
+        conn.send_json(_audio_msg(_pcm16_chunk()))
+        second = _recv_until(conn, "utterance")
+        assert second["speaker"] == "owner"
+        assert "ignored" not in second
+        _recv_until(conn, "tts_end")
+
+
+# ---------------------------------------------------------------------------
 # Escalation
 # ---------------------------------------------------------------------------
 
@@ -904,9 +1114,14 @@ def test_escalation_deep_task_failure_speaks_apology_and_errors(duplex_client, f
         _finish_playback(conn)
 
 
-def test_non_owner_never_escalates(duplex_client, full_fakes):
+def test_non_owner_can_now_escalate(duplex_client, full_fakes):
+    """Speaker ID is voice FOCUS, not access control (spec §4 repurpose):
+    the old owner-only escalation gate is gone, so a guest's (or unknown
+    speaker's) complex ask escalates to the deep agent exactly like the
+    owner's would."""
     full_fakes["identify"]["label"] = "guest"
     full_fakes["instant"]["deltas"] = ["[ESCALATE] On it."]
+    full_fakes["deep"]["text"] = "Here's what I found."
     stt = full_fakes["stt"]
     stt.queue_response("", True)
     stt.final_text = "do something complicated"
@@ -915,26 +1130,17 @@ def test_non_owner_never_escalates(duplex_client, full_fakes):
         conn.receive_json()  # ready
         conn.send_json(_audio_msg(_pcm16_chunk()))
 
-        _recv_until(conn, "utterance")
+        utterance = _recv_until(conn, "utterance")
+        assert utterance["speaker"] == "guest"
 
-        # allow_escalation=False is threaded into the fake instant-reply
-        # call, but this fake ignores it and still emits the marker text --
-        # the important assertion is that the endpoint never emits
-        # "escalated" for a guest. Instead the raw marker text streams
-        # through as an ordinary reply (the real instant lane wouldn't emit
-        # the marker at all once escalation is disabled in its prompt; this
-        # test exercises the endpoint's own gating independent of that).
-        frame = conn.receive_json()
-        seen_types = []
-        deadline = time.monotonic() + 3.0
-        while time.monotonic() < deadline:
-            seen_types.append(frame["type"])
-            if frame["type"] == "tts_end":
-                break
-            frame = conn.receive_json()
+        escalated = _recv_until(conn, "escalated", timeout=10.0)
+        assert escalated["ack_text"] == "On it."
 
-        assert "escalated" not in seen_types
-        assert "deep_result" not in seen_types
+        _finish_playback(conn)
+        deep_result = _recv_until(conn, "deep_result", timeout=10.0)
+        assert deep_result["text"] == "Here's what I found."
+
+    assert full_fakes["deep"]["calls"] == ["do something complicated"]
 
 
 def test_escalation_disabled_never_escalates(duplex_client, full_fakes, monkeypatch):
@@ -1027,6 +1233,164 @@ def test_speech_before_assistant_playback_does_not_false_barge_in(duplex_client,
 
 
 # ---------------------------------------------------------------------------
+# Speaker-confirmed barge-in (spec §3: echo/other-voice-proof). Direct
+# ``_DuplexSession`` unit tests (like the Smart Turn tests above) rather
+# than the WS-protocol client -- these need to feed dozens of tightly
+# controlled chunks and inspect internal state precisely.
+# ---------------------------------------------------------------------------
+
+
+def _make_barge_test_session(cfg=None):
+    ws = _RecordingWs()
+    session = web_server._DuplexSession(ws, cfg or {})
+    session.stt_session = FakeSttSession()
+    vad = FakeVadGate()
+    vad.speaking = True
+    session.vad_gate = vad
+    session._assistant_audio_started.set()
+    session.state = "speaking"
+    return session, ws, vad
+
+
+def test_barge_in_owner_match_confirms_and_barges(monkeypatch):
+    monkeypatch.setattr(web_server, "_duplex_focus_mode_active", lambda cfg: True)
+    identify_calls = []
+
+    def fake_identify(pcm16_bytes):
+        identify_calls.append(len(pcm16_bytes))
+        return ("owner", 0.9, "Shereef")
+
+    monkeypatch.setattr(web_server, "_duplex_identify_speaker", fake_identify)
+
+    async def run():
+        session, ws, _vad = _make_barge_test_session()
+        session.stt_session.queue_response("wait stop", False)
+        chunk = _pcm16_chunk()
+        chunk_bytes = len(chunk)
+        needed_chunks = -(-web_server._DUPLEX_BARGE_CONFIRM_WINDOW_BYTES // chunk_bytes)
+
+        for _ in range(needed_chunks + 10):
+            if ws.sent:
+                break
+            await session._feed_barge_in(chunk)
+
+        assert ws.sent.count({"type": "barge_in"}) == 1
+        assert identify_calls  # confirmation ran at least once
+        assert session.state == "listening"
+
+    asyncio.run(run())
+
+
+def test_barge_in_non_owner_match_suppressed(monkeypatch):
+    """A confirmed-non-owner candidate (TTS echo or another person talking
+    near the mic) never actually barges in, however long it sustains."""
+    monkeypatch.setattr(web_server, "_duplex_focus_mode_active", lambda cfg: True)
+    identify_calls = []
+
+    def fake_identify(pcm16_bytes):
+        identify_calls.append(len(pcm16_bytes))
+        return ("guest", 0.5, "Bob")
+
+    monkeypatch.setattr(web_server, "_duplex_identify_speaker", fake_identify)
+
+    async def run():
+        session, ws, _vad = _make_barge_test_session()
+        session.stt_session.queue_response("wait stop", False)
+        chunk = _pcm16_chunk()
+
+        for _ in range(300):
+            await session._feed_barge_in(chunk)
+
+        assert ws.sent == []
+        assert len(identify_calls) >= 2  # re-checked more than once
+        assert session.state == "speaking"  # never interrupted
+
+    asyncio.run(run())
+
+
+def test_barge_in_sustained_speech_recheck_eventually_confirms(monkeypatch):
+    """Owner starts talking but is briefly misread as a guest -- sustained
+    speech keeps re-checking every fresh ~0.7s window (spec §3: "at most
+    ~1.5s late") until it confirms, rather than being stuck rejected."""
+    monkeypatch.setattr(web_server, "_duplex_focus_mode_active", lambda cfg: True)
+    responses = iter([("guest", 0.5, "Bob"), ("guest", 0.5, "Bob"), ("owner", 0.9, "Shereef")])
+    identify_calls = []
+
+    def fake_identify(pcm16_bytes):
+        result = next(responses)
+        identify_calls.append(result[0])
+        return result
+
+    monkeypatch.setattr(web_server, "_duplex_identify_speaker", fake_identify)
+
+    async def run():
+        session, ws, _vad = _make_barge_test_session()
+        session.stt_session.queue_response("wait stop", False)
+        chunk = _pcm16_chunk()
+
+        for _ in range(400):
+            if ws.sent:
+                break
+            await session._feed_barge_in(chunk)
+
+        assert ws.sent.count({"type": "barge_in"}) == 1
+        assert identify_calls == ["guest", "guest", "owner"]
+
+    asyncio.run(run())
+
+
+def test_barge_in_model_unavailable_falls_back_to_vad_only(monkeypatch):
+    """Speaker model unavailable -- folded into focus_mode_active() being
+    False -- must behave exactly like plain VAD-only barge-in: fire as soon
+    as the streak/text gate is satisfied, without waiting for a ~0.7s
+    confirm window or ever calling identify()."""
+    monkeypatch.setattr(web_server, "_duplex_focus_mode_active", lambda cfg: False)
+    identify_calls = []
+    monkeypatch.setattr(
+        web_server, "_duplex_identify_speaker", lambda pcm: identify_calls.append(1) or ("owner", 0.9, "Shereef")
+    )
+
+    async def run():
+        session, ws, _vad = _make_barge_test_session()
+        session.stt_session.queue_response("wait stop", False)
+        chunk = _pcm16_chunk()
+
+        # ~400ms: past the plain streak_ms threshold (320ms) but well short
+        # of the ~0.7s confirm window -- proves confirmation isn't gating.
+        for _ in range(20):
+            await session._feed_barge_in(chunk)
+
+        assert ws.sent.count({"type": "barge_in"}) == 1
+        assert identify_calls == []
+
+    asyncio.run(run())
+
+
+def test_barge_in_focus_off_falls_back_to_vad_only(monkeypatch):
+    """``voice.speaker_id.focus_mode: off`` (folded into focus_mode_active()
+    being False the same way "no owner enrolled" is) -- same VAD-only
+    passthrough as before this feature existed."""
+    monkeypatch.setattr(web_server, "_duplex_focus_mode_active", lambda cfg: False)
+    identify_calls = []
+    monkeypatch.setattr(
+        web_server, "_duplex_identify_speaker", lambda pcm: identify_calls.append(1) or ("owner", 0.9, "Shereef")
+    )
+
+    async def run():
+        session, ws, _vad = _make_barge_test_session()
+        session.stt_session.queue_response("wait stop", False)
+        chunk = _pcm16_chunk()
+
+        for _ in range(20):
+            await session._feed_barge_in(chunk)
+
+        assert ws.sent.count({"type": "barge_in"}) == 1
+        assert identify_calls == []
+
+    asyncio.run(run())
+
+
+# ---------------------------------------------------------------------------
 # Instant lane unreachable -> fallback
 # ---------------------------------------------------------------------------
 
@@ -1080,11 +1444,14 @@ def test_empty_instant_reply_falls_back_instead_of_leaving_listening_ui(duplex_c
         assert deep_result["text"] == "Fallback answer."
 
 
-def test_instant_lane_down_and_non_owner_still_only_errors_once(duplex_client, full_fakes):
-    """Non-owner + instant lane down: fallback must NOT escalate to the deep
-    agent (never-escalate gating applies to the fallback path too)."""
+def test_instant_lane_down_and_non_owner_still_falls_back_to_deep_task(duplex_client, full_fakes):
+    """Non-owner + instant lane down: the fallback-to-deep-task path (spec
+    "Error handling") isn't owner-gated any more than escalation is -- a
+    guest's utterance still reaches the deep agent when the instant lane is
+    unreachable."""
     full_fakes["identify"]["label"] = "guest"
     full_fakes["instant"]["raises"] = RuntimeError("no provider configured")
+    full_fakes["deep"]["text"] = "Fallback answer."
     stt = full_fakes["stt"]
     stt.queue_response("", True)
     stt.final_text = "hello marvi"
@@ -1097,8 +1464,10 @@ def test_instant_lane_down_and_non_owner_still_only_errors_once(duplex_client, f
         error = _recv_until(conn, "error", timeout=10.0)
         assert error["type"] == "error"
 
-        time.sleep(0.05)
-        assert full_fakes["deep"]["calls"] == []
+        deep_result = _recv_until(conn, "deep_result", timeout=10.0)
+        assert deep_result["text"] == "Fallback answer."
+
+    assert full_fakes["deep"]["calls"] == ["hello marvi"]
 
 
 # ---------------------------------------------------------------------------

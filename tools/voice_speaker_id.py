@@ -480,11 +480,64 @@ def identify(
     return label, score
 
 
-def require_owner_for_escalation(cfg: Optional[Dict[str, Any]] = None) -> bool:
-    """``voice.speaker_id.require_owner_for_escalation`` -- default True."""
+DEFAULT_FOCUS_MODE = "owner"
+
+
+def focus_mode_setting(cfg: Optional[Dict[str, Any]] = None) -> str:
+    """``voice.speaker_id.focus_mode`` -- "owner" (default) or "off".
+
+    Speaker ID is voice FOCUS, not access control (v1 repurpose, see the
+    duplex spec doc's speaker-ID section): when "owner", the duplex
+    session filters non-owner utterances out of the conversation (never
+    reach the instant lane, never get TTS, never enter the rolling
+    transcript) and requires an owner-voice match before honoring
+    barge-in. "off" restores plain VAD-only/no-filtering behavior for
+    every speaker. Any other value falls back to the default rather than
+    erroring.
+    """
     from hermes_cli.config import cfg_get, load_config
 
     cfg = cfg if cfg is not None else load_config()
-    return bool(
-        cfg_get(cfg, "voice", "speaker_id", "require_owner_for_escalation", default=True)
+    value = (
+        str(cfg_get(cfg, "voice", "speaker_id", "focus_mode", default=DEFAULT_FOCUS_MODE) or DEFAULT_FOCUS_MODE)
+        .strip()
+        .lower()
     )
+    return value if value in ("owner", "off") else DEFAULT_FOCUS_MODE
+
+
+def focus_mode_ready(cfg: Optional[Dict[str, Any]] = None, *, path: Optional[Path] = None) -> bool:
+    """True when there's an enrolled owner AND the embedding model loads.
+
+    Both conditions must hold before focus mode does anything active --
+    callers must otherwise behave exactly as they did before this feature
+    existed (never filter/block an un-enrolled user's voice, or a fresh
+    install with no speaker model cached yet).
+    """
+    path = path or default_store_path()
+    store = load_store(path)
+    owner_key = store.get("owner")
+    if not owner_key:
+        return False
+    owner_entry = (store.get("speakers") or {}).get(owner_key)
+    if not owner_entry or not owner_entry.get("embeddings"):
+        return False
+    try:
+        model_path = resolve_speaker_model_path(cfg)
+        _get_extractor(model_path)
+    except Exception:
+        return False
+    return True
+
+
+def focus_mode_active(cfg: Optional[Dict[str, Any]] = None, *, path: Optional[Path] = None) -> bool:
+    """Whether voice focus should currently filter/gate for the owner.
+
+    Combines the ``voice.speaker_id.focus_mode`` setting with real-world
+    readiness (:func:`focus_mode_ready`). Backs both the duplex session's
+    utterance filtering and its barge-in owner-confirmation gate, so the
+    two features turn on/off together.
+    """
+    if focus_mode_setting(cfg) == "off":
+        return False
+    return focus_mode_ready(cfg, path=path)

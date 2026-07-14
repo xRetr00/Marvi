@@ -17580,6 +17580,15 @@ _DUPLEX_SMART_TURN_VAD_FALLBACK_MS = 1500
 _DUPLEX_TURN_VAD_HARD_STOP_MS = 2800
 _DUPLEX_BARGE_CANDIDATE_TIMEOUT_MS = 1800
 _DUPLEX_UTTERANCE_AUDIO_CAP_CHUNKS = 1000
+# Speaker-confirmed barge-in (spec §3, voice-focus repurpose): before a
+# VAD-armed candidate is allowed to actually interrupt playback, this much
+# of its buffered 16 kHz pcm16 audio must be identified as the OWNER --
+# otherwise TTS echo or another person talking near the mic (which TEN VAD
+# alone can't distinguish from the user) would barge in. Only enforced when
+# tools.voice_speaker_id.focus_mode_active() is True (owner enrolled + model
+# available + focus_mode != "off"); otherwise unchanged VAD-only behavior.
+_DUPLEX_BARGE_CONFIRM_WINDOW_MS = 700.0
+_DUPLEX_BARGE_CONFIRM_WINDOW_BYTES = int(16000 * 2 * (_DUPLEX_BARGE_CONFIRM_WINDOW_MS / 1000.0))
 # Fallback only -- used when a tts_chunk stream never reports its own
 # sample_rate (shouldn't happen with tools.tts_tool.stream_text_to_speech_chunks,
 # which always yields a "start" event carrying one; kept as a safety net so
@@ -17858,6 +17867,18 @@ def _duplex_identify_speaker(pcm16_bytes: bytes) -> Tuple[str, float, Optional[s
     from tools.voice_speaker_id import identify_details
 
     return identify_details(pcm16_bytes)
+
+
+def _duplex_focus_mode_active(cfg: Dict[str, Any]) -> bool:
+    """Seam: tests monkeypatch this instead of touching the real speaker
+    store/model. See ``tools.voice_speaker_id.focus_mode_active`` -- true
+    only when ``voice.speaker_id.focus_mode`` isn't "off" AND an owner is
+    enrolled AND the embedding model can be loaded; False (never
+    filter/gate) otherwise, including on a bare install with nothing
+    enrolled yet."""
+    from tools.voice_speaker_id import focus_mode_active
+
+    return focus_mode_active(cfg)
 
 
 def _duplex_warm_instant_lane(transcript, cfg) -> Dict[str, Any]:
@@ -18373,6 +18394,11 @@ class _DuplexSession:
         self._barge_candidate_text = ""
         self._barge_candidate_started_at: Optional[float] = None
         self._barge_candidate_eou = False
+        # Speaker-confirmed barge-in (spec §3) bookkeeping -- see
+        # _barge_owner_gate_blocks.
+        self._barge_owner_confirmed = False
+        self._barge_last_confirm_len = 0
+        self._barge_candidate_bytes_seen = 0
         self._active_assistant_text = ""
         self._end_after_playback = False
         self._assistant_audio_started = threading.Event()
@@ -18774,12 +18800,35 @@ class _DuplexSession:
             score,
             int(len(pcm) / 2 / 16000 * 1000),
         )
-        await self._send({
-                "type": "utterance",
-                "text": text,
-                "speaker": speaker_label,
-                "speaker_name": speaker_name,
-        })
+
+        # Voice FOCUS, not access control (spec §4 repurpose): while focus is
+        # active, a non-owner utterance is attributed and shown in the
+        # transcript event but never reaches the instant lane/TTS and never
+        # pollutes the owner's rolling transcript -- it's someone else
+        # talking near the mic, not a new conversational turn. Never active
+        # (never filters) on a bare/un-enrolled install.
+        focus_ignore = speaker_label != "owner" and await asyncio.to_thread(
+            _duplex_focus_mode_active, self.cfg
+        )
+
+        utterance_event: Dict[str, Any] = {
+            "type": "utterance",
+            "text": text,
+            "speaker": speaker_label,
+            "speaker_name": speaker_name,
+        }
+        if focus_ignore:
+            utterance_event["ignored"] = True
+        await self._send(utterance_event)
+
+        if focus_ignore:
+            _log.info(
+                "Voice duplex focus mode ignoring non-owner utterance label=%s score=%.4f",
+                speaker_label,
+                score,
+            )
+            return
+
         self.transcript.add("user", text)
         self._pending_user_text = text
 
@@ -18839,6 +18888,7 @@ class _DuplexSession:
         if has_speech and self._barge_candidate_started_at is None:
             self._barge_candidate_started_at = now
             self._barge_candidate_audio = list(self._barge_preroll)
+            self._barge_candidate_bytes_seen = sum(len(c) for c in self._barge_candidate_audio)
             chunks_to_feed = list(self._barge_candidate_audio)
             try:
                 await asyncio.to_thread(self.stt_session.begin)
@@ -18848,6 +18898,7 @@ class _DuplexSession:
                 return
         elif self._barge_candidate_started_at is not None:
             self._barge_candidate_audio.append(chunk)
+            self._barge_candidate_bytes_seen += len(chunk)
             if len(self._barge_candidate_audio) > 100:
                 self._barge_candidate_audio.pop(0)
             chunks_to_feed = [chunk]
@@ -18871,6 +18922,8 @@ class _DuplexSession:
         )
         enough_speech = self._barge_streak_ms >= _DUPLEX_BARGE_IN_STREAK_MS
         if actionable and (enough_speech or self._barge_candidate_eou):
+            if await self._barge_owner_gate_blocks():
+                return
             audio = list(self._barge_candidate_audio)
             text = self._barge_candidate_text
             eou = self._barge_candidate_eou
@@ -18910,6 +18963,9 @@ class _DuplexSession:
         self._barge_candidate_eou = False
         self._barge_streak_ms = 0.0
         self._barge_preroll.clear()
+        self._barge_owner_confirmed = False
+        self._barge_last_confirm_len = 0
+        self._barge_candidate_bytes_seen = 0
         if rearm_stt and had_candidate and self.stt_session is not None:
             try:
                 await asyncio.to_thread(self.stt_session.begin)
@@ -18917,6 +18973,64 @@ class _DuplexSession:
                 _log.warning(
                     "Voice duplex: STT re-arm after rejected barge-in failed: %s", exc
                 )
+
+    async def _barge_owner_gate_blocks(self) -> bool:
+        """Speaker-confirmed barge-in (spec §3): before a VAD+text-confirmed
+        candidate is allowed to actually interrupt playback, confirm that
+        ~0.7s of its buffered audio (:data:`_DUPLEX_BARGE_CONFIRM_WINDOW_MS`)
+        matches the OWNER embedding -- otherwise TTS echo or another voice
+        near the mic (which TEN VAD alone cannot distinguish from the user)
+        would barge in.
+
+        Returns True to suppress this attempt (the caller keeps buffering
+        the candidate rather than resetting it; a fresh ~0.7s window is
+        re-checked on the next call once enough new audio has accumulated,
+        so a real interruption is confirmed at most ~1.5s later than an
+        unconfirmed barge would have fired). Returns False when the caller
+        should proceed with the barge exactly as before this feature
+        existed -- including whenever focus mode is off, no owner is
+        enrolled, or the speaker model is unavailable (never regress the
+        plain VAD-only behavior in those cases).
+
+        # ponytail: this identifies the dominant speaker in the buffered
+        # window, not true target-speaker extraction -- the owner talking
+        # *simultaneously* with a TV/other person needs real diarization/
+        # segmentation (sherpa-onnx ships segmentation models for this).
+        # Utterance- and barge-level focus is the full v1 scope.
+        """
+        if self._barge_owner_confirmed:
+            return False
+        if not await asyncio.to_thread(_duplex_focus_mode_active, self.cfg):
+            return False
+
+        # Tracked separately from ``_barge_candidate_audio``'s own length:
+        # that buffer is capped (~2s) and evicts its oldest chunks under
+        # sustained speech, so comparing against its length would stall the
+        # "fresh window" check forever once the cap is hit. This counter
+        # only grows, so re-checks stay on schedule for however long the
+        # candidate keeps accumulating.
+        seen = self._barge_candidate_bytes_seen
+        if seen < _DUPLEX_BARGE_CONFIRM_WINDOW_BYTES:
+            return True  # not enough buffered audio yet -- keep buffering
+        if (
+            self._barge_last_confirm_len
+            and (seen - self._barge_last_confirm_len) < _DUPLEX_BARGE_CONFIRM_WINDOW_BYTES
+        ):
+            return True  # already checked; wait for a fresh ~0.7s window
+
+        candidate_pcm = b"".join(self._barge_candidate_audio)
+        label, score, _name = await asyncio.to_thread(_duplex_identify_speaker, candidate_pcm)
+        self._barge_last_confirm_len = seen
+        if label == "owner":
+            self._barge_owner_confirmed = True
+            return False
+
+        _log.info(
+            "Voice duplex barge-in suppressed: non-owner speaker label=%s score=%.4f",
+            label,
+            score,
+        )
+        return True
 
     async def _trigger_barge_in(
         self,
@@ -18957,6 +19071,9 @@ class _DuplexSession:
         self._barge_candidate_started_at = None
         self._barge_candidate_eou = False
         self._barge_preroll.clear()
+        self._barge_owner_confirmed = False
+        self._barge_last_confirm_len = 0
+        self._barge_candidate_bytes_seen = 0
         if self.stt_session is None:
             return
         if partial:
@@ -18977,20 +19094,16 @@ class _DuplexSession:
 
     # -- turn orchestration (instant lane + TTS + escalation) --------------
 
-    def _escalation_allowed(self, speaker_label: str) -> bool:
-        from tools.voice_instant_lane import escalation_enabled
-        from tools.voice_speaker_id import require_owner_for_escalation
-
-        if not escalation_enabled(self.cfg):
-            return False
-        if require_owner_for_escalation(self.cfg) and speaker_label != "owner":
-            return False
-        return True
-
     async def _run_turn(
         self, utterance_text: str, speaker_label: str, cancel_event: threading.Event
     ) -> None:
-        allow_escalation = self._escalation_allowed(speaker_label)
+        # Escalation gating is purely the feature toggle now -- speaker ID
+        # is voice FOCUS (see _finalize_utterance), not access control, so
+        # every speaker who reaches this point (focus already filtered out
+        # non-owner speech when focus mode is active) may escalate.
+        from tools.voice_instant_lane import escalation_enabled
+
+        allow_escalation = escalation_enabled(self.cfg)
         self._utterance_counter += 1
         utterance_id = f"utt-{self._utterance_counter}"
         try:

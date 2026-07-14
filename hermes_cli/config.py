@@ -2205,7 +2205,10 @@ DEFAULT_CONFIG = {
         },
         "speaker_id": {
             "threshold": 0.60,
-            "require_owner_for_escalation": True,
+            # Speaker ID is voice FOCUS, not access control: "owner" filters
+            # non-owner utterances out of the duplex conversation and gates
+            # barge-in on an owner-voice match; "off" disables both.
+            "focus_mode": "owner",
         },
         "beep_enabled": True,         # Play record start/stop beeps in CLI voice mode
         "silence_threshold": 200,     # RMS below this = silence (0-32767)

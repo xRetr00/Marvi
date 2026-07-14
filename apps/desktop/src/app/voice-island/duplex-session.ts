@@ -41,6 +41,13 @@ export interface DuplexSessionState {
   /** Who the server attributed the last `utterance` to. */
   speaker: DuplexSpeaker | null
   speakerName: string | null
+  /**
+   * Voice focus (spec §4): true when the last utterance was a non-owner
+   * speaker filtered out by focus mode -- attributed/shown but never run
+   * through the instant lane or TTS. Surfaces render this caption dimmed/
+   * struck rather than as a normal in-flight turn.
+   */
+  utteranceIgnored: boolean
   /** Accumulated instant/deep reply text for the in-flight turn. */
   replyText: string | null
   replySource: 'deep' | 'instant' | null
@@ -78,6 +85,7 @@ export const INITIAL_DUPLEX_STATE: DuplexSessionState = {
   utteranceCaption: null,
   speaker: null,
   speakerName: null,
+  utteranceIgnored: false,
   replyText: null,
   replySource: null,
   deepWork: null,
@@ -133,14 +141,16 @@ export class DuplexSessionMachine {
         // the background (spec section 2/3).
         this.patch({
           utteranceCaption: event.text,
+          utteranceIgnored: event.ignored ?? false,
           speaker: event.speaker,
           speakerName: event.speaker_name ?? null,
           partialCaption: null,
           replyText: null,
           replySource: null,
-          // The server has finalized the user's speech and is now running
-          // the instant lane. Present that wait as Thinking, not Listening.
-          phase: 'replying'
+          // Voice focus (spec §4): an ignored (non-owner, filtered) utterance
+          // never reaches the instant lane -- no reply is coming, so the
+          // session stays presented as Listening rather than Thinking.
+          phase: event.ignored ? 'listening' : 'replying'
         })
 
         return []

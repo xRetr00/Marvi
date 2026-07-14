@@ -554,7 +554,8 @@ export const FIELD_DESCRIPTIONS: Record<string, string> = defineFieldCopy({
     },
     speakerId: {
       threshold: 'Minimum enrolled-speaker similarity. Raise it to reduce false owner matches.',
-      requireOwnerForEscalation: 'Only an enrolled owner may hand a voice request to the tool-enabled reasoning model.'
+      focusMode:
+        'Focus on the owner\'s voice when other people are talking nearby -- not access control, every speaker can still ask Marvi anything.'
     }
   },
   tts: {

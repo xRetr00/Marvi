@@ -38,6 +38,13 @@ export interface VoiceState {
    */
   speakerBadge: 'owner' | 'guest' | 'unknown' | null
   speakerName: string | null
+  /**
+   * Duplex-only (speaker ID, spec section 4): true when the current caption
+   * is a non-owner utterance that voice focus mode filtered out (shown but
+   * never run through the instant lane/TTS) -- surfaces render it dimmed/
+   * struck rather than as a normal in-flight turn.
+   */
+  captionIgnored: boolean
   /** Duplex-only: true while an escalated background task hasn't resolved yet. */
   deepWorking: boolean
   deepMode: DuplexWorkMode | null
@@ -88,6 +95,7 @@ export interface DuplexExtras {
   label: string | null
   speakerBadge: 'owner' | 'guest' | 'unknown' | null
   speakerName: string | null
+  captionIgnored: boolean
   deepWorking: boolean
   deepMode: DuplexWorkMode | null
   activity: { kind: DuplexActivityKind; label: string } | null
@@ -97,6 +105,7 @@ const NO_DUPLEX_EXTRAS: DuplexExtras = {
   label: null,
   speakerBadge: null,
   speakerName: null,
+  captionIgnored: false,
   deepWorking: false,
   deepMode: null,
   activity: null
@@ -150,6 +159,7 @@ export const $voiceState = computed(
       phase,
       speakerBadge: conv.active ? conv.speakerBadge : null,
       speakerName: conv.active ? conv.speakerName : null,
+      captionIgnored: conv.active ? conv.captionIgnored : false,
       userCaption
     }
   }

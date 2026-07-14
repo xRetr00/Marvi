@@ -159,7 +159,8 @@ export function useComposerVoice({
       deepMode: presentation?.deepMode ?? null,
       label: presentation?.label ?? null,
       speakerBadge: presentation?.speakerBadge ?? null,
-      speakerName: presentation?.speakerName ?? null
+      speakerName: presentation?.speakerName ?? null,
+      captionIgnored: presentation?.captionIgnored ?? false
     })
 
     if (duplex.status === 'active') {

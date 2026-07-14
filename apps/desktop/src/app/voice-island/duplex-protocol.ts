@@ -48,6 +48,15 @@ export interface DuplexUtteranceEvent {
   text: string
   speaker: DuplexSpeaker
   speaker_name?: string
+  /**
+   * Voice focus (speaker ID repurpose, spec §4): set when the server
+   * attributed this utterance to a non-owner speaker while focus mode is
+   * active. The utterance is announced here for the badge/caption but was
+   * never run through the instant lane/TTS and never joined the rolling
+   * transcript -- additive field, absent (not just `false`) means "not
+   * ignored" for clients built before this existed.
+   */
+  ignored?: boolean
 }
 
 export interface DuplexInstantDeltaEvent {
@@ -225,7 +234,8 @@ export function parseDuplexServerEvent(raw: unknown): DuplexServerEvent | null {
             type: 'utterance',
             text: raw.text,
             speaker: asSpeaker(raw.speaker),
-            ...(typeof raw.speaker_name === 'string' ? { speaker_name: raw.speaker_name } : {})
+            ...(typeof raw.speaker_name === 'string' ? { speaker_name: raw.speaker_name } : {}),
+            ...(raw.ignored === true ? { ignored: true } : {})
           }
         : null
 

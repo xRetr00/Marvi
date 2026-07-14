@@ -236,7 +236,14 @@ export function VoiceConversationActivity() {
           <span>{label}</span>
           {voice.speakerBadge ? <VoiceSpeakerBadge name={voice.speakerName} speaker={voice.speakerBadge} /> : null}
         </div>
-        <div className="line-clamp-2 break-words text-foreground/85">{text}</div>
+        <div
+          className={cn(
+            'line-clamp-2 break-words text-foreground/85',
+            voice.captionIgnored && 'text-foreground/40 line-through'
+          )}
+        >
+          {text}
+        </div>
       </div>
     </div>
   )

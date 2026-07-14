@@ -4,6 +4,7 @@ import type { PropsWithChildren } from 'react'
 
 import { requestVoiceToggle } from '@/app/chat/composer/focus'
 import { VoiceSpeakerBadge } from '@/components/voice-speaker-badge'
+import { cn } from '@/lib/utils'
 import { $voiceModeActive, $voiceState, type VoicePhase } from '@/store/voice-presence'
 
 import { VoiceOrb } from './voice-orb'
@@ -128,7 +129,12 @@ export function VoiceModeStage() {
           </div>
 
           {caption ? (
-            <div className="mx-auto mt-2 line-clamp-2 max-w-lg text-balance text-base leading-relaxed text-foreground/80">
+            <div
+              className={cn(
+                'mx-auto mt-2 line-clamp-2 max-w-lg text-balance text-base leading-relaxed text-foreground/80',
+                voice.phase === 'listening' && voice.captionIgnored && 'text-foreground/40 line-through'
+              )}
+            >
               {caption}
             </div>
           ) : (

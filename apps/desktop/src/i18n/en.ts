@@ -398,6 +398,7 @@ export const en: Translations = {
       backgroundDesc: 'Choose an ASCII art background, or automatically rotate through all of them every five minutes.',
       backgroundElectricGaze: 'Electric Gaze',
       backgroundPersonalWebsite: 'Personal Site',
+      backgroundAsciiFlower: 'ASCII Flower',
       backgroundAuto: 'Auto',
       embedsTitle: 'Inline Embeds',
       embedsDesc:

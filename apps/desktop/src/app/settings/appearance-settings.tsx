@@ -12,8 +12,8 @@ import { Check, Download, Loader2, Palette, Trash2 } from '@/lib/icons'
 import { selectableCardClass } from '@/lib/selectable-card'
 import { normalize } from '@/lib/text'
 import { cn } from '@/lib/utils'
-import { $embedAllowed, $embedMode, clearEmbedAllowed, type EmbedMode, setEmbedMode } from '@/store/embed-consent'
 import { $backgroundMode, type BackgroundMode, setBackgroundMode } from '@/store/background'
+import { $embedAllowed, $embedMode, clearEmbedAllowed, type EmbedMode, setEmbedMode } from '@/store/embed-consent'
 import { $activeGatewayProfile, $profiles, normalizeProfileKey } from '@/store/profile'
 import { $toolViewMode, setToolViewMode } from '@/store/tool-view'
 import { $translucency, setTranslucency } from '@/store/translucency'
@@ -290,6 +290,7 @@ export function AppearanceSettings() {
   const backgroundOptions = [
     { id: 'electricGaze', label: a.backgroundElectricGaze },
     { id: 'personalWebsite', label: a.backgroundPersonalWebsite },
+    { id: 'asciiFlower', label: a.backgroundAsciiFlower },
     { id: 'auto', label: a.backgroundAuto }
   ] as const satisfies readonly { id: BackgroundMode; label: string }[]
 

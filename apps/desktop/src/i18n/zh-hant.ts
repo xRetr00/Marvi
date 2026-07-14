@@ -294,6 +294,7 @@ export const zhHant = defineLocale({
       backgroundDesc: '選擇 ASCII 藝術背景，或每五分鐘自動輪換所有背景。',
       backgroundElectricGaze: '電光凝視',
       backgroundPersonalWebsite: '個人網站',
+      backgroundAsciiFlower: 'ASCII 花朵',
       backgroundAuto: '自動',
       embedsTitle: '內嵌預覽',
       embedsDesc:

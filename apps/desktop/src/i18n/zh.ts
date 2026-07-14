@@ -387,6 +387,7 @@ export const zh: Translations = {
       backgroundDesc: '选择 ASCII 艺术背景，或每五分钟自动轮换所有背景。',
       backgroundElectricGaze: '电光凝视',
       backgroundPersonalWebsite: '个人网站',
+      backgroundAsciiFlower: 'ASCII 花卉',
       backgroundAuto: '自动',
       embedsTitle: '内嵌预览',
       embedsDesc:

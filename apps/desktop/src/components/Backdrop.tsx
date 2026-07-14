@@ -1,8 +1,10 @@
-import { Leva, useControls } from 'leva'
 import { useStore } from '@nanostores/react'
+import { Leva, useControls } from 'leva'
 import { type CSSProperties, useEffect, useState } from 'react'
 
 import { $backgroundMode, backgroundFor } from '@/store/background'
+
+import { AsciiFlowerBackdrop } from './ascii-flower-backdrop'
 
 const BLEND_MODES = [
   'normal',
@@ -83,17 +85,17 @@ export function Backdrop() {
     'Backdrop / Electric Gaze',
     {
       enabled: { value: true, label: 'on' },
-      opacity: { value: 0.15, min: 0, max: 1, step: 0.005 },
-      blendMode: { value: 'difference' as BlendMode, options: BLEND_MODES, label: 'blend' },
+      opacity: { value: 0.6, min: 0, max: 1, step: 0.005 },
+      blendMode: { value: 'normal' as BlendMode, options: BLEND_MODES, label: 'blend' },
       objectPosition: {
         value: 'center',
         options: ['top left', 'top right', 'bottom left', 'bottom right', 'center', 'top', 'bottom', 'left', 'right'],
         label: 'position'
-      },
-      scale: { value: 100, min: 100, max: 300, step: 5, label: 'height (dvh)' }
+      }
     },
     { collapsed: true }
   )
+
   const background = backgroundFor(backgroundMode, backgroundIndex)
 
   return (
@@ -109,20 +111,21 @@ export function Backdrop() {
             opacity: artwork.opacity
           }}
         >
-          <video
-            autoPlay
-            className="w-auto min-w-dvw object-cover"
-            key={background.src}
-            loop
-            muted
-            playsInline
-            poster={background.poster}
-            src={background.src}
-            style={{
-              height: `${artwork.scale}dvh`,
-              objectPosition: artwork.objectPosition
-            }}
-          />
+          {background.kind === 'canvas' ? (
+            <AsciiFlowerBackdrop />
+          ) : (
+            <video
+              autoPlay
+              className="block size-full object-cover"
+              key={background.src}
+              loop
+              muted
+              playsInline
+              poster={background.poster}
+              src={background.src}
+              style={{ objectPosition: artwork.objectPosition }}
+            />
+          )}
         </div>
       )}
     </>

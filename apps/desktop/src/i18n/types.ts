@@ -317,6 +317,7 @@ export interface Translations {
       backgroundDesc: string
       backgroundElectricGaze: string
       backgroundPersonalWebsite: string
+      backgroundAsciiFlower: string
       backgroundAuto: string
       embedsTitle: string
       embedsDesc: string

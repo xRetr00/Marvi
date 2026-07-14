@@ -301,6 +301,7 @@ export const ja = defineLocale({
       backgroundDesc: 'ASCII アート背景を選ぶか、5 分ごとにすべての背景を自動で切り替えます。',
       backgroundElectricGaze: 'Electric Gaze',
       backgroundPersonalWebsite: '個人サイト',
+      backgroundAsciiFlower: 'ASCII フラワー',
       backgroundAuto: '自動',
       embedsTitle: 'インライン埋め込み',
       embedsDesc:

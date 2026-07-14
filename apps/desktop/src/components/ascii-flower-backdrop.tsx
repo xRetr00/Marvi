@@ -1,8 +1,16 @@
 import { useEffect, useRef } from 'react'
 
-const SOURCE = 'https://21st.dev/ascii-editor/demos/generated/ref-098.webp'
-const CELL_SIZE = 10
 const FRAME_MS = 120
+
+export interface AsciiCanvasBackdropProps {
+  background: string
+  cellSize: number
+  coverage: number
+  imageOpacity: number
+  quality: number
+  source: string
+  tint: string
+}
 
 function drawCover(context: CanvasRenderingContext2D, image: HTMLImageElement, width: number, height: number) {
   const scale = Math.max(width / image.naturalWidth, height / image.naturalHeight)
@@ -12,7 +20,7 @@ function drawCover(context: CanvasRenderingContext2D, image: HTMLImageElement, w
   context.drawImage(image, (width - drawWidth) / 2, (height - drawHeight) / 2, drawWidth, drawHeight)
 }
 
-export function AsciiFlowerBackdrop() {
+export function AsciiCanvasBackdrop({ background, cellSize, coverage, imageOpacity, quality, source, tint }: AsciiCanvasBackdropProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
 
   useEffect(() => {
@@ -42,7 +50,8 @@ export function AsciiFlowerBackdrop() {
 
       lastDraw = time
       const bounds = canvas.getBoundingClientRect()
-      const scale = Math.min(window.devicePixelRatio, 1.25, 1280 / bounds.width)
+      const maxWidth = 640 + quality * 8
+      const scale = Math.min(window.devicePixelRatio, 1.25, maxWidth / Math.max(1, bounds.width))
       const width = Math.max(1, Math.round(bounds.width * scale))
       const height = Math.max(1, Math.round(bounds.height * scale))
 
@@ -57,9 +66,9 @@ export function AsciiFlowerBackdrop() {
         return
       }
 
-      context.fillStyle = '#001b0b'
+      context.fillStyle = background
       context.fillRect(0, 0, width, height)
-      context.globalAlpha = 0.28
+      context.globalAlpha = imageOpacity
       drawCover(context, image, width, height)
       context.globalAlpha = 1
 
@@ -71,29 +80,25 @@ export function AsciiFlowerBackdrop() {
         return
       }
 
-      const flicker = 0.8 + Math.sin(time / 130) * 0.2
+      const animation = 0.8 + Math.sin(time / 130) * 0.2
 
-      for (let y = 0; y < height; y += CELL_SIZE) {
-        for (let x = 0; x < width; x += CELL_SIZE) {
-          const offset = (Math.min(y + CELL_SIZE / 2, height - 1) * width + Math.min(x + CELL_SIZE / 2, width - 1)) * 4
+      for (let y = 0; y < height; y += cellSize) {
+        for (let x = 0; x < width; x += cellSize) {
+          const offset = (Math.min(y + cellSize / 2, height - 1) * width + Math.min(x + cellSize / 2, width - 1)) * 4
           const luminance = (pixels.data[offset] * 0.2126 + pixels.data[offset + 1] * 0.7152 + pixels.data[offset + 2] * 0.0722) / 255
-          const coverage = ((x * 17 + y * 31) % 100) / 100
 
-          if (coverage > 0.36 || luminance < 0.07) {
+          if (((x * 17 + y * 31) % 100) / 100 > coverage || luminance < 0.07) {
             continue
           }
 
-          const size = Math.max(1, Math.round(luminance * CELL_SIZE))
-          context.fillStyle = `rgba(0, 255, 102, ${luminance * 0.65 * flicker})`
-          context.fillRect(x + (CELL_SIZE - size) / 2, y + (CELL_SIZE - size) / 2, size, size)
+          const size = Math.max(1, Math.round(luminance * cellSize))
+          context.fillStyle = tint
+          context.globalAlpha = luminance * 0.65 * animation
+          context.fillRect(x + (cellSize - size) / 2, y + (cellSize - size) / 2, size, size)
         }
       }
 
-      for (let y = 0; y < height; y += 4) {
-        context.fillStyle = 'rgba(0, 0, 0, 0.15)'
-        context.fillRect(0, y, width, 1)
-      }
-
+      context.globalAlpha = 1
       const vignette = context.createRadialGradient(width / 2, height / 2, height * 0.1, width / 2, height / 2, Math.max(width, height) * 0.7)
       vignette.addColorStop(0, 'rgba(0, 0, 0, 0)')
       vignette.addColorStop(1, 'rgba(0, 0, 0, 0.55)')
@@ -105,13 +110,13 @@ export function AsciiFlowerBackdrop() {
       frame = requestAnimationFrame(draw)
     }
 
-    image.src = SOURCE
+    image.src = source
 
     return () => {
       disposed = true
       cancelAnimationFrame(frame)
     }
-  }, [])
+  }, [background, cellSize, coverage, imageOpacity, quality, source, tint])
 
   return <canvas aria-hidden className="block size-full" ref={canvasRef} />
 }

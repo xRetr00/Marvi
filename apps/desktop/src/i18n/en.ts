@@ -399,6 +399,11 @@ export const en: Translations = {
       backgroundElectricGaze: 'Electric Gaze',
       backgroundPersonalWebsite: 'Personal Site',
       backgroundAsciiFlower: 'ASCII Flower',
+      backgroundHerbarium: 'Herbarium',
+      backgroundOpacityTitle: 'Background Opacity',
+      backgroundOpacityDesc: 'Sets how strongly the background shows behind the chat.',
+      backgroundQualityTitle: 'Canvas Quality',
+      backgroundQualityDesc: 'Higher quality preserves more Canvas background detail and uses more GPU.',
       backgroundAuto: 'Auto',
       embedsTitle: 'Inline Embeds',
       embedsDesc:

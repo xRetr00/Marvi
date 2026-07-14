@@ -12,7 +12,15 @@ import { Check, Download, Loader2, Palette, Trash2 } from '@/lib/icons'
 import { selectableCardClass } from '@/lib/selectable-card'
 import { normalize } from '@/lib/text'
 import { cn } from '@/lib/utils'
-import { $backgroundMode, type BackgroundMode, setBackgroundMode } from '@/store/background'
+import {
+  $backgroundMode,
+  $backgroundOpacity,
+  $backgroundQuality,
+  type BackgroundMode,
+  setBackgroundMode,
+  setBackgroundOpacity,
+  setBackgroundQuality
+} from '@/store/background'
 import { $embedAllowed, $embedMode, clearEmbedAllowed, type EmbedMode, setEmbedMode } from '@/store/embed-consent'
 import { $activeGatewayProfile, $profiles, normalizeProfileKey } from '@/store/profile'
 import { $toolViewMode, setToolViewMode } from '@/store/tool-view'
@@ -250,6 +258,8 @@ export function AppearanceSettings() {
   const embedAllowed = useStore($embedAllowed)
   const translucency = useStore($translucency)
   const backgroundMode = useStore($backgroundMode)
+  const backgroundOpacity = useStore($backgroundOpacity)
+  const backgroundQuality = useStore($backgroundQuality)
   const installs = useStore($marketplaceInstalls)
   const profiles = useStore($profiles)
   const activeProfileKey = normalizeProfileKey(useStore($activeGatewayProfile))
@@ -291,6 +301,7 @@ export function AppearanceSettings() {
     { id: 'electricGaze', label: a.backgroundElectricGaze },
     { id: 'personalWebsite', label: a.backgroundPersonalWebsite },
     { id: 'asciiFlower', label: a.backgroundAsciiFlower },
+    { id: 'herbarium', label: a.backgroundHerbarium },
     { id: 'auto', label: a.backgroundAuto }
   ] as const satisfies readonly { id: BackgroundMode; label: string }[]
 
@@ -432,6 +443,58 @@ export function AppearanceSettings() {
             }
             description={a.backgroundDesc}
             title={a.backgroundTitle}
+          />
+
+          <ListRow
+            action={
+              <div className="flex items-center gap-3">
+                <input
+                  aria-label={a.backgroundOpacityTitle}
+                  className="h-1 w-40 cursor-pointer appearance-none rounded-full bg-(--ui-stroke-tertiary)"
+                  max={100}
+                  min={0}
+                  onChange={event => {
+                    triggerHaptic('selection')
+                    setBackgroundOpacity(Number(event.target.value))
+                  }}
+                  step={5}
+                  style={{ accentColor: 'var(--dt-primary)' }}
+                  type="range"
+                  value={backgroundOpacity}
+                />
+                <span className="w-9 text-right text-[length:var(--conversation-caption-font-size)] tabular-nums text-(--ui-text-tertiary)">
+                  {backgroundOpacity}%
+                </span>
+              </div>
+            }
+            description={a.backgroundOpacityDesc}
+            title={a.backgroundOpacityTitle}
+          />
+
+          <ListRow
+            action={
+              <div className="flex items-center gap-3">
+                <input
+                  aria-label={a.backgroundQualityTitle}
+                  className="h-1 w-40 cursor-pointer appearance-none rounded-full bg-(--ui-stroke-tertiary)"
+                  max={100}
+                  min={25}
+                  onChange={event => {
+                    triggerHaptic('selection')
+                    setBackgroundQuality(Number(event.target.value))
+                  }}
+                  step={25}
+                  style={{ accentColor: 'var(--dt-primary)' }}
+                  type="range"
+                  value={backgroundQuality}
+                />
+                <span className="w-9 text-right text-[length:var(--conversation-caption-font-size)] tabular-nums text-(--ui-text-tertiary)">
+                  {backgroundQuality}%
+                </span>
+              </div>
+            }
+            description={a.backgroundQualityDesc}
+            title={a.backgroundQualityTitle}
           />
 
           <ListRow

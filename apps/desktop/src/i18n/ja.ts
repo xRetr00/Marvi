@@ -302,6 +302,11 @@ export const ja = defineLocale({
       backgroundElectricGaze: 'Electric Gaze',
       backgroundPersonalWebsite: '個人サイト',
       backgroundAsciiFlower: 'ASCII フラワー',
+      backgroundHerbarium: 'ハーバリウム',
+      backgroundOpacityTitle: '背景の不透明度',
+      backgroundOpacityDesc: 'チャットの背後に表示する背景の強さを設定します。',
+      backgroundQualityTitle: 'キャンバス品質',
+      backgroundQualityDesc: '品質を上げると Canvas 背景の細部が保たれ、GPU の使用量が増えます。',
       backgroundAuto: '自動',
       embedsTitle: 'インライン埋め込み',
       embedsDesc:

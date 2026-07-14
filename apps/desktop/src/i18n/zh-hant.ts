@@ -295,6 +295,11 @@ export const zhHant = defineLocale({
       backgroundElectricGaze: '電光凝視',
       backgroundPersonalWebsite: '個人網站',
       backgroundAsciiFlower: 'ASCII 花朵',
+      backgroundHerbarium: '植物標本',
+      backgroundOpacityTitle: '背景不透明度',
+      backgroundOpacityDesc: '設定背景在聊天內容後方顯示的強度。',
+      backgroundQualityTitle: 'Canvas 品質',
+      backgroundQualityDesc: '較高品質會保留更多 Canvas 背景細節，但會使用更多 GPU。',
       backgroundAuto: '自動',
       embedsTitle: '內嵌預覽',
       embedsDesc:

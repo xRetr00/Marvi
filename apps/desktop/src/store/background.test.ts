@@ -7,6 +7,7 @@ describe('backgroundFor', () => {
     expect(backgroundFor('auto')).toBe(BACKGROUNDS.electricGaze)
     expect(backgroundFor('auto', 1)).toBe(BACKGROUNDS.personalWebsite)
     expect(backgroundFor('auto', 2)).toBe(BACKGROUNDS.asciiFlower)
-    expect(backgroundFor('auto', 3)).toBe(BACKGROUNDS.electricGaze)
+    expect(backgroundFor('auto', 3)).toBe(BACKGROUNDS.herbarium)
+    expect(backgroundFor('auto', 4)).toBe(BACKGROUNDS.electricGaze)
   })
 })

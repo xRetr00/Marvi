@@ -388,6 +388,11 @@ export const zh: Translations = {
       backgroundElectricGaze: '电光凝视',
       backgroundPersonalWebsite: '个人网站',
       backgroundAsciiFlower: 'ASCII 花卉',
+      backgroundHerbarium: '植物标本',
+      backgroundOpacityTitle: '背景不透明度',
+      backgroundOpacityDesc: '设置背景在聊天内容后方显示的强度。',
+      backgroundQualityTitle: 'Canvas 质量',
+      backgroundQualityDesc: '更高质量会保留更多 Canvas 背景细节，但会使用更多 GPU。',
       backgroundAuto: '自动',
       embedsTitle: '内嵌预览',
       embedsDesc:

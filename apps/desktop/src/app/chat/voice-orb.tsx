@@ -43,6 +43,7 @@ export function VoiceOrb({
           '--voice-orb-c1': c1,
           '--voice-orb-c2': c2,
           '--voice-orb-c3': c3,
+          '--voice-orb-core-inset': `${14 + energy * 6}%`,
           '--voice-orb-energy': energy,
           '--voice-orb-level': amplitude,
           '--voice-orb-tempo': `${Math.max(5.5, 13 - energy * 6)}s`,
@@ -59,7 +60,7 @@ export function VoiceOrb({
         <span className="marvi-voice-orb__plasma marvi-voice-orb__plasma--one" />
         <span className="marvi-voice-orb__plasma marvi-voice-orb__plasma--two" />
         <span className="marvi-voice-orb__plasma marvi-voice-orb__plasma--three" />
-        <span className="marvi-voice-orb__depth" />
+        <span className="marvi-voice-orb__core" />
         <span className="marvi-voice-orb__glint" />
       </span>
     </div>

@@ -318,6 +318,11 @@ export interface Translations {
       backgroundElectricGaze: string
       backgroundPersonalWebsite: string
       backgroundAsciiFlower: string
+      backgroundHerbarium: string
+      backgroundOpacityTitle: string
+      backgroundOpacityDesc: string
+      backgroundQualityTitle: string
+      backgroundQualityDesc: string
       backgroundAuto: string
       embedsTitle: string
       embedsDesc: string

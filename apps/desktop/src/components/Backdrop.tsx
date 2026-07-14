@@ -1,36 +1,18 @@
 import { useStore } from '@nanostores/react'
 import { Leva, useControls } from 'leva'
-import { type CSSProperties, useEffect, useState } from 'react'
+import { useEffect, useState } from 'react'
 
-import { $backgroundMode, backgroundFor } from '@/store/background'
+import { $backgroundMode, $backgroundOpacity, $backgroundQuality, backgroundFor } from '@/store/background'
 
-import { AsciiFlowerBackdrop } from './ascii-flower-backdrop'
+import { AsciiCanvasBackdrop } from './ascii-flower-backdrop'
 
-const BLEND_MODES = [
-  'normal',
-  'multiply',
-  'screen',
-  'overlay',
-  'darken',
-  'lighten',
-  'color-dodge',
-  'color-burn',
-  'hard-light',
-  'soft-light',
-  'difference',
-  'exclusion',
-  'hue',
-  'saturation',
-  'color',
-  'luminosity'
-] as const
-
-type BlendMode = (typeof BLEND_MODES)[number]
 const SMART_SWITCH_INTERVAL = 5 * 60 * 1000
 
 export function Backdrop() {
   const [controlsOpen, setControlsOpen] = useState(false)
   const backgroundMode = useStore($backgroundMode)
+  const backgroundOpacity = useStore($backgroundOpacity)
+  const backgroundQuality = useStore($backgroundQuality)
   const [backgroundIndex, setBackgroundIndex] = useState(0)
 
   useEffect(() => {
@@ -81,53 +63,28 @@ export function Backdrop() {
     document.documentElement.style.setProperty('--radius-scalar', String(shape.radiusScalar))
   }, [shape.radiusScalar])
 
-  const artwork = useControls(
-    'Backdrop / Electric Gaze',
-    {
-      enabled: { value: true, label: 'on' },
-      opacity: { value: 0.6, min: 0, max: 1, step: 0.005 },
-      blendMode: { value: 'normal' as BlendMode, options: BLEND_MODES, label: 'blend' },
-      objectPosition: {
-        value: 'center',
-        options: ['top left', 'top right', 'bottom left', 'bottom right', 'center', 'top', 'bottom', 'left', 'right'],
-        label: 'position'
-      }
-    },
-    { collapsed: true }
-  )
-
   const background = backgroundFor(backgroundMode, backgroundIndex)
 
   return (
     <>
       <Leva collapsed hidden={!import.meta.env.DEV || !controlsOpen} titleBar={{ title: 'backdrop', drag: true }} />
 
-      {artwork.enabled && (
-        <div
-          aria-hidden
-          className="pointer-events-none absolute inset-0 z-2"
-          style={{
-            mixBlendMode: artwork.blendMode as CSSProperties['mixBlendMode'],
-            opacity: artwork.opacity
-          }}
-        >
-          {background.kind === 'canvas' ? (
-            <AsciiFlowerBackdrop />
-          ) : (
-            <video
-              autoPlay
-              className="block size-full object-cover"
-              key={background.src}
-              loop
-              muted
-              playsInline
-              poster={background.poster}
-              src={background.src}
-              style={{ objectPosition: artwork.objectPosition }}
-            />
-          )}
-        </div>
-      )}
+      <div aria-hidden className="pointer-events-none absolute inset-0 -z-1" style={{ opacity: backgroundOpacity / 100 }}>
+        {background.kind === 'canvas' ? (
+          <AsciiCanvasBackdrop {...background} quality={backgroundQuality} />
+        ) : (
+          <video
+            autoPlay
+            className="block size-full object-cover"
+            key={background.src}
+            loop
+            muted
+            playsInline
+            poster={background.poster}
+            src={background.src}
+          />
+        )}
+      </div>
     </>
   )
 }

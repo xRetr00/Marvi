@@ -34,6 +34,7 @@ scheduler.
 
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -66,6 +67,17 @@ def _load_composio_config() -> Dict[str, Any]:
         return {}
     composio_cfg = (config or {}).get("composio") if isinstance(config, dict) else None
     return composio_cfg if isinstance(composio_cfg, dict) else {}
+
+
+def _load_root_config() -> Dict[str, Any]:
+    try:
+        from hermes_cli.config import load_config
+
+        config = load_config()
+        return config if isinstance(config, dict) else {}
+    except Exception as exc:
+        _eprint(f"subconscious_snapshot: could not load config ({exc})")
+        return {}
 
 
 def _configured_surfaces(composio_cfg: Dict[str, Any]) -> List[str]:
@@ -110,6 +122,7 @@ def run() -> str:
     from cron.scripts.subconscious.snapshot_store import open_store
 
     initiative_sections: List[str] = []
+    root_config = _load_root_config()
     try:
         from cron.subconscious_initiatives import due_initiatives
 
@@ -163,6 +176,25 @@ def run() -> str:
                 initiative_sections.append(f"## desktop\n{desktop_diff}")
     except Exception as exc:
         _eprint(f"subconscious_snapshot: desktop context fetch failed ({exc})")
+
+    try:
+        smart_config = root_config.get("smart_room") if isinstance(root_config, dict) else None
+        if (
+            isinstance(smart_config, dict)
+            and smart_config.get("enabled", False)
+            and (smart_config.get("subconscious") or {}).get("enabled", True)
+        ):
+            from cron.scripts.subconscious.smart_room import fetch_delta as fetch_smart_room_delta
+
+            smart_store = open_store("smart_room", min_interval_seconds=0, quiet_backoff_max=1)
+            smart_store.mark_attempt()
+            smart_diff = fetch_smart_room_delta(smart_store)
+            smart_store.record_success(changed=bool(smart_diff))
+            smart_store.save()
+            if smart_diff:
+                initiative_sections.append(f"## smart_room\n{smart_diff}")
+    except Exception as exc:
+        _eprint(f"subconscious_snapshot: smart-room context fetch failed ({exc})")
 
     composio_cfg = _load_composio_config()
     surfaces = _configured_surfaces(composio_cfg)

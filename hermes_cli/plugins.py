@@ -159,6 +159,9 @@ VALID_HOOKS: Set[str] = {
     "api_request_error",
     "on_session_start",
     "on_session_end",
+    "on_gateway_start",
+    "on_gateway_stop",
+    "on_webhook_received",
     "on_session_finalize",
     "on_session_reset",
     "subagent_start",
@@ -1172,6 +1175,13 @@ class PluginContext:
         self._manager._hooks.setdefault(hook_name, []).append(callback)
         logger.debug("Plugin %s registered hook: %s", self.manifest.name, hook_name)
 
+    def register_context_provider(self, name: str, handler: Callable) -> None:
+        """Register a compact, read-only session-priming context provider."""
+        if not name or not callable(handler):
+            raise ValueError("context provider requires a name and callable handler")
+        self._manager._context_providers[name] = handler
+        logger.debug("Plugin %s registered context provider: %s", self.manifest.name, name)
+
     # -- middleware registration -------------------------------------------
 
     def register_middleware(self, kind: str, callback: Callable) -> None:
@@ -1251,6 +1261,7 @@ class PluginManager:
     def __init__(self) -> None:
         self._plugins: Dict[str, LoadedPlugin] = {}
         self._hooks: Dict[str, List[Callable]] = {}
+        self._context_providers: Dict[str, Callable] = {}
         self._middleware: Dict[str, List[Callable]] = {}
         self._plugin_tool_names: Set[str] = set()
         self._plugin_platform_names: Set[str] = set()
@@ -1292,6 +1303,7 @@ class PluginManager:
         if force:
             self._plugins.clear()
             self._hooks.clear()
+            self._context_providers.clear()
             self._middleware.clear()
             self._plugin_tool_names.clear()
             self._plugin_platform_names.clear()
@@ -1930,6 +1942,18 @@ class PluginManager:
         """Return True when at least one callback is registered for a hook."""
         return bool(self._hooks.get(hook_name))
 
+    def build_context_blocks(self) -> List[str]:
+        """Return non-empty context blocks from registered providers."""
+        blocks: List[str] = []
+        for name, callback in self._context_providers.items():
+            try:
+                value = callback()
+                if value and str(value).strip():
+                    blocks.append(str(value).strip())
+            except Exception as exc:
+                logger.warning("Context provider '%s' raised: %s", name, exc)
+        return blocks
+
     def has_middleware(self, kind: str) -> bool:
         """Return True when at least one callback is registered for middleware."""
         return bool(self._middleware.get(kind))
@@ -2052,6 +2076,11 @@ def invoke_hook(hook_name: str, **kwargs: Any) -> List[Any]:
     Returns a list of non-``None`` return values from plugin callbacks.
     """
     return get_plugin_manager().invoke_hook(hook_name, **kwargs)
+
+
+def build_plugin_context_blocks() -> List[str]:
+    """Build one-time session context from loaded plugin providers."""
+    return get_plugin_manager().build_context_blocks()
 
 
 def invoke_middleware(kind: str, **kwargs: Any) -> List[Any]:

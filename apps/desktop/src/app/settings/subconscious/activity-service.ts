@@ -7,7 +7,7 @@
 // surfaces (+ two suggestion actions) rather than config-flipping toggles.
 
 /** Which background-thinking surface produced an activity row. */
-export type SubconsciousActivitySource = 'distiller' | 'goblin' | 'idle_trigger' | 'tick'
+export type SubconsciousActivitySource = 'distiller' | 'goblin' | 'idle_trigger' | 'tick' | 'world'
 
 /** One row from `GET /api/subconscious/activity` — a single background-thinking run. */
 export interface SubconsciousActivityRun {

@@ -308,7 +308,7 @@ def _is_cron_silence_response(text: str) -> bool:
 # tracked surfaces is a complete no-op here.
 #
 # Record shape (superset — fields are None/absent when not applicable):
-#   at, source ("tick"|"idle_trigger"|"distiller"|"goblin"), job_id,
+#   at, source ("tick"|"idle_trigger"|"distiller"|"goblin"|"world"), job_id,
 #   outcome ("no_change"|"diff_silent"|"message"|"suggestion"|"error"),
 #   summary (<=200 chars, one-line preview), diff (<=4000 chars, the
 #   stage-1 script output / world-diff that woke the run), thought (<=4000

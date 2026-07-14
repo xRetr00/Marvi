@@ -1386,6 +1386,8 @@ def _start_agent_build(sid: str, session: dict) -> None:
                         kw["reasoning_config_override"] = reasoning
                     if (tier := current.get("create_service_tier_override")) is not None:
                         kw["service_tier_override"] = tier
+                    if world_context := current.get("world_context"):
+                        kw["world_context"] = world_context
                 agent = _make_agent(sid, key, **kw)
             finally:
                 _clear_session_context(tokens)
@@ -4090,6 +4092,35 @@ def _prompt_text(value) -> str:
     return str(value).strip()
 
 
+def _combine_ephemeral_prompt(*parts: str | None) -> str:
+    """Join stable per-session prompt overlays without empty separators."""
+    return "\n\n".join(str(part).strip() for part in parts if str(part or "").strip())
+
+
+def _build_plugin_world_context(profile_home: str | Path | None = None) -> str:
+    """Snapshot ambient plugin context once for a newly created session.
+
+    The returned text is stored on the live session and reused for its whole
+    lifetime. It is deliberately not recomputed per turn or on cold resume:
+    changing an existing conversation's system prefix would invalidate prompt
+    caching and make historical turns observe a different room snapshot.
+    """
+    home_token = None
+    try:
+        if profile_home is not None:
+            home_token = set_hermes_home_override(str(profile_home))
+        from hermes_cli.plugins import build_plugin_context_blocks, discover_plugins
+
+        discover_plugins()
+        return _combine_ephemeral_prompt(*build_plugin_context_blocks())
+    except Exception:
+        logger.debug("failed to snapshot plugin world context", exc_info=True)
+        return ""
+    finally:
+        if home_token is not None:
+            reset_hermes_home_override(home_token)
+
+
 def _apply_personality_to_session(
     sid: str, session: dict, new_prompt: str, personality: str = ""
 ) -> tuple[bool, dict | None]:
@@ -4113,7 +4144,10 @@ def _apply_personality_to_session(
 
     agent = session.get("agent")
     if agent:
-        agent.ephemeral_system_prompt = new_prompt or None
+        combined_prompt = _combine_ephemeral_prompt(
+            new_prompt, session.get("world_context")
+        )
+        agent.ephemeral_system_prompt = combined_prompt or None
         # Inject a pivot marker into history so the model sees the change point.
         # This prevents it from pattern-matching its prior style.
         if new_prompt:
@@ -4349,12 +4383,20 @@ def _preview_restart_callbacks(parent: str, task_id: str) -> dict:
 
 def _reset_session_agent(sid: str, session: dict) -> dict:
     tokens = _set_session_context(session["session_key"])
+    home_token = None
     try:
+        if profile_home := session.get("profile_home"):
+            home_token = set_hermes_home_override(profile_home)
+        world_context = _build_plugin_world_context()
+        session["world_context"] = world_context
         # Preserve this session's chosen model AND reasoning across /new so a
         # reset doesn't silently revert to global config (or to a model
         # another session set). See the cross-session-contamination note in
         # _apply_model_switch.
-        reset_kw = {"model_override": session.get("model_override")}
+        reset_kw = {
+            "model_override": session.get("model_override"),
+            "world_context": world_context or None,
+        }
         old_reasoning = getattr(session.get("agent"), "reasoning_config", None)
         if old_reasoning is None:
             old_reasoning = session.get("create_reasoning_override")
@@ -4368,6 +4410,8 @@ def _reset_session_agent(sid: str, session: dict) -> dict:
             **reset_kw,
         )
     finally:
+        if home_token is not None:
+            reset_hermes_home_override(home_token)
         _clear_session_context(tokens)
     session["agent"] = new_agent
     session["config_model_seen"] = _config_model_target()
@@ -4515,6 +4559,7 @@ def _make_agent(
     reasoning_config_override: dict | None = None,
     service_tier_override: str | None = None,
     platform_override: str | None = None,
+    world_context: str | None = None,
 ):
     from run_agent import AIAgent
 
@@ -4567,6 +4612,7 @@ def _make_agent(
             system_prompt = "\n\n".join(
                 part for part in (system_prompt, skills_prompt) if part
             ).strip()
+    system_prompt = _combine_ephemeral_prompt(system_prompt, world_context)
     # Prefer a per-session model override (set by a prior in-session /model
     # switch) over global config/env resolution. Resume-time stored sessions may
     # also pass scalar model/provider/runtime knobs from the persisted DB row.
@@ -5222,6 +5268,7 @@ def _(rid, params: dict) -> dict:
     # and each turn re-bind HERMES_HOME. None/own profile → launch (unchanged).
     profile = (params.get("profile") or "").strip() or None
     profile_home = _profile_home(profile)
+    world_context = _build_plugin_world_context(profile_home)
 
     # The desktop composer owns its model/effort/fast as plain UI state and ships
     # it on every session.create. Honor each as a PER-SESSION override (built into
@@ -5287,6 +5334,9 @@ def _(rid, params: dict) -> dict:
             "tool_progress_mode": _load_tool_progress_mode(),
             "tool_started_at": {},
             "transport": current_transport() or _stdio_transport,
+            # One immutable ambient snapshot for this conversation. Keep it
+            # out of persisted history and never rebuild it per turn.
+            "world_context": world_context,
         }
         _register_session_cwd(_sessions[sid])
 
@@ -13142,7 +13192,10 @@ def _mirror_slash_side_effects(sid: str, session: dict, command: str) -> str:
         elif name == "prompt" and agent:
             cfg = _load_cfg()
             new_prompt = _prompt_text((cfg.get("agent") or {}).get("system_prompt", ""))
-            agent.ephemeral_system_prompt = new_prompt or None
+            combined_prompt = _combine_ephemeral_prompt(
+                new_prompt, session.get("world_context")
+            )
+            agent.ephemeral_system_prompt = combined_prompt or None
             agent._cached_system_prompt = None
         elif name == "compress" and agent:
             # Mirror the session.compress RPC: build a before/after summary so

@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
 
 import { Button } from '@/components/ui/button'
-import { AlertTriangle, Bell, Brain, CheckCircle2, Clock, MessageCircle, Moon, RefreshCw, Zap } from '@/lib/icons'
+import { AlertTriangle, Bell, Brain, CheckCircle2, Clock, Cloud, MessageCircle, Moon, RefreshCw, Zap } from '@/lib/icons'
 import { relativeTime } from '@/lib/time'
 import { cn } from '@/lib/utils'
 
@@ -24,16 +24,18 @@ const SOURCE_META: Record<SubconsciousActivitySource, { label: string; icon: typ
   tick: { label: 'Tick', icon: RefreshCw },
   idle_trigger: { label: 'Idle', icon: Moon },
   distiller: { label: 'Distiller', icon: Brain },
-  goblin: { label: 'Goblin', icon: Bell }
+  goblin: { label: 'Goblin', icon: Bell },
+  world: { label: 'World', icon: Cloud }
 }
 
-type FilterKey = 'all' | 'distiller' | 'goblin' | 'ticks'
+type FilterKey = 'all' | 'distiller' | 'goblin' | 'ticks' | 'world'
 
 const FILTERS: { key: FilterKey; label: string }[] = [
   { key: 'all', label: 'All' },
   { key: 'ticks', label: 'Ticks' },
   { key: 'goblin', label: 'Goblin' },
-  { key: 'distiller', label: 'Distiller' }
+  { key: 'distiller', label: 'Distiller' },
+  { key: 'world', label: 'World' }
 ]
 
 function matchesFilter(run: SubconsciousActivityRun, filter: FilterKey): boolean {

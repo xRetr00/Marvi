@@ -689,6 +689,16 @@ def _build_deferred_context(cfg: Optional[Dict[str, Any]]) -> str:
             logger.debug("voice_instant_lane: deferred skill index failed", exc_info=True)
     if durable_memory:
         blocks.append(durable_memory)
+    # World-awareness providers are read-only, bounded, ephemeral context.
+    # This is the voice-lane counterpart to new gateway-session priming and
+    # does not mutate the stable system prompt or conversation history.
+    try:
+        from hermes_cli.plugins import build_plugin_context_blocks, discover_plugins
+
+        discover_plugins()
+        blocks.extend(build_plugin_context_blocks())
+    except Exception:
+        logger.debug("voice_instant_lane: plugin world context failed", exc_info=True)
     return "\n\n".join(blocks)[:4500]
 
 

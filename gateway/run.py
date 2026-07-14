@@ -6992,8 +6992,11 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
         # so the discover_plugins() side-effect in model_tools.py is NOT
         # guaranteed to have run by the time we reach this point.
         try:
-            from hermes_cli.plugins import discover_plugins
+            from hermes_cli.plugins import discover_plugins, invoke_hook
             discover_plugins()
+            await asyncio.to_thread(
+                invoke_hook, "on_gateway_start", config=self.config
+            )
         except Exception:
             logger.warning(
                 "plugin discovery failed at gateway startup", exc_info=True,
@@ -8418,6 +8421,12 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
             self._pending_approvals.clear()
             if hasattr(self, '_busy_ack_ts'):
                 self._busy_ack_ts.clear()
+            try:
+                from hermes_cli.plugins import invoke_hook
+
+                await asyncio.to_thread(invoke_hook, "on_gateway_stop")
+            except Exception:
+                logger.debug("Plugin gateway-stop hooks failed", exc_info=True)
             self._shutdown_event.set()
 
             # Global cleanup: kill any remaining tool subprocesses not tied
@@ -11083,6 +11092,14 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
                 pass
             except Exception:
                 logger.debug("Session priming skipped", exc_info=True)
+            try:
+                from hermes_cli.plugins import build_plugin_context_blocks
+
+                _plugin_context = build_plugin_context_blocks()
+                if _plugin_context:
+                    context_prompt = context_prompt + "\n\n" + "\n".join(_plugin_context)
+            except Exception:
+                logger.debug("Plugin session context skipped", exc_info=True)
 
         # If the previous session expired and was auto-reset, prepend a notice
         # so the agent knows this is a fresh conversation (not an intentional /reset).

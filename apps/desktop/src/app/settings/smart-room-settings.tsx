@@ -1,22 +1,35 @@
-import { useCallback, useEffect, useState } from 'react'
-import { getHermesConfigRecord, saveHermesConfig } from '@/hermes'
-import { useI18n } from '@/i18n'
-import { notifyError } from '@/store/notifications'
+import { useCallback, useEffect, useId, useRef, useState } from 'react'
+
 import {
+  applySmartRoomConfig,
+  cancelSmartRoomSleep,
+  getHermesConfigRecord,
+  getSmartRoomStatus,
+  getSmartRoomWebhook,
+  saveHermesConfig,
+  saveSmartRoomSecrets,
+  setSmartRoomMode,
+  setSmartRoomOverride,
+  type SmartRoomStatus
+} from '@/hermes'
+import { useI18n } from '@/i18n'
+import {
+  AlertTriangle,
   Box,
   Brain,
+  Cloud,
+  Monitor,
   Moon,
   RefreshCw,
-  Cloud,
-  Zap,
-  AlertTriangle,
   Settings2,
-  Monitor,
-  SlidersHorizontal
+  SlidersHorizontal,
+  Zap
 } from '@/lib/icons'
+import { notifyError } from '@/store/notifications'
+
+import { OverlayMain } from '../overlays/overlay-split-layout'
 
 import { CONTROL_TEXT } from './constants'
-import { OverlayMain } from '../overlays/overlay-split-layout'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -28,15 +41,27 @@ interface SmartRoomConfig {
   context: { enabled: boolean }
   subconscious: { enabled: boolean }
   tuya: {
-    bulb: { ip: string; local_key: string; protocol: string }
-    he20: { ip: string; local_key: string; protocol: string }
+    bulb: {
+      ip: string
+      device_id: string
+      protocol: string
+      brightness_max: number
+      color_temp_max: number
+      dps: { switch: number; brightness: number; color_temp: number; color: number }
+    }
+    he20: { ip: string; device_id: string; protocol: string; presence_dp: number; occupied_values: string[] }
   }
   esp32: {
     room_id: string
+    owner_device_id: string
     presence_topic: string
     rssi_enter_threshold: number
     rssi_exit_threshold: number
     exit_timeout: number
+    missing_timeout_seconds: number
+  }
+  presence: {
+    wifi_ping: { enabled: boolean; ip: string; interval_seconds: number }
   }
   owntracks: {
     topic: string
@@ -60,25 +85,34 @@ interface SmartRoomConfig {
 }
 
 const DEFAULT_CONFIG: SmartRoomConfig = {
-  enabled: true,
+  enabled: false,
   mqtt: { broker: '127.0.0.1', port: 1883 },
   context: { enabled: true },
   subconscious: { enabled: true },
   tuya: {
-    bulb: { ip: '', local_key: '', protocol: '3.3' },
-    he20: { ip: '', local_key: '', protocol: '3.3' },
+    bulb: {
+      ip: '', device_id: '', protocol: '3.3', brightness_max: 255, color_temp_max: 255,
+      dps: { switch: 1, brightness: 2, color_temp: 3, color: 5 }
+    },
+    he20: {
+      ip: '', device_id: '', protocol: '3.3', presence_dp: 1,
+      occupied_values: ['true', '1', 'presence', 'occupied', 'pir', 'human']
+    }
   },
   esp32: {
     room_id: 'smart_room',
+    owner_device_id: '',
     presence_topic: 'espresense/rooms/smart_room/#',
     rssi_enter_threshold: -70,
     rssi_exit_threshold: -85,
     exit_timeout: 60,
+    missing_timeout_seconds: 30,
   },
+  presence: { wifi_ping: { enabled: false, ip: '', interval_seconds: 60 } },
   owntracks: { topic: 'owntracks/shereef/#', zones: ['home', 'university', 'bakery'] },
   automations: {
     adaptive_light: { enabled: true, debounce: 3, exit_timeout: 60 },
-    alarm: { enabled: false, daily_time: '23:30', duration_minutes: 30, flash_interval_ms: 500 },
+    alarm: { enabled: false, daily_time: '', duration_minutes: 30, flash_interval_ms: 500 },
     evening_sleep: { enabled: true, time: '18:00' },
     work_return: { enabled: true, work_hours_start: '06:00', work_hours_end: '10:00', settle_delay: 300 },
     daily_reset: '00:00',
@@ -90,6 +124,27 @@ const DEFAULT_CONFIG: SmartRoomConfig = {
     night: { color_temp: 2200, rgb: [255, 120, 40], brightness: 15, transition: 3 },
     alarm: { color_temp: 6500, brightness: 100, flash: true, flash_interval: 500 },
   },
+}
+
+function mergeDefaults<T>(defaults: T, value: unknown): T {
+  if (Array.isArray(defaults)) {
+    return (Array.isArray(value) ? value : defaults) as T
+  }
+
+  if (defaults && typeof defaults === 'object') {
+    const incoming = value && typeof value === 'object' ? value as Record<string, unknown> : {}
+    const fallbackObject = defaults as Record<string, unknown>
+    const keys = new Set([...Object.keys(incoming), ...Object.keys(fallbackObject)])
+
+    return Object.fromEntries(
+      [...keys].map(key => [
+        key,
+        key in fallbackObject ? mergeDefaults(fallbackObject[key], incoming[key]) : incoming[key]
+      ])
+    ) as T
+  }
+
+  return (value === undefined || value === null ? defaults : value) as T
 }
 
 const MODES = [
@@ -115,21 +170,42 @@ const AUTOMATIONS = [
 function StatusDot({ online }: { online: boolean }) {
   return (
     <span
- className={`inline-block h-2 w-2 rounded-full ${online ? 'bg-emerald-500' : 'bg-red-500/60'}`}
+      className={`inline-block h-2 w-2 rounded-full ${online ? 'bg-emerald-500' : 'bg-red-500/60'}`}
     />
   )
 }
 
-function Toggle({ checked, onChange }: { checked: boolean; onChange: (v: boolean) => void }) {
+function Toggle({ checked, onChange, label = 'Toggle setting' }: { checked: boolean; onChange: (v: boolean) => void; label?: string }) {
   return (
     <button
-      onClick={() => onChange(!checked)}
+      aria-checked={checked}
+      aria-label={label}
       className={`relative h-5 w-9 rounded-full transition-colors ${checked ? 'bg-primary' : 'bg-zinc-700'}`}
+      onClick={() => onChange(!checked)}
+      role="switch"
+      type="button"
     >
       <span
         className={`absolute top-0.5 h-4 w-4 rounded-full bg-white transition-transform ${checked ? 'translate-x-4' : 'translate-x-0.5'}`}
       />
     </button>
+  )
+}
+
+function ToggleRow({ label, description, checked, onChange }: {
+  label: string
+  description: string
+  checked: boolean
+  onChange: (value: boolean) => void
+}) {
+  return (
+    <div className="mb-3 flex items-center justify-between gap-4">
+      <div>
+        <p className="text-sm text-zinc-300">{label}</p>
+        <p className={`${CONTROL_TEXT} text-zinc-500`}>{description}</p>
+      </div>
+      <Toggle checked={checked} label={label} onChange={onChange} />
+    </div>
   )
 }
 
@@ -153,15 +229,18 @@ function TextField({ label, value, onChange, placeholder, type = 'text', hint }:
   type?: string
   hint?: string
 }) {
+  const id = useId()
+
   return (
     <div className="mb-3">
-      <label className={`mb-1 block ${CONTROL_TEXT} text-zinc-400`}>{label}</label>
+      <label className={`mb-1 block ${CONTROL_TEXT} text-zinc-400`} htmlFor={id}>{label}</label>
       <input
-        type={type}
-        value={value}
+        className="w-full rounded-md border border-zinc-800 bg-zinc-950 px-3 py-1.5 text-sm text-zinc-200 placeholder:text-zinc-600 focus:border-primary focus:outline-none"
+        id={id}
         onChange={(e) => onChange(e.target.value)}
         placeholder={placeholder}
-        className="w-full rounded-md border border-zinc-800 bg-zinc-950 px-3 py-1.5 text-sm text-zinc-200 placeholder:text-zinc-600 focus:border-primary focus:outline-none"
+        type={type}
+        value={value}
       />
       {hint && <p className={`mt-1 ${CONTROL_TEXT} text-zinc-500`}>{hint}</p>}
     </div>
@@ -176,64 +255,79 @@ export function SmartRoomSettings() {
   const { t } = useI18n()
   const [config, setConfig] = useState<SmartRoomConfig>(DEFAULT_CONFIG)
   const [saving, setSaving] = useState(false)
-  const [liveState, setLiveState] = useState<any>(null)
+  const [liveStatus, setLiveStatus] = useState<SmartRoomStatus | null>(null)
+  const [secrets, setSecrets] = useState({ bulb_key: '', he20_key: '', mqtt_username: '', mqtt_password: '' })
+  const [webhook, setWebhook] = useState<{ configured: boolean; url: string; secret?: string } | null>(null)
   const [loading, setLoading] = useState(true)
+  const saveQueue = useRef<Promise<void>>(Promise.resolve())
 
   // Load config
   useEffect(() => {
     getHermesConfigRecord()
       .then((cfg: any) => {
         const sr = cfg?.smart_room
+
         if (sr) {
-          setConfig({ ...DEFAULT_CONFIG, ...sr })
+          setConfig(mergeDefaults(DEFAULT_CONFIG, sr))
         }
       })
       .catch(() => {})
       .finally(() => setLoading(false))
   }, [])
 
-  // Poll live state from runtime (placeholder — runtime not running yet)
+  // Poll the authenticated backend API; the renderer never connects to the
+  // runtime's private TCP socket directly.
   useEffect(() => {
     const poll = async () => {
       try {
-        // When the runtime is running, it serves state on localhost:17842
-        // For now, this is a placeholder that silently fails
-        const resp = await fetch('http://127.0.0.1:17842/state', { signal: AbortSignal.timeout(2000) })
-        if (resp.ok) {
-          setLiveState(await resp.json())
-        }
+        setLiveStatus(await getSmartRoomStatus())
       } catch {
-        // Runtime not running — expected during setup
+        setLiveStatus(null)
       }
     }
-    poll()
+
+    void poll()
+    void getSmartRoomWebhook().then(setWebhook).catch(() => {})
     const interval = setInterval(poll, 10000)
+
     return () => clearInterval(interval)
   }, [])
 
-  const updateConfig = useCallback(async (newConfig: SmartRoomConfig) => {
+  const updateConfig = useCallback((newConfig: SmartRoomConfig) => {
     setConfig(newConfig)
     setSaving(true)
-    try {
+
+    const queued = saveQueue.current.catch(() => {}).then(async () => {
       const cfg = await getHermesConfigRecord()
       cfg.smart_room = newConfig
       await saveHermesConfig(cfg)
-    } catch (err) {
-      notifyError(err, 'Failed to save smart room config')
-    } finally {
-      setSaving(false)
-    }
+    })
+
+    saveQueue.current = queued
+    void queued
+      .catch(err => notifyError(err, 'Failed to save smart room config'))
+      .finally(() => {
+        if (saveQueue.current === queued) {setSaving(false)}
+      })
   }, [])
 
   const updatePath = (path: string, value: any) => {
     const next = JSON.parse(JSON.stringify(config)) // deep clone
     const parts = path.split('.')
     let obj = next
+
     for (let i = 0; i < parts.length - 1; i++) {
       obj = obj[parts[i]]
     }
+
     obj[parts[parts.length - 1]] = value
     void updateConfig(next)
+  }
+
+  const persistSecrets = async () => {
+    const values = Object.fromEntries(Object.entries(secrets).filter(([, value]) => value))
+    await saveSmartRoomSecrets(values)
+    setSecrets({ bulb_key: '', he20_key: '', mqtt_username: '', mqtt_password: '' })
   }
 
   if (loading) {
@@ -244,12 +338,14 @@ export function SmartRoomSettings() {
     )
   }
 
-  const runtimeUp = !!liveState
-  const devices = liveState?.devices || {}
-  const light = liveState?.light || config.scenes
+  const liveState = liveStatus?.state
+  const runtimeUp = !!liveStatus?.runtime?.alive && liveStatus.runtime.ready !== false
+  const devices = (liveStatus?.health?.devices || liveState?.devices || {}) as Record<string, { online?: boolean; stale?: boolean }>
+  const light = liveState?.light
   const presence = liveState?.presence || {}
+
   const activeMode = liveState?.modes
-    ? Object.entries(liveState.modes).find(([k, v]) => v && !['manual_override', 'work_return'].includes(k))?.[0]
+    ? Object.entries(liveState.modes as Record<string, boolean>).find(([k, v]) => v && !['manual_override', 'work_return'].includes(k))?.[0]
     : null
 
   return (
@@ -266,8 +362,16 @@ export function SmartRoomSettings() {
         <div className="flex items-center gap-2">
           {saving && <span className={`${CONTROL_TEXT} text-zinc-500`}>Saving...</span>}
           <button
-            onClick={() => { window.location.reload() }}
+            aria-label="Apply settings and restart Smart Room"
             className="rounded-md p-1.5 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200"
+            onClick={() => {
+              void saveQueue.current
+                .then(() => applySmartRoomConfig())
+                .then(() => getSmartRoomStatus())
+                .then(setLiveStatus)
+                .catch(err => notifyError(err, 'Failed to apply smart room config'))
+            }}
+            title="Apply settings and restart runtime"
           >
             <RefreshCw className="h-4 w-4" />
           </button>
@@ -275,25 +379,25 @@ export function SmartRoomSettings() {
       </div>
 
       {/* Enable toggle */}
-      <SectionCard title="Plugin" icon={Settings2}>
+      <SectionCard icon={Settings2} title="Plugin">
         <div className="flex items-center justify-between">
           <div>
             <p className="text-sm text-zinc-200">Smart Room Engine</p>
             <p className={`${CONTROL_TEXT} text-zinc-500`}>Native presence fusion + Tuya control + automations</p>
           </div>
-          <Toggle checked={config.enabled} onChange={(v) => updatePath('enabled', v)} />
+          <Toggle checked={config.enabled} label="Enable Smart Room plugin" onChange={(v) => updatePath('enabled', v)} />
         </div>
       </SectionCard>
 
       {/* Connection Status */}
-      <SectionCard title="Connection Status" icon={Cloud}>
+      <SectionCard icon={Cloud} title="Connection Status">
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
           <div className="flex items-center gap-2">
-            <StatusDot online={runtimeUp} />
+            <StatusDot online={!!liveStatus?.health?.mqtt?.connected} />
             <span className={`${CONTROL_TEXT} text-zinc-400`}>MQTT</span>
           </div>
           <div className="flex items-center gap-2">
-            <StatusDot online={!!devices.esp32?.online} />
+            <StatusDot online={!!devices.esp32?.online && !devices.esp32?.stale} />
             <span className={`${CONTROL_TEXT} text-zinc-400`}>ESP32</span>
           </div>
           <div className="flex items-center gap-2">
@@ -308,7 +412,7 @@ export function SmartRoomSettings() {
       </SectionCard>
 
       {/* Current Room State */}
-      <SectionCard title="Room State" icon={Brain}>
+      <SectionCard icon={Brain} title="Room State">
         <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
           <div>
             <p className={`${CONTROL_TEXT} text-zinc-500`}>Presence</p>
@@ -326,23 +430,29 @@ export function SmartRoomSettings() {
           </div>
           <div>
             <p className={`${CONTROL_TEXT} text-zinc-500`}>Location</p>
-            <p className="text-sm capitalize text-zinc-200">{liveState?.location?.zone || 'home'}</p>
+            <p className="text-sm capitalize text-zinc-200">{liveState?.location?.zone || 'unknown'}</p>
           </div>
         </div>
       </SectionCard>
 
       {/* Mode Buttons */}
-      <SectionCard title="Modes" icon={Zap}>
+      <SectionCard icon={Zap} title="Modes">
         <div className="grid grid-cols-3 gap-2 sm:grid-cols-6">
           {MODES.map((mode) => (
             <button
-              key={mode.id}
-              onClick={() => updatePath('_mode_action', mode.id)}
               className={`flex flex-col items-center rounded-lg border p-3 transition-colors ${
                 activeMode === mode.id
                   ? 'border-primary bg-primary/10 text-primary'
                   : 'border-zinc-800 text-zinc-400 hover:border-zinc-700 hover:text-zinc-200'
               }`}
+              disabled={!runtimeUp}
+              key={mode.id}
+              onClick={() => {
+                void setSmartRoomMode(mode.id)
+                  .then(() => getSmartRoomStatus())
+                  .then(setLiveStatus)
+                  .catch(err => notifyError(err, `Failed to set ${mode.label} mode`))
+              }}
             >
               <span className="text-lg">{mode.icon}</span>
               <span className="mt-1 text-xs font-medium">{mode.label}</span>
@@ -351,48 +461,78 @@ export function SmartRoomSettings() {
           ))}
         </div>
         <p className={`mt-2 ${CONTROL_TEXT} text-zinc-500`}>
-          Mode buttons require the runtime to be running. Configure devices below first.
+          Save changes automatically, then use the refresh button above to apply them to the runtime.
         </p>
+        <div className="mt-3 flex flex-wrap gap-2">
+          <button
+            className="rounded-md border border-zinc-700 px-3 py-1.5 text-xs text-zinc-300 disabled:opacity-40"
+            disabled={!runtimeUp}
+            onClick={() => void setSmartRoomOverride(!liveState?.modes?.manual_override).then(() => getSmartRoomStatus()).then(setLiveStatus).catch(err => notifyError(err, 'Failed to change manual override'))}
+          >
+            Manual override: {liveState?.modes?.manual_override ? 'On' : 'Off'}
+          </button>
+          <button
+            className="rounded-md border border-zinc-700 px-3 py-1.5 text-xs text-zinc-300 disabled:opacity-40"
+            disabled={!runtimeUp || !liveState?.modes?.sleep}
+            onClick={() => void cancelSmartRoomSleep().then(() => getSmartRoomStatus()).then(setLiveStatus).catch(err => notifyError(err, 'Failed to cancel sleep'))}
+          >
+            Cancel sleep
+          </button>
+        </div>
       </SectionCard>
 
       {/* Automations */}
-      <SectionCard title="Automations" icon={RefreshCw}>
+      <SectionCard icon={RefreshCw} title="Automations">
         <div className="space-y-3">
           {AUTOMATIONS.map((auto) => {
             const enabled = (config.automations as any)?.[auto.key]?.enabled ?? false
+
             return (
-              <div key={auto.key} className="flex items-center justify-between">
+              <div className="flex items-center justify-between" key={auto.key}>
                 <div>
                   <p className="text-sm text-zinc-200">{auto.label}</p>
                   <p className={`${CONTROL_TEXT} text-zinc-500`}>{auto.desc}</p>
                 </div>
                 <Toggle
                   checked={enabled}
+                  label={auto.label}
                   onChange={(v) => updatePath(`automations.${auto.key}.enabled`, v)}
                 />
               </div>
             )
           })}
+          <details className="border-t border-zinc-800 pt-3 text-xs text-zinc-400">
+            <summary className="cursor-pointer">Automation timing</summary>
+            <div className="mt-3 grid grid-cols-1 gap-x-4 sm:grid-cols-2">
+              <TextField hint="Empty keeps the daily alarm disabled; Alarm mode still works manually." label="Alarm Time" onChange={(v) => updatePath('automations.alarm.daily_time', v)} type="time" value={config.automations.alarm.daily_time} />
+              <TextField label="Alarm Duration (minutes)" onChange={(v) => updatePath('automations.alarm.duration_minutes', parseInt(v) || 30)} type="number" value={config.automations.alarm.duration_minutes} />
+              <TextField label="Evening Sleep Time" onChange={(v) => updatePath('automations.evening_sleep.time', v)} type="time" value={config.automations.evening_sleep.time} />
+              <TextField label="Work Return Settle (seconds)" onChange={(v) => updatePath('automations.work_return.settle_delay', parseInt(v) || 300)} type="number" value={config.automations.work_return.settle_delay} />
+              <TextField label="Arrival Window Start" onChange={(v) => updatePath('automations.work_return.work_hours_start', v)} type="time" value={config.automations.work_return.work_hours_start} />
+              <TextField label="Arrival Window End" onChange={(v) => updatePath('automations.work_return.work_hours_end', v)} type="time" value={config.automations.work_return.work_hours_end} />
+            </div>
+          </details>
           <div className="flex items-center justify-between border-t border-zinc-800 pt-3">
             <div>
               <p className="text-sm text-zinc-200">Daily Reset</p>
               <p className={`${CONTROL_TEXT} text-zinc-500`}>Reset mode flags at midnight</p>
             </div>
             <input
+              aria-label="Daily reset time"
+              className="rounded-md border border-zinc-800 bg-zinc-950 px-2 py-1 text-sm text-zinc-200"
+              onChange={(e) => updatePath('automations.daily_reset', e.target.value)}
               type="time"
               value={config.automations.daily_reset}
-              onChange={(e) => updatePath('automations.daily_reset', e.target.value)}
-              className="rounded-md border border-zinc-800 bg-zinc-950 px-2 py-1 text-sm text-zinc-200"
             />
           </div>
         </div>
       </SectionCard>
 
       {/* Scene Presets */}
-      <SectionCard title="Scene Presets" icon={SlidersHorizontal}>
+      <SectionCard icon={SlidersHorizontal} title="Scene Presets">
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
           {Object.entries(config.scenes).map(([name, scene]) => (
-            <div key={name} className="rounded-lg border border-zinc-800 bg-zinc-950 p-3">
+            <div className="rounded-lg border border-zinc-800 bg-zinc-950 p-3" key={name}>
               <p className="mb-1 text-sm font-medium capitalize text-zinc-200">{name}</p>
               <div className={`space-y-0.5 ${CONTROL_TEXT} text-zinc-500`}>
                 <p>{scene.brightness ? `${scene.brightness}% brightness` : '—'}</p>
@@ -405,108 +545,176 @@ export function SmartRoomSettings() {
       </SectionCard>
 
       {/* Tuya Device Config */}
-      <SectionCard title="Tuya Devices" icon={Cloud}>
+      <SectionCard icon={Cloud} title="Tuya Devices">
         <div className="mb-3 flex items-start gap-2 rounded-md bg-amber-500/10 p-2 text-amber-400">
           <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
           <p className={`${CONTROL_TEXT}`}>
             Local keys are needed <strong>once</strong>. Get them from the Tuya IoT Portal (free).
-            After that, all control is LAN-only — no cloud. Run <code className="text-amber-300">python scripts/discover_tuya.py</code> to find device IPs.
+            After that, all control is LAN-only — no cloud. Run <code className="text-amber-300">python plugins/smart_room/scripts/discover_tuya.py</code> to find device IPs.
           </p>
         </div>
 
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <div>
             <p className="mb-2 text-sm font-medium text-zinc-300">RGBCW Bulb</p>
-            <TextField label="IP Address" value={config.tuya.bulb.ip} onChange={(v) => updatePath('tuya.bulb.ip', v)} placeholder="192.168.1.x" />
-            <TextField label="Local Key" value={config.tuya.bulb.local_key} onChange={(v) => updatePath('tuya.bulb.local_key', v)} placeholder="16-char hex key" type="password" />
-            <TextField label="Protocol" value={config.tuya.bulb.protocol} onChange={(v) => updatePath('tuya.bulb.protocol', v)} placeholder="3.3" />
+            <TextField label="IP Address" onChange={(v) => updatePath('tuya.bulb.ip', v)} placeholder="192.168.1.x" value={config.tuya.bulb.ip} />
+            <TextField label="Device ID" onChange={(v) => updatePath('tuya.bulb.device_id', v)} placeholder="Tuya device ID" value={config.tuya.bulb.device_id} />
+            <TextField label="Local Key" onChange={(v) => setSecrets(current => ({ ...current, bulb_key: v }))} placeholder="Stored securely; enter to replace" type="password" value={secrets.bulb_key} />
+            <TextField label="Protocol" onChange={(v) => updatePath('tuya.bulb.protocol', v)} placeholder="3.3" value={config.tuya.bulb.protocol} />
+            <details className="rounded-md border border-zinc-800 p-2 text-xs text-zinc-400">
+              <summary className="cursor-pointer">Advanced DPS mapping</summary>
+              <div className="mt-3 grid grid-cols-2 gap-x-3">
+                <TextField label="Switch DP" onChange={(v) => updatePath('tuya.bulb.dps.switch', parseInt(v) || 1)} type="number" value={config.tuya.bulb.dps.switch} />
+                <TextField label="Brightness DP" onChange={(v) => updatePath('tuya.bulb.dps.brightness', parseInt(v) || 2)} type="number" value={config.tuya.bulb.dps.brightness} />
+                <TextField label="Color Temp DP" onChange={(v) => updatePath('tuya.bulb.dps.color_temp', parseInt(v) || 3)} type="number" value={config.tuya.bulb.dps.color_temp} />
+                <TextField label="Color DP" onChange={(v) => updatePath('tuya.bulb.dps.color', parseInt(v) || 5)} type="number" value={config.tuya.bulb.dps.color} />
+                <TextField label="Brightness Max" onChange={(v) => updatePath('tuya.bulb.brightness_max', parseInt(v) || 255)} type="number" value={config.tuya.bulb.brightness_max} />
+                <TextField label="Color Temp Max" onChange={(v) => updatePath('tuya.bulb.color_temp_max', parseInt(v) || 255)} type="number" value={config.tuya.bulb.color_temp_max} />
+              </div>
+            </details>
           </div>
           <div>
             <p className="mb-2 text-sm font-medium text-zinc-300">HE20 Presence Sensor</p>
-            <TextField label="IP Address" value={config.tuya.he20.ip} onChange={(v) => updatePath('tuya.he20.ip', v)} placeholder="192.168.1.x" />
-            <TextField label="Local Key" value={config.tuya.he20.local_key} onChange={(v) => updatePath('tuya.he20.local_key', v)} placeholder="16-char hex key" type="password" />
-            <TextField label="Protocol" value={config.tuya.he20.protocol} onChange={(v) => updatePath('tuya.he20.protocol', v)} placeholder="3.3" />
+            <TextField label="IP Address" onChange={(v) => updatePath('tuya.he20.ip', v)} placeholder="192.168.1.x" value={config.tuya.he20.ip} />
+            <TextField label="Device ID" onChange={(v) => updatePath('tuya.he20.device_id', v)} placeholder="Tuya device ID" value={config.tuya.he20.device_id} />
+            <TextField label="Local Key" onChange={(v) => setSecrets(current => ({ ...current, he20_key: v }))} placeholder="Stored securely; enter to replace" type="password" value={secrets.he20_key} />
+            <TextField label="Protocol" onChange={(v) => updatePath('tuya.he20.protocol', v)} placeholder="3.3" value={config.tuya.he20.protocol} />
+            <details className="rounded-md border border-zinc-800 p-2 text-xs text-zinc-400">
+              <summary className="cursor-pointer">Advanced presence mapping</summary>
+              <div className="mt-3">
+                <TextField label="Presence DP" onChange={(v) => updatePath('tuya.he20.presence_dp', parseInt(v) || 1)} type="number" value={config.tuya.he20.presence_dp} />
+                <TextField
+                  hint="Comma-separated values that mean occupied."
+                  label="Occupied Values"
+                  onChange={(v) => updatePath('tuya.he20.occupied_values', v.split(',').map(value => value.trim()).filter(Boolean))}
+                  value={config.tuya.he20.occupied_values.join(', ')}
+                />
+              </div>
+            </details>
           </div>
         </div>
+        <button
+          className="mt-3 rounded-md bg-primary px-3 py-1.5 text-sm text-primary-foreground"
+          onClick={() => {
+            void persistSecrets()
+              .catch(err => notifyError(err, 'Failed to save Smart Room secrets'))
+          }}
+        >
+          Save secrets
+        </button>
       </SectionCard>
 
       {/* ESP32 Config */}
-      <SectionCard title="ESP32 (ESPresense)" icon={Monitor}>
+      <SectionCard icon={Monitor} title="ESP32 (ESPresense)">
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <div>
-            <TextField label="Room ID" value={config.esp32.room_id} onChange={(v) => updatePath('esp32.room_id', v)} placeholder="smart_room" />
-            <TextField label="Presence Topic" value={config.esp32.presence_topic} onChange={(v) => updatePath('esp32.presence_topic', v)} placeholder="espresense/rooms/smart_room/#" />
+            <TextField label="Room ID" onChange={(v) => updatePath('esp32.room_id', v)} placeholder="smart_room" value={config.esp32.room_id} />
+            <TextField hint="Copy the enrolled ID shown in ESPresense/MQTT." label="Owner Device ID" onChange={(v) => updatePath('esp32.owner_device_id', v)} placeholder="ESPresense enrolled device ID" value={config.esp32.owner_device_id} />
+            <TextField label="Presence Topic" onChange={(v) => updatePath('esp32.presence_topic', v)} placeholder="espresense/rooms/smart_room/#" value={config.esp32.presence_topic} />
           </div>
           <div>
-            <TextField label="RSSI Enter Threshold" type="number" value={config.esp32.rssi_enter_threshold} onChange={(v) => updatePath('esp32.rssi_enter_threshold', parseInt(v) || -70)} hint="dBm — closer = higher. -70 is typical." />
-            <TextField label="RSSI Exit Threshold" type="number" value={config.esp32.rssi_exit_threshold} onChange={(v) => updatePath('esp32.rssi_exit_threshold', parseInt(v) || -85)} hint="dBm — must drop below this to leave." />
-            <TextField label="Exit Timeout (seconds)" type="number" value={config.esp32.exit_timeout} onChange={(v) => updatePath('esp32.exit_timeout', parseInt(v) || 60)} />
+            <TextField hint="dBm — closer = higher. -70 is typical." label="RSSI Enter Threshold" onChange={(v) => updatePath('esp32.rssi_enter_threshold', parseInt(v) || -70)} type="number" value={config.esp32.rssi_enter_threshold} />
+            <TextField hint="dBm — must drop below this to leave." label="RSSI Exit Threshold" onChange={(v) => updatePath('esp32.rssi_exit_threshold', parseInt(v) || -85)} type="number" value={config.esp32.rssi_exit_threshold} />
+            <TextField label="Exit Timeout (seconds)" onChange={(v) => updatePath('esp32.exit_timeout', parseInt(v) || 60)} type="number" value={config.esp32.exit_timeout} />
+            <TextField hint="BLE silence alone never clears presence; this only enters sticky fusion." label="BLE Missing Timeout (seconds)" onChange={(v) => updatePath('esp32.missing_timeout_seconds', parseInt(v) || 30)} type="number" value={config.esp32.missing_timeout_seconds} />
           </div>
+        </div>
+        <div className="mt-4 border-t border-zinc-800 pt-4">
+          <ToggleRow
+            checked={config.presence.wifi_ping.enabled}
+            description="Ping a reserved iPhone IP. A reply helps identity fusion; a timeout never means away."
+            label="Positive-only Wi-Fi presence fallback"
+            onChange={(v) => updatePath('presence.wifi_ping.enabled', v)}
+          />
+          {config.presence.wifi_ping.enabled && (
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <TextField label="Reserved iPhone IP" onChange={(v) => updatePath('presence.wifi_ping.ip', v)} placeholder="192.168.1.x" value={config.presence.wifi_ping.ip} />
+              <TextField label="Probe Interval (seconds)" onChange={(v) => updatePath('presence.wifi_ping.interval_seconds', parseInt(v) || 60)} type="number" value={config.presence.wifi_ping.interval_seconds} />
+            </div>
+          )}
         </div>
       </SectionCard>
 
-      {/* OwnTracks Config */}
-      <SectionCard title="OwnTracks (iPhone Location)" icon={Moon}>
-        <TextField label="MQTT Topic" value={config.owntracks.topic} onChange={(v) => updatePath('owntracks.topic', v)} placeholder="owntracks/shereef/#" />
+      {/* Phone location */}
+      <SectionCard icon={Moon} title="iPhone Location">
+        <div className="mb-4 rounded-md border border-zinc-800 bg-zinc-950 p-3 text-xs text-zinc-400">
+          <p className="font-medium text-zinc-200">Primary: iOS Shortcuts webhook</p>
+          <p className="mt-1 break-all">URL: {webhook?.url || 'Enable and apply Smart Room to create the route.'}</p>
+          {webhook?.secret && <p className="mt-1 break-all">Webhook secret: {webhook.secret}</p>}
+          <p className="mt-2">Automation → Arrive/Leave → POST JSON with who, transition, zone, and ISO timestamp. Add a unique X-Request-ID. Use strict HMAC V2, or X-Gitlab-Token with this secret for the native Shortcuts fallback.</p>
+        </div>
+        <p className="mb-2 text-xs text-zinc-500">Optional fallback: OwnTracks over authenticated MQTT</p>
+        <TextField label="MQTT Topic" onChange={(v) => updatePath('owntracks.topic', v)} placeholder="owntracks/shereef/#" value={config.owntracks.topic} />
         <div>
           <label className={`mb-1 block ${CONTROL_TEXT} text-zinc-400`}>Geofence Zones</label>
           <div className="flex flex-wrap gap-2">
             {config.owntracks.zones.map((zone, i) => (
-              <span key={zone} className="rounded-full bg-zinc-800 px-3 py-1 text-xs text-zinc-300">
+              <span className="rounded-full bg-zinc-800 px-3 py-1 text-xs text-zinc-300" key={`${zone}-${i}`}>
                 {zone}
                 <button
+                  aria-label={`Remove ${zone} zone`}
+                  className="ml-2 text-zinc-500 hover:text-red-400"
                   onClick={() => {
                     const zones = config.owntracks.zones.filter((_, idx) => idx !== i)
                     updatePath('owntracks.zones', zones)
                   }}
-                  className="ml-2 text-zinc-500 hover:text-red-400"
                 >
                   ×
                 </button>
               </span>
             ))}
             <input
-              type="text"
-              placeholder="add zone..."
+              aria-label="Add geofence zone"
               className="w-24 rounded-full border border-zinc-800 bg-zinc-950 px-3 py-1 text-xs text-zinc-200"
               onKeyDown={(e) => {
                 if (e.key === 'Enter') {
                   const val = (e.target as HTMLInputElement).value.trim()
-                  if (val) {
+
+                  if (val && !config.owntracks.zones.includes(val)) {
                     updatePath('owntracks.zones', [...config.owntracks.zones, val])
                     ;(e.target as HTMLInputElement).value = ''
                   }
                 }
               }}
+              placeholder="add zone..."
+              type="text"
             />
           </div>
         </div>
       </SectionCard>
 
       {/* MQTT Broker Config */}
-      <SectionCard title="MQTT Broker" icon={Cloud}>
+      <SectionCard icon={Cloud} title="MQTT Broker">
         <div className="grid grid-cols-2 gap-4">
-          <TextField label="Broker IP" value={config.mqtt.broker} onChange={(v) => updatePath('mqtt.broker', v)} placeholder="127.0.0.1" />
-          <TextField label="Port" type="number" value={config.mqtt.port} onChange={(v) => updatePath('mqtt.port', parseInt(v) || 1883)} />
+          <TextField label="Broker IP" onChange={(v) => updatePath('mqtt.broker', v)} placeholder="127.0.0.1" value={config.mqtt.broker} />
+          <TextField label="Port" onChange={(v) => updatePath('mqtt.port', parseInt(v) || 1883)} type="number" value={config.mqtt.port} />
+          <TextField label="Username" onChange={(v) => setSecrets(current => ({ ...current, mqtt_username: v }))} placeholder="Stored securely; enter to replace" value={secrets.mqtt_username} />
+          <TextField label="Password" onChange={(v) => setSecrets(current => ({ ...current, mqtt_password: v }))} placeholder="Stored securely; enter to replace" type="password" value={secrets.mqtt_password} />
         </div>
+        <button
+          className="mt-3 rounded-md bg-primary px-3 py-1.5 text-sm text-primary-foreground"
+          onClick={() => void persistSecrets().catch(err => notifyError(err, 'Failed to save MQTT credentials'))}
+        >
+          Save MQTT credentials
+        </button>
       </SectionCard>
 
       {/* Context & Subconscious */}
-      <SectionCard title="Marvi Integration" icon={Brain}>
+      <SectionCard icon={Brain} title="Marvi Integration">
         <div className="space-y-3">
           <div className="flex items-center justify-between">
             <div>
               <p className="text-sm text-zinc-200">World Context</p>
               <p className={`${CONTROL_TEXT} text-zinc-500`}>Inject room state into session context</p>
             </div>
-            <Toggle checked={config.context.enabled} onChange={(v) => updatePath('context.enabled', v)} />
+            <Toggle checked={config.context.enabled} label="World context" onChange={(v) => updatePath('context.enabled', v)} />
           </div>
           <div className="flex items-center justify-between">
             <div>
               <p className="text-sm text-zinc-200">Subconscious Surface</p>
               <p className={`${CONTROL_TEXT} text-zinc-500`}>Meaningful transitions appear in subconscious</p>
             </div>
-            <Toggle checked={config.subconscious.enabled} onChange={(v) => updatePath('subconscious.enabled', v)} />
+            <Toggle checked={config.subconscious.enabled} label="Subconscious awareness" onChange={(v) => updatePath('subconscious.enabled', v)} />
           </div>
         </div>
       </SectionCard>

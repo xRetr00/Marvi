@@ -44,7 +44,7 @@ def test_make_agent_passes_resolved_provider():
 
         from tui_gateway.server import _make_agent
 
-        _make_agent("sid-1", "key-1")
+        _make_agent("sid-1", "key-1", world_context="Room: focus mode, light 70%.")
 
         # target_model comes from _resolve_startup_runtime() which reads
         # _load_cfg().  Due to module-level caching in tui_gateway.server,
@@ -58,6 +58,9 @@ def test_make_agent_passes_resolved_provider():
         assert call_kwargs.kwargs["base_url"] == "https://api.anthropic.com"
         assert call_kwargs.kwargs["api_key"] == "sk-test-key"
         assert call_kwargs.kwargs["api_mode"] == "anthropic_messages"
+        assert call_kwargs.kwargs["ephemeral_system_prompt"] == (
+            "test\n\nRoom: focus mode, light 70%."
+        )
 
 
 def test_make_agent_forwards_provider_routing():

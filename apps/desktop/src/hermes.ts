@@ -415,6 +415,29 @@ export function saveHermesConfig(config: HermesConfigRecord): Promise<{ ok: bool
   })
 }
 
+export interface SmartRoomStatus {
+  runtime: { alive?: boolean; pid?: number; ready?: boolean; restart_count?: number; reason?: string }
+  state: Record<string, any> | null
+  health: Record<string, any> | null
+}
+
+function smartRoomApi<T>(path: string, method = 'GET', body?: unknown): Promise<T> {
+  return window.hermesDesktop.api<T>({
+    ...profileScoped(),
+    path: `/api/plugins/smart_room${path}`,
+    method,
+    body
+  })
+}
+
+export const getSmartRoomStatus = () => smartRoomApi<SmartRoomStatus>('/status')
+export const applySmartRoomConfig = () => smartRoomApi<{ ok: boolean }>('/apply', 'POST')
+export const setSmartRoomMode = (mode: string) => smartRoomApi('/mode', 'POST', { mode })
+export const setSmartRoomOverride = (enabled: boolean) => smartRoomApi('/override', 'POST', { enabled })
+export const cancelSmartRoomSleep = () => smartRoomApi('/cancel-sleep', 'POST')
+export const saveSmartRoomSecrets = (body: Record<string, string>) => smartRoomApi('/secrets', 'PUT', body)
+export const getSmartRoomWebhook = () => smartRoomApi<{ configured: boolean; url: string; secret?: string }>('/webhook')
+
 export interface VoiceSpeaker {
   consistency: number | null
   embeddings: number

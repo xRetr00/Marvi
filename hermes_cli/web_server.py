@@ -695,9 +695,28 @@ async def _lifespan(app: "FastAPI"):
     # Reap idle/dead keep-alive PTY sessions in the background (30-min TTL).
     pty_reaper_task = asyncio.create_task(run_reaper(PTY_REGISTRY))
 
+    # Desktop/headless and dashboard backends are also long-lived Marvi
+    # hosts. Give lifecycle plugins the same start/stop contract as the
+    # messaging gateway so supervised capabilities do not depend on which UI
+    # happens to own the process.
+    try:
+        from hermes_cli.config import load_config
+        from hermes_cli.plugins import discover_plugins, invoke_hook
+
+        discover_plugins()
+        await asyncio.to_thread(invoke_hook, "on_gateway_start", config=load_config())
+    except Exception:
+        _log.debug("Backend plugin start hooks failed", exc_info=True)
+
     try:
         yield
     finally:
+        try:
+            from hermes_cli.plugins import invoke_hook
+
+            await asyncio.to_thread(invoke_hook, "on_gateway_stop")
+        except Exception:
+            _log.debug("Backend plugin stop hooks failed", exc_info=True)
         pty_reaper_task.cancel()
         await PTY_REGISTRY.close_all()
         if cron_stop is not None:

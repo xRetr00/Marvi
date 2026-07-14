@@ -195,6 +195,7 @@ export async function startDuplexMicCapture(options: DuplexMicCaptureOptions): P
   return {
     stop: () => {
       stopped = true
+
       if (levelRaf !== null) {
         window.cancelAnimationFrame(levelRaf)
         levelRaf = null

@@ -465,8 +465,14 @@ function DeepWorkHint({ mode, reducedMotion }: { mode: VoiceState['deepMode']; r
 // Card content sizes to its text instead of a fixed layout: short bodies get
 // a bigger font and hug their width, long bodies shrink and clamp to a few
 // lines with an ellipsis so the pill never blows past the expanded max width.
-const CARD_MIN_WIDTH = 220
-const CARD_LONG_WIDTH = 300
+const CARD_MIN_WIDTH = 260
+const CARD_LONG_WIDTH = 316
+
+const CARD_META: Record<IslandCardKind, { accent: string; label: string; mark: string; tint: string }> = {
+  info: { accent: '#72a7ff', label: 'Marvi', mark: '✦', tint: 'rgba(114,167,255,0.13)' },
+  result: { accent: '#63dfa0', label: 'Result', mark: '✓', tint: 'rgba(99,223,160,0.12)' },
+  approval: { accent: '#f5bd64', label: 'Confirm', mark: '?', tint: 'rgba(245,189,100,0.13)' }
+}
 
 function bodyFontSize(length: number): number {
   if (length <= 44) {
@@ -492,80 +498,104 @@ function bodyLineClamp(length: number): number {
   return 4
 }
 
-function titleColor(kind: IslandCardKind): string {
-  switch (kind) {
-    case 'result':
-      return 'rgba(140,224,168,0.85)'
-
-    case 'approval':
-      return 'rgba(255,255,255,0.5)'
-
-    default:
-      return 'rgba(255,255,255,0.5)'
-  }
-}
-
-function dotColor(kind: IslandCardKind): string | null {
-  switch (kind) {
-    case 'result':
-      return '#5cd97e'
-
-    case 'approval':
-      return '#f5b95c'
-
-    default:
-      return null
-  }
-}
-
 function CardContent({ card, onCardAction }: { card: IslandCard; onCardAction: (payload: CardAction) => void }) {
   const dismiss = () => onCardAction({ type: 'dismiss', id: card.id })
   const bodyLength = (card.body ?? '').length
   const long = bodyLength > 120
-  const accentDot = dotColor(card.kind)
+  const meta = CARD_META[card.kind]
 
   return (
     <div
       style={{
+        position: 'relative',
         display: 'flex',
         flexDirection: 'column',
-        gap: 8,
+        gap: 11,
         minWidth: CARD_MIN_WIDTH,
-        width: long ? CARD_LONG_WIDTH : undefined
+        width: long ? CARD_LONG_WIDTH : undefined,
+        padding: '12px 13px 13px',
+        border: `1px solid color-mix(in srgb, ${meta.accent} 22%, rgba(255,255,255,0.08))`,
+        borderRadius: 17,
+        background: `radial-gradient(circle at 8% 0%, ${meta.tint}, transparent 44%), linear-gradient(145deg, rgba(255,255,255,0.055), rgba(255,255,255,0.018))`,
+        boxShadow: `inset 0 1px 0 rgba(255,255,255,0.07), 0 10px 28px ${meta.tint}`
       }}
     >
-      {card.title && (
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-          {accentDot && (
-            <span
-              style={{
-                display: 'inline-block',
-                width: 6,
-                height: 6,
-                borderRadius: '50%',
-                background: accentDot,
-                flexShrink: 0
-              }}
-            />
-          )}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
+        <span
+          style={{
+            display: 'grid',
+            placeItems: 'center',
+            width: 25,
+            height: 25,
+            borderRadius: 9,
+            flexShrink: 0,
+            color: meta.accent,
+            background: meta.tint,
+            boxShadow: `inset 0 0 0 1px color-mix(in srgb, ${meta.accent} 24%, transparent)`,
+            fontSize: 12,
+            fontWeight: 700
+          }}
+        >
+          {meta.mark}
+        </span>
+        <div style={{ minWidth: 0, flex: 1 }}>
           <div
             style={{
-              fontSize: 11,
-              letterSpacing: '0.12em',
+              fontSize: 9,
+              fontWeight: 650,
+              letterSpacing: '0.13em',
               textTransform: 'uppercase',
-              color: titleColor(card.kind)
+              color: meta.accent,
+              opacity: 0.82
             }}
           >
-            {card.title}
+            {meta.label}
           </div>
+          {card.title && (
+            <div
+              style={{
+                marginTop: 1,
+                overflow: 'hidden',
+                color: 'rgba(255,255,255,0.86)',
+                fontSize: 12,
+                fontWeight: 560,
+                textOverflow: 'ellipsis',
+                whiteSpace: 'nowrap'
+              }}
+            >
+              {card.title}
+            </div>
+          )}
         </div>
-      )}
+        <button
+          aria-label="Dismiss card"
+          onClick={dismiss}
+          style={{
+            display: 'grid',
+            placeItems: 'center',
+            width: 24,
+            height: 24,
+            padding: 0,
+            border: '1px solid rgba(255,255,255,0.08)',
+            borderRadius: 9,
+            color: 'rgba(255,255,255,0.45)',
+            background: 'rgba(255,255,255,0.035)',
+            cursor: 'pointer',
+            fontSize: 15,
+            lineHeight: 1
+          }}
+          type="button"
+        >
+          ×
+        </button>
+      </div>
       {card.body && (
         <div
           style={{
             fontSize: bodyFontSize(bodyLength),
-            lineHeight: 1.5,
-            color: 'rgba(255,255,255,0.92)',
+            lineHeight: 1.45,
+            color: 'rgba(255,255,255,0.94)',
+            letterSpacing: '-0.008em',
             display: '-webkit-box',
             WebkitLineClamp: bodyLineClamp(bodyLength),
             WebkitBoxOrient: 'vertical',
@@ -576,8 +606,8 @@ function CardContent({ card, onCardAction }: { card: IslandCard; onCardAction: (
         </div>
       )}
       {card.actions?.length ? (
-        <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
-          {card.actions.map(action => (
+        <div style={{ display: 'flex', gap: 7, marginTop: 1 }}>
+          {card.actions.map((action, index) => (
             <button
               key={action.id}
               onClick={() => {
@@ -589,14 +619,16 @@ function CardContent({ card, onCardAction }: { card: IslandCard; onCardAction: (
               }}
               style={{
                 flex: 1,
-                background: action.id === 'primary' ? '#2b5bd0' : 'transparent',
-                border: '0.5px solid rgba(255,255,255,0.2)',
-                color: '#fff',
-                borderRadius: 10,
-                padding: '8px 0',
-                fontSize: 13,
+                background: index === 0 ? meta.accent : 'rgba(255,255,255,0.045)',
+                border: index === 0 ? '1px solid transparent' : '1px solid rgba(255,255,255,0.1)',
+                color: index === 0 ? '#07110d' : 'rgba(255,255,255,0.86)',
+                borderRadius: 11,
+                padding: '8px 10px',
+                fontSize: 12,
+                fontWeight: 620,
                 cursor: 'pointer'
               }}
+              type="button"
             >
               {action.label}
             </button>

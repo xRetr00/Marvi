@@ -64,10 +64,12 @@ export function useDuplexVoice(enabled: boolean, onConversationEnd?: () => void)
           }
 
           const active = next.phase !== 'connecting' && next.phase !== 'closed'
+
           if (active) {
             hadLiveSession = true
             recoveryAttempt = 0
           }
+
           setAvailable(active)
           setStatus(active ? 'active' : 'connecting')
           setState(next)
@@ -82,6 +84,7 @@ export function useDuplexVoice(enabled: boolean, onConversationEnd?: () => void)
           setLevel(0)
 
           const delay = hadLiveSession ? RECOVERY_DELAYS_MS[recoveryAttempt] : undefined
+
           if (typeof delay === 'number') {
             recoveryAttempt += 1
             console.debug(`[voice-island] duplex interrupted; reconnecting in ${delay}ms:`, reason)
@@ -107,9 +110,11 @@ export function useDuplexVoice(enabled: boolean, onConversationEnd?: () => void)
 
     return () => {
       cancelled = true
+
       if (retryTimer !== null) {
         window.clearTimeout(retryTimer)
       }
+
       controllerRef.current?.stop()
       controllerRef.current = null
     }

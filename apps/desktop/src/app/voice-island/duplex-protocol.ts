@@ -167,13 +167,16 @@ function asCard(value: unknown): DuplexCard | null {
   }
 
   const kind = value.kind === 'result' || value.kind === 'approval' ? value.kind : 'info'
+
   const actions = Array.isArray(value.actions)
     ? value.actions.flatMap(action => {
         if (!isRecord(action) || typeof action.id !== 'string' || typeof action.label !== 'string') {
           return []
         }
 
-        return [{ id: action.id, label: action.label, ...(typeof action.value === 'string' ? { value: action.value } : {}) }]
+        return [
+          { id: action.id, label: action.label, ...(typeof action.value === 'string' ? { value: action.value } : {}) }
+        ]
       })
     : undefined
 
@@ -267,7 +270,6 @@ export function parseDuplexServerEvent(raw: unknown): DuplexServerEvent | null {
             ...(typeof raw.task_id === 'string' ? { task_id: raw.task_id } : {})
           }
         : null
-
     case 'card_show': {
       const card = asCard(raw.card)
 

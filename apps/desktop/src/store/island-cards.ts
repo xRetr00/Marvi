@@ -15,6 +15,7 @@ const queue = createIslandQueue({ maxQueue: MAX_ISLAND_QUEUE, onChange: snap => 
 // Reading time for a card: base + ~220ms/word, clamped 2.5s-12s.
 function readingTimeMs(text: string | undefined): number {
   const words = (text ?? '').trim().split(/\s+/).filter(Boolean).length
+
   return Math.min(12000, Math.max(2500, 2200 + words * 220))
 }
 
@@ -29,6 +30,7 @@ export function showIslandCard(card: IslandCard, options: { allowWhenFocused?: b
   // they're hands-free or in another app. (Minimized/unfocused → still show.)
   if ($mainWindowFocused.get() && !options.allowWhenFocused) {
     vpLog('card', 'suppressed', { id: card.id, reason: 'main-window-focused' })
+
     return
   }
 

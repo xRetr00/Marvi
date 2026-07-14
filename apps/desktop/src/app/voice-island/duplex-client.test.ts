@@ -71,14 +71,18 @@ class FakeWebSocket {
  */
 function socketGate() {
   let resolve!: (socket: FakeWebSocket) => void
+
   const ready = new Promise<FakeWebSocket>(r => {
     resolve = r
   })
+
   const createWebSocket = () => {
     const socket = new FakeWebSocket()
     resolve(socket)
+
     return socket as unknown as WebSocket
   }
+
   return { createWebSocket, ready }
 }
 
@@ -260,6 +264,7 @@ describe('connectDuplexVoice', () => {
   it('forwards voice cards from the shared duplex socket', async () => {
     const gate = socketGate()
     const onCard = vi.fn()
+
     const connectPromise = connectDuplexVoice({
       audioPlayerFactory: fakeAudioPlayer,
       createWebSocket: gate.createWebSocket,
@@ -269,6 +274,7 @@ describe('connectDuplexVoice', () => {
       onState: vi.fn(),
       onUnavailable: vi.fn()
     })
+
     const socket = await gate.ready
     socket.open()
     await connectPromise

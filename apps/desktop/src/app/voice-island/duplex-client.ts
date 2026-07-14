@@ -6,8 +6,8 @@ import {
   type DuplexMicCapture,
   startDuplexMicCapture
 } from './duplex-audio'
-import { type DuplexCommand, DuplexSessionMachine, type DuplexSessionState } from './duplex-session'
 import { type DuplexCard, parseDuplexServerEvent } from './duplex-protocol'
+import { type DuplexCommand, DuplexSessionMachine, type DuplexSessionState } from './duplex-session'
 
 const CONNECT_TIMEOUT_MS = 8000
 

@@ -2016,7 +2016,11 @@ export const ja = defineLocale({
       loadFailed: 'Composio を読み込めませんでした',
       saveFailed: 'Composio キーを保存できませんでした',
       catalogFailed: 'Composio インテグレーションを読み込めませんでした',
-      connect: '接続'
+      connect: '接続',
+      connecting: '接続中…',
+      connectOpened: 'ブラウザーで認証を開きました',
+      connected: '接続済み',
+      connectFailed: 'Composio 認証を開始できませんでした'
     }
   },
 

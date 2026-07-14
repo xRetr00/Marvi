@@ -1,15 +1,12 @@
 import { useCallback, useEffect, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
 
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { useI18n } from '@/i18n'
 import { Link as LinkIcon, Search } from '@/lib/icons'
 import { $gateway } from '@/store/gateway'
-import { runIslandCardAction } from '@/store/island-cards'
 import { notify, notifyError } from '@/store/notifications'
 
-import { NEW_CHAT_ROUTE } from '../routes'
 import { Pill, SectionHeading } from '../settings/primitives'
 
 interface ComposioStatus {
@@ -31,10 +28,14 @@ interface ToolkitResponse {
   total?: null | number
 }
 
+interface ConnectResponse {
+  connected?: boolean
+  redirect_url?: null | string
+}
+
 const SNAPSHOT_SURFACES = ['gmail', 'github', 'calendar', 'slack'] as const
 
 export function ComposioTab() {
-  const navigate = useNavigate()
   const { t } = useI18n()
   const copy = t.mind.composio
   const [status, setStatus] = useState<ComposioStatus | null>(null)
@@ -45,6 +46,7 @@ export function ComposioTab() {
   const [total, setTotal] = useState<null | number>(null)
   const [saving, setSaving] = useState(false)
   const [loading, setLoading] = useState(false)
+  const [connecting, setConnecting] = useState<null | string>(null)
 
   const loadStatus = useCallback(async () => {
     try {
@@ -154,13 +156,29 @@ export function ComposioTab() {
     }
   }
 
-  function connect(toolkit: Pick<Toolkit, 'name' | 'slug'>) {
-    navigate(NEW_CHAT_ROUTE)
-    window.setTimeout(() => {
-      runIslandCardAction(
-        `Use Composio to connect my ${toolkit.name} (${toolkit.slug}) account. Start the authorization flow and show me the link.`
-      )
-    }, 0)
+  async function connect(toolkit: Pick<Toolkit, 'name' | 'slug'>) {
+    setConnecting(toolkit.slug)
+
+    try {
+      const result = await window.hermesDesktop.api<ConnectResponse>({
+        path: '/api/composio/connect',
+        method: 'POST',
+        body: { toolkit: toolkit.slug }
+      })
+
+      if (result.redirect_url) {
+        await window.hermesDesktop.openExternal(result.redirect_url)
+        notify({ kind: 'success', message: copy.connectOpened })
+      } else if (result.connected) {
+        notify({ kind: 'success', message: `${toolkit.name}: ${copy.connected}` })
+      } else {
+        throw new Error(copy.connectFailed)
+      }
+    } catch (error) {
+      notifyError(error, copy.connectFailed)
+    } finally {
+      setConnecting(null)
+    }
   }
 
   return (
@@ -257,12 +275,12 @@ export function ComposioTab() {
                     <div className="flex items-center gap-2">
                       <code className="text-[0.65rem] text-muted-foreground">{toolkit.slug}</code>
                       <Button
-                        disabled={!status?.mcp_configured}
-                        onClick={() => connect(toolkit)}
+                        disabled={!status?.sdk_configured || connecting !== null}
+                        onClick={() => void connect(toolkit)}
                         size="sm"
                         variant="outline"
                       >
-                        {copy.connect}
+                        {connecting === toolkit.slug ? copy.connecting : copy.connect}
                       </Button>
                     </div>
                   </div>
@@ -282,13 +300,13 @@ export function ComposioTab() {
         <div className="mt-3 flex flex-wrap gap-2">
           {SNAPSHOT_SURFACES.map(surface => (
             <Button
-              disabled={!status?.mcp_configured}
+              disabled={!status?.sdk_configured || connecting !== null}
               key={surface}
-              onClick={() => connect({ name: surface, slug: surface })}
+              onClick={() => void connect({ name: surface, slug: surface })}
               size="sm"
               variant="outline"
             >
-              {copy.connect} {surface}
+              {connecting === surface ? copy.connecting : copy.connect} {surface}
             </Button>
           ))}
         </div>

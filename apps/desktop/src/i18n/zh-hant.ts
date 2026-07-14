@@ -1949,7 +1949,11 @@ export const zhHant = defineLocale({
       loadFailed: '無法載入 Composio',
       saveFailed: '無法儲存 Composio 金鑰',
       catalogFailed: '無法載入 Composio 整合',
-      connect: '連線'
+      connect: '連線',
+      connecting: '正在連線…',
+      connectOpened: '已在瀏覽器中開啟授權',
+      connected: '已連線',
+      connectFailed: '無法啟動 Composio 授權'
     }
   },
 

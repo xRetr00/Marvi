@@ -1707,6 +1707,10 @@ export interface Translations {
       saveFailed: string
       catalogFailed: string
       connect: string
+      connecting: string
+      connectOpened: string
+      connected: string
+      connectFailed: string
     }
   }
 

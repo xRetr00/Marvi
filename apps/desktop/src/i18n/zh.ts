@@ -2237,7 +2237,11 @@ export const zh: Translations = {
       loadFailed: '无法加载 Composio',
       saveFailed: '无法保存 Composio 密钥',
       catalogFailed: '无法加载 Composio 集成',
-      connect: '连接'
+      connect: '连接',
+      connecting: '正在连接…',
+      connectOpened: '已在浏览器中打开授权',
+      connected: '已连接',
+      connectFailed: '无法启动 Composio 授权'
     }
   },
 

@@ -170,19 +170,49 @@ class TestInstallHint:
         assert "composio==0.17.1" in hint
 
 
-def test_verify_auth_retries_sdk_without_removed_user_id_kwarg():
+def test_verify_auth_uses_current_list_signature():
     calls = []
 
     class ConnectedAccounts:
-        def list(self):
-            calls.append("listed")
+        def list(self, **kwargs):
+            calls.append(kwargs)
             return []
 
     client = composio_client_mod.ComposioClient("valid-key")
     client._sdk_client = SimpleNamespace(connected_accounts=ConnectedAccounts())
 
     assert client.verify_auth() is True
-    assert calls == ["listed"]
+    assert calls == [{"limit": 1}]
+
+
+def test_connection_uses_toolkit_authorize_and_filtered_account_list():
+    calls = []
+
+    class ConnectedAccounts:
+        def list(self, **kwargs):
+            calls.append(("list", kwargs))
+            return SimpleNamespace(items=[])
+
+    class Toolkits:
+        def authorize(self, **kwargs):
+            calls.append(("authorize", kwargs))
+            return SimpleNamespace(id="ca_123", status="INITIATED", redirect_url="https://auth.example")
+
+    client = composio_client_mod.ComposioClient("valid-key")
+    client._sdk_client = SimpleNamespace(
+        connected_accounts=ConnectedAccounts(),
+        toolkits=Toolkits(),
+    )
+
+    assert client.initiate_connection("gmail") == {
+        "id": "ca_123",
+        "status": "INITIATED",
+        "redirect_url": "https://auth.example",
+    }
+    assert calls == [
+        ("list", {"user_ids": ["default"], "toolkit_slugs": ["gmail"]}),
+        ("authorize", {"user_id": "default", "toolkit": "gmail"}),
+    ]
 
 
 def test_lazy_deps_allowlist_registers_composio():

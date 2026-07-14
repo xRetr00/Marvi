@@ -165,6 +165,7 @@ class TestConnect:
     def test_connect_prints_redirect_url_when_present(
         self, fake_sdk, capsys, monkeypatch
     ):
+        opened = []
         fake_client = FakeClient(
             "k123",
             connect_result={
@@ -175,12 +176,14 @@ class TestConnect:
         monkeypatch.setattr(
             composio_client_mod, "ComposioClient", lambda api_key: fake_client
         )
+        monkeypatch.setattr(composio_cmd.webbrowser, "open", lambda url: opened.append(url) or True)
 
         args = SimpleNamespace(app="gmail", api_key="k123")
         composio_cmd.cmd_composio_connect(args)
 
         out = capsys.readouterr().out
         assert "https://composio.dev/auth/abc" in out
+        assert opened == ["https://composio.dev/auth/abc"]
 
 
 class TestList:

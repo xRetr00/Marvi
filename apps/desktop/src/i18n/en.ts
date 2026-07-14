@@ -2081,7 +2081,11 @@ export const en: Translations = {
       loadFailed: 'Failed to load Composio',
       saveFailed: 'Failed to save Composio key',
       catalogFailed: 'Failed to load Composio integrations',
-      connect: 'Connect'
+      connect: 'Connect',
+      connecting: 'Connecting…',
+      connectOpened: 'Authorization opened in your browser',
+      connected: 'Already connected',
+      connectFailed: 'Failed to start Composio authorization'
     }
   },
 

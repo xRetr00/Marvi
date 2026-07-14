@@ -86,12 +86,18 @@ class MoonshineStreamingSession:
         samples.frombytes(chunk[: len(chunk) - (len(chunk) % 4)])
         if sys.byteorder != "little":
             samples.byteswap()
-        self.last_eou = False
-        self.last_eou_prob = 0.0
         if samples:
             self._transcriber.add_audio(samples.tolist(), 16000)
         with self._lock:
             return self._partial
+
+    def consume_eou(self) -> bool:
+        """Consume one pause-delimited Moonshine line-completion event."""
+        with self._lock:
+            completed = self.last_eou
+            self.last_eou = False
+            self.last_eou_prob = 0.0
+            return completed
 
     def finish(self) -> str:
         if self._started:

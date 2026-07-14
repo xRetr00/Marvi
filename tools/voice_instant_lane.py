@@ -781,6 +781,8 @@ def _new_instant_agent(runtime: Dict[str, Any], max_tokens: int):
     agent._memory_store = _LazyMemoryStore()
     agent._memory_enabled = True
     agent._user_profile_enabled = True
+    agent._memory_nudge_interval = 0
+    agent._skill_nudge_interval = 0
     # The normal prompt builder adds project/coding/environment guidance even
     # when context files are skipped. Voice needs the identity, not that bulk.
     agent._cached_system_prompt = load_soul_md(None) or DEFAULT_AGENT_IDENTITY
@@ -892,6 +894,8 @@ def stream_instant_reply(
     runtime = resolve_instant_runtime(cfg)
     max_tokens = _resolve_instant_max_tokens(cfg)
     history = transcript.as_messages()
+    if history and history[-1] == {"role": "user", "content": utterance.strip()}:
+        history.pop()
     system_message = build_voice_mode_addendum(allow_escalation=allow_escalation)
 
     key = _runtime_key(runtime, max_tokens)

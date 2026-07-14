@@ -339,6 +339,61 @@ def test_ready_on_connect(duplex_client, full_fakes):
         assert conn.receive_json() == {"type": "ready"}
 
 
+def test_moonshine_pause_waits_for_smart_turn(monkeypatch):
+    from tools import semantic_turn
+
+    predictions = iter((False, True))
+    monkeypatch.setattr(semantic_turn, "pipecat_smart_turn_complete", lambda chunks, rate: next(predictions))
+
+    async def run():
+        class FakeWs:
+            async def send_json(self, _payload):
+                return None
+
+        session = web_server._DuplexSession(
+            FakeWs(),
+            {"stt": {"streaming": {"provider": "moonshine"}}, "voice": {"semantic_turn": True}},
+        )
+        session.stt_session = FakeSttSession()
+        session.stt_session.queue_response("not finished", True)
+        session.stt_session.queue_response("now finished", True)
+        finalized = 0
+
+        async def finalize():
+            nonlocal finalized
+            finalized += 1
+
+        session._finalize_utterance = finalize
+        await session._feed_stt(_pcm16_chunk())
+        assert finalized == 0
+        await session._feed_stt(_pcm16_chunk())
+        assert finalized == 1
+
+    asyncio.run(run())
+
+
+def test_barge_in_does_not_wait_for_cancelled_speaking_task():
+    async def run():
+        class FakeWs:
+            async def send_json(self, _payload):
+                return None
+
+        session = web_server._DuplexSession(FakeWs(), {"stt": {"streaming": {"provider": "parakeet"}}})
+        session.stt_session = FakeSttSession()
+        release = asyncio.Event()
+        speaking_task = asyncio.create_task(release.wait())
+        session._speaking_task = speaking_task
+
+        await asyncio.wait_for(session._trigger_barge_in(_pcm16_chunk()), timeout=0.1)
+
+        assert session.state == "listening"
+        assert speaking_task.done() is False
+        release.set()
+        await speaking_task
+
+    asyncio.run(run())
+
+
 # ---------------------------------------------------------------------------
 # utterance -> instant_delta -> tts cycle
 # ---------------------------------------------------------------------------

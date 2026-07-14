@@ -16419,15 +16419,24 @@ async def transcribe_audio_stream_ws(ws: WebSocket) -> None:
                         streaming_session = None
                 await ws.send_json({"type": "ready"})
             elif event_type == "turn":
-                # Parakeet Realtime EOU reports end-of-utterance itself; use its
-                # signal when active and fall back to the pipecat smart-turn
-                # model for the buffered/whisper paths.
-                if streaming_session is not None:
+                # Parakeet reports semantic EOU itself. Moonshine reports a
+                # pause-delimited line completion, which Smart Turn must
+                # classify before it becomes a conversational end-of-turn.
+                if streaming_session is not None and streaming_provider == "parakeet":
                     complete = streaming_session.last_eou
                 else:
                     from tools.semantic_turn import pipecat_smart_turn_complete
 
-                    complete = await asyncio.to_thread(pipecat_smart_turn_complete, chunks, sample_rate)
+                    segment_complete = True
+                    if streaming_session is not None:
+                        consume = getattr(streaming_session, "consume_eou", None)
+                        segment_complete = consume() if callable(consume) else streaming_session.last_eou
+                    if segment_complete and (cfg.get("voice") or {}).get("semantic_turn", True) is not False:
+                        complete = await asyncio.to_thread(pipecat_smart_turn_complete, chunks, sample_rate)
+                        if complete is None:
+                            complete = True
+                    else:
+                        complete = segment_complete
                 await ws.send_json({"type": "turn", "complete": complete})
             elif event_type == "stop":
                 break
@@ -16563,7 +16572,7 @@ async def wake_word_stream_ws(ws: WebSocket) -> None:
 # ---------------------------------------------------------------------------
 
 _DUPLEX_ROLLING_TURNS = 20
-_DUPLEX_BARGE_IN_STREAK_MS = 260.0
+_DUPLEX_BARGE_IN_STREAK_MS = 180.0
 _DUPLEX_UTTERANCE_AUDIO_CAP_CHUNKS = 1000
 # Fallback only -- used when a tts_chunk stream never reports its own
 # sample_rate (shouldn't happen with tools.tts_tool.stream_text_to_speech_chunks,
@@ -17200,10 +17209,10 @@ class _DuplexSession:
 
     Two states:
 
-    - ``listening``: incoming audio feeds the Parakeet STT session; once its
-      realtime-EOU model flags end-of-utterance, the utterance is finalized
-      and handed to the instant lane / escalation pipeline (state flips to
-      ``speaking``).
+    - ``listening``: incoming audio feeds the configured streaming STT session.
+      Parakeet supplies semantic EOU directly; Moonshine line completions are
+      checked by Smart Turn before the utterance is finalized and handed to
+      the instant lane / escalation pipeline (state flips to ``speaking``).
     - ``speaking``: incoming audio instead feeds a VAD gate watching for
       barge-in; sustained speech cancels the in-flight instant/TTS turn,
       emits ``barge_in``, and the triggering audio seeds the next utterance
@@ -17378,8 +17387,9 @@ class _DuplexSession:
 
     def _accept_stt_chunk(self, chunk: bytes) -> Tuple[str, bool, float]:
         partial = self.stt_session.accept_bytes(_duplex_pcm16_to_float32_bytes(chunk))
-        eou = bool(getattr(self.stt_session, "last_eou", False))
         eou_prob = float(getattr(self.stt_session, "last_eou_prob", 0.0) or 0.0)
+        consume = getattr(self.stt_session, "consume_eou", None)
+        eou = bool(consume() if callable(consume) else getattr(self.stt_session, "last_eou", False))
         return partial, eou, eou_prob
 
     async def _feed_stt(self, chunk: bytes) -> None:
@@ -17395,7 +17405,21 @@ class _DuplexSession:
             return
         if partial:
             await self._send({"type": "partial", "text": partial, "eou_prob": eou_prob})
-        if eou:
+        complete = eou
+        if eou and _streaming_stt_provider(self.stt_cfg) == "moonshine":
+            voice_cfg = self.cfg.get("voice") or {}
+            if voice_cfg.get("semantic_turn", True) is not False:
+                from tools.semantic_turn import pipecat_smart_turn_complete
+
+                float_chunks = [_duplex_pcm16_to_float32_bytes(part) for part in self._utterance_audio]
+                smart_turn = await asyncio.to_thread(pipecat_smart_turn_complete, float_chunks, 16000)
+                _log.info(
+                    "Voice duplex Moonshine pause smart-turn complete=%s audio_ms=%d",
+                    smart_turn,
+                    int(sum(len(part) for part in self._utterance_audio) / 2 / 16000 * 1000),
+                )
+                complete = smart_turn is not False
+        if complete:
             await self._finalize_utterance()
 
     async def _finalize_utterance(self) -> None:
@@ -17491,11 +17515,8 @@ class _DuplexSession:
         await self._send({"type": "barge_in"})
         task = self._speaking_task
         if task is not None:
-            try:
-                await task
-            except Exception:
-                pass
             self._speaking_task = None
+            task.add_done_callback(lambda done: None if done.cancelled() else done.exception())
         self._barge_streak_ms = 0.0
         self.vad_gate = None
         self.state = "listening"

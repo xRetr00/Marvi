@@ -561,6 +561,20 @@ class TestStreamInstantReply:
         assert call["conversation_history"] == [{"role": "user", "content": "earlier turn"}]
         assert "speaking out loud" in fake_agent_cls.last_instance.ephemeral_system_prompt
 
+    def test_current_utterance_is_not_duplicated_in_history(self, fake_agent_cls):
+        transcript = vil.RollingTranscript()
+        transcript.add("user", "earlier")
+        transcript.add("assistant", "reply")
+        transcript.add("user", "current")
+
+        list(vil.stream_instant_reply(transcript, "current", cfg={}))
+
+        call = fake_agent_cls.last_instance.calls[0]
+        assert call["conversation_history"] == [
+            {"role": "user", "content": "earlier"},
+            {"role": "assistant", "content": "reply"},
+        ]
+
     def test_constructs_agent_with_capped_toolsets_and_iterations(self, fake_agent_cls):
         list(vil.stream_instant_reply(vil.RollingTranscript(), "hi", cfg={}))
 
@@ -571,6 +585,8 @@ class TestStreamInstantReply:
         assert kwargs["skip_context_files"] is True
         assert kwargs["load_soul_identity"] is True
         assert kwargs["skip_memory"] is True
+        assert fake_agent_cls.last_instance._memory_nudge_interval == 0
+        assert fake_agent_cls.last_instance._skill_nudge_interval == 0
 
     def test_constructs_agent_with_allowed_tool_names_hard_cap(self, fake_agent_cls):
         """Defense in depth: the tool-DEFINITION path is bounded to the same

@@ -92,3 +92,21 @@ def test_moonshine_rejects_fake_cuda_device(monkeypatch):
         moonshine_streaming_stt.MoonshineStreamingSession(
             {"streaming": {"moonshine": {"device": "cuda"}}}
         )
+
+
+def test_moonshine_line_completion_is_consumed_once(monkeypatch):
+    monkeypatch.setattr(moonshine_streaming_stt, "ensure", lambda _feature: None)
+    fake_module = types.SimpleNamespace(
+        ModelArch=FakeModelArch,
+        TranscriptEventListener=FakeListener,
+        Transcriber=FakeTranscriber,
+        get_model_for_language=lambda language, arch: (f"/{language}/model", arch),
+    )
+    monkeypatch.setitem(sys.modules, "moonshine_voice", fake_module)
+
+    session = moonshine_streaming_stt.MoonshineStreamingSession()
+    session.begin()
+    session._listener.on_line_completed(types.SimpleNamespace(line=types.SimpleNamespace(text="done")))
+
+    assert session.consume_eou() is True
+    assert session.consume_eou() is False

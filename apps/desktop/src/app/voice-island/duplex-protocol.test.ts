@@ -27,6 +27,7 @@ describe('parseDuplexServerEvent', () => {
     })
     expect(parseDuplexServerEvent({ type: 'tts_end' })).toEqual({ type: 'tts_end' })
     expect(parseDuplexServerEvent({ type: 'barge_in' })).toEqual({ type: 'barge_in' })
+    expect(parseDuplexServerEvent({ type: 'conversation_end' })).toEqual({ type: 'conversation_end' })
     expect(parseDuplexServerEvent({ type: 'escalated', task_id: 't1', ack_text: 'ack' })).toEqual({
       type: 'escalated',
       task_id: 't1',

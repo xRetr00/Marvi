@@ -326,6 +326,24 @@ describe('DuplexSessionMachine', () => {
       expect(machine.state.deepWork).toBeNull()
     })
 
+    it('tracks concurrent background tasks and clears only the matching result', () => {
+      const machine = new DuplexSessionMachine()
+      machine.applyEvent({ type: 'escalated', ack_text: 'Researching it.', task_id: 'research-1' })
+      machine.applyEvent({
+        type: 'escalated',
+        ack_text: 'Delegating that change.',
+        task_id: 'work-2',
+        mode: 'delegating'
+      })
+
+      expect(machine.state.backgroundTasks.map(task => task.taskId)).toEqual(['research-1', 'work-2'])
+
+      machine.applyEvent({ type: 'deep_result', task_id: 'research-1', text: 'Research finished.' })
+
+      expect(machine.state.backgroundTasks.map(task => task.taskId)).toEqual(['work-2'])
+      expect(machine.state.deepWork?.taskId).toBe('work-2')
+    })
+
     it('deep_result followed by its own TTS cycle plays like any other reply', () => {
       const machine = new DuplexSessionMachine()
       machine.applyEvent({ type: 'escalated', ack_text: 'On it.', task_id: 'task-1' })
@@ -341,7 +359,7 @@ describe('DuplexSessionMachine', () => {
   })
 
   describe('error handling', () => {
-    it('records the error message without throwing and clears any pending deep work', () => {
+    it('records an unattributed error without erasing background work', () => {
       const machine = new DuplexSessionMachine()
       machine.applyEvent({ type: 'escalated', ack_text: 'On it.', task_id: 'task-1' })
 
@@ -349,7 +367,7 @@ describe('DuplexSessionMachine', () => {
 
       expect(commands).toEqual([])
       expect(machine.state.lastError).toBe('instant model unreachable')
-      expect(machine.state.deepWork).toBeNull()
+      expect(machine.state.deepWork?.taskId).toBe('task-1')
     })
   })
 

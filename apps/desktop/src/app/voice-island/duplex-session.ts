@@ -46,6 +46,8 @@ export interface DuplexSessionState {
   replySource: 'deep' | 'instant' | null
   /** Set while a background deep task is outstanding (escalated, no deep_result/error yet). */
   deepWork: DuplexDeepWork | null
+  /** Every background task still running, keyed by its server task id. */
+  backgroundTasks: DuplexDeepWork[]
   activity: DuplexActivity | null
   /** True while Marvi is speaking and a barge-in would be honored. */
   bargeable: boolean
@@ -79,6 +81,7 @@ export const INITIAL_DUPLEX_STATE: DuplexSessionState = {
   replyText: null,
   replySource: null,
   deepWork: null,
+  backgroundTasks: [],
   activity: null,
   bargeable: false,
   lastError: null
@@ -205,17 +208,26 @@ export class DuplexSessionMachine {
 
         return [{ type: 'reset_playback' }]
 
+      case 'conversation_end':
+        this.awaitingPlaybackEnd = false
+        this.patch({ phase: 'closed', bargeable: false })
+
+        return [{ type: 'send_stop' }, { type: 'reset_playback' }]
+
       case 'escalated':
         // The ack is spoken through the normal instant-reply + TTS cycle, so
         // treat it as this turn's reply text while ALSO raising the
         // "thinking deeper" flag for the outstanding background task.
         {
           const mode = event.mode ?? 'thinking'
+          const task = { taskId: event.task_id, ackText: event.ack_text, mode }
+          const backgroundTasks = [...this._state.backgroundTasks.filter(item => item.taskId !== event.task_id), task]
           this.patch({
             phase: 'replying',
             replyText: event.ack_text,
             replySource: 'instant',
-            deepWork: { taskId: event.task_id, ackText: event.ack_text, mode },
+            deepWork: task,
+            backgroundTasks,
             activity: {
               kind: mode === 'delegating' ? 'delegation' : 'thinking',
               label: mode === 'delegating' ? 'Sub-agent is working' : 'Thinking deeper'
@@ -226,28 +238,31 @@ export class DuplexSessionMachine {
         return []
 
       case 'deep_result':
-        // Clear deepWork whenever a result comes back, whether or not its
-        // task_id matches what we had outstanding — the protocol only ever
-        // tracks one escalation's ack client-side, and leaving the
-        // "thinking deeper" indicator stuck on a stale/mismatched id is
-        // worse than clearing it a beat early.
-        this.patch({
-          phase: 'replying',
-          replyText: event.text,
-          replySource: 'deep',
-          deepWork: null,
-          activity: null
-        })
+        {
+          const backgroundTasks = this._state.backgroundTasks.filter(item => item.taskId !== event.task_id)
+          const deepWork = backgroundTasks.at(-1) ?? null
+          this.patch({
+            phase: 'replying',
+            replyText: event.text,
+            replySource: 'deep',
+            deepWork,
+            backgroundTasks,
+            activity: deepWork
+              ? {
+                  kind: deepWork.mode === 'delegating' ? 'delegation' : 'thinking',
+                  label: deepWork.mode === 'delegating' ? 'Sub-agent is working' : 'Thinking deeper'
+                }
+              : null
+          })
+        }
 
         return []
 
       case 'error':
-        // No task_id on `error`, so an escalated-task failure can't be
-        // distinguished from an unrelated one. Clear deepWork defensively:
-        // the alternative (never clearing on error) risks the "thinking
-        // deeper" indicator sticking forever when the failure WAS the deep
-        // task, which is the worse user-facing outcome.
-        this.patch({ lastError: event.error, deepWork: null, activity: null })
+        // The following deep_result carries task identity (including the
+        // server's spoken failure apology), so an unrelated error must not
+        // erase every background task.
+        this.patch({ lastError: event.error })
 
         return []
 

@@ -19,7 +19,7 @@ export interface UseDuplexVoiceResult {
  * keeps rendering off the legacy `$voiceState` IPC push; this hook never reads
  * or writes that store.
  */
-export function useDuplexVoice(enabled: boolean): UseDuplexVoiceResult {
+export function useDuplexVoice(enabled: boolean, onConversationEnd?: () => void): UseDuplexVoiceResult {
   const [state, setState] = useState<DuplexSessionState>(INITIAL_DUPLEX_STATE)
   const [available, setAvailable] = useState(false)
   const [status, setStatus] = useState<UseDuplexVoiceResult['status']>('idle')
@@ -41,6 +41,7 @@ export function useDuplexVoice(enabled: boolean): UseDuplexVoiceResult {
     let cancelled = false
 
     void connectDuplexVoice({
+      onConversationEnd,
       onLevel: next => {
         if (!cancelled) {
           setLevel(next)
@@ -61,7 +62,6 @@ export function useDuplexVoice(enabled: boolean): UseDuplexVoiceResult {
           return
         }
 
-         
         console.debug('[voice-island] duplex voice unavailable, using legacy voice flow:', reason)
         setAvailable(false)
         setStatus('unavailable')
@@ -83,7 +83,7 @@ export function useDuplexVoice(enabled: boolean): UseDuplexVoiceResult {
       controllerRef.current?.stop()
       controllerRef.current = null
     }
-  }, [enabled])
+  }, [enabled, onConversationEnd])
 
   return { available, level, state, status }
 }

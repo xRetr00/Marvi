@@ -266,17 +266,7 @@ export const ENUM_OPTIONS: Record<string, string[]> = {
   // Text-to-speech backends — kept in sync with the built-in source of truth
   // (agent/tts_registry.py::_BUILTIN_NAMES / tools/tts_tool.py::
   // BUILTIN_TTS_PROVIDERS). 'xai' is Grok TTS.
-  'tts.provider': [
-    'edge',
-    'elevenlabs',
-    'openai',
-    'xai',
-    'minimax',
-    'mistral',
-    'gemini',
-    'piper',
-    'pockettts'
-  ],
+  'tts.provider': ['edge', 'elevenlabs', 'openai', 'xai', 'minimax', 'mistral', 'gemini', 'piper', 'pockettts'],
   'stt.openai.model': ['whisper-1', 'gpt-4o-mini-transcribe', 'gpt-4o-transcribe'],
   'stt.mistral.model': ['voxtral-mini-latest', 'voxtral-mini-2602'],
   'tts.openai.model': ['gpt-4o-mini-tts', 'tts-1', 'tts-1-hd'],
@@ -369,6 +359,7 @@ export const FIELD_LABELS: Record<string, string> = defineFieldCopy({
     autoTts: 'Read Responses Aloud',
     semanticTurn: 'Smart Turn',
     smartTurnVadFallbackMs: 'Smart Turn VAD Fallback',
+    turnVadHardStopMs: 'Listening VAD Hard Stop',
     bargeIn: 'Barge-In',
     wakeWord: {
       enabled: 'Wake Word',
@@ -543,6 +534,8 @@ export const FIELD_DESCRIPTIONS: Record<string, string> = defineFieldCopy({
     semanticTurn: 'Use Pipecat Smart Turn when available to avoid cutting off unfinished speech after VAD silence.',
     smartTurnVadFallbackMs:
       'After Smart Turn says speech is unfinished, let TEN VAD finish the turn after this many milliseconds of continued silence.',
+    turnVadHardStopMs:
+      'Finalize after this much TEN VAD silence when Moonshine never emits an endpoint, preventing a stuck Listening state.',
     bargeIn: 'Allow sustained user speech to interrupt hands-free TTS playback.',
     wakeWord: {
       enabled: 'Listen for a local wake phrase and submit one spoken command, then return to wake-only mode.',
@@ -551,7 +544,8 @@ export const FIELD_DESCRIPTIONS: Record<string, string> = defineFieldCopy({
       phrases: 'Phrases and common Marvi misrecognitions that can wake the one-shot command pipeline.',
       threshold: 'Higher values reduce false wakes but may miss valid wake phrases.',
       boost: 'Keyword score boost. Increase only if valid wake phrases are missed.',
-      debug: 'Write extra wake-word tuning logs for frames, energy, starts, and detections. Leave off unless diagnosing missed wakes.',
+      debug:
+        'Write extra wake-word tuning logs for frames, energy, starts, and detections. Leave off unless diagnosing missed wakes.',
       commandTimeoutMs: 'Maximum time to keep listening for the command after the wake phrase.',
       cooldownMs: 'Delay before wake listening arms again after one command finishes.'
     },
@@ -590,7 +584,8 @@ export const FIELD_DESCRIPTIONS: Record<string, string> = defineFieldCopy({
       moonshine: {
         device: 'Auto currently resolves to CPU. Moonshine Voice does not expose CUDA execution.',
         language: 'Two-letter language code for the locally cached Moonshine model.',
-        model: 'CPU streaming architecture; larger models trade memory and latency for accuracy. Moonshine does not currently provide CUDA execution.'
+        model:
+          'CPU streaming architecture; larger models trade memory and latency for accuracy. Moonshine does not currently provide CUDA execution.'
       }
     },
     elevenlabs: {
@@ -723,6 +718,7 @@ export const SECTIONS: DesktopConfigSection[] = [
       'voice.max_recording_seconds',
       'voice.semantic_turn',
       'voice.smart_turn_vad_fallback_ms',
+      'voice.turn_vad_hard_stop_ms',
       'voice.barge_in',
       'voice.escalation.enabled',
       'auxiliary.voice_instant.max_tokens'

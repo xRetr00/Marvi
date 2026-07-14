@@ -431,6 +431,53 @@ def test_ten_vad_finishes_after_smart_turn_rejects_and_silence_continues(monkeyp
     asyncio.run(run())
 
 
+def test_ten_vad_hard_stop_finishes_when_moonshine_never_emits_eou():
+    async def run():
+        class FakeWs:
+            async def send_json(self, _payload):
+                return None
+
+        session = web_server._DuplexSession(
+            FakeWs(),
+            {
+                "stt": {"streaming": {"provider": "moonshine"}},
+                "voice": {"semantic_turn": True, "turn_vad_hard_stop_ms": 1000},
+            },
+        )
+        session.stt_session = FakeSttSession()
+        session.turn_vad_gate = FakeVadGate()
+        session._turn_speech_started = True
+        session._last_turn_speech_at = time.monotonic() - 2.0
+        finalized = 0
+
+        async def finalize():
+            nonlocal finalized
+            finalized += 1
+
+        session._finalize_utterance = finalize
+        await session._feed_stt(_pcm16_chunk())
+
+        assert finalized == 1
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("text", ["", "um", "hmm", "cough", "breathing noise"])
+def test_barge_in_rejects_noise_and_fillers(text):
+    assert web_server._duplex_meaningful_barge_text(text) is False
+
+
+@pytest.mark.parametrize("text", ["stop", "wait", "actually", "I need", "change that"])
+def test_barge_in_accepts_control_words_and_real_phrases(text):
+    assert web_server._duplex_meaningful_barge_text(text) is True
+
+
+def test_barge_in_rejects_assistant_echo():
+    assert web_server._duplex_meaningful_barge_text(
+        "the weather is sunny", "Today the weather is sunny and warm."
+    ) is False
+
+
 def test_playback_done_is_the_server_listening_boundary():
     async def run():
         class FakeWs:
@@ -511,6 +558,51 @@ def test_utterance_instant_delta_tts_cycle(duplex_client, full_fakes):
 
     # STT was re-armed for the next utterance immediately after finishing.
     assert stt.begin_count >= 2
+
+
+def test_show_card_is_delivered_over_the_shared_duplex_path(duplex_client, full_fakes):
+    full_fakes["instant"]["activity"] = {
+        "kind": "card",
+        "label": "Showing a card",
+        "tool": "show_card",
+        "card": {
+            "title": "Weather",
+            "body": "Sunny, 25°C",
+            "kind": "result",
+            "duration_ms": 5000,
+        },
+    }
+    stt = full_fakes["stt"]
+    stt.queue_response("", True)
+    stt.final_text = "show me the weather"
+
+    with duplex_client.websocket_connect(_duplex_url()) as conn:
+        conn.receive_json()  # ready
+        conn.send_json(_audio_msg(_pcm16_chunk()))
+        card = _recv_until(conn, "card_show")
+
+    assert card["card"] | {"id": "ignored"} == {
+        "id": "ignored",
+        "kind": "result",
+        "title": "Weather",
+        "body": "Sunny, 25°C",
+        "duration": 5000,
+    }
+
+
+def test_voice_model_can_end_conversation_after_spoken_goodbye(duplex_client, full_fakes):
+    full_fakes["instant"]["deltas"] = ["[END_", "VOICE] Talk soon."]
+    stt = full_fakes["stt"]
+    stt.queue_response("", True)
+    stt.final_text = "end voice mode"
+
+    with duplex_client.websocket_connect(_duplex_url()) as conn:
+        conn.receive_json()  # ready
+        conn.send_json(_audio_msg(_pcm16_chunk()))
+        _recv_until(conn, "utterance")
+        _finish_playback(conn, timeout=10.0)
+
+        assert _recv_until(conn, "conversation_end", timeout=10.0) == {"type": "conversation_end"}
 
 
 def test_tts_start_reports_actual_backend_sample_rate(duplex_client, full_fakes, monkeypatch):
@@ -624,7 +716,9 @@ def test_deep_worker_mode_gets_execution_tools_and_verification_prompt(monkeypat
         "load_config",
         lambda: {
             "model": {
-                "default": "deepseek-v4-flash",
+                # Some existing profiles store this under `model` rather than
+                # `default`; delegation must not send an empty model slug.
+                "model": "deepseek-v4-flash",
                 "provider": "opencode-go",
                 "base_url": "https://opencode.ai/zen/go/v1",
                 "api_mode": "chat_completions",
@@ -851,6 +945,7 @@ def test_barge_in_cancels_tts_and_instant_stream(duplex_client, full_fakes):
         # Flip the VAD gate to "speaking" and feed enough chunks to cross
         # the sustained-speech threshold (_DUPLEX_BARGE_IN_STREAK_MS).
         full_fakes["vad"].speaking = True
+        stt.queue_response("wait stop", False)
         for _ in range(30):
             conn.send_json(_audio_msg(_pcm16_chunk()))
 
@@ -1239,6 +1334,7 @@ def test_barge_in_drops_queued_but_unemitted_sentences(
         # Trigger barge-in after first playback starts but while the remaining
         # sentences are blocked/queued and must never be emitted.
         vad_gate.speaking = True
+        stt_session.queue_response("wait stop", False)
         for _ in range(30):
             conn.send_json(_audio_msg(_pcm16_chunk()))
         barge_in = _recv_until(conn, "barge_in", timeout=10.0)

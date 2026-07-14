@@ -61,7 +61,9 @@ class TestSubconsciousEndpoints:
         mock_enable.assert_called_once_with("30m")
 
     def test_enable_without_interval_passes_none(self, client):
-        with patch("cron.subconscious.enable", return_value={"enabled": True}) as mock_enable:
+        with patch(
+            "cron.subconscious.enable", return_value={"enabled": True}
+        ) as mock_enable:
             resp = client.post("/api/subconscious/enable", json={})
 
         assert resp.status_code == 200
@@ -78,10 +80,19 @@ class TestSubconsciousEndpoints:
         assert "Traceback" not in body["detail"]
 
     def test_disable_calls_cron_subconscious_disable(self, client):
-        fake_status = {"enabled": False, "interval": "20m", "idle_trigger_minutes": 15,
-                        "tiers": {}, "job_id": "job-1", "job_state": "paused",
-                        "last_run_at": None, "next_run_at": None}
-        with patch("cron.subconscious.disable", return_value=fake_status) as mock_disable:
+        fake_status = {
+            "enabled": False,
+            "interval": "20m",
+            "idle_trigger_minutes": 15,
+            "tiers": {},
+            "job_id": "job-1",
+            "job_state": "paused",
+            "last_run_at": None,
+            "next_run_at": None,
+        }
+        with patch(
+            "cron.subconscious.disable", return_value=fake_status
+        ) as mock_disable:
             resp = client.post("/api/subconscious/disable")
 
         assert resp.status_code == 200
@@ -102,13 +113,17 @@ class TestComposioEndpoints:
     def test_setup_stores_secret_and_enables_connect_mcp(self, client):
         from hermes_cli.config import get_env_value, load_config, read_raw_config
 
-        response = client.post("/api/composio/setup", json={"api_key": "secret-key"})
+        response = client.post(
+            "/api/composio/setup",
+            json={"api_key": "sdk-key", "consumer_api_key": "mcp-key"},
+        )
         assert response.status_code == 200
         config = load_config()
-        assert get_env_value("COMPOSIO_API_KEY") == "secret-key"
+        assert get_env_value("COMPOSIO_API_KEY") == "sdk-key"
+        assert get_env_value("COMPOSIO_CONSUMER_API_KEY") == "mcp-key"
         assert "api_key" not in (config.get("composio") or {})
         assert read_raw_config()["mcp_servers"]["composio"]["headers"] == {
-            "x-consumer-api-key": "${COMPOSIO_API_KEY}"
+            "x-consumer-api-key": "${COMPOSIO_CONSUMER_API_KEY}"
         }
 
     def test_status_migrates_legacy_plaintext_key(self, client):
@@ -120,11 +135,14 @@ class TestComposioEndpoints:
         config = load_config()
         assert get_env_value("COMPOSIO_API_KEY") == "legacy"
         assert "api_key" not in config["composio"]
-        assert response.json()["mcp_enabled"] is True
+        assert response.json()["sdk_configured"] is True
+        assert response.json()["mcp_enabled"] is False
         assert response.json()["legacy_key_present"] is False
 
     def test_snapshot_surfaces_are_validated_and_saved(self, client):
-        response = client.put("/api/composio/snapshots", json={"surfaces": ["gmail", "slack"]})
+        response = client.put(
+            "/api/composio/snapshots", json={"surfaces": ["gmail", "slack"]}
+        )
         assert response.status_code == 200
         assert response.json()["snapshot_surfaces"] == ["gmail", "slack"]
 
@@ -132,7 +150,12 @@ class TestComposioEndpoints:
         assert rejected.status_code == 400
 
     def test_toolkit_catalog_response_is_forwarded(self, client):
-        fake = {"toolkits": [{"slug": "gmail", "name": "Gmail", "description": "", "categories": []}], "total": 1}
+        fake = {
+            "toolkits": [
+                {"slug": "gmail", "name": "Gmail", "description": "", "categories": []}
+            ],
+            "total": 1,
+        }
         with patch("hermes_cli.web_server._composio_toolkits_sync", return_value=fake):
             response = client.get("/api/composio/toolkits?search=gmail")
         assert response.status_code == 200
@@ -141,9 +164,16 @@ class TestComposioEndpoints:
 
 class TestSubconsciousStatusEndpoints:
     def test_status_calls_cron_subconscious_status(self, client):
-        fake_status = {"enabled": True, "interval": "20m", "idle_trigger_minutes": 15,
-                        "tiers": {"email": "notify"}, "job_id": "job-1", "job_state": "active",
-                        "last_run_at": 1.0, "next_run_at": 2.0}
+        fake_status = {
+            "enabled": True,
+            "interval": "20m",
+            "idle_trigger_minutes": 15,
+            "tiers": {"email": "notify"},
+            "job_id": "job-1",
+            "job_state": "active",
+            "last_run_at": 1.0,
+            "next_run_at": 2.0,
+        }
         with patch("cron.subconscious.status", return_value=fake_status) as mock_status:
             resp = client.get("/api/subconscious/status")
 
@@ -176,7 +206,9 @@ class TestPresenceEndpoints:
             "job_message": "presence distiller job created (id=job-1, schedule=0 3 * * *)",
             "enabled": True,
         }
-        with patch("hermes_cli.presence_cmd.setup_presence", return_value=fake_result) as mock_setup:
+        with patch(
+            "hermes_cli.presence_cmd.setup_presence", return_value=fake_result
+        ) as mock_setup:
             resp = client.post("/api/presence/setup")
 
         assert resp.status_code == 200
@@ -207,15 +239,23 @@ class TestPresenceEndpoints:
         assert data["job_ok"] is False
 
     def test_setup_failure_returns_structured_500(self, client):
-        with patch("hermes_cli.presence_cmd.setup_presence", side_effect=RuntimeError("boom")):
+        with patch(
+            "hermes_cli.presence_cmd.setup_presence", side_effect=RuntimeError("boom")
+        ):
             resp = client.post("/api/presence/setup")
 
         assert resp.status_code == 500
         assert "boom" not in resp.json()["detail"]
 
     def test_pause_reflects_underlying_ok(self, client):
-        with patch("hermes_cli.presence_cmd.pause_presence",
-                    return_value={"ok": True, "message": "media watcher stopped (pid 1)", "enabled": False}) as mock_pause:
+        with patch(
+            "hermes_cli.presence_cmd.pause_presence",
+            return_value={
+                "ok": True,
+                "message": "media watcher stopped (pid 1)",
+                "enabled": False,
+            },
+        ) as mock_pause:
             resp = client.post("/api/presence/pause")
 
         assert resp.status_code == 200
@@ -225,15 +265,23 @@ class TestPresenceEndpoints:
         mock_pause.assert_called_once_with()
 
     def test_pause_failure_returns_structured_500(self, client):
-        with patch("hermes_cli.presence_cmd.pause_presence", side_effect=RuntimeError("boom")):
+        with patch(
+            "hermes_cli.presence_cmd.pause_presence", side_effect=RuntimeError("boom")
+        ):
             resp = client.post("/api/presence/pause")
 
         assert resp.status_code == 500
         assert "boom" not in resp.json()["detail"]
 
     def test_resume_reflects_underlying_ok(self, client):
-        with patch("hermes_cli.presence_cmd.resume_presence",
-                    return_value={"ok": False, "message": "failed to start media watcher: boom", "enabled": True}) as mock_resume:
+        with patch(
+            "hermes_cli.presence_cmd.resume_presence",
+            return_value={
+                "ok": False,
+                "message": "failed to start media watcher: boom",
+                "enabled": True,
+            },
+        ) as mock_resume:
             resp = client.post("/api/presence/resume")
 
         assert resp.status_code == 200
@@ -242,7 +290,9 @@ class TestPresenceEndpoints:
         mock_resume.assert_called_once_with()
 
     def test_resume_failure_returns_structured_500(self, client):
-        with patch("hermes_cli.presence_cmd.resume_presence", side_effect=RuntimeError("boom")):
+        with patch(
+            "hermes_cli.presence_cmd.resume_presence", side_effect=RuntimeError("boom")
+        ):
             resp = client.post("/api/presence/resume")
 
         assert resp.status_code == 500
@@ -250,13 +300,24 @@ class TestPresenceEndpoints:
 
     def test_status_calls_get_presence_status(self, client):
         fake_status = {
-            "config": {"enabled": True, "flow_gating": True, "goblin": {}, "denylist": []},
+            "config": {
+                "enabled": True,
+                "flow_gating": True,
+                "goblin": {},
+                "denylist": [],
+            },
             "activitywatch_reachable": True,
             "is_windows": True,
             "watcher_pid": 123,
-            "distill_job": {"id": "job-1", "schedule_display": "0 3 * * *", "enabled": True},
+            "distill_job": {
+                "id": "job-1",
+                "schedule_display": "0 3 * * *",
+                "enabled": True,
+            },
         }
-        with patch("hermes_cli.presence_cmd.get_presence_status", return_value=fake_status) as mock_status:
+        with patch(
+            "hermes_cli.presence_cmd.get_presence_status", return_value=fake_status
+        ) as mock_status:
             resp = client.get("/api/presence/status")
 
         assert resp.status_code == 200
@@ -267,7 +328,10 @@ class TestPresenceEndpoints:
         mock_status.assert_called_once_with()
 
     def test_status_failure_returns_structured_500(self, client):
-        with patch("hermes_cli.presence_cmd.get_presence_status", side_effect=RuntimeError("boom")):
+        with patch(
+            "hermes_cli.presence_cmd.get_presence_status",
+            side_effect=RuntimeError("boom"),
+        ):
             resp = client.get("/api/presence/status")
 
         assert resp.status_code == 500
@@ -294,7 +358,9 @@ class TestMarviKnowledgeEndpoint:
 
         mem_dir = get_hermes_home() / "memories"
         mem_dir.mkdir(parents=True, exist_ok=True)
-        (mem_dir / "USER.md").write_text("Prefers dark mode\n§\nWorks late nights", encoding="utf-8")
+        (mem_dir / "USER.md").write_text(
+            "Prefers dark mode\n§\nWorks late nights", encoding="utf-8"
+        )
         (mem_dir / "MEMORY.md").write_text("Project uses pytest", encoding="utf-8")
 
         resp = client.get("/api/marvi/knowledge")
@@ -303,7 +369,11 @@ class TestMarviKnowledgeEndpoint:
         data = resp.json()
         assert data["ok"] is True
         texts = {e["text"] for e in data["entries"]}
-        assert texts == {"Prefers dark mode", "Works late nights", "Project uses pytest"}
+        assert texts == {
+            "Prefers dark mode",
+            "Works late nights",
+            "Project uses pytest",
+        }
 
         by_text = {e["text"]: e for e in data["entries"]}
         assert by_text["Prefers dark mode"]["source"] == "presence"
@@ -318,7 +388,9 @@ class TestMarviKnowledgeEndpoint:
 
         mem_dir = get_hermes_home() / "memories"
         mem_dir.mkdir(parents=True, exist_ok=True)
-        (mem_dir / "USER.md").write_text("first entry\n§\nsecond entry\n§\nthird entry", encoding="utf-8")
+        (mem_dir / "USER.md").write_text(
+            "first entry\n§\nsecond entry\n§\nthird entry", encoding="utf-8"
+        )
 
         resp = client.get("/api/marvi/knowledge")
         data = resp.json()
@@ -333,7 +405,9 @@ class TestMarviKnowledgeEndpoint:
         mem_dir = get_hermes_home() / "memories"
         mem_dir.mkdir(parents=True, exist_ok=True)
         entries = [f"entry {i}" for i in range(150)]
-        (mem_dir / "MEMORY.md").write_text(ENTRY_DELIMITER.join(entries), encoding="utf-8")
+        (mem_dir / "MEMORY.md").write_text(
+            ENTRY_DELIMITER.join(entries), encoding="utf-8"
+        )
 
         resp = client.get("/api/marvi/knowledge")
         data = resp.json()
@@ -341,7 +415,10 @@ class TestMarviKnowledgeEndpoint:
         assert len(data["entries"]) == 100
 
     def test_failure_returns_structured_500(self, client):
-        with patch("hermes_cli.web_server._read_marvi_knowledge_entries", side_effect=RuntimeError("boom")):
+        with patch(
+            "hermes_cli.web_server._read_marvi_knowledge_entries",
+            side_effect=RuntimeError("boom"),
+        ):
             resp = client.get("/api/marvi/knowledge")
 
         assert resp.status_code == 500
@@ -372,7 +449,10 @@ class TestSubconsciousActivityEndpoint:
         assert "note" in data and data["note"]
 
     def test_falls_back_to_cron_store_last_run_when_no_log(self, client):
-        with patch("cron.subconscious.status", return_value={"last_run_at": "2026-07-13T12:00:00+00:00"}):
+        with patch(
+            "cron.subconscious.status",
+            return_value={"last_run_at": "2026-07-13T12:00:00+00:00"},
+        ):
             resp = client.get("/api/subconscious/activity")
 
         data = resp.json()
@@ -386,11 +466,28 @@ class TestSubconsciousActivityEndpoint:
         path = self._activity_path()
         path.parent.mkdir(parents=True, exist_ok=True)
         lines = [
-            {"at": "2026-07-13T10:00:00", "job_id": "j1", "outcome": "no_change", "summary": None},
-            {"at": "2026-07-13T10:20:00", "job_id": "j1", "outcome": "message", "summary": "Told you about X"},
-            {"at": "2026-07-13T10:40:00", "job_id": "j1", "outcome": "error", "summary": "boom"},
+            {
+                "at": "2026-07-13T10:00:00",
+                "job_id": "j1",
+                "outcome": "no_change",
+                "summary": None,
+            },
+            {
+                "at": "2026-07-13T10:20:00",
+                "job_id": "j1",
+                "outcome": "message",
+                "summary": "Told you about X",
+            },
+            {
+                "at": "2026-07-13T10:40:00",
+                "job_id": "j1",
+                "outcome": "error",
+                "summary": "boom",
+            },
         ]
-        path.write_text("\n".join(json.dumps(r) for r in lines) + "\n", encoding="utf-8")
+        path.write_text(
+            "\n".join(json.dumps(r) for r in lines) + "\n", encoding="utf-8"
+        )
 
         resp = client.get("/api/subconscious/activity")
 
@@ -426,14 +523,25 @@ class TestSubconsciousActivityEndpoint:
         assert run["source"] == "distiller"
         assert run["diff"] == "App usage since last check:\n  - vscode: 2h"
         assert run["thought"] == "Noted: you spent 2h in vscode on hermes-agent today."
-        assert run["output_path"] == "/home/user/.hermes/cron/output/job-distiller/2026-07-13_10-00-00.md"
+        assert (
+            run["output_path"]
+            == "/home/user/.hermes/cron/output/job-distiller/2026-07-13_10-00-00.md"
+        )
 
     def test_defaults_source_to_tick_for_legacy_lines_without_it(self, client):
         """A line written before the `source` field existed should still
         read back sensibly rather than surfacing null."""
         path = self._activity_path()
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps({"at": "2026-07-13T10:00:00", "job_id": "j1", "outcome": "no_change"}) + "\n", encoding="utf-8")
+        path.write_text(
+            json.dumps({
+                "at": "2026-07-13T10:00:00",
+                "job_id": "j1",
+                "outcome": "no_change",
+            })
+            + "\n",
+            encoding="utf-8",
+        )
 
         resp = client.get("/api/subconscious/activity")
 
@@ -442,8 +550,13 @@ class TestSubconsciousActivityEndpoint:
     def test_respects_limit_param(self, client):
         path = self._activity_path()
         path.parent.mkdir(parents=True, exist_ok=True)
-        lines = [{"at": f"2026-07-13T10:0{i}:00", "job_id": "j1", "outcome": "no_change"} for i in range(5)]
-        path.write_text("\n".join(json.dumps(r) for r in lines) + "\n", encoding="utf-8")
+        lines = [
+            {"at": f"2026-07-13T10:0{i}:00", "job_id": "j1", "outcome": "no_change"}
+            for i in range(5)
+        ]
+        path.write_text(
+            "\n".join(json.dumps(r) for r in lines) + "\n", encoding="utf-8"
+        )
 
         resp = client.get("/api/subconscious/activity?limit=2")
 
@@ -455,7 +568,11 @@ class TestSubconsciousActivityEndpoint:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(
             "not json at all\n"
-            + json.dumps({"at": "2026-07-13T10:00:00", "job_id": "j1", "outcome": "no_change"})
+            + json.dumps({
+                "at": "2026-07-13T10:00:00",
+                "job_id": "j1",
+                "outcome": "no_change",
+            })
             + "\n",
             encoding="utf-8",
         )
@@ -467,7 +584,10 @@ class TestSubconsciousActivityEndpoint:
         assert data["runs"][0]["outcome"] == "no_change"
 
     def test_failure_returns_structured_500(self, client):
-        with patch("hermes_cli.web_server._read_subconscious_activity_sync", side_effect=RuntimeError("boom")):
+        with patch(
+            "hermes_cli.web_server._read_subconscious_activity_sync",
+            side_effect=RuntimeError("boom"),
+        ):
             resp = client.get("/api/subconscious/activity")
 
         assert resp.status_code == 500
@@ -516,7 +636,9 @@ class TestSubconsciousSurfacesEndpoint:
         save_config(config)
 
         store = open_store("github")
-        store.record_failure("401 Unauthorized: token expired for real this time round the loop")
+        store.record_failure(
+            "401 Unauthorized: token expired for real this time round the loop"
+        )
         store.save()
 
         resp = client.get("/api/subconscious/surfaces")
@@ -530,7 +652,10 @@ class TestSubconsciousSurfacesEndpoint:
         assert surface["next_retry_at"]
 
     def test_failure_returns_structured_500(self, client):
-        with patch("hermes_cli.web_server._read_subconscious_surfaces_sync", side_effect=RuntimeError("boom")):
+        with patch(
+            "hermes_cli.web_server._read_subconscious_surfaces_sync",
+            side_effect=RuntimeError("boom"),
+        ):
             resp = client.get("/api/subconscious/surfaces")
 
         assert resp.status_code == 500
@@ -626,14 +751,20 @@ class TestSubconsciousSuggestionsEndpoints:
         assert resp.status_code == 404
 
     def test_accept_failure_returns_structured_500(self, client):
-        with patch("hermes_cli.web_server._accept_subconscious_suggestion_sync", side_effect=RuntimeError("boom")):
+        with patch(
+            "hermes_cli.web_server._accept_subconscious_suggestion_sync",
+            side_effect=RuntimeError("boom"),
+        ):
             resp = client.post("/api/subconscious/suggestions/x/accept")
 
         assert resp.status_code == 500
         assert "boom" not in resp.json()["detail"]
 
     def test_dismiss_failure_returns_structured_500(self, client):
-        with patch("hermes_cli.web_server._dismiss_subconscious_suggestion_sync", side_effect=RuntimeError("boom")):
+        with patch(
+            "hermes_cli.web_server._dismiss_subconscious_suggestion_sync",
+            side_effect=RuntimeError("boom"),
+        ):
             resp = client.post("/api/subconscious/suggestions/x/dismiss")
 
         assert resp.status_code == 500
@@ -666,7 +797,10 @@ class TestMindNarrativeHistoryEndpoint:
         assert resp.status_code == 200
         data = resp.json()
         assert data["ok"] is True
-        assert [entry["text"] for entry in data["narrative_history"]] == ["second", "first"]
+        assert [entry["text"] for entry in data["narrative_history"]] == [
+            "second",
+            "first",
+        ]
         assert data["narrative"] == "third"
 
     def test_history_flag_empty_on_cold_start(self, client):
@@ -676,7 +810,9 @@ class TestMindNarrativeHistoryEndpoint:
         assert resp.json()["narrative_history"] == []
 
     def test_failure_returns_structured_500(self, client):
-        with patch("hermes_cli.web_server._mind_state_sync", side_effect=RuntimeError("boom")):
+        with patch(
+            "hermes_cli.web_server._mind_state_sync", side_effect=RuntimeError("boom")
+        ):
             resp = client.get("/api/mind?history=1")
 
         assert resp.status_code == 500
@@ -707,7 +843,9 @@ class TestBrainStatusEndpoint:
         folder.mkdir()
         (folder / "note.txt").write_text("hello brain", encoding="utf-8")
 
-        put_resp = client.put("/api/brain/config", json={"enabled": True, "folders": [str(folder)]})
+        put_resp = client.put(
+            "/api/brain/config", json={"enabled": True, "folders": [str(folder)]}
+        )
         assert put_resp.status_code == 200
 
         index_resp = client.post("/api/brain/index")
@@ -722,7 +860,9 @@ class TestBrainStatusEndpoint:
         assert data["last_run"]["at"]
 
     def test_failure_returns_structured_500(self, client):
-        with patch("hermes_cli.web_server._brain_status_sync", side_effect=RuntimeError("boom")):
+        with patch(
+            "hermes_cli.web_server._brain_status_sync", side_effect=RuntimeError("boom")
+        ):
             resp = client.get("/api/brain/status")
 
         assert resp.status_code == 500
@@ -757,7 +897,9 @@ class TestBrainConfigEndpoint:
         folder = tmp_path / "real"
         folder.mkdir()
 
-        resp = client.put("/api/brain/config", json={"enabled": True, "folders": [str(folder)]})
+        resp = client.put(
+            "/api/brain/config", json={"enabled": True, "folders": [str(folder)]}
+        )
 
         assert resp.status_code == 200
         data = resp.json()
@@ -767,7 +909,9 @@ class TestBrainConfigEndpoint:
     def test_disable_pauses_job_without_error(self, client, tmp_path):
         folder = tmp_path / "real"
         folder.mkdir()
-        client.put("/api/brain/config", json={"enabled": True, "folders": [str(folder)]})
+        client.put(
+            "/api/brain/config", json={"enabled": True, "folders": [str(folder)]}
+        )
 
         resp = client.put("/api/brain/config", json={"enabled": False})
 
@@ -792,7 +936,9 @@ class TestBrainSearchAndIndexEndpoints:
         assert data["results"] == []
 
     def test_search_failure_returns_structured_500(self, client):
-        with patch("tools.brain.store.BrainStore.search", side_effect=RuntimeError("boom")):
+        with patch(
+            "tools.brain.store.BrainStore.search", side_effect=RuntimeError("boom")
+        ):
             resp = client.get("/api/brain/search", params={"q": "x"})
 
         assert resp.status_code == 500
@@ -807,7 +953,10 @@ class TestBrainSearchAndIndexEndpoints:
         assert data["indexed"] == 0
 
     def test_index_failure_returns_structured_500(self, client):
-        with patch("tools.brain.indexer.index_configured_folders", side_effect=RuntimeError("boom")):
+        with patch(
+            "tools.brain.indexer.index_configured_folders",
+            side_effect=RuntimeError("boom"),
+        ):
             resp = client.post("/api/brain/index")
 
         assert resp.status_code == 500

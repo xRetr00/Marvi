@@ -11,6 +11,7 @@ No test here imports (or installs) the real ``composio`` package --
 from __future__ import annotations
 
 import builtins
+from types import SimpleNamespace
 
 import pytest
 
@@ -167,6 +168,21 @@ class TestInstallHint:
         monkeypatch.setattr(_builtins, "__import__", fake_import)
         hint = composio_client_mod.install_hint()
         assert "composio==0.17.1" in hint
+
+
+def test_verify_auth_retries_sdk_without_removed_user_id_kwarg():
+    calls = []
+
+    class ConnectedAccounts:
+        def list(self):
+            calls.append("listed")
+            return []
+
+    client = composio_client_mod.ComposioClient("valid-key")
+    client._sdk_client = SimpleNamespace(connected_accounts=ConnectedAccounts())
+
+    assert client.verify_auth() is True
+    assert calls == ["listed"]
 
 
 def test_lazy_deps_allowlist_registers_composio():

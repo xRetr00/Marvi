@@ -28,6 +28,8 @@ export interface DuplexConnectOptions {
    * retries on its own.
    */
   onUnavailable: (reason: string) => void
+  /** Fires after Marvi has spoken a model-requested voice-session goodbye. */
+  onConversationEnd?: () => void
 
   // Test seams — production callers rely on the defaults below.
   getConnection?: () => Promise<DuplexGatewayConnection | null>
@@ -225,6 +227,22 @@ export async function connectDuplexVoice(options: DuplexConnectOptions): Promise
     const wasReady = machine.state.phase !== 'connecting'
     runCommands(machine.applyRawEvent(payload))
     emitState()
+
+    if (typeof payload === 'object' && payload !== null && 'type' in payload && payload.type === 'conversation_end') {
+      stopped = true
+      mic?.stop()
+      mic = null
+      player.destroy()
+      options.onConversationEnd?.()
+
+      try {
+        ws.close()
+      } catch {
+        // already closing/closed
+      }
+
+      return
+    }
 
     // Start capturing the mic on the transition INTO 'listening' from
     // 'connecting' (i.e. the first `ready`), not on every subsequent

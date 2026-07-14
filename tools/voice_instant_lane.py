@@ -3,18 +3,16 @@
 Every finalized utterance in the ``/api/voice/duplex`` loop (see
 ``hermes_cli/web_server.py`` and
 ``docs/superpowers/specs/2026-07-10-marvi-duplex-voice-splitbrain-design.md``)
-goes to a small, fast model first: the "instant lane". It keeps the normal
-SOUL.md identity but deliberately skips project context and the heavyweight
-general agent prompt. Bounded memory/profile/skill metadata loads in the
-background after first audio begins and is cached for later turns. A voice-mode
-addendum instructs short spoken replies,
-or -- when the ask needs more than a quick read/search or a tool outside its
-whitelist -- to emit an ``[ESCALATE]`` marker instead, handing the turn to a
+goes to a small, fast model first: the "instant lane". It gets the same stable
+identity, context, capability prompt, and configured tool schemas as the normal
+agent. Bounded personal context is also warmed in the background for later
+turns. A voice-mode addendum instructs short spoken replies or -- when work
+would make the live reply too slow -- to emit an ``[ESCALATE]`` marker instead, handing the turn to a
 separate, fully tool-armed deep-task agent in the background
 (``hermes_cli.web_server._duplex_run_deep_task``).
 
-The instant lane is a real, tool-capable agent turn, capped hard for voice
-latency and kept separate from the full deep-task agent:
+The instant lane is a real, tool-capable agent turn routed to a low-latency
+model and kept separate from the full deep-task agent:
 
 - **Runtime**: ``auxiliary.voice_instant.{provider,model,base_url,api_key,
   max_tokens}`` -- this repo's established auxiliary-model convention, same
@@ -40,17 +38,13 @@ latency and kept separate from the full deep-task agent:
   :class:`InstantLaneUnavailable` -- the SAME "instant model unreachable"
   path ``hermes_cli.web_server`` already uses to emit one error event and
   route the utterance directly to the escalation deep-task path.
-- **Tools**: a hard-coded, runtime-enforced whitelist
-  (:data:`INSTANT_LANE_TOOL_WHITELIST`) -- fast reads only. Enforced via
-  ``hermes_cli.plugins.set_thread_tool_whitelist``, the SAME mechanism
-  ``agent/background_review.py``'s review fork uses, not just
-  ``enabled_toolsets`` (defense in depth).
-- **Iterations**: capped (:data:`INSTANT_LANE_MAX_ITERATIONS`) to roughly two
-  tool calls before it must answer or escalate.
+- **Tools**: the user's normal configured toolset. The model sees the complete
+  capability surface and decides whether a short operation belongs in the
+  foreground or should be escalated/delegated in the background.
 
 This module owns three things:
 
-1. :func:`stream_instant_reply` -- runs that capped agent turn and streams
+1. :func:`stream_instant_reply` -- runs that agent turn and streams
    its text deltas via ``AIAgent.run_conversation``'s ``stream_callback``
    hook (the same mechanism the existing voice-mode TTS pipeline uses to
    start audio before the full response is ready), bridged from the
@@ -79,39 +73,10 @@ logger = logging.getLogger(__name__)
 
 ESCALATE_MARKER = "[ESCALATE]"
 DELEGATE_MARKER = "[DELEGATE]"
+END_VOICE_MARKER = "[END_VOICE]"
 
 DEFAULT_ROLLING_TURNS = 20
 DEFAULT_MAX_TOKENS = 200
-
-# Runtime-enforced tool whitelist for the instant lane -- bounded foreground actions only.
-# Checked via hermes_cli.plugins.set_thread_tool_whitelist (the same
-# mechanism agent/background_review.py's review fork uses), NOT just
-# enabled_toolsets -- defense in depth regardless of what toolset-level tool
-# definitions the model can see. Explicitly excludes write_file/patch,
-# filesystem search, page extraction, terminal, and delegation.
-INSTANT_LANE_TOOL_WHITELIST = frozenset(
-    {
-        "read_file",
-        "web_search",
-        "memory",
-        "session_search",
-        "recall_files",
-    }
-)
-# Toolset-level gate for tool-definition generation (cache-prefix parity,
-# mirrors background_review.py's enabled_toolsets usage). Deliberately
-# broader than INSTANT_LANE_TOOL_WHITELIST at the toolset level (e.g. "file"
-# also resolves write_file/patch/search_files) -- run_agent.AIAgent's
-# ``allowed_tool_names`` param (passed below in _new_instant_agent) is what
-# actually intersects the resolved set down to the whitelist BEFORE
-# registry.get_definitions() runs any check_fn, so construction never probes
-# a check_fn for a tool this lane can't call anyway. set_thread_tool_whitelist
-# (see stream_instant_reply) remains the real per-CALL enforcement boundary;
-# allowed_tool_names is defense in depth on the tool-DEFINITION path only.
-INSTANT_LANE_TOOLSETS = ["file", "web", "memory", "session_search"]
-# ~2 tool calls (tool call -> result -> tool call -> result) then an answer.
-INSTANT_LANE_MAX_ITERATIONS = 4
-INSTANT_LANE_MAX_TOOL_CALLS = 2
 
 
 # ---------------------------------------------------------------------------
@@ -226,24 +191,21 @@ _VOICE_MODE_ADDENDUM = (
     "- Say numbers and abbreviations the way a person would say them out "
     "loud (e.g. \"twenty-three\" not \"23\", \"as soon as possible\" not "
     "\"ASAP\"), not their written form.\n"
-    "- Available quick tools are web_search, read_file, memory, and session_search. "
-    "Use read_file only for one simple file. Never inspect, search, "
-    "compare, or analyze multiple files in this lane.\n"
-    "- web_search is only for a simple search whose snippets answer the question. "
-    "Fetching/extracting pages, multi-source research, or complex browsing must run in the background.\n"
-    "- memory is only for saving an explicit durable preference/fact; your cached memory is already visible. "
-    "session_search may recall one simple past detail.\n"
-    "- Use at most two quick tool calls before answering.\n"
-    "- You are the fast foreground lane of a larger agent. The background lane has the full Marvi "
-    "capability set: deep reasoning, multi-page web research and page extraction, multi-file reading "
-    "and search, terminal and code execution, memory and session recall, and specialist task work. "
-    "You cannot call those heavier capabilities directly in this foreground lane, but you MUST route "
-    "requests that need them with the marker contract below instead of claiming you cannot do them."
+    "- You have the normal Marvi prompt and all tools enabled by the user's configuration. Never claim "
+    "a capability is unavailable without checking the tool schemas you were given.\n"
+    "- Use a tool directly when the operation is short enough for a live conversation. For research, "
+    "multi-file analysis, long-running execution, or specialist work, keep the conversation responsive "
+    "by using the background marker contract below.\n"
+    "- You decide whether to answer, use a foreground tool, escalate for deeper reasoning/research, or "
+    "delegate actual multi-step work. Do not reduce the user's request just to stay in the instant lane.\n"
+    "- If the user asks to end, stop, close, or leave voice conversation mode, reply with exactly "
+    f"{END_VOICE_MARKER} followed by one short spoken goodbye. This is the voice-session end action; "
+    "do not merely say that voice mode ended."
 )
 
 _ESCALATION_CONTRACT = (
     "\n\n"
-    "Some asks need background work. Do NOT attempt them here and do NOT keep trying tools.\n"
+    "Some asks are better completed in the background while the live conversation continues.\n"
     "For a complex question, deep reasoning, page fetching, or multi-source research, reply with "
     "EXACTLY this and nothing else, on one line:\n\n"
     f"{ESCALATE_MARKER} <a short spoken acknowledgment, e.g. \"On it -- give "
@@ -253,8 +215,7 @@ _ESCALATION_CONTRACT = (
     f"{DELEGATE_MARKER} <a short spoken acknowledgment, e.g. \"I'll hand this to a sub-agent and keep you posted.\">\n\n"
     "The acknowledgment must be one short sentence, in your voice, said as "
     "if you're about to go look into it. Never write "
-    f"either marker for anything you can actually answer in 1 to 3 "
-    "sentences (with at most two quick tool calls) right now."
+    f"either marker for anything you can answer or complete quickly right now."
 )
 
 
@@ -787,29 +748,25 @@ def _new_instant_agent(runtime: Dict[str, Any], max_tokens: int):
         api_key=runtime["api_key"],
         api_mode=runtime["api_mode"],
         max_tokens=max_tokens,
-        max_iterations=INSTANT_LANE_MAX_ITERATIONS,
-        enabled_toolsets=INSTANT_LANE_TOOLSETS,
-        allowed_tool_names=INSTANT_LANE_TOOL_WHITELIST,
         reasoning_config=runtime.get("reasoning_config"),
         quiet_mode=True,
         platform="voice",
-        skip_context_files=True,
+        skip_context_files=False,
         load_soul_identity=True,
-        skip_memory=True,
+        skip_memory=False,
     )
     agent._persist_disabled = True
-    # Persistence remains disabled, but session_search is a read-only tool in
-    # this lane and must be allowed to lazily open the canonical SessionDB.
+    # Persistence remains disabled, but read-only recall tools may lazily open
+    # their canonical stores.
     agent._recall_allowed_while_persist_disabled = True
     agent._memory_store = _LazyMemoryStore()
     agent._memory_enabled = True
     agent._user_profile_enabled = True
     agent._memory_nudge_interval = 0
     agent._skill_nudge_interval = 0
-    # Do not replace _cached_system_prompt with SOUL.md.  Leaving it unset
-    # makes AIAgent build and cache its normal capability/tool guidance on the
-    # first turn.  The actual tool schemas remain restricted above; the voice
-    # addendum explains which heavier capabilities must be handed off.
+    # Do not replace _cached_system_prompt with SOUL.md. Leaving it unset makes
+    # AIAgent build and cache the same full prompt and capability guidance as a
+    # normal turn; only the appended voice response policy differs.
     return agent
 
 
@@ -871,19 +828,17 @@ def stream_instant_reply(
     *,
     allow_escalation: bool = True,
     cfg: Optional[Dict[str, Any]] = None,
-    activity_callback: Optional[Callable[[Dict[str, str]], None]] = None,
+    activity_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
     warm_status_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
 ) -> Iterator[str]:
-    """Run one capped, tool-armed instant-lane agent turn and stream its text
+    """Run one fully tool-armed instant-lane agent turn and stream its text
     deltas.
 
     Reuses a per-duplex ``run_agent.AIAgent`` routed to
     ``auxiliary.voice_instant.*`` (see :func:`resolve_instant_runtime`). Its
-    stable prompt is only SOUL.md identity; the voice addendum and the bounded,
-    deferred personal context are ephemeral suffixes. A runtime tool
-    whitelist enforced via ``hermes_cli.plugins.set_thread_tool_whitelist``
-    (:data:`INSTANT_LANE_TOOL_WHITELIST`) -- the same mechanism
-    ``agent/background_review.py``'s review fork uses.
+    stable prompt is the normal Marvi system prompt; the voice addendum and
+    bounded deferred personal context are ephemeral suffixes. Tool schemas are
+    the same configured schemas visible to the normal agent.
 
     ``run_conversation`` is a single blocking call; its ``stream_callback``
     hook (the same one the existing voice-mode TTS pipeline uses to start
@@ -912,9 +867,6 @@ def stream_instant_reply(
     time spent doing so. Used by ``hermes_cli.web_server`` for
     [VOICE-PERF] per-turn logging.
     """
-    from agent.iteration_budget import IterationBudget
-    from hermes_cli.plugins import clear_thread_tool_whitelist, set_thread_tool_whitelist
-
     runtime = resolve_instant_runtime(cfg)
     max_tokens = _resolve_instant_max_tokens(cfg)
     history = transcript.as_messages()
@@ -956,23 +908,32 @@ def stream_instant_reply(
     agent.ephemeral_system_prompt = system_message
     if transcript._deferred_context:
         agent.ephemeral_system_prompt += "\n\n" + transcript._deferred_context
-    agent.iteration_budget = IterationBudget(INSTANT_LANE_MAX_ITERATIONS)
-
     def _tool_activity(tool_name: str) -> Tuple[str, str]:
         return {
             "web_search": ("web", "Searching the web"),
+            "web_extract": ("web", "Reading a web page"),
             "read_file": ("file", "Reading a file"),
+            "search_files": ("file", "Searching files"),
             "memory": ("memory", "Updating memory"),
             "session_search": ("session", "Searching past conversations"),
+            "terminal": ("delegation", "Running a command"),
+            "process": ("delegation", "Running a process"),
+            "execute_code": ("delegation", "Running code"),
+            "delegate_task": ("delegation", "Delegating work"),
         }.get(tool_name, ("thinking", "Working on it"))
 
     def _tool_started(_call_id: str, tool_name: str, _args: Any) -> None:
         if activity_callback:
+            if tool_name == "show_card" and isinstance(_args, dict):
+                activity_callback({"status": "started", "kind": "card", "label": "Showing a card", "tool": tool_name, "card": _args})
+                return
             kind, label = _tool_activity(tool_name)
             activity_callback({"status": "started", "kind": kind, "label": label, "tool": tool_name})
 
     def _tool_completed(_call_id: str, tool_name: str, _args: Any, _result: Any) -> None:
         if activity_callback:
+            if tool_name == "show_card":
+                return
             kind, label = _tool_activity(tool_name)
             activity_callback({"status": "completed", "kind": kind, "label": label, "tool": tool_name})
 
@@ -988,13 +949,6 @@ def stream_instant_reply(
             delta_queue.put(text)
 
     def _worker() -> None:
-        set_thread_tool_whitelist(
-            set(INSTANT_LANE_TOOL_WHITELIST),
-            deny_msg_fmt=(
-                "Tool '{tool_name}' is not available in the voice instant "
-                "lane (fast reads only). Say [ESCALATE] instead if you need it."
-            ),
-        )
         try:
             agent.run_conversation(
                 utterance,
@@ -1004,7 +958,6 @@ def stream_instant_reply(
         except BaseException as exc:  # noqa: BLE001 -- reraised on the caller's thread
             error_box["error"] = exc
         finally:
-            clear_thread_tool_whitelist()
             if owns_cached_agent:
                 transcript._instant_agent_lock.release()
             delta_queue.put(None)
@@ -1038,6 +991,7 @@ class EscalationResult:
     escalate: bool
     text: str  # ack_text when escalate else the full reply text
     mode: Optional[str] = None  # "thinking" | "delegating"
+    end_voice: bool = False
 
     @property
     def ack_text(self) -> Optional[str]:
@@ -1071,6 +1025,7 @@ class EscalationStream:
         self._buffer = ""
         self._resolved = False
         self._escalate = False
+        self._end_voice = False
         self._mode: Optional[str] = None
         self.full_text = ""
 
@@ -1088,10 +1043,14 @@ class EscalationStream:
         self.full_text += delta
 
         if self._resolved:
-            return None if self._escalate else delta
+            return None if (self._escalate or self._end_voice) else delta
 
         self._buffer += delta
-        markers = ((ESCALATE_MARKER, "thinking"), (DELEGATE_MARKER, "delegating"))
+        markers = (
+            (ESCALATE_MARKER, "thinking"),
+            (DELEGATE_MARKER, "delegating"),
+            (END_VOICE_MARKER, "end_voice"),
+        )
         possible = [item for item in markers if item[0].startswith(self._buffer) or self._buffer.startswith(item[0])]
         if not possible:
             # Diverged from the marker -- definitely an ordinary reply.
@@ -1108,8 +1067,9 @@ class EscalationStream:
 
         # Buffer length >= marker length and matches exactly -> escalation.
         self._resolved = True
-        self._escalate = True
-        self._mode = matched[1]
+        self._end_voice = matched[1] == "end_voice"
+        self._escalate = not self._end_voice
+        self._mode = None if self._end_voice else matched[1]
         self._buffer = ""
         return None
 
@@ -1127,8 +1087,13 @@ class EscalationStream:
             elif self._buffer == DELEGATE_MARKER:
                 self._escalate = True
                 self._mode = "delegating"
+            elif self._buffer == END_VOICE_MARKER:
+                self._end_voice = True
             self._resolved = True
 
+        if self._end_voice:
+            goodbye = self.full_text[len(END_VOICE_MARKER):].strip()
+            return EscalationResult(escalate=False, text=goodbye, end_voice=True)
         if self._escalate:
             marker = DELEGATE_MARKER if self._mode == "delegating" else ESCALATE_MARKER
             ack = self.full_text[len(marker):].strip()

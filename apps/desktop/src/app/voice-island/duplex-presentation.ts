@@ -72,7 +72,7 @@ export function resolveDuplexPresentation(state: DuplexSessionState): DuplexPres
   return {
     bargeable: state.bargeable,
     caption: resolveCaption(state),
-    deepWorking: Boolean(state.deepWork),
+    deepWorking: state.backgroundTasks.length > 0,
     deepMode: state.deepWork?.mode ?? null,
     activity: state.activity,
     label: resolveLabel(state),

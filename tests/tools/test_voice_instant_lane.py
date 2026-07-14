@@ -95,6 +95,17 @@ class TestEscalationStream:
         assert result.mode == "delegating"
         assert result.ack_text == "I'll hand this to a sub-agent."
 
+    def test_end_voice_marker_becomes_a_session_control_action(self):
+        parser = vil.EscalationStream()
+        pieces = [parser.feed(delta) for delta in ["[END_", "VOICE]", " Talk soon."]]
+
+        result = parser.finish()
+
+        assert pieces == [None, None, None]
+        assert result.escalate is False
+        assert result.end_voice is True
+        assert result.reply_text == "Talk soon."
+
     def test_marker_split_across_many_deltas(self):
         parser = vil.EscalationStream()
         out = []
@@ -238,9 +249,10 @@ class TestVoiceModeAddendum:
         assert vil.ESCALATE_MARKER in with_escalation
         assert vil.ESCALATE_MARKER not in without_escalation
 
-    def test_mentions_tool_call_cap(self):
+    def test_exposes_full_configured_capabilities(self):
         addendum = vil.build_voice_mode_addendum(allow_escalation=True)
-        assert "two quick tool calls" in addendum
+        assert "all tools enabled by the user's configuration" in addendum
+        assert vil.END_VOICE_MARKER in addendum
 
 
 # ---------------------------------------------------------------------------
@@ -585,29 +597,21 @@ class TestStreamInstantReply:
             {"role": "assistant", "content": "reply"},
         ]
 
-    def test_constructs_agent_with_capped_toolsets_and_iterations(self, fake_agent_cls):
+    def test_constructs_agent_with_full_prompt_and_default_toolset(self, fake_agent_cls):
         list(vil.stream_instant_reply(vil.RollingTranscript(), "hi", cfg={}))
 
         kwargs = fake_agent_cls.last_instance.kwargs
-        assert kwargs["enabled_toolsets"] == vil.INSTANT_LANE_TOOLSETS
-        assert kwargs["max_iterations"] == vil.INSTANT_LANE_MAX_ITERATIONS
+        assert "enabled_toolsets" not in kwargs
+        assert "allowed_tool_names" not in kwargs
+        assert "max_iterations" not in kwargs
         assert kwargs.get("ephemeral_system_prompt") in (None, "")
-        assert kwargs["skip_context_files"] is True
+        assert kwargs["skip_context_files"] is False
         assert kwargs["load_soul_identity"] is True
-        assert kwargs["skip_memory"] is True
+        assert kwargs["skip_memory"] is False
         assert fake_agent_cls.last_instance._memory_nudge_interval == 0
         assert fake_agent_cls.last_instance._skill_nudge_interval == 0
         assert not hasattr(fake_agent_cls.last_instance, "_cached_system_prompt")
         assert fake_agent_cls.last_instance._recall_allowed_while_persist_disabled is True
-
-    def test_constructs_agent_with_allowed_tool_names_hard_cap(self, fake_agent_cls):
-        """Defense in depth: the tool-DEFINITION path is bounded to the same
-        whitelist set_thread_tool_whitelist enforces at dispatch time, so a
-        future toolset change can't silently widen what check_fn runs for."""
-        list(vil.stream_instant_reply(vil.RollingTranscript(), "hi", cfg={}))
-
-        kwargs = fake_agent_cls.last_instance.kwargs
-        assert kwargs["allowed_tool_names"] == vil.INSTANT_LANE_TOOL_WHITELIST
 
     def test_reuses_warm_agent_and_adds_deferred_context(self, fake_agent_cls):
         transcript = vil.RollingTranscript()
@@ -669,7 +673,7 @@ class TestStreamInstantReply:
         deltas = list(vil.stream_instant_reply(vil.RollingTranscript(), "hi", cfg={}))
         assert deltas == ["partial"]
 
-    def test_enforces_tool_whitelist_during_the_turn(self, monkeypatch):
+    def test_does_not_install_a_thread_tool_whitelist(self, monkeypatch):
         import run_agent
         from hermes_cli import plugins
 
@@ -687,13 +691,7 @@ class TestStreamInstantReply:
 
         list(vil.stream_instant_reply(vil.RollingTranscript(), "hi", cfg={}))
 
-        assert seen["allowed"] == set(vil.INSTANT_LANE_TOOL_WHITELIST)
-        assert "write_file" not in seen["allowed"]
-        assert "session_search" in seen["allowed"]
-        assert "memory" in seen["allowed"]
-        assert "web_extract" not in seen["allowed"]
-        assert "search_files" not in seen["allowed"]
-        assert "terminal" not in seen["allowed"]
+        assert seen["allowed"] in (None, "MISSING")
 
     def test_reports_tool_activity_for_voice_cues(self, monkeypatch):
         import run_agent
@@ -715,6 +713,29 @@ class TestStreamInstantReply:
         assert activity == [
             {"status": "started", "kind": "web", "label": "Searching the web", "tool": "web_search"},
             {"status": "completed", "kind": "web", "label": "Searching the web", "tool": "web_search"},
+        ]
+
+    def test_forwards_show_card_to_the_duplex_presentation(self, monkeypatch):
+        import run_agent
+
+        card = {"title": "Weather", "body": "Sunny, 25°C", "kind": "result"}
+
+        class CardAgent:
+            def __init__(self, **_kwargs):
+                pass
+
+            def run_conversation(self, _utterance, *, conversation_history=None, stream_callback=None):
+                self.tool_start_callback("call-1", "show_card", card)
+                self.tool_complete_callback("call-1", "show_card", card, {"success": True})
+                stream_callback("It is sunny.")
+
+        monkeypatch.setattr(run_agent, "AIAgent", CardAgent)
+        activity = []
+
+        list(vil.stream_instant_reply(vil.RollingTranscript(), "weather", cfg={}, activity_callback=activity.append))
+
+        assert activity == [
+            {"status": "started", "kind": "card", "label": "Showing a card", "tool": "show_card", "card": card}
         ]
 
     def test_memory_store_stays_lazy_until_memory_is_used(self):

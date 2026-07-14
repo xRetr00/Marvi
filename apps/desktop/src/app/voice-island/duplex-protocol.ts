@@ -81,6 +81,10 @@ export interface DuplexBargeInEvent {
   type: 'barge_in'
 }
 
+export interface DuplexConversationEndEvent {
+  type: 'conversation_end'
+}
+
 export interface DuplexEscalatedEvent {
   type: 'escalated'
   task_id: string
@@ -118,6 +122,7 @@ export type DuplexServerEvent =
   | DuplexTtsChunkEvent
   | DuplexTtsEndEvent
   | DuplexBargeInEvent
+  | DuplexConversationEndEvent
   | DuplexEscalatedEvent
   | DuplexActivityEvent
   | DuplexDeepResultEvent
@@ -201,6 +206,9 @@ export function parseDuplexServerEvent(raw: unknown): DuplexServerEvent | null {
 
     case 'barge_in':
       return { type: 'barge_in' }
+
+    case 'conversation_end':
+      return { type: 'conversation_end' }
 
     case 'escalated':
       return typeof raw.task_id === 'string' && typeof raw.ack_text === 'string'

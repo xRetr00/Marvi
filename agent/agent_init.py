@@ -40,6 +40,7 @@ from agent.model_metadata import (
     query_ollama_num_ctx,
 )
 from agent.process_bootstrap import _install_safe_stdio
+from agent.platform_tools import filter_platform_tools
 from agent.subdirectory_hints import SubdirectoryHintTracker
 from agent.think_scrubber import StreamingThinkScrubber
 from agent.tool_guardrails import (
@@ -1192,11 +1193,14 @@ def init_agent(
         agent._tool_snapshot_generation = _snapshot_registry._generation
     except Exception:
         agent._tool_snapshot_generation = 0
-    agent.tools = _ra().get_tool_definitions(
-        enabled_toolsets=enabled_toolsets,
-        disabled_toolsets=disabled_toolsets,
-        quiet_mode=agent.quiet_mode,
-        allowed_tool_names=allowed_tool_names,
+    agent.tools = filter_platform_tools(
+        _ra().get_tool_definitions(
+            enabled_toolsets=enabled_toolsets,
+            disabled_toolsets=disabled_toolsets,
+            quiet_mode=agent.quiet_mode,
+            allowed_tool_names=allowed_tool_names,
+        ),
+        agent.platform,
     )
     
     # Show tool configuration and store valid tool names for validation

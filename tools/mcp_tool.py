@@ -5269,6 +5269,7 @@ def refresh_agent_mcp_tools(
     explicit user consent; the late-binding and between-turns paths only rebuild
     at a turn boundary, before that turn's ``tools=`` prefix is assembled).
     """
+    from agent.platform_tools import filter_platform_tools
     from model_tools import get_tool_definitions
     from tools.registry import registry
 
@@ -5297,13 +5298,16 @@ def refresh_agent_mcp_tools(
     # Computed OUTSIDE the lock (get_tool_definitions can be slow); the diff and
     # publish below happen together in ONE critical section so two concurrent
     # callers can't torn-publish or compute overlapping ``added`` sets.
-    new_defs = list(
-        get_tool_definitions(
-            enabled_toolsets=enabled,
-            disabled_toolsets=disabled,
-            quiet_mode=quiet_mode,
-        )
-        or []
+    new_defs = filter_platform_tools(
+        list(
+            get_tool_definitions(
+                enabled_toolsets=enabled,
+                disabled_toolsets=disabled,
+                quiet_mode=quiet_mode,
+            )
+            or []
+        ),
+        getattr(agent, "platform", None),
     )
     new_names = {t["function"]["name"] for t in new_defs}
 

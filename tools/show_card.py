@@ -3,8 +3,8 @@
 Voice-first "show, don't say": when the agent wants to display a short result,
 list, link, or a confirm prompt instead of speaking it, it calls show_card and
 the desktop renders it on the Dynamic Island (the always-present pill at the top
-of the screen). The desktop only shows the card when the user is NOT looking at
-the main Marvi window, so it never competes with the chat.
+of the screen). This tool is exposed only to voice agents, where the card
+complements the spoken answer in both focused voice mode and hands-free use.
 """
 
 import uuid
@@ -18,13 +18,10 @@ SHOW_CARD_SCHEMA = {
     "description": (
         "Show a compact card on the user's desktop voice presence (the Dynamic "
         "Island pill at the top of the screen). Best for VOICE / hands-free "
-        "interactions: when the user is talking to you or working in ANOTHER app, "
+        "interactions: when the user is talking to you or working in another app, "
         "SHOW a short result, a key fact, a link, a list, or a quick confirm "
-        "prompt instead of only speaking it. Do NOT rely on it when the user is "
-        "actively looking at the main Marvi chat window — they'll read your reply "
-        "there, and the desktop deliberately suppresses the card while its window "
-        "is focused, so calling it then is wasted. It is always safe to call (a "
-        "no-op when suppressed or when no desktop is watching). Keep body under "
+        "prompt alongside a concise spoken answer. It is always safe to call (a "
+        "no-op when no desktop is watching). Keep body under "
         "~200 chars. Use actions for yes/no or quick replies — an action's value "
         "is sent back as the user's next message when tapped."
     ),

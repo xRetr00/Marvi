@@ -59,7 +59,8 @@ export function useComposerVoice({
   const { t } = useI18n()
   const [voiceConversationActive, setVoiceConversationActive] = useState(false)
   const lastSpokenIdRef = useRef<string | null>(null)
-  const duplex = useDuplexVoice(voiceConversationActive)
+  const handleDuplexConversationEnd = useCallback(() => setVoiceConversationActive(false), [])
+  const duplex = useDuplexVoice(voiceConversationActive, handleDuplexConversationEnd)
   const legacyVoiceEnabled = voiceConversationActive && duplex.status === 'unavailable'
 
   const { dictate, voiceActivityState, voiceStatus } = useVoiceRecorder({

@@ -257,6 +257,34 @@ describe('connectDuplexVoice', () => {
     expect(player.reset).toHaveBeenCalledTimes(1)
   })
 
+  it('ends cleanly when the voice model requests conversation_end', async () => {
+    const player = fakeAudioPlayer()
+    const gate = socketGate()
+    const onConversationEnd = vi.fn()
+    const onUnavailable = vi.fn()
+
+    const connectPromise = connectDuplexVoice({
+      audioPlayerFactory: () => player,
+      createWebSocket: gate.createWebSocket,
+      getConnection: async () => DEFAULT_CONNECTION,
+      micCaptureFactory: fakeMicCapture().factory,
+      onConversationEnd,
+      onState: vi.fn(),
+      onUnavailable
+    })
+
+    const socket = await gate.ready
+    socket.open()
+    await connectPromise
+
+    socket.message({ type: 'conversation_end' })
+
+    expect(socket.sent).toContainEqual({ type: 'stop' })
+    expect(player.destroy).toHaveBeenCalled()
+    expect(onConversationEnd).toHaveBeenCalledTimes(1)
+    expect(onUnavailable).not.toHaveBeenCalled()
+  })
+
   it('a malformed server message is ignored without throwing or changing state', async () => {
     const onState = vi.fn()
     const gate = socketGate()

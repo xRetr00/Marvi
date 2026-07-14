@@ -595,3 +595,177 @@ class TestSubconsciousSuggestionsEndpoints:
 
         assert resp.status_code == 500
         assert "boom" not in resp.json()["detail"]
+
+
+# ---------------------------------------------------------------------------
+# /api/mind — ?history=1 narrative history (2026-07-14 hardening pass)
+# ---------------------------------------------------------------------------
+
+
+class TestMindNarrativeHistoryEndpoint:
+    def test_no_history_key_by_default(self, client):
+        resp = client.get("/api/mind")
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["ok"] is True
+        assert "narrative_history" not in data
+
+    def test_history_flag_returns_rotated_versions(self, client):
+        from cron import subconscious
+
+        subconscious.write_narrative("first")
+        subconscious.write_narrative("second")
+        subconscious.write_narrative("third")
+
+        resp = client.get("/api/mind?history=1")
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["ok"] is True
+        assert [entry["text"] for entry in data["narrative_history"]] == ["second", "first"]
+        assert data["narrative"] == "third"
+
+    def test_history_flag_empty_on_cold_start(self, client):
+        resp = client.get("/api/mind?history=1")
+
+        assert resp.status_code == 200
+        assert resp.json()["narrative_history"] == []
+
+    def test_failure_returns_structured_500(self, client):
+        with patch("hermes_cli.web_server._mind_state_sync", side_effect=RuntimeError("boom")):
+            resp = client.get("/api/mind?history=1")
+
+        assert resp.status_code == 500
+        assert "boom" not in resp.json()["detail"]
+
+
+# ---------------------------------------------------------------------------
+# /api/brain/* — status, search, index, config (2026-07-14 hardening pass)
+# ---------------------------------------------------------------------------
+
+
+class TestBrainStatusEndpoint:
+    def test_reports_config_and_store_stats(self, client):
+        resp = client.get("/api/brain/status")
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["ok"] is True
+        assert data["enabled"] is False
+        assert data["folders"] == []
+        assert data["files"] == 0
+        assert data["chunks"] == 0
+        assert "last_run" in data
+        assert data["last_run"]["at"] is None
+
+    def test_reflects_a_completed_index_run(self, client, tmp_path):
+        folder = tmp_path / "docs"
+        folder.mkdir()
+        (folder / "note.txt").write_text("hello brain", encoding="utf-8")
+
+        put_resp = client.put("/api/brain/config", json={"enabled": True, "folders": [str(folder)]})
+        assert put_resp.status_code == 200
+
+        index_resp = client.post("/api/brain/index")
+        assert index_resp.status_code == 200
+
+        status_resp = client.get("/api/brain/status")
+        data = status_resp.json()
+        assert data["ok"] is True
+        assert data["enabled"] is True
+        assert data["files"] == 1
+        assert data["last_run"]["indexed"] == 1
+        assert data["last_run"]["at"]
+
+    def test_failure_returns_structured_500(self, client):
+        with patch("hermes_cli.web_server._brain_status_sync", side_effect=RuntimeError("boom")):
+            resp = client.get("/api/brain/status")
+
+        assert resp.status_code == 500
+        assert "boom" not in resp.json()["detail"]
+
+
+class TestBrainConfigEndpoint:
+    def test_rejects_nonexistent_folder_with_structured_error(self, client, tmp_path):
+        missing = tmp_path / "does-not-exist"
+
+        resp = client.put("/api/brain/config", json={"folders": [str(missing)]})
+
+        assert resp.status_code == 400
+        assert str(missing) in resp.json()["detail"]
+
+    def test_accepts_existing_folder(self, client, tmp_path):
+        folder = tmp_path / "real"
+        folder.mkdir()
+
+        resp = client.put("/api/brain/config", json={"folders": [str(folder)]})
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["ok"] is True
+        assert data["brain"]["folders"] == [str(folder)]
+
+    def test_enable_with_valid_folder_does_not_500(self, client, tmp_path):
+        """Regression test: update_brain_config's enable branch calls
+        ensure_index_job(cfg), which must actually be imported in this
+        function's scope — a prior version of this endpoint only imported
+        brain_config, so enabling Brain here raised an unhandled NameError."""
+        folder = tmp_path / "real"
+        folder.mkdir()
+
+        resp = client.put("/api/brain/config", json={"enabled": True, "folders": [str(folder)]})
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["ok"] is True
+        assert data["brain"]["enabled"] is True
+
+    def test_disable_pauses_job_without_error(self, client, tmp_path):
+        folder = tmp_path / "real"
+        folder.mkdir()
+        client.put("/api/brain/config", json={"enabled": True, "folders": [str(folder)]})
+
+        resp = client.put("/api/brain/config", json={"enabled": False})
+
+        assert resp.status_code == 200
+        assert resp.json()["brain"]["enabled"] is False
+
+    def test_failure_returns_structured_500(self, client):
+        with patch("hermes_cli.config.load_config", side_effect=RuntimeError("boom")):
+            resp = client.put("/api/brain/config", json={"enabled": False})
+
+        assert resp.status_code == 500
+        assert "boom" not in resp.json()["detail"]
+
+
+class TestBrainSearchAndIndexEndpoints:
+    def test_search_empty_index_returns_no_results(self, client):
+        resp = client.get("/api/brain/search", params={"q": "anything"})
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["ok"] is True
+        assert data["results"] == []
+
+    def test_search_failure_returns_structured_500(self, client):
+        with patch("tools.brain.store.BrainStore.search", side_effect=RuntimeError("boom")):
+            resp = client.get("/api/brain/search", params={"q": "x"})
+
+        assert resp.status_code == 500
+        assert "boom" not in resp.json()["detail"]
+
+    def test_index_with_no_folders_configured_is_a_no_op(self, client):
+        resp = client.post("/api/brain/index")
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["ok"] is True
+        assert data["indexed"] == 0
+
+    def test_index_failure_returns_structured_500(self, client):
+        with patch("tools.brain.indexer.index_configured_folders", side_effect=RuntimeError("boom")):
+            resp = client.post("/api/brain/index")
+
+        assert resp.status_code == 500
+        assert "boom" not in resp.json()["detail"]

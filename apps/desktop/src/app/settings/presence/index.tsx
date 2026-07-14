@@ -1,7 +1,8 @@
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { Activity, Brain, type IconComponent, Mic } from '@/lib/icons'
+import { Activity, Brain, FolderOpen, type IconComponent, Mic } from '@/lib/icons'
 
 import { useRouteEnumParam } from '../../hooks/use-route-enum-param'
+import { BrainSettings } from '../brain'
 import { LoadingState, SettingsContent } from '../primitives'
 import { SubconsciousSettings } from '../subconscious'
 import { DesktopPresenceSettings } from '../subconscious/core-settings'
@@ -10,12 +11,15 @@ import { VoicePresenceSettings } from '../voice-presence-settings'
 
 import { WakeWordSettings } from './wake-word-settings'
 
-export const PRESENCE_TABS = ['subconscious', 'desktop', 'voice', 'wake-word'] as const
+export const PRESENCE_TABS = ['subconscious', 'desktop', 'brain', 'voice', 'wake-word'] as const
 export type PresenceTab = (typeof PRESENCE_TABS)[number]
 
 const TAB_META: Record<PresenceTab, { label: string; icon: IconComponent }> = {
   subconscious: { icon: Brain, label: 'Subconscious' },
   desktop: { icon: Activity, label: 'Desktop Presence' },
+  // FolderOpen (not Brain) so this tab reads distinctly from "Subconscious"
+  // in the tab strip — Brain is a local-folder index, not the tick/reflection.
+  brain: { icon: FolderOpen, label: 'Brain' },
   voice: { icon: Mic, label: 'Voice' },
   'wake-word': { icon: Mic, label: 'Wake Word' }
 }
@@ -61,6 +65,8 @@ export function PresenceSettings({
       <div className="min-h-0 flex-1">
         {tab === 'subconscious' ? (
           <SubconsciousSettings />
+        ) : tab === 'brain' ? (
+          <BrainSettings />
         ) : loading ? (
           <LoadingState label="Loading Marvi settings" />
         ) : tab === 'desktop' ? (

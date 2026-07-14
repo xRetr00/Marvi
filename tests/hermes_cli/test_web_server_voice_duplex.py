@@ -358,7 +358,7 @@ def test_ready_on_connect(duplex_client, full_fakes):
         assert conn.receive_json() == {"type": "ready"}
 
 
-def test_moonshine_pause_waits_for_smart_turn(monkeypatch):
+def test_moonshine_pause_waits_for_smart_turn_and_commit_silence(monkeypatch):
     from tools import semantic_turn
 
     predictions = iter((False, True))
@@ -385,6 +385,17 @@ def test_moonshine_pause_waits_for_smart_turn(monkeypatch):
         session._finalize_utterance = finalize
         await session._feed_stt(_pcm16_chunk())
         assert finalized == 0
+        await session._feed_stt(_pcm16_chunk())
+        assert finalized == 0
+        gate = FakeVadGate()
+        gate.speaking = True
+        session.turn_vad_gate = gate
+        session._turn_vad_unavailable = False
+        await session._feed_stt(_pcm16_chunk())
+        assert session._smart_turn_accepted_at is None
+        gate.speaking = False
+        session._smart_turn_accepted_at = time.monotonic() - 1.0
+        session.cfg["voice"]["smart_turn_commit_delay_ms"] = 250
         await session._feed_stt(_pcm16_chunk())
         assert finalized == 1
 
@@ -516,6 +527,39 @@ def test_barge_in_does_not_wait_for_cancelled_speaking_task():
         assert speaking_task.done() is False
         release.set()
         await speaking_task
+
+    asyncio.run(run())
+
+
+def test_moonshine_barge_in_waits_for_commit_silence():
+    async def run():
+        class FakeWs:
+            async def send_json(self, _payload):
+                return None
+
+        session = web_server._DuplexSession(
+            FakeWs(),
+            {
+                "stt": {"streaming": {"provider": "moonshine"}},
+                "voice": {"semantic_turn": True, "smart_turn_commit_delay_ms": 250},
+            },
+        )
+        session.stt_session = FakeSttSession()
+        finalized = 0
+
+        async def finalize():
+            nonlocal finalized
+            finalized += 1
+
+        session._finalize_utterance = finalize
+        await session._trigger_barge_in(
+            [_pcm16_chunk()], stt_seeded=True, eou=True, partial="wait"
+        )
+        assert finalized == 0
+
+        session._smart_turn_accepted_at = time.monotonic() - 1.0
+        await session._feed_stt(_pcm16_chunk())
+        assert finalized == 1
 
     asyncio.run(run())
 

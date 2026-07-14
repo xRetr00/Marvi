@@ -149,6 +149,13 @@ class TestComposioEndpoints:
         rejected = client.put("/api/composio/snapshots", json={"surfaces": ["notion"]})
         assert rejected.status_code == 400
 
+    def test_connect_returns_direct_sdk_authorization(self, client):
+        expected = {"connected": False, "redirect_url": "https://auth.example"}
+        with patch("hermes_cli.web_server._composio_connect_sync", return_value=expected):
+            response = client.post("/api/composio/connect", json={"toolkit": "gmail"})
+        assert response.status_code == 200
+        assert response.json()["redirect_url"] == "https://auth.example"
+
     def test_toolkit_catalog_response_is_forwarded(self, client):
         fake = {
             "toolkits": [

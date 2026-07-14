@@ -13252,6 +13252,10 @@ class ComposioSetupRequest(BaseModel):
     consumer_api_key: str = ""
 
 
+class ComposioConnectRequest(BaseModel):
+    toolkit: str
+
+
 class ComposioSnapshotsRequest(BaseModel):
     surfaces: List[str] = []
 
@@ -13273,6 +13277,18 @@ def _composio_status_sync() -> Dict[str, Any]:
     # Opening the dedicated Mind tab is a safe migration point for installs
     # that still have the old plaintext composio.api_key setting.
     return composio_status(migrate=True)
+
+
+def _composio_connect_sync(toolkit: str) -> Dict[str, Any]:
+    from cron.scripts.subconscious.composio_client import get_api_key, get_client
+    from hermes_cli.config import load_config
+
+    toolkit = str(toolkit or "").strip().lower()
+    if not re.fullmatch(r"[a-z0-9_-]{1,100}", toolkit):
+        raise ValueError("Invalid Composio toolkit")
+    if not get_api_key(load_config()):
+        raise ValueError("Save the Composio project API key first")
+    return get_client().initiate_connection(toolkit)
 
 
 def _composio_toolkits_sync(search: str, limit: int) -> Dict[str, Any]:
@@ -13360,6 +13376,17 @@ async def setup_composio(body: ComposioSetupRequest):
     except Exception:
         _log.exception("POST /api/composio/setup failed")
         raise HTTPException(status_code=500, detail="Failed to configure Composio")
+
+
+@app.post("/api/composio/connect")
+async def connect_composio(body: ComposioConnectRequest):
+    try:
+        return {"ok": True, **await run_in_threadpool(_composio_connect_sync, body.toolkit)}
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception:
+        _log.exception("POST /api/composio/connect failed")
+        raise HTTPException(status_code=502, detail="Failed to start Composio authorization")
 
 
 @app.put("/api/composio/snapshots")
@@ -17548,6 +17575,7 @@ async def wake_word_stream_ws(ws: WebSocket) -> None:
 
 _DUPLEX_ROLLING_TURNS = 20
 _DUPLEX_BARGE_IN_STREAK_MS = 320.0
+_DUPLEX_SMART_TURN_COMMIT_DELAY_MS = 1200
 _DUPLEX_SMART_TURN_VAD_FALLBACK_MS = 1500
 _DUPLEX_TURN_VAD_HARD_STOP_MS = 2800
 _DUPLEX_BARGE_CANDIDATE_TIMEOUT_MS = 1800
@@ -18335,6 +18363,7 @@ class _DuplexSession:
         self.turn_vad_gate = None
         self._turn_vad_unavailable = False
         self._smart_turn_rejected_at: Optional[float] = None
+        self._smart_turn_accepted_at: Optional[float] = None
         self._turn_speech_started = False
         self._last_turn_speech_at: Optional[float] = None
         self._last_barge_log_at = 0.0
@@ -18513,6 +18542,7 @@ class _DuplexSession:
 
     def _reset_turn_endpoint_state(self) -> None:
         self._smart_turn_rejected_at = None
+        self._smart_turn_accepted_at = None
         self._turn_speech_started = False
         self._last_turn_speech_at = None
         if self.turn_vad_gate is not None:
@@ -18573,6 +18603,7 @@ class _DuplexSession:
         if speech_now:
             self._turn_speech_started = True
             self._last_turn_speech_at = time.monotonic()
+            self._smart_turn_accepted_at = None
         if speech_now and self._smart_turn_rejected_at is not None:
             # The user resumed after Smart Turn's rejection. A later STT
             # pause must start a fresh fallback timer.
@@ -18611,9 +18642,35 @@ class _DuplexSession:
                         * 1000
                     ),
                 )
-                complete = smart_turn is not False
-                if smart_turn is False and self._smart_turn_rejected_at is None:
-                    self._smart_turn_rejected_at = time.monotonic()
+                complete = False
+                if smart_turn is False:
+                    if self._smart_turn_rejected_at is None:
+                        self._smart_turn_rejected_at = time.monotonic()
+                else:
+                    self._smart_turn_rejected_at = None
+                    if self._smart_turn_accepted_at is None:
+                        self._smart_turn_accepted_at = time.monotonic()
+
+        if not complete and semantic_fallback and self._smart_turn_accepted_at is not None:
+            try:
+                commit_delay_ms = max(
+                    250,
+                    int(
+                        voice_cfg.get(
+                            "smart_turn_commit_delay_ms",
+                            _DUPLEX_SMART_TURN_COMMIT_DELAY_MS,
+                        )
+                    ),
+                )
+            except (TypeError, ValueError):
+                commit_delay_ms = _DUPLEX_SMART_TURN_COMMIT_DELAY_MS
+            waited_ms = (time.monotonic() - self._smart_turn_accepted_at) * 1000.0
+            if waited_ms >= commit_delay_ms:
+                _log.info(
+                    "Voice duplex Smart Turn commit confirmed silence_ms=%d",
+                    int(waited_ms),
+                )
+                complete = True
 
         if (
             not complete
@@ -18908,7 +18965,10 @@ class _DuplexSession:
             self._turn_speech_started = True
             self._last_turn_speech_at = time.monotonic()
             if eou:
-                await self._finalize_utterance()
+                if _streaming_stt_provider(self.stt_cfg) == "moonshine":
+                    self._smart_turn_accepted_at = time.monotonic()
+                else:
+                    await self._finalize_utterance()
             return
         # Compatibility/direct-call path: seed the next STT turn through the
         # normal endpoint logic.

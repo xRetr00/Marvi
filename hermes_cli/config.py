@@ -2188,6 +2188,9 @@ DEFAULT_CONFIG = {
         "max_recording_seconds": 120,
         "auto_tts": False,
         "semantic_turn": True,
+        # Smart Turn can still accept a thinking pause. Require this much
+        # continued silence after its positive verdict before committing.
+        "smart_turn_commit_delay_ms": 1200,
         # Smart Turn remains primary. If it rejects an endpoint and TEN VAD
         # then observes this much uninterrupted silence, finalize as a safety
         # net so a voice session cannot remain listening forever.

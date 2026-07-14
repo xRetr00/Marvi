@@ -119,6 +119,12 @@ export function VoiceModeStage() {
                 {voice.activity.label}
               </span>
             ) : null}
+            {voice.deepWorking ? (
+              <span className="inline-flex items-center gap-1.5 rounded-full border border-amber-300/15 bg-amber-300/8 px-2.5 py-1 text-[0.68rem] font-medium text-amber-100/65">
+                <span className="size-1.5 animate-pulse rounded-full bg-amber-300/80" />
+                {voice.deepMode === 'delegating' ? 'Background agent active' : 'Background task active'}
+              </span>
+            ) : null}
           </div>
 
           {caption ? (
@@ -132,12 +138,6 @@ export function VoiceModeStage() {
                 : 'Voice mode is live'}
             </div>
           )}
-
-          {voice.deepWorking && voice.phase !== 'speaking' ? (
-            <div className="mt-2 text-[0.62rem] font-semibold uppercase tracking-[0.16em] text-muted-foreground/40">
-              {voice.deepMode === 'delegating' ? 'Background sub-agent active' : 'Background reasoning active'}
-            </div>
-          ) : null}
 
           <button
             className="mt-3 rounded-full border border-white/8 bg-white/4 px-3.5 py-1.5 text-[0.68rem] font-medium text-foreground/45 transition-colors hover:bg-white/8 hover:text-foreground/80 focus-visible:outline-2 focus-visible:outline-offset-3 focus-visible:outline-foreground/60"

@@ -288,7 +288,12 @@ export function DynamicIsland({
             transition={contentTransition}
           >
             {card ? (
-              <CardContent card={card} onCardAction={onCardAction} />
+              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 7 }}>
+                <CardContent card={card} onCardAction={onCardAction} />
+                {state.deepWorking ? (
+                  <DeepWorkBadge mode={state.deepMode} reducedMotion={Boolean(reducedMotion)} />
+                ) : null}
+              </div>
             ) : (
               <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6 }}>
                 <IslandWaveform active={active} height={72} level={displayLevel} width={300} />
@@ -306,8 +311,9 @@ export function DynamicIsland({
                 ) : null}
                 {state.phase === 'speaking' && state.bargeable ? (
                   <InterruptHint reducedMotion={Boolean(reducedMotion)} />
-                ) : state.deepWorking ? (
-                  <DeepWorkHint mode={state.deepMode} reducedMotion={Boolean(reducedMotion)} />
+                ) : null}
+                {state.deepWorking ? (
+                  <DeepWorkBadge mode={state.deepMode} reducedMotion={Boolean(reducedMotion)} />
                 ) : null}
               </div>
             )}
@@ -432,9 +438,20 @@ function InterruptHint({ reducedMotion }: { reducedMotion: boolean }) {
 // its `deep_result` arrives, while the conversation otherwise keeps flowing
 // normally (listening/replying to further turns) — this is deliberately NOT
 // a blocking state, just a quiet "still working on that" marker.
-function DeepWorkHint({ mode, reducedMotion }: { mode: VoiceState['deepMode']; reducedMotion: boolean }) {
+function DeepWorkBadge({ mode, reducedMotion }: { mode: VoiceState['deepMode']; reducedMotion: boolean }) {
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 2 }}>
+    <div
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: 6,
+        marginTop: 2,
+        padding: '4px 8px',
+        border: '1px solid rgba(245,185,92,0.16)',
+        borderRadius: 999,
+        background: 'rgba(245,185,92,0.07)'
+      }}
+    >
       <motion.span
         animate={reducedMotion ? { opacity: 0.7 } : { opacity: [0.3, 0.9, 0.3] }}
         style={{
@@ -456,7 +473,7 @@ function DeepWorkHint({ mode, reducedMotion }: { mode: VoiceState['deepMode']; r
           color: 'rgba(255,255,255,0.4)'
         }}
       >
-        {mode === 'delegating' ? 'sub-agent working…' : 'thinking deeper…'}
+        {mode === 'delegating' ? 'background agent active' : 'background task active'}
       </span>
     </div>
   )

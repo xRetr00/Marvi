@@ -7,7 +7,7 @@ import json
 
 def brain_command(args) -> int:
     from hermes_cli.config import load_config, save_config
-    from tools.brain.indexer import brain_config, ensure_index_job, index_configured_folders
+    from tools.brain.indexer import DEFAULT_SCHEDULE, brain_config, ensure_index_job, index_configured_folders
     from tools.brain.store import BrainStore
 
     command = getattr(args, "brain_command", None) or "status"
@@ -16,7 +16,7 @@ def brain_command(args) -> int:
     if command == "enable":
         section["enabled"] = True
         section["folders"] = list(dict.fromkeys([*section.get("folders", []), *args.folders]))
-        section.setdefault("schedule", "every 30m")
+        section.setdefault("schedule", DEFAULT_SCHEDULE)
         cfg["brain"] = section
         ensure_index_job(cfg)
         save_config(cfg)

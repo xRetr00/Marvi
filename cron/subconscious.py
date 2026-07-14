@@ -127,6 +127,28 @@ def read_narrative() -> str:
         return ""
 
 
+def read_narrative_history() -> List[Dict[str, Any]]:
+    """Return the up-to-3 rotated previous narrative versions, most recent first.
+
+    ``write_narrative`` rotates narrative.md -> .1 -> .2 -> .3 on every write
+    (see below); this reads them back for the Mind view's narrative history
+    (``GET /api/mind?history=1``). Missing files are skipped rather than
+    erroring — a fresh install or one that hasn't ticked three times yet will
+    simply have fewer entries.
+    """
+    path = narrative_path()
+    history: List[Dict[str, Any]] = []
+    for version in (1, 2, 3):
+        candidate = path.with_name(f"{path.name}.{version}")
+        try:
+            text = candidate.read_text(encoding="utf-8")[:NARRATIVE_CAP]
+        except OSError:
+            continue
+        if text.strip():
+            history.append({"version": version, "text": text})
+    return history
+
+
 def write_narrative(text: str) -> None:
     """Atomically persist the bounded narrative and retain three revisions."""
     value = (text or "").strip()[-NARRATIVE_CAP:]

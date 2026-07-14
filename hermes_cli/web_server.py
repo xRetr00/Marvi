@@ -12972,11 +12972,11 @@ async def get_marvi_knowledge():
         raise HTTPException(status_code=500, detail="Failed to read Marvi's memory")
 
 
-def _mind_state_sync() -> Dict[str, Any]:
+def _mind_state_sync(history: bool = False) -> Dict[str, Any]:
     from agent.goal_store import list_goal_templates
-    from cron.subconscious import read_narrative, status
+    from cron.subconscious import read_narrative, read_narrative_history, status
     from cron.subconscious_initiatives import list_initiatives
-    from tools.brain.indexer import brain_config, ensure_index_job
+    from tools.brain.indexer import brain_config
     from tools.brain.store import BrainStore
 
     store = BrainStore()
@@ -12984,19 +12984,22 @@ def _mind_state_sync() -> Dict[str, Any]:
         brain = {**brain_config(), **store.status()}
     finally:
         store.close()
-    return {
+    result = {
         "subconscious": status(),
         "narrative": read_narrative(),
         "initiatives": list_initiatives(),
         "goal_templates": list_goal_templates(),
         "brain": brain,
     }
+    if history:
+        result["narrative_history"] = read_narrative_history()
+    return result
 
 
 @app.get("/api/mind")
-async def get_mind_state():
+async def get_mind_state(history: bool = False):
     try:
-        return {"ok": True, **await run_in_threadpool(_mind_state_sync)}
+        return {"ok": True, **await run_in_threadpool(_mind_state_sync, history)}
     except Exception:
         _log.exception("GET /api/mind failed")
         raise HTTPException(status_code=500, detail="Failed to read Mind state")
@@ -13011,6 +13014,21 @@ async def cancel_mind_initiative(initiative_id: str):
     return {"ok": True}
 
 
+def _brain_status_sync() -> Dict[str, Any]:
+    from tools.brain.indexer import brain_status
+
+    return brain_status()
+
+
+@app.get("/api/brain/status")
+async def get_brain_status():
+    try:
+        return {"ok": True, **await run_in_threadpool(_brain_status_sync)}
+    except Exception:
+        _log.exception("GET /api/brain/status failed")
+        raise HTTPException(status_code=500, detail="Failed to read Brain status")
+
+
 @app.get("/api/brain/search")
 async def search_brain(q: str, limit: int = 8):
     from tools.brain.store import BrainStore
@@ -13022,24 +13040,46 @@ async def search_brain(q: str, limit: int = 8):
         finally:
             store.close()
 
-    return {"ok": True, "results": await run_in_threadpool(_search)}
+    try:
+        return {"ok": True, "results": await run_in_threadpool(_search)}
+    except Exception:
+        _log.exception("GET /api/brain/search failed")
+        raise HTTPException(status_code=500, detail="Brain search failed")
 
 
 @app.post("/api/brain/index")
 async def index_brain():
     from tools.brain.indexer import index_configured_folders
 
-    return await run_in_threadpool(index_configured_folders)
+    try:
+        return {"ok": True, **await run_in_threadpool(index_configured_folders)}
+    except Exception:
+        _log.exception("POST /api/brain/index failed")
+        raise HTTPException(status_code=500, detail="Brain indexing failed")
+
+
+class _BrainConfigValidationError(ValueError):
+    """Raised when PUT /api/brain/config receives a folder that doesn't exist."""
 
 
 @app.put("/api/brain/config")
 async def update_brain_config(body: Dict[str, Any]):
     from hermes_cli.config import load_config, save_config
-    from tools.brain.indexer import brain_config
+    from tools.brain.indexer import brain_config, ensure_index_job
 
     def _update():
         cfg = load_config()
         current = dict(cfg.get("brain") or {})
+        if "folders" in body:
+            missing = [
+                str(folder)
+                for folder in body["folders"]
+                if not Path(str(folder)).expanduser().is_dir()
+            ]
+            if missing:
+                raise _BrainConfigValidationError(
+                    f"Folder(s) not found on disk: {', '.join(missing)}"
+                )
         for key in ("enabled", "folders", "exclude", "schedule"):
             if key in body:
                 current[key] = body[key]
@@ -13053,7 +13093,15 @@ async def update_brain_config(body: Dict[str, Any]):
         save_config(cfg)
         return brain_config(cfg)
 
-    return {"ok": True, "brain": await run_in_threadpool(_update)}
+    try:
+        return {"ok": True, "brain": await run_in_threadpool(_update)}
+    except _BrainConfigValidationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except HTTPException:
+        raise
+    except Exception:
+        _log.exception("PUT /api/brain/config failed")
+        raise HTTPException(status_code=500, detail="Failed to save Brain settings")
 
 
 # ---------------------------------------------------------------------------

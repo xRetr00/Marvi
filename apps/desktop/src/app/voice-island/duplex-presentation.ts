@@ -11,7 +11,7 @@ import type { DuplexSessionState } from './duplex-session'
  * overlay (use-composer-voice.ts) and the ambient wake-word/island path
  * (desktop-controller.tsx) — funnel their `DuplexSessionState` through this
  * one pure function before publishing into the store, so the island,
- * voice-mode overlay, and composer status all render duplex turns identically
+ * voice stage, island, and composer status all render duplex turns identically
  * without needing to know about duplex's internals. Pure + unit-testable.
  */
 export interface DuplexPresentation {

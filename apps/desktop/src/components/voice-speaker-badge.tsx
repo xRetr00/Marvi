@@ -10,7 +10,7 @@ export type VoiceSpeakerBadgeSpeaker = 'owner' | 'guest' | 'unknown'
  * category alone never hides who matched.
  *
  * Shared across every voice surface (the wake-word island, the hands-free
- * voice-mode overlay/orb, and the composer's inline voice status) so the
+ * voice stage/orb, and the composer's inline voice status) so the
  * indicator reads identically everywhere duplex speaker ID can surface it.
  */
 export function VoiceSpeakerBadge({

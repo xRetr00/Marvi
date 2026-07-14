@@ -71,7 +71,7 @@ import { useFileDropZone } from './hooks/use-file-drop-zone'
 import { ScrollToBottomButton } from './scroll-to-bottom-button'
 import { SessionActionsMenu } from './sidebar/session-actions-menu'
 import { threadLoadingState } from './thread-loading'
-import { VoiceModeOverlay } from './voice-mode-overlay'
+import { VoiceModeViewport } from './voice-mode-stage'
 
 interface ChatViewProps extends Omit<React.ComponentProps<'div'>, 'onSubmit'> {
   gateway: HermesGateway | null
@@ -476,19 +476,21 @@ export function ChatView({
           data-slot="composer-bounds"
           {...dropHandlers}
         >
-          <Thread
-            clampToComposer={showChatBar}
-            cwd={currentCwd}
-            gateway={gateway}
-            intro={showIntro ? { personality: introPersonality, seed: introSeed } : undefined}
-            loading={threadLoading}
-            onBranchInNewChat={onBranchInNewChat}
-            onCancel={onCancel}
-            onDismissError={onDismissError}
-            onRestoreToMessage={onRestoreToMessage}
-            sessionId={activeSessionId}
-            sessionKey={threadKey}
-          />
+          <VoiceModeViewport>
+            <Thread
+              clampToComposer={showChatBar}
+              cwd={currentCwd}
+              gateway={gateway}
+              intro={showIntro ? { personality: introPersonality, seed: introSeed } : undefined}
+              loading={threadLoading}
+              onBranchInNewChat={onBranchInNewChat}
+              onCancel={onCancel}
+              onDismissError={onDismissError}
+              onRestoreToMessage={onRestoreToMessage}
+              sessionId={activeSessionId}
+              sessionKey={threadKey}
+            />
+          </VoiceModeViewport>
           {resumeExhausted && routedSessionId && (
             <div className="absolute inset-0 z-10 grid place-items-center bg-(--ui-chat-surface-background) px-8 py-10">
               <ErrorState
@@ -560,7 +562,6 @@ export function ChatView({
           </Suspense>
         )}
       </ChatRuntimeBoundary>
-      <VoiceModeOverlay />
     </div>
   )
 }

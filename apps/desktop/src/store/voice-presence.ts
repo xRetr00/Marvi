@@ -114,6 +114,9 @@ export const $conversation = atom<
   ...NO_DUPLEX_EXTRAS
 })
 
+/** Stable boolean for swapping the transcript with the in-layout voice stage. */
+export const $voiceModeActive = computed($conversation, conversation => conversation.active)
+
 /** Wake-word status, published by chat/index.tsx (owns useWakeWord). */
 export const $wakeStatus = atom<WakeStatus>('idle')
 

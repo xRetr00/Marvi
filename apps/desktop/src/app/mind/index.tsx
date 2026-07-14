@@ -180,7 +180,7 @@ function BrainPanel({ brain, onRefresh }: { brain: BrainState | null; onRefresh:
     try {
       await window.hermesDesktop.api({
         path: '/api/brain/config', method: 'PUT',
-        body: { enabled, folders: parsedFolders, schedule: brain?.schedule || 'every 30m' }
+        body: { enabled, folders: parsedFolders, schedule: brain?.schedule || 'every 6h' }
       })
       notify({ kind: 'success', message: 'Brain settings saved' })
       await onRefresh()

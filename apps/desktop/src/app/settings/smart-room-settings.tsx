@@ -36,6 +36,8 @@ import { SettingsContent } from './primitives'
 
 interface SmartRoomConfig {
   enabled: boolean
+  owner: string
+  welcome: { enabled: boolean; identity_grace_seconds: number; reset_after_seconds: number }
   mqtt: { broker: string; port: number }
   context: { enabled: boolean }
   subconscious: { enabled: boolean }
@@ -87,6 +89,8 @@ interface SmartRoomConfig {
 
 const DEFAULT_CONFIG: SmartRoomConfig = {
   enabled: false,
+  owner: 'Shereef',
+  welcome: { enabled: true, identity_grace_seconds: 4, reset_after_seconds: 3600 },
   mqtt: { broker: '127.0.0.1', port: 1883 },
   context: { enabled: true },
   subconscious: { enabled: true },
@@ -381,6 +385,20 @@ export function SmartRoomSettings() {
             <p className={`${CONTROL_TEXT} text-zinc-500`}>Native presence fusion + Tuya control + automations</p>
           </div>
           <Toggle checked={config.enabled} label="Enable Smart Room plugin" onChange={(v) => updatePath('enabled', v)} />
+        </div>
+      </SectionCard>
+
+      <SectionCard icon={Brain} title="Voice Welcome">
+        <ToggleRow
+          checked={config.welcome.enabled}
+          description="Generate a short personality-aware TTS greeting after a genuine arrival"
+          label="Welcome on arrival"
+          onChange={(v) => updatePath('welcome.enabled', v)}
+        />
+        <div className="grid grid-cols-1 gap-x-4 sm:grid-cols-3">
+          <TextField label="Owner name" onChange={(v) => updatePath('owner', v)} value={config.owner} />
+          <TextField hint="Wait for ESPresense identity." label="Identity wait (seconds)" onChange={(v) => updatePath('welcome.identity_grace_seconds', parseInt(v) || 4)} type="number" value={config.welcome.identity_grace_seconds} />
+          <TextField hint="Default: 60 minutes." label="Empty reset (minutes)" onChange={(v) => updatePath('welcome.reset_after_seconds', (parseInt(v) || 60) * 60)} type="number" value={Math.round(config.welcome.reset_after_seconds / 60)} />
         </div>
       </SectionCard>
 

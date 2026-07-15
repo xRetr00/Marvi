@@ -71,3 +71,9 @@ def test_owntracks_transition_normalizes_zone():
         {"_type": "transition", "event": "enter", "desc": " Home "}
     )
     geofence.assert_called_once_with("enter", "home")
+
+
+def test_owntracks_location_initializes_current_region():
+    client, _, geofence, _ = _client()
+    client._handle_owntracks({"_type": "location", "inregions": [" Home "]})
+    geofence.assert_called_once_with("sync", "home")

@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useId, useRef, useState } from 'react'
 
+import { Switch } from '@/components/ui/switch'
 import {
   applySmartRoomConfig,
   cancelSmartRoomSleep,
   getHermesConfigRecord,
   getSmartRoomStatus,
-  getSmartRoomWebhook,
   saveHermesConfig,
   saveSmartRoomSecrets,
   setSmartRoomMode,
@@ -27,9 +27,8 @@ import {
 } from '@/lib/icons'
 import { notifyError } from '@/store/notifications'
 
-import { OverlayMain } from '../overlays/overlay-split-layout'
-
 import { CONTROL_TEXT } from './constants'
+import { SettingsContent } from './primitives'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -52,9 +51,11 @@ interface SmartRoomConfig {
     he20: { ip: string; device_id: string; protocol: string; presence_dp: number; occupied_values: string[] }
   }
   esp32: {
+    ip: string
     room_id: string
     owner_device_id: string
     presence_topic: string
+    status_topic: string
     rssi_enter_threshold: number
     rssi_exit_threshold: number
     exit_timeout: number
@@ -100,9 +101,11 @@ const DEFAULT_CONFIG: SmartRoomConfig = {
     }
   },
   esp32: {
+    ip: '192.168.1.172',
     room_id: 'smart_room',
     owner_device_id: '',
-    presence_topic: 'espresense/rooms/smart_room/#',
+    presence_topic: 'espresense/devices/+/smart_room',
+    status_topic: 'espresense/rooms/smart_room/#',
     rssi_enter_threshold: -70,
     rssi_exit_threshold: -85,
     exit_timeout: 60,
@@ -177,18 +180,11 @@ function StatusDot({ online }: { online: boolean }) {
 
 function Toggle({ checked, onChange, label = 'Toggle setting' }: { checked: boolean; onChange: (v: boolean) => void; label?: string }) {
   return (
-    <button
-      aria-checked={checked}
+    <Switch
       aria-label={label}
-      className={`relative h-5 w-9 rounded-full transition-colors ${checked ? 'bg-primary' : 'bg-zinc-700'}`}
-      onClick={() => onChange(!checked)}
-      role="switch"
-      type="button"
-    >
-      <span
-        className={`absolute top-0.5 h-4 w-4 rounded-full bg-white transition-transform ${checked ? 'translate-x-4' : 'translate-x-0.5'}`}
-      />
-    </button>
+      checked={checked}
+      onCheckedChange={onChange}
+    />
   )
 }
 
@@ -257,7 +253,6 @@ export function SmartRoomSettings() {
   const [saving, setSaving] = useState(false)
   const [liveStatus, setLiveStatus] = useState<SmartRoomStatus | null>(null)
   const [secrets, setSecrets] = useState({ bulb_key: '', he20_key: '', mqtt_username: '', mqtt_password: '' })
-  const [webhook, setWebhook] = useState<{ configured: boolean; url: string; secret?: string } | null>(null)
   const [loading, setLoading] = useState(true)
   const saveQueue = useRef<Promise<void>>(Promise.resolve())
 
@@ -287,7 +282,6 @@ export function SmartRoomSettings() {
     }
 
     void poll()
-    void getSmartRoomWebhook().then(setWebhook).catch(() => {})
     const interval = setInterval(poll, 10000)
 
     return () => clearInterval(interval)
@@ -349,7 +343,8 @@ export function SmartRoomSettings() {
     : null
 
   return (
-    <OverlayMain className="space-y-4 px-4 pb-8">
+    <SettingsContent>
+      <div className="space-y-4 px-4 pb-8">
       {/* Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
@@ -413,12 +408,16 @@ export function SmartRoomSettings() {
 
       {/* Current Room State */}
       <SectionCard icon={Brain} title="Room State">
-        <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+        <div className="grid grid-cols-2 gap-4 sm:grid-cols-5">
           <div>
-            <p className={`${CONTROL_TEXT} text-zinc-500`}>Presence</p>
+            <p className={`${CONTROL_TEXT} text-zinc-500`}>Owner</p>
             <p className="text-sm text-zinc-200">
-              {presence.detected ? `Detected (${(presence.confidence * 100).toFixed(0)}%)` : 'Not detected'}
+              {presence.detected ? `Detected (${(presence.confidence * 100).toFixed(0)}%)` : 'Not identified'}
             </p>
+          </div>
+          <div>
+            <p className={`${CONTROL_TEXT} text-zinc-500`}>HE20</p>
+            <p className="text-sm text-zinc-200">{liveState?.mmwave?.occupied ? 'Occupied' : 'Clear'}</p>
           </div>
           <div>
             <p className={`${CONTROL_TEXT} text-zinc-500`}>Mode</p>
@@ -608,9 +607,11 @@ export function SmartRoomSettings() {
       <SectionCard icon={Monitor} title="ESP32 (ESPresense)">
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <div>
+            <TextField label="Node IP" onChange={(v) => updatePath('esp32.ip', v)} placeholder="192.168.1.172" value={config.esp32.ip} />
             <TextField label="Room ID" onChange={(v) => updatePath('esp32.room_id', v)} placeholder="smart_room" value={config.esp32.room_id} />
             <TextField hint="Copy the enrolled ID shown in ESPresense/MQTT." label="Owner Device ID" onChange={(v) => updatePath('esp32.owner_device_id', v)} placeholder="ESPresense enrolled device ID" value={config.esp32.owner_device_id} />
-            <TextField label="Presence Topic" onChange={(v) => updatePath('esp32.presence_topic', v)} placeholder="espresense/rooms/smart_room/#" value={config.esp32.presence_topic} />
+            <TextField label="Presence Topic" onChange={(v) => updatePath('esp32.presence_topic', v)} placeholder="espresense/devices/+/smart_room" value={config.esp32.presence_topic} />
+            <TextField label="Status Topic" onChange={(v) => updatePath('esp32.status_topic', v)} placeholder="espresense/rooms/smart_room/#" value={config.esp32.status_topic} />
           </div>
           <div>
             <TextField hint="dBm — closer = higher. -70 is typical." label="RSSI Enter Threshold" onChange={(v) => updatePath('esp32.rssi_enter_threshold', parseInt(v) || -70)} type="number" value={config.esp32.rssi_enter_threshold} />
@@ -638,12 +639,10 @@ export function SmartRoomSettings() {
       {/* Phone location */}
       <SectionCard icon={Moon} title="iPhone Location">
         <div className="mb-4 rounded-md border border-zinc-800 bg-zinc-950 p-3 text-xs text-zinc-400">
-          <p className="font-medium text-zinc-200">Primary: iOS Shortcuts webhook</p>
-          <p className="mt-1 break-all">URL: {webhook?.url || 'Enable and apply Smart Room to create the route.'}</p>
-          {webhook?.secret && <p className="mt-1 break-all">Webhook secret: {webhook.secret}</p>}
-          <p className="mt-2">Automation → Arrive/Leave → POST JSON with who, transition, zone, and ISO timestamp. Add a unique X-Request-ID. Use strict HMAC V2, or X-Gitlab-Token with this secret for the native Shortcuts fallback.</p>
+          <p className="font-medium text-zinc-200">Primary: OwnTracks over authenticated MQTT</p>
+          <p className="mt-1">Use User ID <code>smart_room</code> and Device ID <code>iphone</code>. OwnTracks transitions update home/away; iOS Shortcuts is not required.</p>
+          <p className="mt-1 text-amber-300/80">Use the PC's private Tailscale address with port 1883 and TLS off. Tailscale encrypts the route; never expose port 1883 publicly.</p>
         </div>
-        <p className="mb-2 text-xs text-zinc-500">Optional fallback: OwnTracks over authenticated MQTT</p>
         <TextField label="MQTT Topic" onChange={(v) => updatePath('owntracks.topic', v)} placeholder="owntracks/shereef/#" value={config.owntracks.topic} />
         <div>
           <label className={`mb-1 block ${CONTROL_TEXT} text-zinc-400`}>Geofence Zones</label>
@@ -718,6 +717,7 @@ export function SmartRoomSettings() {
           </div>
         </div>
       </SectionCard>
-    </OverlayMain>
+      </div>
+    </SettingsContent>
   )
 }

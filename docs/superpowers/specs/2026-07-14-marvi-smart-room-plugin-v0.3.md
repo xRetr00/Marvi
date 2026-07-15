@@ -1,6 +1,6 @@
-# Marvi Smart Room Engine v0.3 — Plugin Architecture & World-Awareness Revision
+# Marvi Smart Room Engine v0.4 — OwnTracks & ESPresense Wiring Revision
 
-> Version: 0.3 · Date: 2026-07-14 · Implementer: Codex agent
+> Version: 0.4 · Date: 2026-07-15 · Implementer: Codex agent
 > Base document: `smart-room-spec v0.2` (uploaded; all sections not amended
 > here remain in force — v0.3 is a DELTA, read both).
 > Status: approved direction; Phase 0 hardware validation still mandatory.
@@ -14,8 +14,8 @@
 2. **Room state becomes world-awareness context, NOT memory.** Marvi should
    *know* the room the way it knows the desktop (presence layer), without a
    single automatic memory write.
-3. **iPhone location joins the model** via iOS Shortcuts geofence webhooks —
-   no cloud API, no GPS polling, and it fixes the work-return heuristic.
+3. **iPhone location joins the model** via OwnTracks transition messages over
+   authenticated MQTT. iOS Shortcuts is not part of the system.
 4. **BLE deep-sleep is handled explicitly.** iPhones suppress BLE advertising
    when locked/idle unless a service needs the radio, so BLE silence is NOT
    evidence of absence. The fusion rules below make it impossible for a
@@ -102,23 +102,21 @@ desktop — ambient context, zero automatic memory writes.
    enum value; the Activity UI already renders unknown sources generically —
    verify, else add the chip). This gives the Mind page eyes on the room.
 
-## C. iPhone location (new; upgrades v0.2 §13.6 work-return)
+## C. iPhone location (upgrades v0.2 §13.6 work-return)
 
-iOS Shortcuts personal automations (Arrive/Leave location) fire reliably in
-the background and can POST a webhook — no cloud account, no polling, no app:
+OwnTracks is the only geofence source:
 
-- Marvi's gateway already has webhook routes with HMAC auth
-  (`hermes webhook subscribe`). Add subscription `smart-room-location` with
-  payload `{"who":"shereef","transition":"arrive|leave","zone":"home|uni|bakery","at":ISO}`.
-  The plugin consumes it and forwards to the runtime as a
-  `PHONE_LOCATION_CHANGED` event (new event in v0.2 §14's list).
-- Runtime keeps `phone_location: {zone, since, source}` in the snapshot
-  (v0.2 §10.1 gains this block) — world context line includes it.
-- **Work-return v2:** trigger = geofence `arrive home` during the arrival
-  window (primary) OR BLE arrival (fallback when no webhook seen for >24h).
-  Settle timer and cancellation rules unchanged from v0.2 §13.6.
-- Setup doc: SKILL.md includes the 2-minute Shortcuts recipe (Automation →
-  Arrive → URL → POST). Zones beyond `home` are optional.
+- OwnTracks publishes `_type: transition` messages on authenticated MQTT topic
+  `owntracks/<owner>/#`. The runtime maps `enter|leave` to `arrive|leave`,
+  normalizes region names, and emits `PHONE_LOCATION_CHANGED`.
+- Runtime keeps `phone_location: {zone, since, source}` in the snapshot;
+  world context includes it.
+- **Work-return v2:** trigger = OwnTracks `arrive home` during the arrival
+  window (primary) OR BLE arrival (fallback when no OwnTracks signal has been
+  seen for >24h). Settle timer and cancellation rules remain unchanged.
+- Port 1883 stays private. Home-Wi-Fi-only testing may use the LAN broker;
+  reliable cellular delivery uses a private VPN such as Tailscale. Never
+  forward plaintext MQTT to the public internet.
 
 ## D. BLE deep-sleep: identity must survive a silent phone (amends v0.2 §8.4)
 
@@ -137,7 +135,7 @@ enroll flow) solves MAC randomization but NOT sleep silence. Therefore:
    phone on the desk + a warm body on the bed is Shereef until proven
    otherwise.
 3. Sticky identity releases when: mmWave clears for its timeout (room empty),
-   OR the geofence webhook says `leave home`, OR another enrolled identity
+   OR OwnTracks says `leave home`, OR another enrolled identity
    appears without Shereef's.
 4. Light-off still requires mmWave clear + BLE absent (v0.2 policy) — the
    phone-asleep-in-room case can never darken an occupied room.
@@ -145,8 +143,11 @@ enroll flow) solves MAC randomization but NOT sleep silence. Therefore:
    without at least one BLE/geofence identity signal that session.
 
 **Signal hygiene:**
-- ESPresense: use the v3 secure enroll (IRK), room id `smart_room`,
-  and capture live topic/payload as fixtures (v0.2 §19.4 unchanged).
+- ESPresense: use secure IRK enrollment and room id `smart_room`. Firmware
+  v4 publishes owner BLE at `espresense/devices/<irk-backed-id>/smart_room`
+  and node health at `espresense/rooms/smart_room/#`; never feed the latter
+  into presence fusion. Generic Apple fingerprints are not unique and cannot
+  be guessed as the owner.
 - Mitigations that INCREASE BLE chatter are user-optional, documented in
   SKILL.md (Apple Watch presence, Handoff on), never assumed by the fusion.
 - Optional third signal, config-gated `presence.wifi_ping.enabled` (default
@@ -161,9 +162,9 @@ The wish: run as much as possible on the ESP32. The assessment:
 - **Tier 1 (v0.3 scope, recommended):** ESP32 runs ESPresense, dedicated —
   the best-supported BLE identity stack (IRK enroll flow, room-level
   filtering, MQTT). The engine stays on the PC because Marvi is on the PC,
-  and because the deep-sleep mitigations (geofence webhooks) terminate at
-  the gateway anyway. ESP32 also publishes its own telemetry
-  (espresense/rooms/smart_room status) — the runtime's health model treats
+  and because the deep-sleep mitigations (OwnTracks) terminate at MQTT
+  anyway. ESP32 also publishes its own telemetry
+  (`espresense/rooms/smart_room/#`) — the runtime's health model treats
   ESP32 staleness per v0.2 §16.4.
 - **Tier 2 (v0.4, worth doing):** replace ESPresense with a custom
   ESPHome/Arduino firmware that combines NimBLE IRK tracking AND direct Tuya
@@ -178,7 +179,7 @@ The wish: run as much as possible on the ESP32. The assessment:
 - **Tier 3 (full system on ESP32) — not recommended:** possible in theory
   (EspTuya + NimBLE + rules), but you lose: the HE20 (it is a Tuya WiFi
   node — the ESP32 would poll it over WiFi anyway, same as the PC), the
-  geofence webhook terminus, scheduling robustness, structured logs, tests,
+  OwnTracks MQTT consumer, scheduling robustness, structured logs, tests,
   and every Marvi integration. The ceiling is documented here so nobody
   half-builds it; revisit only if the PC stops being always-on.
 - **HE20 note for Phase 0:** if local DPS polling proves unreliable
@@ -211,8 +212,10 @@ All v0.2 §21 tests stand. Add:
 - Fusion axioms: sleeping-phone matrix (BLE silent + mmWave occupied holds
   identity with decay; geofence leave releases; mmWave clear releases;
   positive-only wifi-ping evidence).
-- Geofence webhook → PHONE_LOCATION_CHANGED → work-return v2 trigger; HMAC
-  rejection; stale/duplicate webhook idempotency.
+- OwnTracks transition → PHONE_LOCATION_CHANGED → work-return v2 trigger;
+  region normalization and MQTT authentication.
+- ESPresense v4 device topics drive owner RSSI, room topics drive node health
+  only, and generic Apple fingerprints are ignored.
 - Plugin lifecycle: gateway start spawns runtime; runtime crash → backoff
   restart → tools return structured unavailable during downtime (never
   hang); gateway shutdown terminates child cleanly.
@@ -228,8 +231,8 @@ All v0.2 §21 tests stand. Add:
   for 60 min (with and without Apple Watch nearby if available) — log gap
   distribution; these gaps calibrate `missing_timeout_seconds` and the
   sticky-decay curve (measurements, not guesses — same rule as v0.2 §19.5).
-- Verify the Shortcuts geofence webhook fires from lock screen state and
-  measure delivery latency to the gateway route.
+- Verify OwnTracks transitions from locked/background iOS on Wi-Fi and through
+  the private cellular VPN path; measure broker delivery latency.
 
 ## Sources
 
@@ -240,6 +243,8 @@ All v0.2 §21 tests stand. Add:
   https://github.com/ESPresense/ESPresense/discussions/492
 - IRK enroll flow walkthrough:
   https://www.jamesridgway.co.uk/reliable-ios-presence-detection-with-espresense-v3-enroll-flow-and-irk/
+- OwnTracks iOS and MQTT:
+  https://owntracks.org/booklet/features/ios/ · https://owntracks.org/booklet/tech/mqtt/
 - ESP32 native Tuya LAN control (protocol 3.4/3.5):
   https://github.com/FrBerger83/EspTuya ·
   https://github.com/jasonacox/tinytuya/blob/master/PROTOCOL.md

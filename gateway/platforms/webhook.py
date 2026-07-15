@@ -678,31 +678,6 @@ class WebhookAdapter(BasePlatformAdapter):
                 status=200,
             )
 
-        # Authenticated plugin consumers may handle a route without paying for
-        # an agent turn. HMAC, rate limiting, filters, and idempotency have all
-        # completed before this point.
-        try:
-            from hermes_cli.plugins import invoke_hook
-
-            hook_results = await asyncio.to_thread(
-                invoke_hook,
-                "on_webhook_received",
-                route_name=route_name,
-                payload=payload,
-                delivery_id=delivery_id,
-                event_type=event_type,
-            )
-            for hook_result in hook_results:
-                if isinstance(hook_result, dict) and hook_result.get("handled"):
-                    status = int(hook_result.get("status", 200))
-                    body = hook_result.get("body")
-                    return web.json_response(
-                        body if isinstance(body, dict) else {"status": "handled"},
-                        status=status,
-                    )
-        except Exception:
-            logger.warning("[webhook] plugin consumer failed", exc_info=True)
-
         # ── Direct delivery mode (deliver_only) ─────────────────
         # Skip the agent entirely — the rendered prompt IS the message we
         # deliver.  Use case: external services (Supabase, monitoring,

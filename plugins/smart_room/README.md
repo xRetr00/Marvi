@@ -4,7 +4,7 @@
 
 ## What It Does
 
-- **Presence fusion**: BLE (ESP32/ESPresense) + mmWave (HE20) + authenticated iOS geofence → room-level presence with iPhone deep-sleep handling
+- **Presence fusion**: BLE (ESP32/ESPresense) + mmWave (HE20) + OwnTracks geofence → room-level presence with iPhone deep-sleep handling
 - **Tuya LAN control**: Direct control of RGBCW bulb + HE20 sensor via tinytuya — no cloud
 - **Room automations**: Adaptive light, sleep/alarm behavior, work-return settle/cancel, evening sleep, and daily resets
 - **World-awareness**: Marvi knows where you are, what mode the room is in, light state — as ambient context, not memory writes
@@ -15,7 +15,7 @@
 ```
 ESP32 (ESPresense) ──MQTT──┐
                            ├──→ Mosquitto MQTT ──→ Runtime (Python) ──→ Marvi Plugin
-iOS Shortcuts ──HMAC webhook──→ Marvi Gateway ────────┘
+OwnTracks (iPhone) ──MQTT───┘
                                                   Tuya Controller (tinytuya)
                                                   (RGBCW bulb + HE20 sensor)
 ```
@@ -43,7 +43,17 @@ smart_room:
 The plugin is bundled with Marvi; no symlink or second repository is needed.
 
 ### 4. Hardware setup
-See **NEEDS_YOU_AT_HOME.md** for the full checklist (Tuya keys, ESP32 flash, iPhone webhook, and MQTT setup).
+See **NEEDS_YOU_AT_HOME.md** for the remaining OwnTracks import and Home-region steps.
+
+To regenerate the password-bearing iPhone configuration without printing the
+password, run:
+
+```powershell
+python plugins/smart_room/scripts/create_owntracks_config.py `
+  --host <PC_TAILSCALE_IP> `
+  --env-file "$env:LOCALAPPDATA\hermes\.env" `
+  --output "$env:USERPROFILE\Downloads\marvi-owntracks.otrc"
+```
 
 ## Tools
 
@@ -58,7 +68,7 @@ See **NEEDS_YOU_AT_HOME.md** for the full checklist (Tuya keys, ESP32 flash, iPh
 | `smart_room_diagnostic` | Full diagnostic dump |
 
 ## Spec
-See `D:\hermes-agent\docs\superpowers\specs\2026-07-14-marvi-smart-room-plugin-v0.3.md` for the full architecture spec.
+See `D:\hermes-agent\docs\superpowers\specs\2026-07-14-marvi-smart-room-plugin-v0.3.md` for the current v0.4 revision (the original path is retained for existing links).
 
 ## License
 MIT — xRetro Labs

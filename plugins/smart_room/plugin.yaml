@@ -16,4 +16,3 @@ provides_tools:
 hooks:
   - on_gateway_start
   - on_gateway_stop
-  - on_webhook_received

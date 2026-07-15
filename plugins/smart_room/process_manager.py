@@ -11,14 +11,12 @@ import subprocess
 import sys
 import threading
 import time
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Optional
 
 from hermes_constants import get_hermes_home
 
 _lock = threading.RLock()
-_queue_lock = threading.Lock()
 _supervisor_stop = threading.Event()
 _supervisor_thread: Optional[threading.Thread] = None
 _supervisor_config: Dict[str, Any] = {}
@@ -37,10 +35,6 @@ def _active_file() -> Path:
 
 def _rpc_token_file() -> Path:
     return _root() / ".rpc-token"
-
-
-def _pending_location_file() -> Path:
-    return _root() / "pending-location.jsonl"
 
 
 def _write_rpc_token(token: str) -> None:
@@ -158,6 +152,23 @@ def start(config: Optional[Dict[str, Any]] = None, *, restart_count: int = 0) ->
         cfg = dict(config or _supervisor_config)
         _root().mkdir(parents=True, exist_ok=True)
         env = os.environ.copy()
+        # Desktop secret writes update the profile .env without mutating a
+        # long-lived gateway process. Resolve this plugin's credentials at
+        # spawn time so Apply/restart always gives the child the latest keys.
+        from dotenv import dotenv_values
+
+        # Read the captured profile directly. Gateway multiplexing deliberately
+        # isolates process-global secrets, so a generic load_env() call may see
+        # a different active scope than this supervised child belongs to.
+        stored_env = dotenv_values(_root().parent / ".env", encoding="utf-8")
+        for name in (
+            "SMART_ROOM_MQTT_USERNAME",
+            "SMART_ROOM_MQTT_PASSWORD",
+            "SMART_ROOM_TUYA_BULB_KEY",
+            "SMART_ROOM_TUYA_HE20_KEY",
+        ):
+            if value := stored_env.get(name):
+                env[name] = value
         env["SMART_ROOM_RPC_PORT"] = str(_rpc_port(cfg))
         token = secrets.token_urlsafe(32)
         _write_rpc_token(token)
@@ -236,29 +247,11 @@ def restart() -> Dict[str, Any]:
     return start(restart_count=int(previous.get("restart_count", 0)) + 1)
 
 
-def _ensure_location_subscription() -> None:
-    from hermes_cli.webhook import _load_subscriptions, _save_subscriptions
-
-    subscriptions = _load_subscriptions()
-    if "smart-room-location" in subscriptions:
-        return
-    subscriptions["smart-room-location"] = {
-        "description": "Authenticated iOS Shortcuts location events for Smart Room",
-        "events": [],
-        "secret": secrets.token_urlsafe(32),
-        "prompt": "",
-        "deliver": "log",
-        "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-    }
-    _save_subscriptions(subscriptions)
-
-
 def _supervise_loop() -> None:
     failures = 0
     while not _supervisor_stop.is_set():
         current = status()
         if current.get("alive"):
-            _flush_pending_location_events()
             if time.time() - float(current.get("started_at", 0)) > 60:
                 failures = 0
             _supervisor_stop.wait(2)
@@ -288,7 +281,6 @@ def start_supervisor(config: Dict[str, Any]) -> Dict[str, Any]:
     with _lock:
         _supervisor_config = dict(config)
         _supervisor_home = Path(get_hermes_home())
-        _ensure_location_subscription()
         result = start(_supervisor_config)
         if _supervisor_thread and _supervisor_thread.is_alive():
             return result
@@ -313,117 +305,6 @@ def stop_supervisor() -> None:
     stop(reason="gateway stopped")
     _supervisor_config = {}
     _supervisor_home = None
-
-
-def forward_location_webhook(payload: Dict[str, Any], delivery_id: str) -> Dict[str, Any]:
-    """Validate an iOS location payload and forward it to the runtime."""
-    params = _validated_location_params(payload, delivery_id)
-    return _call_runtime("phone_location_changed", params)
-
-
-def _validated_location_params(payload: Dict[str, Any], delivery_id: str) -> Dict[str, Any]:
-    config = _supervisor_config or {}
-    owner = str(config.get("owner", "shereef")).strip().lower()
-    who = str(payload.get("who", "")).strip().lower()
-    transition = str(payload.get("transition", "")).strip().lower()
-    zone = str(payload.get("zone", "")).strip().lower()
-    at = str(payload.get("at", "")).strip()
-    zones = {str(z).lower() for z in (config.get("owntracks") or {}).get("zones", [])}
-    zones.add("home")
-    if who != owner:
-        raise ValueError("unexpected location identity")
-    if transition not in {"arrive", "leave"}:
-        raise ValueError("transition must be 'arrive' or 'leave'")
-    if not zone or (zones and zone not in zones):
-        raise ValueError("unknown location zone")
-    try:
-        stamp = datetime.fromisoformat(at.replace("Z", "+00:00"))
-        if stamp.tzinfo is None:
-            stamp = stamp.replace(tzinfo=timezone.utc)
-    except ValueError as exc:
-        raise ValueError("at must be an ISO timestamp") from exc
-    age = (datetime.now(timezone.utc) - stamp.astimezone(timezone.utc)).total_seconds()
-    max_age = int((config.get("webhook") or {}).get("max_age_seconds", 900))
-    if age < -300 or age > max_age:
-        raise ValueError("stale location event")
-
-    return {
-        "who": who,
-        "transition": transition,
-        "zone": zone,
-        "at": stamp.astimezone(timezone.utc).isoformat(),
-        "delivery_id": delivery_id,
-        "source": "shortcut_webhook",
-    }
-
-
-def queue_location_webhook(payload: Dict[str, Any], delivery_id: str) -> None:
-    """Persist a validated event while the runtime is between restarts."""
-    params = _validated_location_params(payload, delivery_id)
-    path = _pending_location_file()
-    with _queue_lock:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        entries: list[Dict[str, Any]] = []
-        if path.exists():
-            for line in path.read_text(encoding="utf-8").splitlines():
-                try:
-                    item = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-                if isinstance(item, dict):
-                    entries.append(item)
-        if not any(item.get("delivery_id") == delivery_id for item in entries):
-            entries.append(params)
-        tmp = path.with_suffix(".jsonl.tmp")
-        tmp.write_text(
-            "".join(json.dumps(item, ensure_ascii=False) + "\n" for item in entries[-100:]),
-            encoding="utf-8",
-        )
-        tmp.replace(path)
-        try:
-            path.chmod(0o600)
-        except OSError:
-            pass
-
-
-def _flush_pending_location_events() -> int:
-    path = _pending_location_file()
-    with _queue_lock:
-        if not path.exists():
-            return 0
-        entries = []
-        for line in path.read_text(encoding="utf-8").splitlines():
-            try:
-                item = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            if isinstance(item, dict):
-                entries.append(item)
-        remaining: list[Dict[str, Any]] = []
-        delivered = 0
-        for index, params in enumerate(entries):
-            try:
-                result = _call_runtime("phone_location_changed", params)
-            except RuntimeError:
-                remaining.extend(entries[index:])
-                break
-            if result.get("success"):
-                delivered += 1
-            else:
-                remaining.append(params)
-        if remaining:
-            tmp = path.with_suffix(".jsonl.tmp")
-            tmp.write_text(
-                "".join(json.dumps(item, ensure_ascii=False) + "\n" for item in remaining),
-                encoding="utf-8",
-            )
-            tmp.replace(path)
-        else:
-            try:
-                path.unlink()
-            except FileNotFoundError:
-                pass
-        return delivered
 
 
 def health_check() -> Dict[str, Any]:

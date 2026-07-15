@@ -41,7 +41,7 @@ The smart room plugin provides ambient world-context to Marvi:
 Presence is determined by fusing three signals:
 1. **BLE** (ESP32/ESPresense) — strong evidence FOR identity, weak evidence AGAINST
 2. **mmWave** (HE20 sensor) — room occupancy, no identity
-3. **Geofence** (authenticated iOS Shortcuts; OwnTracks optional) — home/away/work/uni zones
+3. **Geofence** (OwnTracks over authenticated MQTT) — home/away/work/uni zones
 
 Key axiom: iPhone BLE silence is NOT absence (deep-sleep). Identity is sticky:
 once BLE establishes presence, mmWave occupancy holds it even if BLE goes silent.
@@ -73,9 +73,7 @@ The runtime provides:
 4. Copy the enrolled device ID into Desktop Settings → Smart Room → Owner Device ID
 
 ### iPhone location
-1. Enable Smart Room and apply settings so Marvi creates `smart-room-location`
-2. Copy the URL and webhook secret from Desktop Settings → Smart Room
-3. Create Arrive/Leave Shortcuts that POST `{who, transition, zone, at}` and a unique `X-Request-ID`
-4. Strict option: sign `timestamp + "." + raw_body` with HMAC-SHA256 and send `X-Webhook-Timestamp` plus `X-Webhook-Signature-V2`
-5. Native Shortcuts fallback: send the secret as `X-Gitlab-Token`; stale-event and delivery-id checks still prevent repeated actions
-6. OwnTracks over authenticated MQTT remains an optional fallback
+1. Configure OwnTracks in MQTT mode with the Smart Room broker credentials
+2. Set the device/user topic to match `smart_room.owntracks.topic`
+3. Create the `home` region and enable background location with Always permission
+4. Use a private VPN such as Tailscale for reliable transitions away from home; never expose plaintext MQTT port 1883 to the internet

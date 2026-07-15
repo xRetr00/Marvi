@@ -69,8 +69,8 @@ class PhoneLocation:
     home: bool = False
     zone: str = "unknown"  # "home", "university", "bakery", "away"
     since: Optional[str] = None
-    source: str = "unknown"  # "shortcut_webhook", "owntracks", "ble", "unknown"
-    last_webhook_at: Optional[str] = None
+    source: str = "unknown"  # "owntracks", "ble", "unknown"
+    last_geofence_at: Optional[str] = None
     last_event_key: Optional[str] = None
 
 
@@ -120,7 +120,10 @@ class RoomState:
         if "flags" in d:
             state.flags = DailyFlags(**d["flags"])
         if "location" in d:
-            state.location = PhoneLocation(**d["location"])
+            location = dict(d["location"])
+            # One-time migration from the removed iOS Shortcuts design.
+            location.setdefault("last_geofence_at", location.pop("last_webhook_at", None))
+            state.location = PhoneLocation(**location)
         if "devices" in d:
             state.devices = {
                 k: DeviceHealth(**v) for k, v in d["devices"].items()

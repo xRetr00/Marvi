@@ -2,7 +2,8 @@
 
 Subscribes to:
   - owntracks/shereef/#          — geofence enter/leave events
-  - espresense/rooms/smart_room/# — BLE presence + RSSI
+  - espresense/devices/+/smart_room — BLE presence + RSSI
+  - espresense/rooms/smart_room/#   — node status + telemetry
 
 Publishes to:
   - smart_room/state             — state snapshot (retained)
@@ -40,11 +41,13 @@ class MQTTClient:
         on_presence: Callable[[bool, Optional[int], Optional[str]], None],
         on_geofence: Callable[[str, str], None],
         on_command: Callable[[Dict[str, Any]], None],
+        on_node_status: Optional[Callable[[bool, Optional[str]], None]] = None,
     ):
         self._config = config
         self._on_presence = on_presence
         self._on_geofence = on_geofence
         self._on_command = on_command
+        self._on_node_status = on_node_status or (lambda _online, _ip: None)
         self._client: Optional[Any] = None
         self._connected = False
         self._thread: Optional[threading.Thread] = None
@@ -59,7 +62,14 @@ class MQTTClient:
         ot_cfg = config.get("owntracks", {})
         self._owntracks_topic = ot_cfg.get("topic", "owntracks/shereef/#")
         esp_cfg = config.get("esp32", {})
-        self._espresense_topic = esp_cfg.get("presence_topic", "espresense/rooms/smart_room/#")
+        self._room = str(esp_cfg.get("room_id", "smart_room")).strip().lower()
+        self._owner_device_id = str(esp_cfg.get("owner_device_id", "")).strip().lower()
+        self._espresense_topic = esp_cfg.get(
+            "presence_topic", f"espresense/devices/+/{self._room}"
+        )
+        self._espresense_status_topic = esp_cfg.get(
+            "status_topic", f"espresense/rooms/{self._room}/#"
+        )
         self._state_topic = "smart_room/state"
         self._command_topic = "smart_room/command"
         self._commands_enabled = bool(mqtt_cfg.get("commands_enabled", False))
@@ -117,6 +127,7 @@ class MQTTClient:
             topics = [
                 (self._owntracks_topic, 0),
                 (self._espresense_topic, 0),
+                (self._espresense_status_topic, 0),
             ]
             if self._commands_enabled:
                 topics.append((self._command_topic, 0))
@@ -153,7 +164,7 @@ class MQTTClient:
         event_type = payload.get("_type", "")
         if event_type == "transition":
             event = payload.get("event", "")
-            zone = payload.get("desc", "unknown")
+            zone = str(payload.get("desc", "unknown")).strip().lower()
             if event == "enter":
                 self._on_geofence("enter", zone)
             elif event == "leave":
@@ -161,15 +172,34 @@ class MQTTClient:
 
     def _handle_espresense(self, topic: str, payload: Dict[str, Any]) -> None:
         """Process ESPresense BLE presence data."""
-        # ESPresense publishes to: espresense/rooms/<room>/<deviceId>
-        # Payload includes: {"rssi": -65, "loc": "smart_room", "confidence": 0.85}
+        parts = topic.split("/")
+        if len(parts) == 4 and parts[:2] == ["espresense", "rooms"]:
+            room, message_type = parts[2].lower(), parts[3].lower()
+            if room != self._room:
+                return
+            if message_type == "status":
+                self._on_node_status(
+                    str(payload.get("value", "")).strip().lower() == "online", None
+                )
+            elif message_type == "telemetry":
+                self._on_node_status(True, payload.get("ip"))
+            return
+
+        # ESPresense v4 publishes devices as espresense/devices/<id>/<room>.
+        if len(parts) != 4 or parts[:2] != ["espresense", "devices"]:
+            return
+        identity = parts[2].strip().lower()
+        if parts[3].strip().lower() != self._room:
+            return
+        # Generic Apple fingerprints are not unique. Until secure enrollment
+        # supplies the owner's IRK-backed ID, they must never drive identity.
+        if not self._owner_device_id or identity != self._owner_device_id:
+            return
+
         rssi = payload.get("rssi")
-        identity = str(
-            payload.get("id")
-            or payload.get("device")
-            or payload.get("name")
-            or topic.rsplit("/", 1)[-1]
-        ).strip().lower()
+        if not isinstance(rssi, (int, float)):
+            return
+        rssi = int(round(rssi))
 
         # If rssi is strong enough, presence is detected
         threshold = self._config.get("esp32", {}).get("rssi_enter_threshold", -70)

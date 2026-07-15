@@ -9,6 +9,7 @@ is the fallback/override. Both use the same Tuya LAN protocol.
 
 from __future__ import annotations
 
+import colorsys
 import logging
 import os
 import threading
@@ -84,24 +85,40 @@ class TuyaController:
             bulb_cfg = (self._config.get("tuya", {}).get("bulb", {}))
             dp = bulb_cfg.get("dps", {})
             switch_dp = str(dp.get("switch", 1))
+            mode_dp = str(dp.get("mode", 21))
             dps: Dict[str, Any] = {}
             if on is not None:
                 dps[switch_dp] = on
-            if brightness is not None:
+            if brightness is not None and rgb is None:
                 brightness_max = int(bulb_cfg.get("brightness_max", 255))
-                dps[str(dp.get("brightness", 2))] = str(int(brightness * brightness_max / 100))
-            if color_temp is not None:
-                # Tuya color temp is 0-255 (warm to cool)
+                dps[str(dp.get("brightness", 2))] = int(brightness * brightness_max / 100)
+            if color_temp is not None and rgb is None:
                 color_temp_max = int(bulb_cfg.get("color_temp_max", 255))
                 tuya_ct = int((color_temp - 2200) / (6500 - 2200) * color_temp_max)
-                dps[str(dp.get("color_temp", 3))] = str(tuya_ct)
+                dps[str(dp.get("color_temp", 3))] = tuya_ct
+                dps[mode_dp] = "white"
             if rgb is not None:
                 r, g, b = rgb[0], rgb[1], rgb[2]
-                # Tuya expects "rrrgggbb" hex format
-                dps[str(dp.get("color", 5))] = f"{r:02x}{g:02x}{b:02x}"
+                hue, saturation, value = colorsys.rgb_to_hsv(r / 255, g / 255, b / 255)
+                if brightness is not None:
+                    value = brightness / 100
+                dps[mode_dp] = "colour"
+                dps[str(dp.get("color", 5))] = (
+                    f"{round(hue * 360):04x}{round(saturation * 1000):04x}"
+                    f"{round(value * 1000):04x}"
+                )
 
             if dps:
-                dev.set_multiple_dps(dps)
+                setter = getattr(dev, "set_multiple_values", None) or getattr(
+                    dev, "set_multiple_dps", None
+                )
+                if setter is None:
+                    raise RuntimeError("installed tinytuya has no multi-DP setter")
+                response = setter(dps)
+                if isinstance(response, dict) and (
+                    response.get("Error") or response.get("Err")
+                ):
+                    raise RuntimeError(str(response.get("Error") or response.get("Err")))
             if flash:
                 self._start_flash(dev, switch_dp, flash_interval_ms)
             return {"success": True, "dps": dps}

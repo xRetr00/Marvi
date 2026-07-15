@@ -9,7 +9,6 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from hermes_cli.config import save_env_value
-from hermes_cli.webhook import _get_webhook_base_url, _load_subscriptions
 from plugins.smart_room.bridge import call_runtime
 from plugins.smart_room.process_manager import start_supervisor, status, stop_supervisor
 from plugins.smart_room.runtime.state_store import load_config
@@ -116,13 +115,3 @@ async def save_secrets(body: SecretsBody) -> dict:
         if field in values:
             await asyncio.to_thread(save_env_value, env_name, values[field])
     return {"ok": True, "saved": sorted(values)}
-
-
-@router.get("/webhook")
-async def webhook_setup() -> dict:
-    route = _load_subscriptions().get("smart-room-location") or {}
-    return {
-        "configured": bool(route),
-        "url": f"{_get_webhook_base_url()}/webhooks/smart-room-location",
-        "secret": route.get("secret"),
-    }

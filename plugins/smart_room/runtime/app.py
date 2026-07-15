@@ -79,6 +79,10 @@ class Runtime:
         self._ble_detected = False
         self._ble_rssi: Optional[int] = None
         self._last_ble_seen_monotonic = 0.0
+        # A clear event is edge-triggered after the room has remained empty
+        # for the configured timeout.  HE20 can briefly report "none" between
+        # occupied samples, so a single clear poll must never turn lights off.
+        self._room_clear_emitted = not self._state.mmwave.occupied
         self._owner = str(config.get("owner", "shereef")).strip().lower()
         self._owner_device_id = str(
             (config.get("esp32") or {}).get("owner_device_id", "")
@@ -120,6 +124,7 @@ class Runtime:
                 on_presence=self._on_ble_presence,
                 on_geofence=self._on_geofence,
                 on_command=self._on_mqtt_command,
+                on_node_status=self._on_esp32_status,
             )
             self._mqtt.start()
         except Exception as e:
@@ -275,9 +280,9 @@ class Runtime:
         was_present = self._state.presence.detected
         self._update_presence(other_identity_detected=detected and not is_owner)
         if not was_present and self._state.presence.detected:
-            stale_webhook = self._location_webhook_stale()
+            stale_geofence = self._location_signal_stale()
             self._emit_event("presence_detected", {"source": self._state.presence.source})
-            if stale_webhook:
+            if stale_geofence:
                 self._emit_event("ble_arrive_fallback", {"source": "ble"})
         elif was_present and not self._state.presence.detected:
             self._emit_event("presence_cleared", {})
@@ -294,8 +299,21 @@ class Runtime:
             source="owntracks",
         )
 
-    def _location_webhook_stale(self) -> bool:
-        value = self._state.location.last_webhook_at
+    @_state_locked
+    def _on_esp32_status(self, online: bool, ip: Optional[str] = None) -> None:
+        """Update node health from ESPresense retained status/telemetry."""
+        esp32 = self._state.devices.setdefault("esp32", DeviceHealth())
+        esp32.online = online
+        if ip:
+            esp32.ip = str(ip)
+        elif not esp32.ip:
+            esp32.ip = (self._config.get("esp32") or {}).get("ip")
+        if online:
+            esp32.last_seen = now_iso()
+        save_state(self._state)
+
+    def _location_signal_stale(self) -> bool:
+        value = self._state.location.last_geofence_at
         if not value:
             return True
         try:
@@ -348,6 +366,10 @@ class Runtime:
         source: str,
     ) -> Dict[str, Any]:
         """Apply one validated, idempotent phone-location transition."""
+        who = str(who).strip().lower()
+        transition = str(transition).strip().lower()
+        zone = str(zone).strip().lower()
+        source = str(source).strip().lower()
         event_key = f"{who}|{transition}|{zone}|{at}"
         if self._state.location.last_event_key == event_key:
             return {"success": True, "duplicate": True, "event_id": self._state.event_id}
@@ -356,8 +378,8 @@ class Runtime:
         self._state.location.last_event_key = event_key
         self._state.location.source = source
         self._state.location.since = at
-        if source == "shortcut_webhook":
-            self._state.location.last_webhook_at = at
+        if source == "owntracks":
+            self._state.location.last_geofence_at = at
 
         if transition == "arrive":
             self._state.location.zone = zone
@@ -420,7 +442,6 @@ class Runtime:
     def _poll_devices(self) -> None:
         """Poll Tuya devices and update state."""
         was_present = self._state.presence.detected
-        old_mmwave = self._state.mmwave.occupied
         if self._tuya:
             # Poll bulb
             bulb_status = self._tuya.get_light_status()
@@ -454,12 +475,13 @@ class Runtime:
                 he20.online = False
 
         wifi_detected = self._probe_wifi_presence()
-        self._update_presence(wifi_detected=wifi_detected)
+        _, light_should_off = self._update_presence(wifi_detected=wifi_detected)
+        if self._state.mmwave.occupied:
+            self._room_clear_emitted = False
         if not was_present and self._state.presence.detected:
             self._emit_event("presence_detected", {"source": self._state.presence.source})
-        elif was_present and not self._state.presence.detected:
-            self._emit_event("presence_cleared", {"source": "mmwave"})
-        elif old_mmwave and not self._state.mmwave.occupied and not self._ble_detected:
+        elif light_should_off and not self._room_clear_emitted:
+            self._room_clear_emitted = True
             self._emit_event("presence_cleared", {"source": "mmwave"})
 
         # Publish state via MQTT
@@ -492,13 +514,16 @@ class Runtime:
             return False
 
     def _check_exit_timeout(self) -> bool:
-        """Check if presence has been absent long enough to clear."""
+        """Check whether mmWave has remained clear for the exit timeout."""
         exit_timeout = self._config.get("esp32", {}).get("exit_timeout", 60)
-        if self._state.presence.last_seen is None:
+        if self._state.mmwave.occupied:
+            return False
+        last_seen = self._state.mmwave.last_seen
+        if last_seen is None:
             return True
         try:
             from datetime import datetime, timezone
-            last = datetime.fromisoformat(self._state.presence.last_seen.replace("Z", "+00:00"))
+            last = datetime.fromisoformat(last_seen.replace("Z", "+00:00"))
             now = datetime.now(timezone.utc)
             return (now - last).total_seconds() > exit_timeout
         except Exception:

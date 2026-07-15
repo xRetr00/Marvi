@@ -83,6 +83,40 @@ def test_wifi_is_positive_only_identity_evidence():
     assert presence.source == "ble_sticky_mmwave"
 
 
+def test_exit_timeout_uses_last_mmwave_occupancy_not_phone_sighting():
+    runtime = Runtime({"esp32": {"exit_timeout": 60}})
+    runtime._state.presence.last_seen = (datetime.now(timezone.utc) - timedelta(hours=4)).isoformat()
+    runtime._state.mmwave.occupied = False
+    runtime._state.mmwave.last_seen = (datetime.now(timezone.utc) - timedelta(seconds=10)).isoformat()
+
+    assert runtime._check_exit_timeout() is False
+
+    runtime._state.mmwave.last_seen = (datetime.now(timezone.utc) - timedelta(seconds=61)).isoformat()
+    assert runtime._check_exit_timeout() is True
+
+
+def test_he20_clear_event_is_delayed_and_edge_triggered(monkeypatch):
+    runtime = Runtime({"esp32": {"exit_timeout": 60}})
+    runtime._state.mmwave.occupied = True
+    runtime._state.mmwave.last_seen = datetime.now(timezone.utc).isoformat()
+    runtime._room_clear_emitted = False
+    runtime._tuya = MagicMock()
+    runtime._tuya.get_light_status.return_value = {"success": True, "on": True, "brightness": 70}
+    runtime._tuya.get_mmwave_status.return_value = {"success": True, "occupied": False}
+    runtime._mqtt = None
+    monkeypatch.setattr(runtime, "_probe_wifi_presence", lambda: False)
+    emitted = []
+    monkeypatch.setattr(runtime, "_emit_event", lambda event, data: emitted.append((event, data)))
+
+    runtime._poll_devices()
+    assert emitted == []
+
+    runtime._state.mmwave.last_seen = (datetime.now(timezone.utc) - timedelta(seconds=61)).isoformat()
+    runtime._poll_devices()
+    runtime._poll_devices()
+    assert emitted == [("presence_cleared", {"source": "mmwave"})]
+
+
 def test_location_event_is_idempotent_and_schedules_work_return(monkeypatch):
     runtime = Runtime({
         "owner": "shereef",
@@ -102,62 +136,17 @@ def test_location_event_is_idempotent_and_schedules_work_return(monkeypatch):
     monkeypatch.setattr(runtime, "_schedule_mode", scheduled)
     at = datetime.now(timezone.utc).isoformat()
     params = {
-        "who": "shereef", "transition": "arrive", "zone": "home",
-        "at": at, "delivery_id": "delivery-1", "source": "shortcut_webhook",
+        "who": "Shereef", "transition": "ARRIVE", "zone": "Home",
+        "at": at, "delivery_id": "delivery-1", "source": "OwnTracks",
     }
     first = runtime.phone_location_changed(**params)
     second = runtime.phone_location_changed(**params)
     assert first["success"] is True and first["duplicate"] is False
     assert second["success"] is True and second["duplicate"] is True
+    assert runtime._state.location.zone == "home"
+    assert runtime._state.location.source == "owntracks"
+    assert runtime._state.location.last_geofence_at == at
     scheduled.assert_called_once_with("sleep", 300, reason="work_return")
-
-
-def test_location_forwarder_rejects_stale_event(monkeypatch):
-    monkeypatch.setattr(process_manager, "_supervisor_config", {
-        "owner": "shereef", "owntracks": {"zones": ["home"]},
-        "webhook": {"max_age_seconds": 60},
-    })
-    stale = (datetime.now(timezone.utc) - timedelta(minutes=5)).isoformat()
-    with pytest.raises(ValueError, match="stale"):
-        process_manager.forward_location_webhook(
-            {"who": "shereef", "transition": "arrive", "zone": "home", "at": stale},
-            "delivery-1",
-        )
-
-
-def test_location_event_is_queued_during_runtime_restart(monkeypatch):
-    import plugins.smart_room as plugin
-
-    monkeypatch.setattr(process_manager, "_supervisor_config", {
-        "owner": "shereef", "owntracks": {"zones": ["home"]},
-    })
-    monkeypatch.setattr(plugin, "_enabled", lambda: True)
-    monkeypatch.setattr(
-        process_manager,
-        "_call_runtime",
-        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("down")),
-    )
-    payload = {
-        "who": "shereef", "transition": "arrive", "zone": "home",
-        "at": datetime.now(timezone.utc).isoformat(),
-    }
-    response = plugin._on_webhook_received(
-        route_name="smart-room-location", payload=payload, delivery_id="queued-1",
-    )
-    assert response == {
-        "handled": True, "status": 202, "body": {"success": True, "queued": True},
-    }
-    assert process_manager._pending_location_file().exists()
-
-    calls = []
-    monkeypatch.setattr(
-        process_manager,
-        "_call_runtime",
-        lambda method, params: calls.append((method, params)) or {"success": True},
-    )
-    assert process_manager._flush_pending_location_events() == 1
-    assert calls[0][0] == "phone_location_changed"
-    assert not process_manager._pending_location_file().exists()
 
 
 def test_scheduler_fires_each_daily_trigger_once(monkeypatch):
@@ -207,7 +196,7 @@ def test_plugin_registers_tools_lifecycle_and_context(monkeypatch):
     plugin.register(ctx)
     assert len(ctx.tools) == 7
     assert {name for name, _ in ctx.hooks} == {
-        "on_gateway_start", "on_gateway_stop", "on_webhook_received",
+        "on_gateway_start", "on_gateway_stop",
     }
     assert [name for name, _ in ctx.context] == ["smart_room"]
 
@@ -260,6 +249,39 @@ def test_runtime_has_no_memory_writer_imports():
             elif isinstance(node, ast.ImportFrom) and node.module:
                 imports.add(node.module)
     assert not any("memory_tool" in name or "honcho" in name for name in imports)
+
+
+def test_tuya_v35_bulb_uses_standard_hsv_dps(monkeypatch):
+    from types import SimpleNamespace
+    from plugins.smart_room.runtime.tuya import controller
+
+    class Device:
+        values = None
+
+        def __init__(self, **_kwargs):
+            pass
+
+        def set_version(self, _version):
+            pass
+
+        def set_multiple_values(self, values):
+            Device.values = values
+            return {"dps": values}
+
+    monkeypatch.setattr(controller, "HAS_TINYTUYA", True)
+    monkeypatch.setattr(controller, "tinytuya", SimpleNamespace(Device=Device))
+    monkeypatch.setenv("SMART_ROOM_TUYA_BULB_KEY", "test-key")
+    room = controller.TuyaController({"tuya": {"bulb": {
+        "ip": "192.0.2.1", "device_id": "bulb", "protocol": "3.5",
+        "brightness_max": 1000, "color_temp_max": 1000,
+        "dps": {"switch": 20, "mode": 21, "brightness": 22, "color_temp": 23, "color": 24},
+    }}})
+
+    expected = {
+        "20": True, "21": "colour", "24": "000003e80190",
+    }
+    assert room.set_light(on=True, brightness=40, rgb=[255, 0, 0])["dps"] == expected
+    assert Device.values == expected
 
 
 def test_subconscious_fetcher_baselines_then_returns_only_new_events():

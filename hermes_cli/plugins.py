@@ -161,7 +161,6 @@ VALID_HOOKS: Set[str] = {
     "on_session_end",
     "on_gateway_start",
     "on_gateway_stop",
-    "on_webhook_received",
     "on_session_finalize",
     "on_session_reset",
     "subagent_start",

@@ -13,9 +13,7 @@ Key design principles (from v0.3 spec):
 
 from __future__ import annotations
 
-import logging
 import platform
-from typing import Any, Dict
 
 from plugins.smart_room.tools import (
     SMART_ROOM_STATE_SCHEMA,
@@ -38,8 +36,6 @@ from plugins.smart_room.context import build_context_line
 from plugins.smart_room import process_manager
 from plugins.smart_room.runtime.state_store import load_config
 
-logger = logging.getLogger(__name__)
-
 _TOOLS = (
     ("smart_room_state",       SMART_ROOM_STATE_SCHEMA,       handle_smart_room_state,       "🏠"),
     ("smart_room_set_mode",    SMART_ROOM_SET_MODE_SCHEMA,    handle_smart_room_set_mode,    "🎨"),
@@ -51,10 +47,6 @@ _TOOLS = (
 )
 
 
-def _enabled() -> bool:
-    return bool(load_config().get("enabled", False))
-
-
 def _on_gateway_start(**_kwargs) -> None:
     config = load_config()
     if config.get("enabled", False):
@@ -63,33 +55,6 @@ def _on_gateway_start(**_kwargs) -> None:
 
 def _on_gateway_stop(**_kwargs) -> None:
     process_manager.stop_supervisor()
-
-
-def _on_webhook_received(
-    *, route_name: str, payload: Dict[str, Any], delivery_id: str, **_kwargs
-) -> Dict[str, Any] | None:
-    if route_name != "smart-room-location" or not _enabled():
-        return None
-    try:
-        result = process_manager.forward_location_webhook(payload, delivery_id)
-    except ValueError as exc:
-        return {"handled": True, "status": 400, "body": {"error": str(exc)}}
-    except RuntimeError:
-        try:
-            process_manager.queue_location_webhook(payload, delivery_id)
-        except Exception:
-            logger.exception("Unable to queue Smart Room location event")
-            return {
-                "handled": True,
-                "status": 503,
-                "body": {"success": False, "error": "runtime unavailable and queue write failed"},
-            }
-        return {
-            "handled": True,
-            "status": 202,
-            "body": {"success": True, "queued": True},
-        }
-    return {"handled": True, "status": 200, "body": result}
 
 
 def register(ctx) -> None:
@@ -120,6 +85,3 @@ def register(ctx) -> None:
     )
     ctx.register_hook("on_gateway_start", _on_gateway_start)
     ctx.register_hook("on_gateway_stop", _on_gateway_stop)
-    ctx.register_hook("on_webhook_received", _on_webhook_received)
-
-    logger.info("smart_room plugin registered — %d tools, context provider active", len(_TOOLS))

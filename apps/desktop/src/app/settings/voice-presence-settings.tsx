@@ -223,6 +223,12 @@ export function VoicePresenceSettings({
           {enrolling ? 'Recording…' : 'Enroll'}
         </Button>
       </div>
+      {speakers.some(speaker => speaker.model_mismatch) && (
+        <div className="flex items-center gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
+          Re-enroll needed — the speaker-ID model changed since these samples were captured. Old embeddings can&apos;t
+          be compared against the new model; add a fresh sample for each speaker below.
+        </div>
+      )}
       {speakers.length ? (
         <div className="grid gap-1">
           {speakers.map(speaker => (
@@ -252,11 +258,13 @@ export function VoicePresenceSettings({
                 </div>
               }
               description={
-                speaker.ready
+                (speaker.ready
                   ? `Ready · ${speaker.embeddings} samples · ${Math.round((speaker.consistency ?? 0) * 100)}% consistency`
                   : speaker.samples_needed
                     ? `Needs ${speaker.samples_needed} more independent sample${speaker.samples_needed === 1 ? '' : 's'}`
-                    : `Samples disagree (${Math.round((speaker.consistency ?? 0) * 100)}%) · add a clearer sample`
+                    : `Samples disagree (${Math.round((speaker.consistency ?? 0) * 100)}%) · add a clearer sample`) +
+                (speaker.adaptive ? ` · +${speaker.adaptive} self-learned` : '') +
+                (speaker.model_mismatch ? ' · re-enroll needed (model changed)' : '')
               }
               key={speaker.name}
               title={`${speaker.name}${speaker.is_owner ? ' · owner' : ''}`}

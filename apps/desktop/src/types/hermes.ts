@@ -915,6 +915,13 @@ export interface ModelAssignmentRequest {
   provider: string
   scope: 'main' | 'auxiliary'
   task?: string
+  /** Set true to proceed anyway after a first response came back with
+   *  `confirm_required: true` (the model looked expensive) — resend the
+   *  SAME request with this set so the backend actually persists it.
+   *  Without this round-trip, `POST /api/model/set` returns HTTP 200 with
+   *  `ok: false` and never calls save_config — silently a no-op unless the
+   *  caller checks `ok`/`confirm_required` (see ModelAssignmentResponse). */
+  confirm_expensive_model?: boolean
 }
 
 /** An auxiliary task still pinned to a provider that differs from the
@@ -1078,6 +1085,16 @@ export interface DebugShareResponse {
 export interface ModelAssignmentResponse {
   /** Persisted endpoint URL for custom/local providers (echoed back). */
   base_url?: string
+  /** When `ok` is false and this is true, NOTHING was persisted — the
+   *  backend's expensive-model cost guard fired and is asking for explicit
+   *  confirmation. Resend the same request with `confirm_expensive_model:
+   *  true` to actually save it, or show `confirm_message` and let the user
+   *  decide. Every caller of setModelAssignment MUST check this — a
+   *  resolved promise here does NOT mean the assignment was saved. */
+  confirm_required?: boolean
+  /** Human-readable explanation when `confirm_required` is true (e.g. the
+   *  estimated cost that triggered the guard). */
+  confirm_message?: string
   /** Toolset keys auto-routed through the Nous Tool Gateway as a result of
    *  switching the main provider to Nous. Empty unless provider === 'nous'
    *  and the user is a paid subscriber with unconfigured tools. */

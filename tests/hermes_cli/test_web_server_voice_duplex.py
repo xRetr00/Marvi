@@ -1204,10 +1204,15 @@ def test_focus_off_setting_passes_guest_through(duplex_client, full_fakes):
 
 
 def test_focus_ignored_event_over_the_wire_and_no_tts_follows(duplex_client, full_fakes):
-    """End-to-end: an ignored utterance is announced over the WS with
-    ``ignored: true`` but never triggers an instant/TTS cycle."""
+    """End-to-end: a CONFIDENT_OTHER utterance is announced over the WS with
+    ``ignored: true`` but never triggers an instant/TTS cycle. INVERSION
+    NOTE: previously any non-owner (including guest) was ignored while
+    focus was active; the fail-open redesign only ignores CONFIDENT_OTHER
+    (and an armed-flag ABSTAIN) -- see the zoned fixture below."""
     full_fakes["focus"]["active"] = True
-    full_fakes["identify"]["label"] = "guest"
+    full_fakes["zoned"].update(
+        {"zone": "CONFIDENT_OTHER", "label": "unknown", "score": 0.1, "name": None}
+    )
     stt = full_fakes["stt"]
     stt.queue_response("", True)
     stt.final_text = "hello"
@@ -1216,13 +1221,13 @@ def test_focus_ignored_event_over_the_wire_and_no_tts_follows(duplex_client, ful
         conn.receive_json()  # ready
         conn.send_json(_audio_msg(_pcm16_chunk()))
         utterance = _recv_until(conn, "utterance")
-        assert utterance["speaker"] == "guest"
+        assert utterance["speaker"] == "unknown"
         assert utterance["ignored"] is True
 
         # A second, owner utterance proves the session is still alive and
         # listening normally -- if it never arrives, the prior ignore left
         # the session wedged.
-        full_fakes["identify"]["label"] = "owner"
+        full_fakes["zoned"].update({"zone": "OWNER", "label": "owner", "score": 0.9, "name": "Shereef"})
         stt.queue_response("", True)
         stt.final_text = "what time is it"
         conn.send_json(_audio_msg(_pcm16_chunk()))
@@ -1542,46 +1547,58 @@ def _make_barge_test_session(cfg=None):
     return session, ws, vad
 
 
-def test_barge_in_owner_match_confirms_and_barges(monkeypatch):
+def _patch_barge_negative(monkeypatch, *, tts_score=-1.0, other_voice_active=False, zoned_zone="ABSTAIN"):
+    monkeypatch.setattr(web_server, "_duplex_owner_threshold", lambda cfg: 0.45)
+    monkeypatch.setattr(web_server, "_duplex_competing_window_seconds", lambda cfg: 90.0)
+    monkeypatch.setattr(web_server, "_duplex_continuity_seconds", lambda cfg: 120.0)
+    monkeypatch.setattr(web_server, "_duplex_tts_echo_score", lambda pcm, cfg: tts_score)
+    monkeypatch.setattr(
+        web_server, "_duplex_identify_speaker_zoned",
+        lambda pcm, cfg: {
+            "zone": zoned_zone, "label": "unknown", "score": 0.1, "audio_ms": 3000,
+            "name": None, "model_mismatch": False, "embedding": None,
+        },
+    )
+
+
+def test_barge_in_uncertain_candidate_barges_immediately(monkeypatch):
+    """INVERSION (fail-open redesign, spec §3): the old positive-owner gate
+    (``_barge_owner_gate_blocks``, required an owner match before ANY
+    barge) is replaced by confirm-negative -- an uncertain candidate (no TTS
+    echo, no armed competing flag) barges as soon as the plain VAD+text
+    streak/eou gate is satisfied, WITHOUT waiting for a confirm window.
+    This replaces ``test_barge_in_owner_match_confirms_and_barges``, which
+    asserted the opposite (barge only after a positive owner match)."""
     monkeypatch.setattr(web_server, "_duplex_focus_mode_active", lambda cfg: True)
-    identify_calls = []
-
-    def fake_identify(pcm16_bytes):
-        identify_calls.append(len(pcm16_bytes))
-        return ("owner", 0.9, "Shereef")
-
-    monkeypatch.setattr(web_server, "_duplex_identify_speaker", fake_identify)
+    _patch_barge_negative(monkeypatch)
 
     async def run():
         session, ws, _vad = _make_barge_test_session()
         session.stt_session.queue_response("wait stop", False)
         chunk = _pcm16_chunk()
-        chunk_bytes = len(chunk)
-        needed_chunks = -(-web_server._DUPLEX_BARGE_CONFIRM_WINDOW_BYTES // chunk_bytes)
 
-        for _ in range(needed_chunks + 10):
+        # ~400ms: past the plain streak_ms threshold (320ms) but well short
+        # of the old ~0.7s confirm window -- proves the redesign doesn't
+        # wait for a full confirm window before barging.
+        for _ in range(20):
             if ws.sent:
                 break
             await session._feed_barge_in(chunk)
 
         assert ws.sent.count({"type": "barge_in"}) == 1
-        assert identify_calls  # confirmation ran at least once
         assert session.state == "listening"
 
     asyncio.run(run())
 
 
-def test_barge_in_non_owner_match_suppressed(monkeypatch):
-    """A confirmed-non-owner candidate (TTS echo or another person talking
-    near the mic) never actually barges in, however long it sustains."""
+def test_barge_in_tts_echo_suppressed(monkeypatch):
+    """A candidate confidently matching Marvi's own TTS voice (self-echo,
+    spec Part 1.3) never barges in, however long it sustains. Replaces
+    ``test_barge_in_non_owner_match_suppressed`` -- suppression is now keyed
+    on a NEGATIVE match (echo/competing-other), not "failed to positively
+    match the owner"."""
     monkeypatch.setattr(web_server, "_duplex_focus_mode_active", lambda cfg: True)
-    identify_calls = []
-
-    def fake_identify(pcm16_bytes):
-        identify_calls.append(len(pcm16_bytes))
-        return ("guest", 0.5, "Bob")
-
-    monkeypatch.setattr(web_server, "_duplex_identify_speaker", fake_identify)
+    _patch_barge_negative(monkeypatch, tts_score=0.95)
 
     async def run():
         session, ws, _vad = _make_barge_test_session()
@@ -1592,26 +1609,59 @@ def test_barge_in_non_owner_match_suppressed(monkeypatch):
             await session._feed_barge_in(chunk)
 
         assert ws.sent == []
-        assert len(identify_calls) >= 2  # re-checked more than once
         assert session.state == "speaking"  # never interrupted
 
     asyncio.run(run())
 
 
-def test_barge_in_sustained_speech_recheck_eventually_confirms(monkeypatch):
-    """Owner starts talking but is briefly misread as a guest -- sustained
-    speech keeps re-checking every fresh ~0.7s window (spec §3: "at most
-    ~1.5s late") until it confirms, rather than being stuck rejected."""
+def test_barge_in_confident_other_suppressed_only_while_armed(monkeypatch):
+    """A CONFIDENT_OTHER match only suppresses barge-in while the
+    competing-voice flag is armed -- an uncertain/ABSTAIN candidate is not
+    enough on its own (that's the default fail-open case, see
+    ``test_barge_in_uncertain_candidate_barges_immediately``)."""
     monkeypatch.setattr(web_server, "_duplex_focus_mode_active", lambda cfg: True)
-    responses = iter([("guest", 0.5, "Bob"), ("guest", 0.5, "Bob"), ("owner", 0.9, "Shereef")])
-    identify_calls = []
+    _patch_barge_negative(monkeypatch, zoned_zone="CONFIDENT_OTHER")
 
-    def fake_identify(pcm16_bytes):
-        result = next(responses)
-        identify_calls.append(result[0])
-        return result
+    async def run():
+        session, ws, _vad = _make_barge_test_session()
+        session._other_voice_active_until = time.monotonic() + 60.0  # armed
+        session.stt_session.queue_response("wait stop", False)
+        chunk = _pcm16_chunk()
 
-    monkeypatch.setattr(web_server, "_duplex_identify_speaker", fake_identify)
+        for _ in range(300):
+            await session._feed_barge_in(chunk)
+
+        assert ws.sent == []
+        assert session.state == "speaking"
+
+    asyncio.run(run())
+
+
+def test_barge_in_recheck_on_fresh_window_then_barges_once_no_longer_negative(monkeypatch):
+    """A candidate initially screened as TTS echo, then genuinely changes
+    (the score drops on a later, fresher window) -- re-checked at most every
+    ~300ms of new audio, and barges once it's no longer negative, rather
+    than being stuck suppressed forever from one early check."""
+    monkeypatch.setattr(web_server, "_duplex_focus_mode_active", lambda cfg: True)
+    monkeypatch.setattr(web_server, "_duplex_owner_threshold", lambda cfg: 0.45)
+    monkeypatch.setattr(web_server, "_duplex_competing_window_seconds", lambda cfg: 90.0)
+    monkeypatch.setattr(web_server, "_duplex_continuity_seconds", lambda cfg: 120.0)
+    monkeypatch.setattr(
+        web_server, "_duplex_identify_speaker_zoned",
+        lambda pcm, cfg: {
+            "zone": "ABSTAIN", "label": "unknown", "score": 0.1, "audio_ms": 3000,
+            "name": None, "model_mismatch": False, "embedding": None,
+        },
+    )
+    scores = iter([0.95, 0.95, 0.1])  # echo, echo, then genuinely not echo
+    score_calls = []
+
+    def fake_tts_score(pcm, cfg):
+        value = next(scores, 0.1)
+        score_calls.append(value)
+        return value
+
+    monkeypatch.setattr(web_server, "_duplex_tts_echo_score", fake_tts_score)
 
     async def run():
         session, ws, _vad = _make_barge_test_session()
@@ -1624,7 +1674,7 @@ def test_barge_in_sustained_speech_recheck_eventually_confirms(monkeypatch):
             await session._feed_barge_in(chunk)
 
         assert ws.sent.count({"type": "barge_in"}) == 1
-        assert identify_calls == ["guest", "guest", "owner"]
+        assert score_calls == [0.95, 0.95, 0.1]
 
     asyncio.run(run())
 
@@ -1632,12 +1682,18 @@ def test_barge_in_sustained_speech_recheck_eventually_confirms(monkeypatch):
 def test_barge_in_model_unavailable_falls_back_to_vad_only(monkeypatch):
     """Speaker model unavailable -- folded into focus_mode_active() being
     False -- must behave exactly like plain VAD-only barge-in: fire as soon
-    as the streak/text gate is satisfied, without waiting for a ~0.7s
-    confirm window or ever calling identify()."""
+    as the streak/text gate is satisfied, without ever running the negative
+    screen (TTS-echo or zoned-identify)."""
     monkeypatch.setattr(web_server, "_duplex_focus_mode_active", lambda cfg: False)
-    identify_calls = []
+    tts_calls = []
+    zoned_calls = []
+    monkeypatch.setattr(web_server, "_duplex_tts_echo_score", lambda pcm, cfg: tts_calls.append(1) or -1.0)
     monkeypatch.setattr(
-        web_server, "_duplex_identify_speaker", lambda pcm: identify_calls.append(1) or ("owner", 0.9, "Shereef")
+        web_server, "_duplex_identify_speaker_zoned",
+        lambda pcm, cfg: zoned_calls.append(1) or {
+            "zone": "ABSTAIN", "label": "unknown", "score": 0.0, "audio_ms": 0,
+            "name": None, "model_mismatch": False, "embedding": None,
+        },
     )
 
     async def run():
@@ -1651,7 +1707,8 @@ def test_barge_in_model_unavailable_falls_back_to_vad_only(monkeypatch):
             await session._feed_barge_in(chunk)
 
         assert ws.sent.count({"type": "barge_in"}) == 1
-        assert identify_calls == []
+        assert tts_calls == []
+        assert zoned_calls == []
 
     asyncio.run(run())
 
@@ -1661,10 +1718,8 @@ def test_barge_in_focus_off_falls_back_to_vad_only(monkeypatch):
     being False the same way "no owner enrolled" is) -- same VAD-only
     passthrough as before this feature existed."""
     monkeypatch.setattr(web_server, "_duplex_focus_mode_active", lambda cfg: False)
-    identify_calls = []
-    monkeypatch.setattr(
-        web_server, "_duplex_identify_speaker", lambda pcm: identify_calls.append(1) or ("owner", 0.9, "Shereef")
-    )
+    tts_calls = []
+    monkeypatch.setattr(web_server, "_duplex_tts_echo_score", lambda pcm, cfg: tts_calls.append(1) or -1.0)
 
     async def run():
         session, ws, _vad = _make_barge_test_session()
@@ -1675,7 +1730,7 @@ def test_barge_in_focus_off_falls_back_to_vad_only(monkeypatch):
             await session._feed_barge_in(chunk)
 
         assert ws.sent.count({"type": "barge_in"}) == 1
-        assert identify_calls == []
+        assert tts_calls == []
 
     asyncio.run(run())
 

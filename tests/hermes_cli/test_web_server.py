@@ -2217,6 +2217,104 @@ class TestWebServerEndpoints:
         assert confirmed.status_code == 200
         assert confirmed.json()["ok"] is True
 
+    def test_model_set_auxiliary_voice_instant_round_trip(self):
+        """Spec Part 2 round-trip test: POST /api/model/set with
+        scope=auxiliary, task=voice_instant persists under
+        auxiliary.voice_instant.{provider,model}, and
+        resolve_instant_runtime reads back EXACTLY that model -- the
+        regression this round fixed was the desktop Apply button silently
+        no-op'ing (see model-settings.tsx's applyAuxiliaryDraft), not this
+        backend write path, but this pins the write+read contract the fix
+        depends on end-to-end."""
+        from hermes_cli.config import cfg_get, load_config
+        from tools.voice_instant_lane import resolve_instant_runtime
+
+        resp = self.client.post(
+            "/api/model/set",
+            json={
+                "scope": "auxiliary",
+                "provider": "openrouter",
+                "model": "deepseek/deepseek-v4-flash",
+                "task": "voice_instant",
+            },
+        )
+        assert resp.status_code == 200
+        assert resp.json()["ok"] is True
+
+        cfg = load_config()
+        assert cfg_get(cfg, "auxiliary", "voice_instant", "provider") == "openrouter"
+        assert cfg_get(cfg, "auxiliary", "voice_instant", "model") == "deepseek/deepseek-v4-flash"
+
+        runtime = resolve_instant_runtime(cfg)
+        assert runtime["provider"] == "openrouter"
+        assert runtime["model"] == "deepseek/deepseek-v4-flash"
+
+    def test_voice_instant_status_reports_resolved_configured_model(self):
+        resp = self.client.post(
+            "/api/model/set",
+            json={
+                "scope": "auxiliary",
+                "provider": "openrouter",
+                "model": "deepseek/deepseek-v4-flash",
+                "task": "voice_instant",
+            },
+        )
+        assert resp.json()["ok"] is True
+
+        status = self.client.get("/api/voice/instant/status")
+        assert status.status_code == 200
+        data = status.json()
+        assert data["resolved"] is True
+        assert data["provider"] == "openrouter"
+        assert data["model"] == "deepseek/deepseek-v4-flash"
+        assert data["is_fallback"] is False
+
+    def test_voice_instant_status_flags_silent_fallback(self, monkeypatch):
+        """If auxiliary.voice_instant.* somehow never got persisted (the bug
+        this round fixed), the status endpoint must make that visible --
+        never look identical to a deliberately-configured curated default."""
+        from hermes_cli.config import load_config, save_config
+
+        cfg = load_config()
+        cfg.setdefault("auxiliary", {})["voice_instant"] = {
+            "provider": "openrouter", "model": "deepseek/deepseek-v4-flash",
+        }
+        save_config(cfg)
+
+        # Simulate resolve_instant_runtime falling back (e.g. is_instant_capable
+        # rejected the configured model and no toggle exists) by monkeypatching
+        # the resolver directly -- the status endpoint must surface the
+        # mismatch, not the configured value.
+        from hermes_cli import web_server as ws_module
+
+        def fake_resolve(cfg_arg=None):
+            return {"provider": "openai", "model": "gpt-5.4-mini"}
+
+        monkeypatch.setattr("tools.voice_instant_lane.resolve_instant_runtime", fake_resolve)
+
+        status = self.client.get("/api/voice/instant/status")
+        data = status.json()
+        assert data["resolved"] is True
+        assert data["provider"] == "openai"
+        assert data["model"] == "gpt-5.4-mini"
+        assert data["configured_provider"] == "openrouter"
+        assert data["configured_model"] == "deepseek/deepseek-v4-flash"
+        assert data["is_fallback"] is True
+
+    def test_voice_instant_status_unresolvable_never_500s(self, monkeypatch):
+        from tools.voice_instant_lane import InstantLaneUnavailable
+
+        def fake_resolve(cfg_arg=None):
+            raise InstantLaneUnavailable("no instant-capable model configured")
+
+        monkeypatch.setattr("tools.voice_instant_lane.resolve_instant_runtime", fake_resolve)
+
+        status = self.client.get("/api/voice/instant/status")
+        assert status.status_code == 200
+        data = status.json()
+        assert data["resolved"] is False
+        assert "error" in data
+
     def test_model_set_normalizes_vendor_slug_for_native_provider(self, monkeypatch):
         """'Use as → Main' with an OpenRouter slug + native provider must not
         persist the vendor-prefixed slug verbatim (it 400s against the native

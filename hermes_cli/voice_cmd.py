@@ -161,7 +161,7 @@ def _cmd_enroll(args) -> int:
 
 
 def _cmd_speakers(args) -> int:
-    from tools.voice_speaker_id import list_speakers, remove_speaker
+    from tools.voice_speaker_id import list_speakers, remove_speaker, reset_adaptive
 
     if args.remove:
         removed = remove_speaker(args.remove)
@@ -170,6 +170,11 @@ def _cmd_speakers(args) -> int:
             return 0
         print(color(f"  No enrolled speaker named {args.remove!r}", Colors.RED))
         return 1
+
+    if getattr(args, "reset_adaptive", False):
+        reset_adaptive()
+        _print_line(True, "Cleared the owner's self-adapted (adaptive) voice samples")
+        return 0
 
     speakers = list_speakers()
     print()
@@ -180,10 +185,23 @@ def _cmd_speakers(args) -> int:
         print()
         return 0
 
+    if any(entry.get("model_mismatch") for entry in speakers):
+        print(
+            color(
+                "  ⚠ re-enroll needed: the speaker-ID model changed since these "
+                "samples were captured -- old embeddings can't be compared "
+                "against the new model. Run: hermes voice enroll <name>",
+                Colors.YELLOW,
+            )
+        )
+        print()
+
     for entry in speakers:
         tag = color(" (owner)", Colors.GREEN) if entry["is_owner"] else ""
         plural = "embedding" if entry["embeddings"] == 1 else "embeddings"
-        print(f"  {entry['name']}{tag} -- {entry['embeddings']} {plural}")
+        adaptive = entry.get("adaptive") or 0
+        adaptive_note = f" (+{adaptive} adaptive)" if adaptive else ""
+        print(f"  {entry['name']}{tag} -- {entry['embeddings']} {plural}{adaptive_note}")
     print()
     return 0
 
@@ -227,5 +245,10 @@ def add_parser(subparsers) -> None:
         help="List enrolled speakers, or remove one with --remove",
     )
     speakers_parser.add_argument("--remove", help="Remove the named speaker")
+    speakers_parser.add_argument(
+        "--reset-adaptive",
+        action="store_true",
+        help="Clear the owner's self-adapted voice samples (manual enrollment samples are untouched)",
+    )
 
     voice_parser.set_defaults(func=voice_command)

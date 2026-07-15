@@ -348,10 +348,13 @@ class TestIsInstantCapable:
     @pytest.mark.parametrize("model", [
         "claude-haiku-4-5-20251001",
         "gpt-4o-mini",
+        "gpt-5.4-mini",
         "gemini-3-flash-preview",
         "glm-4.5-flash",
         "llama-3.1-8b-instant",
+        "llama-3.3-70b-versatile",
         "openai/gpt-4o-mini",
+        "deepseek/deepseek-v4-flash",
         "kimi-k2-turbo-preview",
         "",
     ])
@@ -467,10 +470,12 @@ class TestCuratedInstantModel:
         assert vil._curated_instant_model("gemini")
 
     @pytest.mark.parametrize("provider,expected", [
-        ("openai", "gpt-4o-mini"),
-        ("openai-codex", "gpt-4o-mini"),
-        ("openrouter", "openai/gpt-4o-mini"),
-        ("groq", "llama-3.1-8b-instant"),
+        # Refreshed 2026-07-15 -- see _INSTANT_DEFAULT_MODELS_SUPPLEMENTAL's
+        # docstring for why gpt-4o-mini/llama-3.1-8b-instant were replaced.
+        ("openai", "gpt-5.4-mini"),
+        ("openai-codex", "gpt-5.4-mini"),
+        ("openrouter", "deepseek/deepseek-v4-flash"),
+        ("groq", "llama-3.3-70b-versatile"),
     ])
     def test_supplemental_table_covers_providers_without_aux_profile(self, provider, expected):
         assert vil._curated_instant_model(provider) == expected

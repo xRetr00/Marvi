@@ -18160,7 +18160,62 @@ class _VoiceSpeakerEnrollBody(BaseModel):
 def voice_speakers_list():
     from tools.voice_speaker_id import list_speakers
 
-    return {"speakers": list_speakers()}
+    return {"speakers": list_speakers(cfg=load_config())}
+
+
+@app.get("/api/voice/instant/status")
+def voice_instant_status():
+    """Resolved instant-lane provider/model, for the settings panel's
+    "currently using" line (spec Part 2 fix: a silent fallback -- e.g. the
+    Apply button not persisting, or a configured reasoning model getting
+    swapped out under is_instant_capable -- must never be invisible again).
+
+    Never raises: reports ``resolved: false`` with the raise's message
+    instead of a 500, since this is a read-only status probe the panel
+    polls, not an action.
+    """
+    from tools.voice_instant_lane import InstantLaneUnavailable, resolve_instant_runtime
+
+    cfg = load_config()
+    configured_provider = str(
+        cfg_get(cfg, "auxiliary", "voice_instant", "provider", default="") or ""
+    ).strip()
+    configured_model = str(
+        cfg_get(cfg, "auxiliary", "voice_instant", "model", default="") or ""
+    ).strip()
+    try:
+        runtime = resolve_instant_runtime(cfg)
+        resolved_provider = runtime.get("provider") or ""
+        resolved_model = runtime.get("model") or ""
+        return {
+            "resolved": True,
+            "provider": resolved_provider,
+            "model": resolved_model,
+            "configured_provider": configured_provider,
+            "configured_model": configured_model,
+            "is_fallback": (
+                bool(configured_provider and configured_model)
+                and (
+                    configured_provider.lower() != (resolved_provider or "").lower()
+                    or configured_model != resolved_model
+                )
+            ),
+        }
+    except InstantLaneUnavailable as exc:
+        return {
+            "resolved": False,
+            "error": str(exc),
+            "configured_provider": configured_provider,
+            "configured_model": configured_model,
+        }
+    except Exception as exc:
+        _log.warning("GET /api/voice/instant/status: resolution failed: %s", exc)
+        return {
+            "resolved": False,
+            "error": "instant-lane status unavailable",
+            "configured_provider": configured_provider,
+            "configured_model": configured_model,
+        }
 
 
 @app.post("/api/voice/speakers")

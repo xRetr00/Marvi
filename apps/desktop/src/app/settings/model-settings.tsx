@@ -11,6 +11,7 @@ import {
   getGlobalModelOptions,
   getMoaModels,
   getRecommendedDefaultModel,
+  getVoiceInstantStatus,
   saveHermesConfig,
   saveMoaModels,
   setEnvVar,
@@ -21,7 +22,8 @@ import type {
   MoaConfigResponse,
   MoaModelSlot,
   ModelOptionProvider,
-  StaleAuxAssignment
+  StaleAuxAssignment,
+  VoiceInstantStatusResponse
 } from '@/hermes'
 import { useI18n } from '@/i18n'
 import { AlertTriangle, Cpu, Loader2 } from '@/lib/icons'
@@ -193,6 +195,12 @@ export function ModelSettings({ onMainModelChanged }: ModelSettingsProps) {
   const [applying, setApplying] = useState(false)
   const [editingAuxTask, setEditingAuxTask] = useState<null | string>(null)
   const [auxDraft, setAuxDraft] = useState<{ model: string; provider: string }>({ model: '', provider: '' })
+  // Set when the backend's expensive-model cost guard blocks a save (POST
+  // /api/model/set responds ok:false, confirm_required:true) WITHOUT
+  // persisting anything — see applyAuxiliaryDraft. Surfaced as an inline
+  // "apply anyway?" prompt instead of silently closing the editor as if the
+  // Apply click had succeeded.
+  const [auxConfirm, setAuxConfirm] = useState<{ task: string; message: string } | null>(null)
   // Aux slots reported stale by the backend immediately after a main-model
   // switch (provider differs from the new main). Cleared on next switch/reset.
   const [switchStaleAux, setSwitchStaleAux] = useState<StaleAuxAssignment[]>([])
@@ -200,6 +208,10 @@ export function ModelSettings({ onMainModelChanged }: ModelSettingsProps) {
   // place — mirrors the onboarding ApiKeyForm but scoped to the model picker.
   const [apiKeyDraft, setApiKeyDraft] = useState('')
   const [activating, setActivating] = useState(false)
+  // The RESOLVED instant-lane provider/model (spec Part 2 fix) -- fetched
+  // alongside everything else in refresh() so "currently using" can never
+  // silently drift from what Apply actually persisted.
+  const [instantStatus, setInstantStatus] = useState<VoiceInstantStatusResponse | null>(null)
 
   // Every profile-scoped async here captures this and bails before writing back,
   // so a request in flight when the user switches profiles can't paint profile
@@ -212,11 +224,12 @@ export function ModelSettings({ onMainModelChanged }: ModelSettingsProps) {
     setError('')
 
     try {
-      const [modelInfo, modelOptions, auxiliaryModels, moaModels] = await Promise.all([
+      const [modelInfo, modelOptions, auxiliaryModels, moaModels, voiceInstantStatus] = await Promise.all([
         getGlobalModelInfo(),
         getGlobalModelOptions(),
         getAuxiliaryModels(),
-        getMoaModels().catch(() => null)
+        getMoaModels().catch(() => null),
+        getVoiceInstantStatus().catch(() => null)
       ])
 
       if (profileEpoch.current !== epoch) {
@@ -230,6 +243,7 @@ export function ModelSettings({ onMainModelChanged }: ModelSettingsProps) {
       setSelectedModel(prev => prev || modelInfo.model)
       setAuxiliary(auxiliaryModels)
       setMoa(moaModels)
+      setInstantStatus(voiceInstantStatus)
 
       if (moaModels) {
         setSelectedMoaPreset(prev => (prev && moaModels.presets[prev] ? prev : moaModels.default_preset))
@@ -431,9 +445,11 @@ export function ModelSettings({ onMainModelChanged }: ModelSettingsProps) {
     .toLowerCase()
 
   const effortValue = rawEffort === 'false' || rawEffort === 'disabled' ? 'none' : rawEffort || 'medium'
+
   const rawInstantEffort = String(getNested(config ?? {}, 'auxiliary.voice_instant.reasoning_effort') ?? 'none')
     .trim()
     .toLowerCase()
+
   const instantEffortValue = rawInstantEffort === 'false' || rawInstantEffort === 'disabled' ? 'none' : rawInstantEffort
 
   const fastOn = isFastTier(getNested(config ?? {}, 'agent.service_tier'))
@@ -569,7 +585,20 @@ export function ModelSettings({ onMainModelChanged }: ModelSettingsProps) {
       setError('')
 
       try {
-        await setModelAssignment({ model: mainModel.model, provider: mainModel.provider, scope: 'auxiliary', task })
+        const res = await setModelAssignment({
+          model: mainModel.model,
+          provider: mainModel.provider,
+          scope: 'auxiliary',
+          task,
+          confirm_expensive_model: true // already the user's chosen main model, not a new pick
+        })
+
+        if (!res.ok) {
+          setError(res.confirm_message || 'Could not apply model — the change was not saved.')
+
+          return
+        }
+
         await refresh()
       } catch (err) {
         setError(err instanceof Error ? err.message : String(err))
@@ -581,7 +610,7 @@ export function ModelSettings({ onMainModelChanged }: ModelSettingsProps) {
   )
 
   const applyAuxiliaryDraft = useCallback(
-    async (task: string) => {
+    async (task: string, confirmExpensive = false) => {
       if (!auxDraft.provider || !auxDraft.model) {
         return
       }
@@ -590,7 +619,33 @@ export function ModelSettings({ onMainModelChanged }: ModelSettingsProps) {
       setError('')
 
       try {
-        await setModelAssignment({ model: auxDraft.model, provider: auxDraft.provider, scope: 'auxiliary', task })
+        const res = await setModelAssignment({
+          model: auxDraft.model,
+          provider: auxDraft.provider,
+          scope: 'auxiliary',
+          task,
+          confirm_expensive_model: confirmExpensive
+        })
+
+        // A resolved promise here does NOT mean the assignment was saved --
+        // the cost guard can respond ok:false without persisting anything.
+        // Surface that instead of silently treating the click as applied
+        // (the bug this round fixed: the Instant voice model Apply button
+        // could close the editor and refresh() with nothing actually
+        // written to auxiliary.voice_instant.*).
+        if (!res.ok) {
+          if (res.confirm_required) {
+            setAuxConfirm({ task, message: res.confirm_message || 'This model may be expensive. Apply anyway?' })
+
+            return
+          }
+
+          setError('Could not apply model — the change was not saved.')
+
+          return
+        }
+
+        setAuxConfirm(null)
         setEditingAuxTask(null)
         await refresh()
       } catch (err) {
@@ -611,6 +666,7 @@ export function ModelSettings({ onMainModelChanged }: ModelSettingsProps) {
 
       const initialModel = current?.model || mainModel?.model || ''
       setAuxDraft({ provider: initialProvider, model: initialModel })
+      setAuxConfirm(null)
       setEditingAuxTask(task)
     },
     [auxiliary, mainModel]
@@ -625,12 +681,20 @@ export function ModelSettings({ onMainModelChanged }: ModelSettingsProps) {
     setError('')
 
     try {
-      await setModelAssignment({
+      const res = await setModelAssignment({
         model: mainModel.model,
         provider: mainModel.provider,
         scope: 'auxiliary',
-        task: '__reset__'
+        task: '__reset__',
+        confirm_expensive_model: true // resetting to "auto", not picking a new paid model
       })
+
+      if (!res.ok) {
+        setError(res.confirm_message || 'Could not reset auxiliary models.')
+
+        return
+      }
+
       setSwitchStaleAux([])
       await refresh()
     } catch (err) {
@@ -887,15 +951,57 @@ export function ModelSettings({ onMainModelChanged }: ModelSettingsProps) {
                       >
                         {applying ? m.applying : t.common.apply}
                       </Button>
-                      <Button onClick={() => setEditingAuxTask(null)} size="sm" variant="ghost">
+                      <Button
+                        onClick={() => {
+                          setAuxConfirm(null)
+                          setEditingAuxTask(null)
+                        }}
+                        size="sm"
+                        variant="ghost"
+                      >
                         {t.common.cancel}
                       </Button>
+                      {auxConfirm && auxConfirm.task === meta.key && (
+                        <div className="flex w-full flex-wrap items-center gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
+                          <AlertTriangle className="size-3.5 shrink-0" />
+                          <span className="grow">{auxConfirm.message}</span>
+                          <Button
+                            disabled={applying}
+                            onClick={() => void applyAuxiliaryDraft(meta.key, true)}
+                            size="sm"
+                            variant="textStrong"
+                          >
+                            Apply anyway
+                          </Button>
+                          <Button onClick={() => setAuxConfirm(null)} size="sm" variant="ghost">
+                            {t.common.cancel}
+                          </Button>
+                        </div>
+                      )}
                     </div>
                   )
                 }
                 description={
-                  <span className="font-mono text-[0.68rem]">
-                    {isAuto ? m.autoUseMain : `${current.provider} · ${current.model || m.providerDefault}`}
+                  <span className="flex flex-col gap-0.5">
+                    <span className="font-mono text-[0.68rem]">
+                      {isAuto ? m.autoUseMain : `${current.provider} · ${current.model || m.providerDefault}`}
+                    </span>
+                    {meta.key === 'voice_instant' && instantStatus && (
+                      <span
+                        className={cn(
+                          'font-mono text-[0.65rem]',
+                          instantStatus.resolved && instantStatus.is_fallback
+                            ? 'text-amber-400'
+                            : 'text-muted-foreground'
+                        )}
+                      >
+                        {instantStatus.resolved
+                          ? `currently using: ${instantStatus.provider} · ${instantStatus.model}${
+                              instantStatus.is_fallback ? ' (fallback — not what’s configured)' : ''
+                            }`
+                          : `currently using: none (${instantStatus.error ?? 'unresolved'})`}
+                      </span>
+                    )}
                   </span>
                 }
                 key={meta.key}

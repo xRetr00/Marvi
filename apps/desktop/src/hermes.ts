@@ -421,6 +421,17 @@ export interface SmartRoomStatus {
   health: Record<string, any> | null
 }
 
+export interface SmartRoomAlarm {
+  id: string
+  name: string
+  time: string
+  recurrence: 'daily' | 'once'
+  date?: null | string
+  enabled: boolean
+  duration_minutes: number
+  last_fired_at?: null | string
+}
+
 function smartRoomApi<T>(path: string, method = 'GET', body?: unknown): Promise<T> {
   return window.hermesDesktop.api<T>({
     ...profileScoped(),
@@ -433,18 +444,29 @@ function smartRoomApi<T>(path: string, method = 'GET', body?: unknown): Promise<
 export const getSmartRoomStatus = () => smartRoomApi<SmartRoomStatus>('/status')
 export const applySmartRoomConfig = () => smartRoomApi<{ ok: boolean }>('/apply', 'POST')
 export const setSmartRoomMode = (mode: string) => smartRoomApi('/mode', 'POST', { mode })
-export const setSmartRoomOverride = (enabled: boolean) => smartRoomApi('/override', 'POST', { enabled })
+export const setSmartRoomOverride = (mode: 'hold_off' | 'hold_on' | 'none') => smartRoomApi('/override', 'POST', { mode })
 export const cancelSmartRoomSleep = () => smartRoomApi('/cancel-sleep', 'POST')
 export const testSmartRoomWelcome = (audience: 'owner' | 'guest') => smartRoomApi('/welcome/test', 'POST', { audience })
 export const saveSmartRoomSecrets = (body: Record<string, string>) => smartRoomApi('/secrets', 'PUT', body)
+export const saveSmartRoomAlarm = (alarm: Omit<SmartRoomAlarm, 'last_fired_at'>) =>
+  smartRoomApi<{ alarm: SmartRoomAlarm }>('/alarms', 'PUT', alarm)
+export const deleteSmartRoomAlarm = (id: string) => smartRoomApi(`/alarms/${encodeURIComponent(id)}`, 'DELETE')
+export const acknowledgeSmartRoomAlarm = () => smartRoomApi('/alarms/acknowledge', 'POST')
 
 export interface VoiceSpeaker {
   consistency: number | null
   embeddings: number
+  /** Self-adapted (Part 1.4) sample count on the owner ring -- distinct
+   *  from `embeddings` (manual enrollment only). 0 for non-owner speakers. */
+  adaptive?: number
   is_owner: boolean
   name: string
   ready: boolean
   samples_needed: number
+  /** True when this profile's embeddings were captured under a different
+   *  voice.speaker_id.model than is currently configured -- re-enrollment
+   *  needed, never silently compared cross-model (spec Part 3). */
+  model_mismatch?: boolean
 }
 
 export interface VoiceSpeakersResponse {
@@ -473,6 +495,29 @@ export function removeVoiceSpeaker(name: string): Promise<VoiceSpeakersResponse>
     ...profileScoped(),
     method: 'DELETE',
     path: `/api/voice/speakers/${encodeURIComponent(name)}`
+  })
+}
+
+/** `GET /api/voice/instant/status` — the RESOLVED instant-lane provider/model,
+ *  so a silent fallback (e.g. Apply not persisting, or a configured model
+ *  getting swapped for a curated default) can never hide in the settings
+ *  panel again (spec Part 2). */
+export interface VoiceInstantStatusResponse {
+  resolved: boolean
+  provider?: string
+  model?: string
+  configured_provider?: string
+  configured_model?: string
+  /** True when the resolved provider/model differs from what's configured
+   *  -- the panel should call this out, not just show the resolved value. */
+  is_fallback?: boolean
+  error?: string
+}
+
+export function getVoiceInstantStatus(): Promise<VoiceInstantStatusResponse> {
+  return window.hermesDesktop.api<VoiceInstantStatusResponse>({
+    ...profileScoped(),
+    path: '/api/voice/instant/status'
   })
 }
 

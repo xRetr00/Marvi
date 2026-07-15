@@ -10,12 +10,13 @@ import {
   saveSmartRoomSecrets,
   setSmartRoomMode,
   setSmartRoomOverride,
-  testSmartRoomWelcome,
-  type SmartRoomStatus
+  type SmartRoomStatus,
+  testSmartRoomWelcome
 } from '@/hermes'
 import { useI18n } from '@/i18n'
 import {
   AlertTriangle,
+  AudioLines,
   Box,
   Brain,
   Cloud,
@@ -39,6 +40,7 @@ interface SmartRoomConfig {
   enabled: boolean
   owner: string
   welcome: { enabled: boolean; identity_grace_seconds: number; reset_after_seconds: number }
+  sound_events: { enabled: boolean; confidence: number; min_peak: number }
   mqtt: { broker: string; port: number }
   context: { enabled: boolean }
   subconscious: { enabled: boolean }
@@ -92,6 +94,7 @@ const DEFAULT_CONFIG: SmartRoomConfig = {
   enabled: false,
   owner: 'Shereef',
   welcome: { enabled: true, identity_grace_seconds: 4, reset_after_seconds: 3600 },
+  sound_events: { enabled: false, confidence: 0.45, min_peak: 0.12 },
   mqtt: { broker: '127.0.0.1', port: 1883 },
   context: { enabled: true },
   subconscious: { enabled: true },
@@ -222,13 +225,16 @@ function SectionCard({ title, icon: Icon, children }: { title: string; icon: any
   )
 }
 
-function TextField({ label, value, onChange, placeholder, type = 'text', hint }: {
+function TextField({ label, value, onChange, placeholder, type = 'text', hint, min, max, step }: {
   label: string
   value: string | number
   onChange: (v: string) => void
   placeholder?: string
   type?: string
   hint?: string
+  min?: number
+  max?: number
+  step?: number
 }) {
   const id = useId()
 
@@ -238,8 +244,11 @@ function TextField({ label, value, onChange, placeholder, type = 'text', hint }:
       <input
         className="w-full rounded-md border border-zinc-800 bg-zinc-950 px-3 py-1.5 text-sm text-zinc-200 placeholder:text-zinc-600 focus:border-primary focus:outline-none"
         id={id}
+        max={max}
+        min={min}
         onChange={(e) => onChange(e.target.value)}
         placeholder={placeholder}
+        step={step}
         type={type}
         value={value}
       />
@@ -332,6 +341,7 @@ export function SmartRoomSettings() {
 
   const testWelcome = async (audience: 'owner' | 'guest') => {
     setTestingWelcome(audience)
+
     try {
       await saveQueue.current
       await testSmartRoomWelcome(audience)
@@ -356,6 +366,12 @@ export function SmartRoomSettings() {
   const devices = (liveStatus?.health?.devices || liveState?.devices || {}) as Record<string, { online?: boolean; stale?: boolean }>
   const light = liveState?.light
   const presence = liveState?.presence || {}
+
+  const soundEvents = liveStatus?.health?.sound_events as {
+    enabled?: boolean
+    running?: boolean
+    microphone?: string | null
+  } | undefined
 
   const activeMode = liveState?.modes
     ? Object.entries(liveState.modes as Record<string, boolean>).find(([k, v]) => v && !['manual_override', 'work_return'].includes(k))?.[0]
@@ -428,6 +444,69 @@ export function SmartRoomSettings() {
             </button>
           ))}
         </div>
+      </SectionCard>
+
+      <SectionCard icon={AudioLines} title={t.settings.soundEvents.title}>
+        <ToggleRow
+          checked={config.sound_events.enabled}
+          description={t.settings.soundEvents.description}
+          label={t.settings.soundEvents.enabled}
+          onChange={(value) => updatePath('sound_events.enabled', value)}
+        />
+        <div className="mb-4 flex items-center gap-2 text-xs text-zinc-400">
+          <StatusDot online={!!soundEvents?.running} />
+          <span>{soundEvents?.running ? t.settings.soundEvents.listening : t.common.off}</span>
+          {soundEvents?.microphone && (
+            <span className="text-zinc-500">
+              · {t.settings.soundEvents.microphone}: {soundEvents.microphone}
+            </span>
+          )}
+        </div>
+        <div className="mb-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <div>
+            <p className="text-sm text-zinc-200">{t.settings.soundEvents.doubleClap}</p>
+            <p className={`${CONTROL_TEXT} text-zinc-500`}>{t.settings.soundEvents.doubleClapDesc}</p>
+          </div>
+          <div>
+            <p className="text-sm text-zinc-200">{t.settings.soundEvents.tripleClap}</p>
+            <p className={`${CONTROL_TEXT} text-zinc-500`}>{t.settings.soundEvents.tripleClapDesc}</p>
+          </div>
+        </div>
+        <div className="grid grid-cols-1 gap-x-4 sm:grid-cols-2">
+          <TextField
+            hint={t.settings.soundEvents.confidenceHint}
+            label={t.settings.soundEvents.confidence}
+            max={1}
+            min={0}
+            onChange={(value) => {
+              const parsed = Number(value)
+
+              if (value !== '' && Number.isFinite(parsed)) {
+                updatePath('sound_events.confidence', Math.min(1, Math.max(0, parsed)))
+              }
+            }}
+            step={0.05}
+            type="number"
+            value={config.sound_events.confidence}
+          />
+          <TextField
+            hint={t.settings.soundEvents.minimumPeakHint}
+            label={t.settings.soundEvents.minimumPeak}
+            max={1}
+            min={0}
+            onChange={(value) => {
+              const parsed = Number(value)
+
+              if (value !== '' && Number.isFinite(parsed)) {
+                updatePath('sound_events.min_peak', Math.min(1, Math.max(0, parsed)))
+              }
+            }}
+            step={0.01}
+            type="number"
+            value={config.sound_events.min_peak}
+          />
+        </div>
+        <p className={`${CONTROL_TEXT} text-zinc-500`}>{t.settings.soundEvents.applyHint}</p>
       </SectionCard>
 
       {/* Connection Status */}

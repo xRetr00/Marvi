@@ -299,6 +299,22 @@ export interface Translations {
       completionSoundDesc: string
       completionSoundPreview: string
     }
+    soundEvents: {
+      title: string
+      enabled: string
+      description: string
+      listening: string
+      microphone: string
+      doubleClap: string
+      doubleClapDesc: string
+      tripleClap: string
+      tripleClapDesc: string
+      confidence: string
+      confidenceHint: string
+      minimumPeak: string
+      minimumPeakHint: string
+      applyHint: string
+    }
     sections: Record<string, string>
     searchPlaceholder: Record<'about' | 'config' | 'gateway' | 'keys' | 'mcp' | 'sessions', string>
     modeOptions: Record<'light' | 'dark' | 'system', ModeOptionCopy>

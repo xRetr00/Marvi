@@ -262,6 +262,22 @@ export const ja = defineLocale({
       completionSoundDesc: 'エージェントのターン終了時に再生されます。プリセットを選んでここで試聴できます。',
       completionSoundPreview: '試聴'
     },
+    soundEvents: {
+      title: 'サウンドコントロール',
+      enabled: '拍手コントロール',
+      description: 'YAMNet で拍手をローカル検出します。音声がこの PC の外へ送信されることはありません。',
+      listening: '待受中',
+      microphone: 'マイク',
+      doubleClap: '2 回拍手',
+      doubleClapDesc: '部屋の照明を切り替えます',
+      tripleClap: '3 回拍手',
+      tripleClapDesc: 'スリープモードを有効にします',
+      confidence: '拍手の信頼度',
+      confidenceHint: '高くすると誤検出が減ります。既定値: 0.45。',
+      minimumPeak: '最小音量ピーク',
+      minimumPeakHint: '実際の拍手を検出できない場合は少し下げます。既定値: 0.12。',
+      applyHint: '変更後は上の適用ボタンでリスナーを再起動してください。'
+    },
     sections: {
       model: 'モデル',
       chat: 'チャット',

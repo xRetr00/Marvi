@@ -348,6 +348,22 @@ export const zh: Translations = {
       completionSoundDesc: '智能体回合结束时播放。可在此选择预设并预览。',
       completionSoundPreview: '预览'
     },
+    soundEvents: {
+      title: '声音控制',
+      enabled: '拍手控制',
+      description: '使用 YAMNet 在本机检测拍手；音频不会离开此电脑。',
+      listening: '正在监听',
+      microphone: '麦克风',
+      doubleClap: '拍手两次',
+      doubleClapDesc: '切换房间灯光',
+      tripleClap: '拍手三次',
+      tripleClapDesc: '启用睡眠模式',
+      confidence: '拍手置信度',
+      confidenceHint: '数值越高，误识别越少。默认值：0.45。',
+      minimumPeak: '最低声音峰值',
+      minimumPeakHint: '如果漏掉真实拍手，请稍微降低。默认值：0.12。',
+      applyHint: '更改后，请使用上方的应用按钮重启监听器。'
+    },
     sections: {
       model: '模型',
       chat: '对话',

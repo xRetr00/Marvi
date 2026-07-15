@@ -255,6 +255,22 @@ export const zhHant = defineLocale({
       completionSoundDesc: '代理回合結束時播放。可在此選擇預設並預覽。',
       completionSoundPreview: '預覽'
     },
+    soundEvents: {
+      title: '聲音控制',
+      enabled: '拍手控制',
+      description: '使用 YAMNet 在本機偵測拍手；音訊不會離開此電腦。',
+      listening: '正在監聽',
+      microphone: '麥克風',
+      doubleClap: '拍手兩次',
+      doubleClapDesc: '切換房間燈光',
+      tripleClap: '拍手三次',
+      tripleClapDesc: '啟用睡眠模式',
+      confidence: '拍手信賴度',
+      confidenceHint: '數值越高，誤判越少。預設值：0.45。',
+      minimumPeak: '最低聲音峰值',
+      minimumPeakHint: '若漏掉真正的拍手，請稍微降低。預設值：0.12。',
+      applyHint: '變更後，請使用上方的套用按鈕重新啟動監聽器。'
+    },
     sections: {
       model: '模型',
       chat: '聊天',

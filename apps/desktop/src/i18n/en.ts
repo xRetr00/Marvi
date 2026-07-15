@@ -358,6 +358,22 @@ export const en: Translations = {
       completionSoundDesc: 'Plays when an agent turn finishes. Pick a preset and preview it here.',
       completionSoundPreview: 'Preview'
     },
+    soundEvents: {
+      title: 'Sound Controls',
+      enabled: 'Clap controls',
+      description: 'Detect claps locally with YAMNet; audio never leaves this computer.',
+      listening: 'Listening',
+      microphone: 'Microphone',
+      doubleClap: 'Double clap',
+      doubleClapDesc: 'Toggle the room light',
+      tripleClap: 'Triple clap',
+      tripleClapDesc: 'Activate Sleep mode',
+      confidence: 'Clap confidence',
+      confidenceHint: 'Higher rejects more false matches. Default: 0.45.',
+      minimumPeak: 'Minimum sound peak',
+      minimumPeakHint: 'Lower this slightly if real claps are missed. Default: 0.12.',
+      applyHint: 'Use Apply above to restart the listener after changing these settings.'
+    },
     sections: {
       model: 'Model',
       chat: 'Chat',

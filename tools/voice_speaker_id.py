@@ -51,13 +51,58 @@ MIN_ENROLLMENT_CONSISTENCY = 0.60
 DEFAULT_SPEAKER_MODEL_ID = "wespeaker-en-voxceleb-cam++"
 DEFAULT_THRESHOLD = 0.60
 
-# A small (~7 MB), English speaker-embedding model from sherpa-onnx's own
-# speaker-recognition-models release -- same CPU ONNX runtime as the rest of
-# the voice stack, unrelated to the (retired) sherpa KWS wake-word release.
-_SHERPA_SPEAKER_MODEL_URL = (
-    "https://github.com/k2-fsa/sherpa-onnx/releases/download/"
-    "speaker-recongition-models/wespeaker_en_voxceleb_CAM%2B%2B.onnx"
-)
+# Reserved store key for Marvi's own TTS-voice self-enrollment profile (spec
+# Part 1.3, barge-in confirm-negative). Never claims the owner slot, never
+# returned by list_speakers -- it isn't a person, it's an echo reference.
+RESERVED_TTS_PROFILE_KEY = "__marvi_tts__"
+
+# ---------------------------------------------------------------------------
+# voice.speaker_id.model registry (Part 3): embeddings are model-specific, so
+# every entry here is a distinct vector space -- switching ids requires
+# re-enrollment (see model_mismatch()). All three are sherpa-onnx's own
+# speaker-recognition-models release assets (same CPU ONNX runtime as the
+# rest of the voice stack); every one is trained on VoxCeleb (English), which
+# keeps them reasonably language-robust even though the label is "en".
+# ---------------------------------------------------------------------------
+SPEAKER_MODEL_REGISTRY: Dict[str, Dict[str, str]] = {
+    # Default -- kept for compatibility with every store enrolled before this
+    # registry existed (their model_id, once stamped, will read back as this
+    # key -- see model_mismatch()'s "no model_id recorded yet" fallback).
+    "wespeaker-en-voxceleb-cam++": {
+        "url": (
+            "https://github.com/k2-fsa/sherpa-onnx/releases/download/"
+            "speaker-recongition-models/wespeaker_en_voxceleb_CAM%2B%2B.onnx"
+        ),
+        "label": "WeSpeaker CAM++ (English, VoxCeleb) -- default, ~7MB, fastest CPU inference",
+    },
+    # Stronger option: same WeSpeaker family, larger ResNet293 backbone with
+    # a large-margin fine-tune (the "_LM" release variant) -- lower EER than
+    # CAM++ on VoxCeleb1-O at the cost of a bigger model / slower CPU
+    # inference. Good pick when far-field/noisy audio (the real owner
+    # utterances that scored 0.22-0.33 close-mic-vs-live-speech gap this
+    # round is fixing) needs more discriminative power than CAM++ gives.
+    "wespeaker-en-voxceleb-resnet293-lm": {
+        "url": (
+            "https://github.com/k2-fsa/sherpa-onnx/releases/download/"
+            "speaker-recongition-models/wespeaker_en_voxceleb_resnet293_LM.onnx"
+        ),
+        "label": (
+            "WeSpeaker ResNet293-LM (English, VoxCeleb) -- larger backbone, "
+            "lower EER than CAM++, slower CPU inference"
+        ),
+    },
+    # Alternate architecture (3D-Speaker's ERes2Net rather than WeSpeaker's
+    # CAM++/ResNet family) -- also VoxCeleb-trained. Offered as a second
+    # option per the design note that a single architecture family can share
+    # blind spots; this is a genuinely different model, not just a bigger one.
+    "3dspeaker-eres2net-en-voxceleb": {
+        "url": (
+            "https://github.com/k2-fsa/sherpa-onnx/releases/download/"
+            "speaker-recongition-models/3dspeaker_speech_eres2net_sv_en_voxceleb_16k.onnx"
+        ),
+        "label": "3D-Speaker ERes2Net (English, VoxCeleb) -- alternate architecture, also language-robust",
+    },
+}
 
 
 class SpeakerIdUnavailable(RuntimeError):
@@ -91,8 +136,8 @@ def _import_sherpa_onnx():
     return sherpa_onnx
 
 
-def _speaker_model_cache_dir() -> Path:
-    return Path(get_hermes_dir(f"cache/speaker-id/{DEFAULT_SPEAKER_MODEL_ID}", "speaker_id_cache"))
+def _speaker_model_cache_dir(model_id: str) -> Path:
+    return Path(get_hermes_dir(f"cache/speaker-id/{model_id}", "speaker_id_cache"))
 
 
 def _download_file(url: str, target: Path) -> None:
@@ -110,11 +155,33 @@ def _download_file(url: str, target: Path) -> None:
         raise SpeakerIdUnavailable(f"Could not download speaker-ID model: {exc}") from exc
 
 
+def resolve_speaker_model_id(cfg: Optional[Dict[str, Any]] = None) -> str:
+    """The effective ``voice.speaker_id.model`` registry id for ``cfg``.
+
+    Used purely for model-mismatch bookkeeping (see :func:`model_mismatch`):
+    a literal local-file override (not a registry id) gets a synthetic
+    ``"custom:<path>"`` id so switching between two different local files is
+    still detected as a mismatch, same as switching registry ids.
+    """
+    from hermes_cli.config import cfg_get, load_config
+
+    cfg = cfg if cfg is not None else load_config()
+    value = str(cfg_get(cfg, "voice", "speaker_id", "model", default="") or "").strip()
+    if not value:
+        return DEFAULT_SPEAKER_MODEL_ID
+    if value in SPEAKER_MODEL_REGISTRY:
+        return value
+    return f"custom:{value}"
+
+
 def resolve_speaker_model_path(cfg: Optional[Dict[str, Any]] = None) -> str:
     """Resolve the ONNX speaker-embedding model path, downloading + caching
-    the default model on first use.
+    the selected model on first use.
 
-    ``voice.speaker_id.model`` may point at a local file to use instead.
+    ``voice.speaker_id.model`` selects a :data:`SPEAKER_MODEL_REGISTRY` id
+    (default :data:`DEFAULT_SPEAKER_MODEL_ID` when unset), OR may point at an
+    existing local file to use instead (checked first, so a local override
+    always wins over registry lookup).
     """
     from hermes_cli.config import cfg_get, load_config
 
@@ -125,12 +192,21 @@ def resolve_speaker_model_path(cfg: Optional[Dict[str, Any]] = None) -> str:
         model_path = Path(model_value).expanduser()
         if model_path.exists():
             return str(model_path)
-        raise SpeakerIdUnavailable(f"voice.speaker_id.model does not exist: {model_value}")
+        if model_value not in SPEAKER_MODEL_REGISTRY:
+            raise SpeakerIdUnavailable(
+                f"voice.speaker_id.model {model_value!r} is neither an existing local "
+                "file nor a known model id ("
+                + ", ".join(sorted(SPEAKER_MODEL_REGISTRY))
+                + ")."
+            )
+        model_id = model_value
+    else:
+        model_id = DEFAULT_SPEAKER_MODEL_ID
 
-    target = _speaker_model_cache_dir() / "model.onnx"
+    target = _speaker_model_cache_dir(model_id) / "model.onnx"
     if not target.exists() or target.stat().st_size == 0:
-        logger.info("[SpeakerID] Downloading sherpa-onnx speaker-embedding model")
-        _download_file(_SHERPA_SPEAKER_MODEL_URL, target)
+        logger.info("[SpeakerID] Downloading sherpa-onnx speaker-embedding model id=%s", model_id)
+        _download_file(SPEAKER_MODEL_REGISTRY[model_id]["url"], target)
     return str(target)
 
 

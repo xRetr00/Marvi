@@ -10,6 +10,7 @@ import {
   saveSmartRoomSecrets,
   setSmartRoomMode,
   setSmartRoomOverride,
+  testSmartRoomWelcome,
   type SmartRoomStatus
 } from '@/hermes'
 import { useI18n } from '@/i18n'
@@ -25,7 +26,7 @@ import {
   SlidersHorizontal,
   Zap
 } from '@/lib/icons'
-import { notifyError } from '@/store/notifications'
+import { notify, notifyError } from '@/store/notifications'
 
 import { CONTROL_TEXT } from './constants'
 import { SettingsContent } from './primitives'
@@ -258,6 +259,7 @@ export function SmartRoomSettings() {
   const [liveStatus, setLiveStatus] = useState<SmartRoomStatus | null>(null)
   const [secrets, setSecrets] = useState({ bulb_key: '', he20_key: '', mqtt_username: '', mqtt_password: '' })
   const [loading, setLoading] = useState(true)
+  const [testingWelcome, setTestingWelcome] = useState<'owner' | 'guest' | null>(null)
   const saveQueue = useRef<Promise<void>>(Promise.resolve())
 
   // Load config
@@ -326,6 +328,19 @@ export function SmartRoomSettings() {
     const values = Object.fromEntries(Object.entries(secrets).filter(([, value]) => value))
     await saveSmartRoomSecrets(values)
     setSecrets({ bulb_key: '', he20_key: '', mqtt_username: '', mqtt_password: '' })
+  }
+
+  const testWelcome = async (audience: 'owner' | 'guest') => {
+    setTestingWelcome(audience)
+    try {
+      await saveQueue.current
+      await testSmartRoomWelcome(audience)
+      notify({ kind: 'success', message: `${audience === 'owner' ? 'Owner' : 'Guest'} greeting is playing` })
+    } catch (err) {
+      notifyError(err, `Failed to test ${audience} greeting`)
+    } finally {
+      setTestingWelcome(null)
+    }
   }
 
   if (loading) {
@@ -399,6 +414,19 @@ export function SmartRoomSettings() {
           <TextField label="Owner name" onChange={(v) => updatePath('owner', v)} value={config.owner} />
           <TextField hint="Wait for ESPresense identity." label="Identity wait (seconds)" onChange={(v) => updatePath('welcome.identity_grace_seconds', parseInt(v) || 4)} type="number" value={config.welcome.identity_grace_seconds} />
           <TextField hint="Default: 60 minutes." label="Empty reset (minutes)" onChange={(v) => updatePath('welcome.reset_after_seconds', (parseInt(v) || 60) * 60)} type="number" value={Math.round(config.welcome.reset_after_seconds / 60)} />
+        </div>
+        <div className="flex gap-2">
+          {(['owner', 'guest'] as const).map(audience => (
+            <button
+              className="rounded-md border border-zinc-700 px-3 py-1.5 text-sm text-zinc-300 hover:bg-zinc-800 disabled:cursor-wait disabled:opacity-50"
+              disabled={testingWelcome !== null || !runtimeUp}
+              key={audience}
+              onClick={() => void testWelcome(audience)}
+              type="button"
+            >
+              {testingWelcome === audience ? 'Generating…' : `Test ${audience} greeting`}
+            </button>
+          ))}
         </div>
       </SectionCard>
 

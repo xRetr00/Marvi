@@ -39,6 +39,20 @@ def test_mode_calls_private_runtime_bridge(monkeypatch):
     assert calls == [("set_mode", {"mode": "focus"})]
 
 
+def test_welcome_preview_calls_private_runtime_bridge(monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        plugin_api,
+        "call_runtime",
+        lambda method, params: calls.append((method, params)) or {"success": True},
+    )
+    response = _client().post(
+        "/api/plugins/smart_room/welcome/test", json={"audience": "owner"}
+    )
+    assert response.status_code == 200
+    assert calls == [("test_welcome", {"audience": "owner"})]
+
+
 def test_secret_fields_are_written_to_env_store(monkeypatch):
     saved = []
     monkeypatch.setattr(plugin_api, "save_env_value", lambda key, value: saved.append((key, value)))

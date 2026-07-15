@@ -435,6 +435,7 @@ export const applySmartRoomConfig = () => smartRoomApi<{ ok: boolean }>('/apply'
 export const setSmartRoomMode = (mode: string) => smartRoomApi('/mode', 'POST', { mode })
 export const setSmartRoomOverride = (enabled: boolean) => smartRoomApi('/override', 'POST', { enabled })
 export const cancelSmartRoomSleep = () => smartRoomApi('/cancel-sleep', 'POST')
+export const testSmartRoomWelcome = (audience: 'owner' | 'guest') => smartRoomApi('/welcome/test', 'POST', { audience })
 export const saveSmartRoomSecrets = (body: Record<string, string>) => smartRoomApi('/secrets', 'PUT', body)
 
 export interface VoiceSpeaker {

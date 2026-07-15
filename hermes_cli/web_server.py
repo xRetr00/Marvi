@@ -17599,15 +17599,40 @@ _DUPLEX_SMART_TURN_VAD_FALLBACK_MS = 1500
 _DUPLEX_TURN_VAD_HARD_STOP_MS = 2800
 _DUPLEX_BARGE_CANDIDATE_TIMEOUT_MS = 1800
 _DUPLEX_UTTERANCE_AUDIO_CAP_CHUNKS = 1000
-# Speaker-confirmed barge-in (spec §3, voice-focus repurpose): before a
-# VAD-armed candidate is allowed to actually interrupt playback, this much
-# of its buffered 16 kHz pcm16 audio must be identified as the OWNER --
-# otherwise TTS echo or another person talking near the mic (which TEN VAD
-# alone can't distinguish from the user) would barge in. Only enforced when
-# tools.voice_speaker_id.focus_mode_active() is True (owner enrolled + model
-# available + focus_mode != "off"); otherwise unchanged VAD-only behavior.
+# Confirm-NEGATIVE barge-in (spec §3, 2026-07-15 fail-open round -- replaces
+# the old positive-owner-confirmation gate, _barge_owner_gate_blocks, which
+# required a POSITIVE owner match before ANY barge could fire and so
+# suppressed real interruptions almost always (live logs: barge-in candidate
+# audio scored 0.34-0.40 against the 0.45 owner threshold, i.e. legitimate
+# barge-in, and was blocked essentially every time). A VAD+text-confirmed
+# candidate now barges IMMEDIATELY unless its buffered audio confidently
+# matches a NEGATIVE reference -- Marvi's own TTS voice (self-echo) or a
+# CONFIDENT_OTHER speaker while the competing-voice flag is armed. Anything
+# uncertain barges. Still buffers up to ~700ms of candidate audio (unchanged
+# -- other machinery reads it), but the negative screen itself only needs
+# ~300ms to run, so it no longer delays the common (real interruption) case.
+# Only enforced when tools.voice_speaker_id.focus_mode_active() is True
+# (owner enrolled + model available + focus_mode != "off"); otherwise
+# unchanged VAD-only behavior, exactly as before this feature existed.
 _DUPLEX_BARGE_CONFIRM_WINDOW_MS = 700.0
 _DUPLEX_BARGE_CONFIRM_WINDOW_BYTES = int(16000 * 2 * (_DUPLEX_BARGE_CONFIRM_WINDOW_MS / 1000.0))
+_DUPLEX_BARGE_NEGATIVE_SCREEN_MIN_MS = 300.0
+_DUPLEX_BARGE_NEGATIVE_SCREEN_MIN_BYTES = int(16000 * 2 * (_DUPLEX_BARGE_NEGATIVE_SCREEN_MIN_MS / 1000.0))
+# Self-adaptation (spec Part 1.4): a direct-score OWNER-zone utterance with
+# at least this much clean audio appends its embedding to the owner's
+# adaptive ring -- short utterances are noisier speaker-embedding material,
+# so they're excluded from ever entering the ring.
+_DUPLEX_ADAPTIVE_MIN_AUDIO_MS = 3000.0
+# TTS self-enrollment (spec Part 1.3): short, distinct phrases synthesized
+# through Marvi's OWN configured TTS voice and embedded once (then cached,
+# refreshed only when the tts.* config block changes -- see
+# _duplex_tts_fingerprint) so barge-in's negative screen can recognize "this
+# is Marvi's own voice playing back" without needing a positive owner match.
+_DUPLEX_TTS_SELF_ENROLL_PHRASES = (
+    "Hi, I'm here and I'm listening.",
+    "Sure, let me help you with that.",
+    "One moment, I'm thinking it through.",
+)
 # Fallback only -- used when a tts_chunk stream never reports its own
 # sample_rate (shouldn't happen with tools.tts_tool.stream_text_to_speech_chunks,
 # which always yields a "start" event carrying one; kept as a safety net so
@@ -17898,6 +17923,193 @@ def _duplex_focus_mode_active(cfg: Dict[str, Any]) -> bool:
     from tools.voice_speaker_id import focus_mode_active
 
     return focus_mode_active(cfg)
+
+
+def _duplex_identify_speaker_zoned(pcm16_bytes: bytes, cfg: Dict[str, Any]) -> Dict[str, Any]:
+    """Seam: tests monkeypatch this instead of touching the real speaker
+    store/model. See ``tools.voice_speaker_id.identify_zoned`` -- the
+    fail-open three-zone (OWNER/CONFIDENT_OTHER/ABSTAIN) resolution behind
+    both utterance-focus filtering and barge-in's negative screen."""
+    from tools.voice_speaker_id import identify_zoned
+
+    return identify_zoned(pcm16_bytes, cfg=cfg)
+
+
+def _duplex_tts_echo_score(pcm16_bytes: bytes, cfg: Dict[str, Any]) -> float:
+    """Seam: cosine similarity of ``pcm16_bytes`` against the cached
+    ``__marvi_tts__`` self-voice profile (spec Part 1.3)."""
+    from tools.voice_speaker_id import compute_embedding, tts_echo_score
+
+    embedding = compute_embedding(pcm16_bytes, cfg=cfg)
+    if embedding is None:
+        return -1.0
+    return tts_echo_score(embedding)
+
+
+def _duplex_append_adaptive_embedding(embedding: List[float]) -> None:
+    """Seam: tests monkeypatch this instead of touching the real speaker
+    store. See ``tools.voice_speaker_id.append_adaptive_embedding`` (spec
+    Part 1.4 self-adaptation)."""
+    from tools.voice_speaker_id import append_adaptive_embedding
+
+    append_adaptive_embedding(embedding)
+
+
+def _duplex_owner_threshold(cfg: Dict[str, Any]) -> float:
+    from tools.voice_speaker_id import owner_threshold
+
+    return owner_threshold(cfg)
+
+
+def _duplex_competing_window_seconds(cfg: Dict[str, Any]) -> float:
+    from tools.voice_speaker_id import competing_window_seconds
+
+    return competing_window_seconds(cfg)
+
+
+def _duplex_continuity_seconds(cfg: Dict[str, Any]) -> float:
+    from tools.voice_speaker_id import continuity_seconds
+
+    return continuity_seconds(cfg)
+
+
+def _duplex_tts_fingerprint(cfg: Dict[str, Any]) -> str:
+    """Coarse fingerprint of the current ``tts.*`` config block -- any
+    change re-triggers TTS self-enrollment (spec Part 1.3). Deliberately
+    whole-block rather than picking apart per-provider voice keys: cheap,
+    and a false-positive refresh (re-synthesizing on an unrelated tts.*
+    change) costs a few seconds once, while a false negative (a stale
+    profile silently mismatching the real TTS voice) would quietly break
+    echo suppression."""
+    try:
+        return json.dumps((cfg or {}).get("tts") or {}, sort_keys=True, default=str)
+    except Exception:
+        return ""
+
+
+def _duplex_resample_pcm16(pcm_bytes: bytes, src_rate: int, dst_rate: int = 16000) -> bytes:
+    """Linear-interpolation PCM16 resample -- good enough for TTS
+    self-enrollment (matching Marvi's own synthesized voice against itself,
+    not identifying a human), avoiding a real DSP dependency for this one
+    narrow use."""
+    if not pcm_bytes or src_rate == dst_rate:
+        return pcm_bytes
+    try:
+        import numpy as np
+
+        usable = pcm_bytes[: len(pcm_bytes) - (len(pcm_bytes) % 2)]
+        samples = np.frombuffer(usable, dtype="<i2")
+        if samples.size == 0:
+            return b""
+        n_dst = max(1, int(round(samples.size * dst_rate / src_rate)))
+        src_x = np.linspace(0, samples.size - 1, num=samples.size)
+        dst_x = np.linspace(0, samples.size - 1, num=n_dst)
+        resampled = np.interp(dst_x, src_x, samples.astype(np.float64))
+        return resampled.astype("<i2").tobytes()
+    except Exception:
+        _log.debug("Voice duplex: PCM resample failed", exc_info=True)
+        return b""
+
+
+def _duplex_synthesize_tts_pcm16_16k(text: str) -> bytes:
+    """Synthesize ``text`` through the configured TTS backend and return
+    16 kHz mono PCM16 bytes, resampling from whatever rate the backend
+    actually reports. Best-effort: returns ``b""`` on any failure."""
+    try:
+        pcm_chunks: List[bytes] = []
+        src_rate = _DUPLEX_DEFAULT_TTS_SAMPLE_RATE
+        for event in _duplex_stream_tts_chunks(text):
+            event_type = event.get("type")
+            if event_type in ("start", "sample_rate"):
+                src_rate = int(event.get("sample_rate") or src_rate)
+            elif event_type == "chunk":
+                try:
+                    pcm_chunks.append(base64.b64decode(event.get("audio") or ""))
+                except (binascii.Error, ValueError):
+                    continue
+        raw = b"".join(pcm_chunks)
+        if not raw:
+            return b""
+        return _duplex_resample_pcm16(raw, src_rate, 16000)
+    except Exception:
+        _log.debug("Voice duplex: TTS self-enrollment synthesis failed", exc_info=True)
+        return b""
+
+
+def _duplex_ensure_tts_self_enrollment(cfg: Dict[str, Any]) -> None:
+    """Lazily (re-)synthesize + enroll Marvi's own TTS voice as the reserved
+    ``__marvi_tts__`` negative-match profile (spec Part 1.3). Cheap
+    fingerprint check first -- only actually re-synthesizes when the tts.*
+    config block changed since the cached profile, or nothing is cached yet.
+    Never raises: this is best-effort infrastructure, not a user-facing
+    action -- a failure here just means the barge-in negative screen falls
+    back to "uncertain -> barge" for the echo-suppression half of the check.
+    """
+    try:
+        from tools.voice_speaker_id import (
+            compute_embedding,
+            store_tts_profile,
+            stored_tts_fingerprint,
+        )
+
+        fingerprint = _duplex_tts_fingerprint(cfg)
+        if fingerprint and stored_tts_fingerprint() == fingerprint:
+            return
+
+        embeddings: List[List[float]] = []
+        for phrase in _DUPLEX_TTS_SELF_ENROLL_PHRASES:
+            pcm16 = _duplex_synthesize_tts_pcm16_16k(phrase)
+            if not pcm16:
+                continue
+            embedding = compute_embedding(pcm16, cfg=cfg)
+            if embedding:
+                embeddings.append(embedding)
+
+        if embeddings:
+            store_tts_profile(embeddings, fingerprint=fingerprint)
+            _log.info(
+                "Voice duplex TTS self-enrollment refreshed samples=%d", len(embeddings)
+            )
+        else:
+            _log.debug("Voice duplex TTS self-enrollment produced no usable samples")
+    except Exception:
+        _log.debug("Voice duplex TTS self-enrollment failed", exc_info=True)
+
+
+def _log_voice_id(
+    *,
+    session_id: str,
+    context: str,
+    zone: str,
+    label: str,
+    score: float,
+    audio_ms: int,
+    resolved_by: str,
+    ignored: bool,
+    extra: str = "",
+) -> None:
+    """Single grep-friendly ``[VOICE-ID]`` line per voice-focus decision
+    (spec Part 1.5) -- one line whether the decision was made at utterance
+    finalize (``context="utterance"``) or during barge-in's negative screen
+    (``context="barge"``), with the same field set both times so a week of
+    logs is `grep '\\[VOICE-ID\\]'`-able into a single table for tuning
+    thresholds/windows without cross-referencing anything else.
+    """
+    line = (
+        "[VOICE-ID] context=%s session_id=%s zone=%s label=%s score=%.4f "
+        "audio_ms=%d resolved_by=%s ignored=%s%s"
+    ) % (
+        context,
+        session_id,
+        zone,
+        label,
+        score,
+        audio_ms,
+        resolved_by,
+        "true" if ignored else "false",
+        (" " + extra) if extra else "",
+    )
+    _log.info(line)
 
 
 def _duplex_warm_instant_lane(transcript, cfg) -> Dict[str, Any]:
@@ -18413,11 +18625,16 @@ class _DuplexSession:
         self._barge_candidate_text = ""
         self._barge_candidate_started_at: Optional[float] = None
         self._barge_candidate_eou = False
-        # Speaker-confirmed barge-in (spec §3) bookkeeping -- see
-        # _barge_owner_gate_blocks.
-        self._barge_owner_confirmed = False
+        # Confirm-negative barge-in (spec §3) bookkeeping -- see
+        # _barge_negative_match_blocks.
+        self._barge_negative_confirmed = False
         self._barge_last_confirm_len = 0
         self._barge_candidate_bytes_seen = 0
+        # Fail-open voice-focus zone bookkeeping (spec §4, 2026-07-15 round)
+        # -- see _finalize_utterance and _barge_negative_match_blocks.
+        self._last_owner_activity_at: Optional[float] = None
+        self._other_voice_active_until: Optional[float] = None
+        self._speaker_model_mismatch_warned = False
         self._active_assistant_text = ""
         self._end_after_playback = False
         self._assistant_audio_started = threading.Event()
@@ -18463,6 +18680,23 @@ class _DuplexSession:
 
         threading.Thread(target=_run, name="voice-instant-warmup", daemon=True).start()
 
+    def _start_tts_self_enrollment(self) -> None:
+        """Kick TTS self-enrollment (spec Part 1.3) on a background thread at
+        session start -- lazy in the sense that a cheap fingerprint check
+        (see ``_duplex_tts_fingerprint``) skips the actual synthesis on every
+        session once a profile matching the current tts.* config is already
+        cached; only a real config change or a first-ever run pays the
+        synthesis cost. Never blocks ``ready`` or any turn -- barge-in's
+        negative screen just has no TTS-echo signal to use until this
+        finishes (falls back to "uncertain -> barge", same as before this
+        feature existed)."""
+        threading.Thread(
+            target=_duplex_ensure_tts_self_enrollment,
+            args=(self.cfg,),
+            name="voice-tts-self-enroll",
+            daemon=True,
+        ).start()
+
     async def start(self) -> None:
         from tools.voice_instant_lane import RollingTranscript
 
@@ -18471,6 +18705,7 @@ class _DuplexSession:
         # below, so construction/deferred-context loading overlaps with the
         # rest of session setup instead of waiting for it.
         self._start_instant_lane_warmup()
+        self._start_tts_self_enrollment()
 
         # Share the SAME streaming-STT concurrency budget as
         # transcribe_audio_stream_ws (see _STREAMING_STT_MAX_CONCURRENT) --
@@ -18810,25 +19045,93 @@ class _DuplexSession:
         except Exception:
             pass
 
-        speaker_label, score, speaker_name = await asyncio.to_thread(
-            _duplex_identify_speaker, pcm
-        )
-        _log.info(
-            "Voice duplex speaker identified label=%s score=%.4f audio_ms=%d",
-            speaker_label,
-            score,
-            int(len(pcm) / 2 / 16000 * 1000),
-        )
+        focus_active = await asyncio.to_thread(_duplex_focus_mode_active, self.cfg)
+        resolved_by: Optional[str] = None
 
-        # Voice FOCUS, not access control (spec §4 repurpose): while focus is
-        # active, a non-owner utterance is attributed and shown in the
-        # transcript event but never reaches the instant lane/TTS and never
-        # pollutes the owner's rolling transcript -- it's someone else
-        # talking near the mic, not a new conversational turn. Never active
-        # (never filters) on a bare/un-enrolled install.
-        focus_ignore = speaker_label != "owner" and await asyncio.to_thread(
-            _duplex_focus_mode_active, self.cfg
-        )
+        if not focus_active:
+            # Never active (never filters) on a bare/un-enrolled install, or
+            # with focus_mode off -- plain single-threshold identify exactly
+            # as before this round, no zones/continuity/competing-flag.
+            speaker_label, score, speaker_name = await asyncio.to_thread(
+                _duplex_identify_speaker, pcm
+            )
+            _log.info(
+                "Voice duplex speaker identified label=%s score=%.4f audio_ms=%d",
+                speaker_label,
+                score,
+                int(len(pcm) / 2 / 16000 * 1000),
+            )
+            focus_ignore = False
+        else:
+            # Fail-open voice-focus redesign (spec §4, 2026-07-15 round):
+            # three zones instead of one threshold. ABSTAIN (short/degraded
+            # audio, or a score between reject_threshold and threshold) is
+            # resolved by SESSION CONTEXT, not dropped outright -- dropping
+            # only ever happens for a CONFIDENT_OTHER match, or an ABSTAIN
+            # while the competing-voice flag is armed. Net effect: alone in
+            # a room, no utterance is ever dropped regardless of score.
+            zoned = await asyncio.to_thread(_duplex_identify_speaker_zoned, pcm, self.cfg)
+            zone = zoned["zone"]
+            speaker_label = zoned["label"]
+            score = zoned["score"]
+            speaker_name = zoned.get("name")
+            audio_ms = zoned["audio_ms"]
+            now = time.monotonic()
+            focus_ignore = False
+            resolved_by = "score"
+
+            if zoned.get("model_mismatch") and not self._speaker_model_mismatch_warned:
+                self._speaker_model_mismatch_warned = True
+                _log.warning(
+                    "Voice duplex: speaker store embeddings were captured under a "
+                    "different voice.speaker_id.model than is currently configured -- "
+                    "re-enrollment needed (run `hermes voice enroll`); every utterance "
+                    "ABSTAINs until then."
+                )
+
+            if zone == "OWNER":
+                if speaker_label == "owner":
+                    self._last_owner_activity_at = now
+            elif zone == "CONFIDENT_OTHER":
+                focus_ignore = True
+                competing_secs = await asyncio.to_thread(
+                    _duplex_competing_window_seconds, self.cfg
+                )
+                self._other_voice_active_until = now + competing_secs
+            else:  # ABSTAIN
+                if self._other_voice_active():
+                    focus_ignore = True
+                    resolved_by = "competing_drop"
+                else:
+                    continuity_secs = await asyncio.to_thread(
+                        _duplex_continuity_seconds, self.cfg
+                    )
+                    if (
+                        self._last_owner_activity_at is not None
+                        and (now - self._last_owner_activity_at) <= continuity_secs
+                    ):
+                        resolved_by = "continuity"
+                        speaker_label = "owner"
+                        self._last_owner_activity_at = now
+                    else:
+                        resolved_by = "abstain_open"
+
+            _log_voice_id(
+                session_id=self._session_id, context="utterance", zone=zone,
+                label=speaker_label, score=score, audio_ms=audio_ms,
+                resolved_by=resolved_by, ignored=focus_ignore,
+            )
+
+            # Self-adaptation (Part 1.4): a DIRECT-score OWNER-zone
+            # acceptance (never a continuity-resolved one) with enough
+            # clean audio feeds the owner's adaptive ring.
+            if (
+                zone == "OWNER"
+                and zoned["label"] == "owner"
+                and audio_ms >= _DUPLEX_ADAPTIVE_MIN_AUDIO_MS
+                and zoned.get("embedding")
+            ):
+                await asyncio.to_thread(_duplex_append_adaptive_embedding, zoned["embedding"])
 
         utterance_event: Dict[str, Any] = {
             "type": "utterance",
@@ -18838,13 +19141,16 @@ class _DuplexSession:
         }
         if focus_ignore:
             utterance_event["ignored"] = True
+        if resolved_by is not None:
+            utterance_event["resolved_by"] = resolved_by
         await self._send(utterance_event)
 
         if focus_ignore:
             _log.info(
-                "Voice duplex focus mode ignoring non-owner utterance label=%s score=%.4f",
+                "Voice duplex focus mode ignoring utterance label=%s score=%.4f resolved_by=%s",
                 speaker_label,
                 score,
+                resolved_by,
             )
             return
 
@@ -18941,7 +19247,7 @@ class _DuplexSession:
         )
         enough_speech = self._barge_streak_ms >= _DUPLEX_BARGE_IN_STREAK_MS
         if actionable and (enough_speech or self._barge_candidate_eou):
-            if await self._barge_owner_gate_blocks():
+            if await self._barge_negative_match_blocks():
                 return
             audio = list(self._barge_candidate_audio)
             text = self._barge_candidate_text
@@ -18982,7 +19288,7 @@ class _DuplexSession:
         self._barge_candidate_eou = False
         self._barge_streak_ms = 0.0
         self._barge_preroll.clear()
-        self._barge_owner_confirmed = False
+        self._barge_negative_confirmed = False
         self._barge_last_confirm_len = 0
         self._barge_candidate_bytes_seen = 0
         if rearm_stt and had_candidate and self.stt_session is not None:
@@ -18993,23 +19299,31 @@ class _DuplexSession:
                     "Voice duplex: STT re-arm after rejected barge-in failed: %s", exc
                 )
 
-    async def _barge_owner_gate_blocks(self) -> bool:
-        """Speaker-confirmed barge-in (spec §3): before a VAD+text-confirmed
-        candidate is allowed to actually interrupt playback, confirm that
-        ~0.7s of its buffered audio (:data:`_DUPLEX_BARGE_CONFIRM_WINDOW_MS`)
-        matches the OWNER embedding -- otherwise TTS echo or another voice
-        near the mic (which TEN VAD alone cannot distinguish from the user)
-        would barge in.
+    async def _barge_negative_match_blocks(self) -> bool:
+        """Confirm-NEGATIVE barge-in (spec §3, 2026-07-15 fail-open round).
+
+        A VAD+text-confirmed candidate barges IMMEDIATELY unless its
+        buffered audio confidently matches a NEGATIVE reference: (a) Marvi's
+        own TTS voice (self-echo -- see ``_duplex_ensure_tts_self_enrollment``)
+        at/above the owner threshold, or (b) a CONFIDENT_OTHER speaker while
+        the competing-voice flag is armed (``_other_voice_active``).
+        Uncertainty is no longer a reason to withhold barge-in -- contrast
+        the old fail-closed ``_barge_owner_gate_blocks`` this replaces, which
+        required a POSITIVE owner match before ANY barge could fire and so
+        suppressed real interruptions almost always (live logs: genuine
+        barge-in candidates scored 0.34-0.40, below the 0.45 owner
+        threshold, and were blocked essentially every time).
 
         Returns True to suppress this attempt (the caller keeps buffering
-        the candidate rather than resetting it; a fresh ~0.7s window is
-        re-checked on the next call once enough new audio has accumulated,
-        so a real interruption is confirmed at most ~1.5s later than an
-        unconfirmed barge would have fired). Returns False when the caller
-        should proceed with the barge exactly as before this feature
-        existed -- including whenever focus mode is off, no owner is
-        enrolled, or the speaker model is unavailable (never regress the
-        plain VAD-only behavior in those cases).
+        the candidate rather than resetting it; a fresh ~300ms window is
+        re-checked on the next call once enough new audio has accumulated).
+        Returns False -- the default -- as soon as there's nothing
+        confidently negative to say, which lets the caller barge right away;
+        this includes whenever focus mode is off, no owner is enrolled, the
+        speaker model is unavailable, or not enough buffered audio exists
+        yet for a negative screen (never regress the plain VAD-only
+        behavior in those cases, and never delay a real interruption on
+        mere uncertainty).
 
         # ponytail: this identifies the dominant speaker in the buffered
         # window, not true target-speaker extraction -- the owner talking
@@ -19017,8 +19331,6 @@ class _DuplexSession:
         # segmentation (sherpa-onnx ships segmentation models for this).
         # Utterance- and barge-level focus is the full v1 scope.
         """
-        if self._barge_owner_confirmed:
-            return False
         if not await asyncio.to_thread(_duplex_focus_mode_active, self.cfg):
             return False
 
@@ -19029,27 +19341,57 @@ class _DuplexSession:
         # only grows, so re-checks stay on schedule for however long the
         # candidate keeps accumulating.
         seen = self._barge_candidate_bytes_seen
-        if seen < _DUPLEX_BARGE_CONFIRM_WINDOW_BYTES:
-            return True  # not enough buffered audio yet -- keep buffering
+        if seen < _DUPLEX_BARGE_NEGATIVE_SCREEN_MIN_BYTES:
+            return False  # not enough buffered audio for a screen yet -- fail OPEN, barge now
         if (
             self._barge_last_confirm_len
-            and (seen - self._barge_last_confirm_len) < _DUPLEX_BARGE_CONFIRM_WINDOW_BYTES
+            and (seen - self._barge_last_confirm_len) < _DUPLEX_BARGE_NEGATIVE_SCREEN_MIN_BYTES
         ):
-            return True  # already checked; wait for a fresh ~0.7s window
+            return self._barge_negative_confirmed  # reuse the last screen's verdict
 
         candidate_pcm = b"".join(self._barge_candidate_audio)
-        label, score, _name = await asyncio.to_thread(_duplex_identify_speaker, candidate_pcm)
         self._barge_last_confirm_len = seen
-        if label == "owner":
-            self._barge_owner_confirmed = True
-            return False
+        audio_ms = int(len(candidate_pcm) / 2 / 16000 * 1000)
 
-        _log.info(
-            "Voice duplex barge-in suppressed: non-owner speaker label=%s score=%.4f",
-            label,
-            score,
+        tts_score = await asyncio.to_thread(_duplex_tts_echo_score, candidate_pcm, self.cfg)
+        tts_thr = await asyncio.to_thread(_duplex_owner_threshold, self.cfg)
+        if tts_score >= tts_thr:
+            self._barge_negative_confirmed = True
+            _log_voice_id(
+                session_id=self._session_id, context="barge", zone="-", label="tts_echo",
+                score=tts_score, audio_ms=audio_ms, resolved_by="tts_echo", ignored=True,
+            )
+            return True
+
+        if self._other_voice_active():
+            zoned = await asyncio.to_thread(_duplex_identify_speaker_zoned, candidate_pcm, self.cfg)
+            if zoned["zone"] == "CONFIDENT_OTHER":
+                self._barge_negative_confirmed = True
+                _log_voice_id(
+                    session_id=self._session_id, context="barge", zone=zoned["zone"],
+                    label=zoned["label"], score=zoned["score"], audio_ms=audio_ms,
+                    resolved_by="competing_other", ignored=True,
+                )
+                return True
+
+        self._barge_negative_confirmed = False
+        _log_voice_id(
+            session_id=self._session_id, context="barge", zone="-", label="-",
+            score=tts_score, audio_ms=audio_ms, resolved_by="uncertain_barge", ignored=False,
         )
-        return True
+        return False
+
+    def _other_voice_active(self) -> bool:
+        """True while the "a confidently different voice was just heard"
+        flag is armed (spec Part 1.2 competing-voice flag) -- a
+        CONFIDENT_OTHER utterance arms it for
+        ``voice.speaker_id.competing_window_seconds`` (default 90s); it
+        decays on its own once that window elapses, nothing disarms it
+        early."""
+        return (
+            self._other_voice_active_until is not None
+            and time.monotonic() < self._other_voice_active_until
+        )
 
     async def _trigger_barge_in(
         self,
@@ -19090,7 +19432,7 @@ class _DuplexSession:
         self._barge_candidate_started_at = None
         self._barge_candidate_eou = False
         self._barge_preroll.clear()
-        self._barge_owner_confirmed = False
+        self._barge_negative_confirmed = False
         self._barge_last_confirm_len = 0
         self._barge_candidate_bytes_seen = 0
         if self.stt_session is None:

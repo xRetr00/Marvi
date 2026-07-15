@@ -49,7 +49,13 @@ MIN_ENROLLMENT_SAMPLES = 3
 MIN_ENROLLMENT_CONSISTENCY = 0.60
 
 DEFAULT_SPEAKER_MODEL_ID = "wespeaker-en-voxceleb-cam++"
-DEFAULT_THRESHOLD = 0.60
+# 2026-07-15 fail-open round: aligned to the spec's long-standing documented
+# default (docs/superpowers/specs/2026-07-10-marvi-duplex-voice-splitbrain-design.md
+# §4) -- the config default had drifted to 0.60, which is stricter than the
+# spec ever called for and part of why real owner utterances (0.51-0.61
+# accepted, but also 0.22-0.33 dropped) were landing below threshold so
+# often. See DEFAULT_REJECT_THRESHOLD below for the new companion bound.
+DEFAULT_THRESHOLD = 0.45
 
 # Reserved store key for Marvi's own TTS-voice self-enrollment profile (spec
 # Part 1.3, barge-in confirm-negative). Never claims the owner slot, never
@@ -327,13 +333,24 @@ def _atomic_write_json(path: Path, data: Dict[str, Any]) -> None:
 
 
 def enroll_embedding(
-    name: str, embedding: List[float], *, path: Optional[Path] = None,
+    name: str,
+    embedding: List[float],
+    *,
+    path: Optional[Path] = None,
+    model_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Append ``embedding`` for ``name`` to the store; return the new store.
 
     The first name ever enrolled becomes "owner". A name that literally
     equals "owner" (case-insensitive) always claims the owner slot, even on
     a later enrollment -- an explicit way to (re)designate ownership.
+
+    ``model_id`` (Part 3, :data:`SPEAKER_MODEL_REGISTRY`) stamps the store
+    with which embedding model produced this sample, so a later config
+    change to a different model is detected as a mismatch (see
+    :func:`model_mismatch`) instead of silently comparing embeddings from two
+    different vector spaces. Omitted by direct/legacy callers (tests, the
+    reserved TTS profile) that manage the store by hand.
     """
     name = (name or "").strip()
     if not name:
@@ -354,6 +371,8 @@ def enroll_embedding(
         store["owner"] = key
     if key == OWNER_LABEL:
         store["owner"] = key
+    if model_id:
+        store["model_id"] = model_id
 
     _atomic_write_json(path, store)
     return store
@@ -380,16 +399,27 @@ def enroll(
             "unavailable, the model failed to download, or the audio was "
             "too short/silent."
         )
-    return enroll_embedding(name, embedding, path=path)
+    try:
+        model_id = resolve_speaker_model_id(cfg)
+    except Exception:
+        model_id = None
+    return enroll_embedding(name, embedding, path=path, model_id=model_id)
 
 
-def list_speakers(*, path: Optional[Path] = None) -> List[Dict[str, Any]]:
+def list_speakers(
+    *, cfg: Optional[Dict[str, Any]] = None, path: Optional[Path] = None,
+) -> List[Dict[str, Any]]:
     path = path or default_store_path()
     store = load_store(path)
     owner_key = store.get("owner")
+    mismatch = model_mismatch(cfg, path=path)
     out = []
     for key, entry in sorted((store.get("speakers") or {}).items()):
+        if key == RESERVED_TTS_PROFILE_KEY:
+            continue  # internal echo-reference profile, never user-facing
         embeddings = entry.get("embeddings") or []
+        # Consistency reflects MANUAL samples only -- adaptive (self-learned)
+        # embeddings never perturb this UI stat (Part 1.4).
         pairs = [
             cosine_similarity(left, right)
             for i, left in enumerate(embeddings)
@@ -409,9 +439,11 @@ def list_speakers(*, path: Optional[Path] = None) -> List[Dict[str, Any]]:
                 "key": key,
                 "is_owner": key == owner_key,
                 "embeddings": len(embeddings),
+                "adaptive": len(entry.get("adaptive_embeddings") or []),
                 "consistency": round(consistency, 3) if consistency is not None else None,
                 "samples_needed": max(0, MIN_ENROLLMENT_SAMPLES - len(embeddings)),
                 "ready": ready,
+                "model_mismatch": mismatch,
             }
         )
     return out
@@ -426,7 +458,9 @@ def remove_speaker(name: str, *, path: Optional[Path] = None) -> bool:
         return False
     del speakers[key]
     if store.get("owner") == key:
-        store["owner"] = next(iter(speakers), None)
+        store["owner"] = next(
+            (k for k in speakers if k != RESERVED_TTS_PROFILE_KEY), None
+        )
     _atomic_write_json(path, store)
     return True
 
@@ -617,3 +651,359 @@ def focus_mode_active(cfg: Optional[Dict[str, Any]] = None, *, path: Optional[Pa
     if focus_mode_setting(cfg) == "off":
         return False
     return focus_mode_ready(cfg, path=path)
+
+
+# ---------------------------------------------------------------------------
+# Fail-open voice-focus redesign (2026-07-15 round): three-zone identify,
+# self-adaptation, TTS self-echo reference, and model-mismatch safety.
+#
+# Root cause this replaces: a single threshold turned "uncertain" into
+# "drop" (fail-closed). Live logs showed real owner utterances scoring
+# 0.22-0.33 (far-field vs. the 10 close-mic enrollment samples) getting
+# silently dropped, and legitimate barge-in suppressed almost always because
+# it required a POSITIVE owner match before interrupting playback at all.
+# The zones below make "uncertain" fail OPEN by default and only drop when
+# there's actual contrary evidence (a confidently different voice, heard
+# recently) -- see identify_zoned()'s docstring and the duplex spec's §4.
+# ---------------------------------------------------------------------------
+
+ZONE_OWNER = "OWNER"
+ZONE_CONFIDENT_OTHER = "CONFIDENT_OTHER"
+ZONE_ABSTAIN = "ABSTAIN"
+
+DEFAULT_REJECT_THRESHOLD = 0.25
+DEFAULT_CONTINUITY_SECONDS = 120.0
+DEFAULT_COMPETING_WINDOW_SECONDS = 90.0
+# Fixed (not config-exposed): below this much clean audio, a low score is
+# just as likely to be "not enough signal" as "a different voice" -- so a
+# short utterance can never land in CONFIDENT_OTHER, only ABSTAIN.
+MIN_CONFIDENT_OTHER_AUDIO_MS = 2000.0
+
+# Self-adaptation ring cap (Part 1.4) -- FIFO, oldest evicted first.
+ADAPTIVE_RING_CAP = 20
+
+
+def reject_threshold(cfg: Optional[Dict[str, Any]] = None) -> float:
+    """``voice.speaker_id.reject_threshold`` -- at/below this cosine score
+    (and given enough clean audio, see :data:`MIN_CONFIDENT_OTHER_AUDIO_MS`)
+    a candidate is confidently NOT the owner (zone CONFIDENT_OTHER)."""
+    from hermes_cli.config import cfg_get, load_config
+
+    cfg = cfg if cfg is not None else load_config()
+    try:
+        return float(
+            cfg_get(cfg, "voice", "speaker_id", "reject_threshold", default=DEFAULT_REJECT_THRESHOLD)
+        )
+    except (TypeError, ValueError):
+        return DEFAULT_REJECT_THRESHOLD
+
+
+def continuity_seconds(cfg: Optional[Dict[str, Any]] = None) -> float:
+    """``voice.speaker_id.continuity_seconds`` -- how long an ABSTAIN keeps
+    resolving to owner-accept after the last owner-labeled utterance."""
+    from hermes_cli.config import cfg_get, load_config
+
+    cfg = cfg if cfg is not None else load_config()
+    try:
+        return float(
+            cfg_get(cfg, "voice", "speaker_id", "continuity_seconds", default=DEFAULT_CONTINUITY_SECONDS)
+        )
+    except (TypeError, ValueError):
+        return DEFAULT_CONTINUITY_SECONDS
+
+
+def competing_window_seconds(cfg: Optional[Dict[str, Any]] = None) -> float:
+    """``voice.speaker_id.competing_window_seconds`` -- how long the
+    per-session "another voice was just heard" flag stays armed after a
+    CONFIDENT_OTHER utterance. ABSTAIN only drops while this flag is armed
+    (see the duplex session's ``_other_voice_active``)."""
+    from hermes_cli.config import cfg_get, load_config
+
+    cfg = cfg if cfg is not None else load_config()
+    try:
+        return float(
+            cfg_get(
+                cfg, "voice", "speaker_id", "competing_window_seconds",
+                default=DEFAULT_COMPETING_WINDOW_SECONDS,
+            )
+        )
+    except (TypeError, ValueError):
+        return DEFAULT_COMPETING_WINDOW_SECONDS
+
+
+def owner_threshold(cfg: Optional[Dict[str, Any]] = None) -> float:
+    """``voice.speaker_id.threshold`` -- at/above this cosine score a
+    candidate IS the owner (zone OWNER)."""
+    from hermes_cli.config import cfg_get, load_config
+
+    cfg = cfg if cfg is not None else load_config()
+    try:
+        return float(cfg_get(cfg, "voice", "speaker_id", "threshold", default=DEFAULT_THRESHOLD))
+    except (TypeError, ValueError):
+        return DEFAULT_THRESHOLD
+
+
+def _entry_embeddings(entry: Dict[str, Any]) -> List[List[float]]:
+    manual = entry.get("embeddings") or []
+    adaptive = entry.get("adaptive_embeddings") or []
+    return [e for e in (list(manual) + list(adaptive)) if e]
+
+
+def _speaker_score(entry: Dict[str, Any], embedding: List[float]) -> float:
+    """Max cosine similarity of ``embedding`` against every manual + adaptive
+    sample on ``entry`` (max-sim, not average).
+
+    Chosen over averaging deliberately: the adaptive ring self-populates
+    from live far-field audio with no human review, so a handful of noisy
+    adaptive samples pulling the centroid away from the clean manual
+    enrollment average would make the profile WORSE over time. Max-sim lets
+    any single strong match (manual or adaptive) carry the score, so a noisy
+    adaptive sample can only ever help (find an extra angle that matches) and
+    never drag a good manual match down. This is the "better-tested" choice
+    called for in the spec: it degrades gracefully as adaptive samples
+    accumulate, where averaging degrades unpredictably.
+    """
+    vectors = _entry_embeddings(entry)
+    if not vectors:
+        return -1.0
+    return max(cosine_similarity(embedding, v) for v in vectors)
+
+
+def append_adaptive_embedding(
+    embedding: List[float], *, path: Optional[Path] = None,
+) -> Dict[str, Any]:
+    """Append ``embedding`` to the OWNER's adaptive ring (Part 1.4 self-
+    adaptation). FIFO-capped at :data:`ADAPTIVE_RING_CAP`; stored in a
+    separate ``adaptive_embeddings`` list so it never touches the manual
+    ``embeddings`` list the UI consistency stat is computed from. No-op
+    (returns the store unchanged) when no owner is enrolled yet.
+    """
+    path = path or default_store_path()
+    store = load_store(path)
+    owner_key = store.get("owner")
+    if not owner_key or not embedding:
+        return store
+    speakers: Dict[str, Any] = store["speakers"]
+    entry = speakers.setdefault(owner_key, {"display_name": owner_key, "embeddings": []})
+    ring: List[List[float]] = entry.setdefault("adaptive_embeddings", [])
+    ring.append([float(x) for x in embedding])
+    if len(ring) > ADAPTIVE_RING_CAP:
+        del ring[: len(ring) - ADAPTIVE_RING_CAP]
+    _atomic_write_json(path, store)
+    return store
+
+
+def reset_adaptive(*, path: Optional[Path] = None) -> Dict[str, Any]:
+    """Clear the owner's adaptive ring (``hermes voice speakers
+    --reset-adaptive``). Manual enrollment samples are untouched."""
+    path = path or default_store_path()
+    store = load_store(path)
+    owner_key = store.get("owner")
+    speakers = store.get("speakers") or {}
+    if owner_key and owner_key in speakers:
+        speakers[owner_key]["adaptive_embeddings"] = []
+        _atomic_write_json(path, store)
+    return store
+
+
+def adaptive_count(*, path: Optional[Path] = None) -> int:
+    path = path or default_store_path()
+    store = load_store(path)
+    owner_key = store.get("owner")
+    if not owner_key:
+        return 0
+    entry = (store.get("speakers") or {}).get(owner_key) or {}
+    return len(entry.get("adaptive_embeddings") or [])
+
+
+def model_mismatch(cfg: Optional[Dict[str, Any]] = None, *, path: Optional[Path] = None) -> bool:
+    """True when the store's embeddings were captured under a different
+    ``voice.speaker_id.model`` than what's currently configured.
+
+    Embeddings from two different models live in different, incomparable
+    vector spaces -- comparing across them is not just less accurate, it's
+    meaningless (cosine similarity between unrelated spaces is noise dressed
+    up as a number). Callers (identify_zoned, the CLI, the settings UI) must
+    treat a mismatch as "re-enroll needed", never silently keep matching.
+
+    ``False`` when the store has no speakers yet (nothing to mismatch) or no
+    ``model_id`` was ever recorded (pre-registry stores -- treated as having
+    been captured with :data:`DEFAULT_SPEAKER_MODEL_ID`, which is what
+    actually computed them before this registry existed).
+    """
+    path = path or default_store_path()
+    store = load_store(path)
+    speakers = store.get("speakers") or {}
+    # The reserved TTS profile doesn't count -- it's re-synthesized whenever
+    # its own fingerprint goes stale (see hermes_cli.web_server's TTS
+    # self-enrollment), never left stranded on an old model.
+    if not any(k != RESERVED_TTS_PROFILE_KEY for k in speakers):
+        return False
+    stored_model_id = store.get("model_id") or DEFAULT_SPEAKER_MODEL_ID
+    try:
+        current_model_id = resolve_speaker_model_id(cfg)
+    except Exception:
+        return False
+    return stored_model_id != current_model_id
+
+
+def _audio_ms(pcm16_bytes_16k: bytes) -> int:
+    if not pcm16_bytes_16k:
+        return 0
+    return int(len(pcm16_bytes_16k) / 2 / 16000 * 1000)
+
+
+def identify_zoned(
+    pcm16_bytes_16k: bytes,
+    *,
+    cfg: Optional[Dict[str, Any]] = None,
+    path: Optional[Path] = None,
+) -> Dict[str, Any]:
+    """Three-zone speaker identification for voice FOCUS (fail-open design).
+
+    Returns a dict: ``{"zone": OWNER|CONFIDENT_OTHER|ABSTAIN, "label":
+    "owner"|"guest"|"unknown", "score": float, "audio_ms": int, "name":
+    Optional[str], "model_mismatch": bool, "embedding": Optional[list]}``.
+
+    Zone rules (against the OWNER profile's score; see
+    :func:`_speaker_score` for how manual + adaptive samples combine):
+
+    - **OWNER**: owner score >= :func:`owner_threshold`. label="owner".
+    - **OWNER** (enrolled-non-owner acceptance): no owner match, but some
+      OTHER enrolled speaker's score >= :func:`owner_threshold`. Treated
+      like an OWNER-zone acceptance for focus purposes (never dropped) but
+      keeps its own badge: label="guest".
+    - **CONFIDENT_OTHER**: owner score <= :func:`reject_threshold` AND at
+      least :data:`MIN_CONFIDENT_OTHER_AUDIO_MS` of clean audio. A
+      confidently-different voice -- label="unknown" (not matched to any
+      enrolled guest profile; that case is the OWNER/guest branch above).
+    - **ABSTAIN**: everything else -- score between the two thresholds, OR
+      audio too short/degraded (embedding computation failed), OR no owner
+      enrolled at all. The duplex session (not this function) decides
+      ABSTAIN's fate via continuity/competing-flag context -- see
+      ``hermes_cli.web_server._DuplexSession._finalize_utterance``.
+
+    Never raises: any problem (no store, no model, bad/short audio, model
+    mismatch) degrades to ABSTAIN/unknown, consistent with every other
+    function in this module's "can't identify right now, not a hard error"
+    contract.
+    """
+    audio_ms = _audio_ms(pcm16_bytes_16k)
+    abstain = {
+        "zone": ZONE_ABSTAIN, "label": UNKNOWN_LABEL, "score": 0.0,
+        "audio_ms": audio_ms, "name": None, "model_mismatch": False, "embedding": None,
+    }
+
+    try:
+        try:
+            from hermes_cli.config import load_config
+
+            cfg_dict = cfg if cfg is not None else load_config()
+        except Exception:
+            cfg_dict = cfg
+
+        store_path = path or default_store_path()
+        if not store_path.exists():
+            return abstain
+        if model_mismatch(cfg_dict, path=store_path):
+            return {**abstain, "model_mismatch": True}
+
+        embedding = compute_embedding(pcm16_bytes_16k, cfg=cfg_dict)
+        if embedding is None:
+            return abstain
+
+        store = load_store(store_path)
+        owner_key = store.get("owner")
+        speakers = store.get("speakers") or {}
+        if not owner_key or owner_key not in speakers:
+            return {**abstain, "embedding": embedding}
+
+        owner_thr = owner_threshold(cfg_dict)
+        reject_thr = reject_threshold(cfg_dict)
+
+        owner_score = _speaker_score(speakers[owner_key], embedding)
+
+        best_other_key: Optional[str] = None
+        best_other_score = -1.0
+        for key, entry in speakers.items():
+            if key in (owner_key, RESERVED_TTS_PROFILE_KEY):
+                continue
+            score = _speaker_score(entry, embedding)
+            if score > best_other_score:
+                best_other_key, best_other_score = key, score
+
+        if owner_score >= owner_thr:
+            return {
+                "zone": ZONE_OWNER, "label": OWNER_LABEL, "score": owner_score,
+                "audio_ms": audio_ms, "name": speakers[owner_key].get("display_name"),
+                "model_mismatch": False, "embedding": embedding,
+            }
+        if best_other_key is not None and best_other_score >= owner_thr:
+            return {
+                "zone": ZONE_OWNER, "label": GUEST_LABEL, "score": best_other_score,
+                "audio_ms": audio_ms, "name": speakers[best_other_key].get("display_name"),
+                "model_mismatch": False, "embedding": embedding,
+            }
+        if owner_score <= reject_thr and audio_ms >= MIN_CONFIDENT_OTHER_AUDIO_MS:
+            return {
+                "zone": ZONE_CONFIDENT_OTHER, "label": UNKNOWN_LABEL, "score": owner_score,
+                "audio_ms": audio_ms, "name": None, "model_mismatch": False, "embedding": embedding,
+            }
+        return {
+            "zone": ZONE_ABSTAIN, "label": UNKNOWN_LABEL, "score": owner_score,
+            "audio_ms": audio_ms, "name": None, "model_mismatch": False, "embedding": embedding,
+        }
+    except Exception:
+        logger.exception("Speaker zoned-identify failed; returning ABSTAIN")
+        return abstain
+
+
+# ---------------------------------------------------------------------------
+# Reserved TTS self-voice profile (Part 1.3: barge-in confirm-negative).
+# Cached like any other speaker profile but under a reserved key that
+# list_speakers() filters out and enroll_embedding()'s owner-promotion logic
+# never sees (this store is written directly, not through enroll_embedding).
+# ---------------------------------------------------------------------------
+
+
+def store_tts_profile(
+    embeddings: List[List[float]], *, fingerprint: str = "", path: Optional[Path] = None,
+) -> Dict[str, Any]:
+    """Persist Marvi's own synthesized-voice embeddings under the reserved
+    ``__marvi_tts__`` key. ``fingerprint`` is an opaque caller-computed
+    string (see ``hermes_cli.web_server``'s TTS-config fingerprint) letting
+    the caller cheaply detect "the TTS voice config changed, re-synthesize"
+    without needing to know anything about TTS itself here.
+    """
+    path = path or default_store_path()
+    store = load_store(path)
+    store["speakers"][RESERVED_TTS_PROFILE_KEY] = {
+        "display_name": RESERVED_TTS_PROFILE_KEY,
+        "embeddings": [[float(x) for x in e] for e in embeddings if e],
+        "reserved": True,
+        "tts_fingerprint": fingerprint,
+    }
+    _atomic_write_json(path, store)
+    return store
+
+
+def stored_tts_fingerprint(*, path: Optional[Path] = None) -> Optional[str]:
+    """The fingerprint the cached TTS profile was captured under, or
+    ``None`` when nothing is cached yet (forces a first-time synthesize)."""
+    path = path or default_store_path()
+    store = load_store(path)
+    entry = (store.get("speakers") or {}).get(RESERVED_TTS_PROFILE_KEY)
+    if not entry or not entry.get("embeddings"):
+        return None
+    return entry.get("tts_fingerprint")
+
+
+def tts_echo_score(embedding: List[float], *, path: Optional[Path] = None) -> float:
+    """Cosine similarity of ``embedding`` against the cached TTS self-voice
+    profile, or ``-1.0`` when nothing is enrolled yet (never matches)."""
+    path = path or default_store_path()
+    store = load_store(path)
+    entry = (store.get("speakers") or {}).get(RESERVED_TTS_PROFILE_KEY)
+    if not entry:
+        return -1.0
+    return _speaker_score(entry, embedding)

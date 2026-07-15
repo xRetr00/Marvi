@@ -176,6 +176,12 @@ def duplex_client(monkeypatch, _isolate_hermes_home):
     # within a single test's 1-2 connections, so acquire() never needs to
     # wait/bind to a loop at all.
     web_server.app.state.audio_transcribe_lock = asyncio.Semaphore(web_server._STREAMING_STT_MAX_CONCURRENT)
+    # TTS self-enrollment (spec Part 1.3) fires a background thread from
+    # _DuplexSession.start() that would otherwise touch the real TTS/sherpa
+    # stack -- neuter it for every duplex_client test; barge-in negative-
+    # screen tests that care about TTS-echo matching use the `tts_echo`
+    # seam fixture directly instead.
+    monkeypatch.setattr(web_server._DuplexSession, "_start_tts_self_enrollment", lambda self: None)
 
     client = TestClient(web_server.app)
     try:
@@ -286,6 +292,48 @@ def focus_mode(monkeypatch):
 
 
 @pytest.fixture
+def identify_zoned(monkeypatch):
+    """Controls the ``_duplex_identify_speaker_zoned`` seam (fail-open
+    three-zone voice focus, spec §4 2026-07-15 round). Defaults to a
+    confident OWNER match with plenty of clean audio -- so tests that only
+    care about "focus off"/unrelated behavior are unaffected unless they opt
+    into a different zone.
+    """
+    state = {
+        "zone": "OWNER", "label": "owner", "score": 0.9, "audio_ms": 3000,
+        "name": "Shereef", "model_mismatch": False, "embedding": [0.9, 0.1],
+    }
+
+    def fake_zoned(pcm16_bytes, cfg):
+        return dict(state)
+
+    monkeypatch.setattr(web_server, "_duplex_identify_speaker_zoned", fake_zoned)
+    return state
+
+
+@pytest.fixture
+def tts_echo(monkeypatch):
+    """Controls the ``_duplex_tts_echo_score`` seam (barge-in confirm-
+    negative TTS self-echo check). Defaults to "never matches"."""
+    state = {"score": -1.0}
+
+    def fake_score(pcm16_bytes, cfg):
+        return state["score"]
+
+    monkeypatch.setattr(web_server, "_duplex_tts_echo_score", fake_score)
+    return state
+
+
+@pytest.fixture
+def speaker_id_windows(monkeypatch):
+    """Fixed owner_threshold/competing_window_seconds/continuity_seconds so
+    zone/window tests don't depend on real config resolution."""
+    monkeypatch.setattr(web_server, "_duplex_owner_threshold", lambda cfg: 0.45)
+    monkeypatch.setattr(web_server, "_duplex_competing_window_seconds", lambda cfg: 90.0)
+    monkeypatch.setattr(web_server, "_duplex_continuity_seconds", lambda cfg: 120.0)
+
+
+@pytest.fixture
 def deep_task(monkeypatch):
     state = {"text": "Deep answer.", "raises": None, "calls": [], "modes": [], "delay": 0.0}
 
@@ -318,10 +366,15 @@ def warm_lane(monkeypatch):
 
 
 @pytest.fixture
-def full_fakes(stt_session, identify_speaker, instant_reply, tts_chunks, vad_gate, deep_task, warm_lane, focus_mode):
+def full_fakes(
+    stt_session, identify_speaker, identify_zoned, tts_echo, speaker_id_windows,
+    instant_reply, tts_chunks, vad_gate, deep_task, warm_lane, focus_mode,
+):
     return {
         "stt": stt_session,
         "identify": identify_speaker,
+        "zoned": identify_zoned,
+        "tts_echo": tts_echo,
         "instant": instant_reply,
         "tts": tts_chunks,
         "vad": vad_gate,
@@ -781,11 +834,27 @@ def _make_focus_test_session(cfg=None):
     return session, ws
 
 
+def _patch_zoned(monkeypatch, **overrides):
+    state = {
+        "zone": "OWNER", "label": "owner", "score": 0.9, "audio_ms": 3000,
+        "name": "Shereef", "model_mismatch": False, "embedding": [0.9, 0.1],
+    }
+    state.update(overrides)
+    monkeypatch.setattr(web_server, "_duplex_identify_speaker_zoned", lambda pcm, cfg: dict(state))
+    monkeypatch.setattr(web_server, "_duplex_owner_threshold", lambda cfg: 0.45)
+    monkeypatch.setattr(web_server, "_duplex_competing_window_seconds", lambda cfg: 90.0)
+    monkeypatch.setattr(web_server, "_duplex_continuity_seconds", lambda cfg: 120.0)
+    return state
+
+
 def test_focus_owner_utterance_passes_through_normally(monkeypatch):
     """Owner-matching utterances behave exactly as today, even with focus
-    mode active."""
-    monkeypatch.setattr(web_server, "_duplex_identify_speaker", lambda pcm: ("owner", 0.9, "Shereef"))
+    mode active. INVERSION NOTE: this test previously drove the retired
+    single-threshold ``_duplex_identify_speaker`` seam; it now drives the
+    zoned seam directly (zone OWNER, label owner)."""
+    _patch_zoned(monkeypatch)
     monkeypatch.setattr(web_server, "_duplex_focus_mode_active", lambda cfg: True)
+    monkeypatch.setattr(web_server, "_duplex_append_adaptive_embedding", lambda embedding: None)
 
     async def run():
         session, ws = _make_focus_test_session()
@@ -803,15 +872,23 @@ def test_focus_owner_utterance_passes_through_normally(monkeypatch):
         utterance = next(f for f in ws.sent if f["type"] == "utterance")
         assert utterance["speaker"] == "owner"
         assert "ignored" not in utterance
+        assert utterance["resolved_by"] == "score"
         assert session.transcript.turns == [{"role": "user", "content": "what time is it"}]
         assert run_calls == [("what time is it", "owner")]
         assert session.state == "speaking"
+        assert session._last_owner_activity_at is not None
 
     asyncio.run(run())
 
 
-def test_focus_guest_utterance_ignored_when_focus_active(monkeypatch):
-    monkeypatch.setattr(web_server, "_duplex_identify_speaker", lambda pcm: ("guest", 0.55, "Bob"))
+def test_focus_enrolled_guest_passes_through_now(monkeypatch):
+    """INVERSION (fail-open redesign, spec §4): an enrolled-non-owner match
+    (score >= threshold) is now treated like an OWNER-zone acceptance for
+    focus purposes -- never dropped -- while keeping its own "guest" badge.
+    This REPLACES the old ``test_focus_guest_utterance_ignored_when_focus_active``,
+    which asserted the opposite (every non-owner was ignored when focus was
+    active) under the old fail-closed single-threshold design."""
+    _patch_zoned(monkeypatch, zone="OWNER", label="guest", score=0.7, name="Bob")
     monkeypatch.setattr(web_server, "_duplex_focus_mode_active", lambda cfg: True)
 
     async def run():
@@ -824,22 +901,27 @@ def test_focus_guest_utterance_ignored_when_focus_active(monkeypatch):
 
         session._run_turn = fake_run_turn
         await session._finalize_utterance()
+        if session._speaking_task is not None:
+            await session._speaking_task
 
         utterance = next(f for f in ws.sent if f["type"] == "utterance")
         assert utterance["speaker"] == "guest"
-        assert utterance["ignored"] is True
-        # Never reaches the instant lane / TTS turn...
-        assert run_calls == []
-        # ...and never pollutes the owner's rolling transcript.
-        assert session.transcript.turns == []
-        # Session stays listening for the owner to keep talking.
-        assert session.state == "listening"
+        assert "ignored" not in utterance
+        assert run_calls == [("turn off the lights", "guest")]
+        assert session.transcript.turns == [{"role": "user", "content": "turn off the lights"}]
+        # A guest acceptance is not an owner activity -- continuity must not
+        # be refreshed by it.
+        assert session._last_owner_activity_at is None
 
     asyncio.run(run())
 
 
-def test_focus_unknown_utterance_ignored_when_focus_active(monkeypatch):
-    monkeypatch.setattr(web_server, "_duplex_identify_speaker", lambda pcm: ("unknown", 0.1, None))
+def test_focus_confident_other_ignored_and_arms_competing_flag(monkeypatch):
+    """A CONFIDENT_OTHER match (confidently NOT the owner, with enough clean
+    audio) is dropped and arms the competing-voice flag -- the direct
+    successor to the old ``test_focus_unknown_utterance_ignored_when_focus_active``,
+    now scoped to CONFIDENT_OTHER specifically rather than every non-owner."""
+    _patch_zoned(monkeypatch, zone="CONFIDENT_OTHER", label="unknown", score=0.1, name=None)
     monkeypatch.setattr(web_server, "_duplex_focus_mode_active", lambda cfg: True)
 
     async def run():
@@ -859,6 +941,214 @@ def test_focus_unknown_utterance_ignored_when_focus_active(monkeypatch):
         assert run_calls == []
         assert session.transcript.turns == []
         assert session.state == "listening"
+        assert session._other_voice_active() is True
+
+    asyncio.run(run())
+
+
+def test_focus_abstain_alone_in_room_never_dropped(monkeypatch):
+    """The fail-open invariant (spec §4): an ABSTAIN (short/degraded audio,
+    or a mid-range score) is never dropped when nothing confidently
+    different has been heard recently -- even on the very first utterance
+    of a session, with no continuity established yet."""
+    _patch_zoned(monkeypatch, zone="ABSTAIN", label="unknown", score=0.35, name=None)
+    monkeypatch.setattr(web_server, "_duplex_focus_mode_active", lambda cfg: True)
+
+    async def run():
+        session, ws = _make_focus_test_session()
+        session.stt_session.final_text = "hello there"
+        run_calls = []
+
+        async def fake_run_turn(text, speaker_label, cancel_event):
+            run_calls.append((text, speaker_label))
+
+        session._run_turn = fake_run_turn
+        await session._finalize_utterance()
+        if session._speaking_task is not None:
+            await session._speaking_task
+
+        utterance = next(f for f in ws.sent if f["type"] == "utterance")
+        assert "ignored" not in utterance
+        assert utterance["resolved_by"] == "abstain_open"
+        assert run_calls == [("hello there", "unknown")]
+
+    asyncio.run(run())
+
+
+def test_focus_abstain_resolves_to_owner_via_continuity(monkeypatch):
+    zoned_state = _patch_zoned(monkeypatch, zone="ABSTAIN", label="unknown", score=0.35, name=None)
+    monkeypatch.setattr(web_server, "_duplex_focus_mode_active", lambda cfg: True)
+
+    async def run():
+        session, ws = _make_focus_test_session()
+        session._last_owner_activity_at = time.monotonic() - 10.0  # owner spoke 10s ago
+        session.stt_session.final_text = "and also this"
+        run_calls = []
+
+        async def fake_run_turn(text, speaker_label, cancel_event):
+            run_calls.append((text, speaker_label))
+
+        session._run_turn = fake_run_turn
+        await session._finalize_utterance()
+        if session._speaking_task is not None:
+            await session._speaking_task
+
+        utterance = next(f for f in ws.sent if f["type"] == "utterance")
+        assert "ignored" not in utterance
+        assert utterance["speaker"] == "owner"
+        assert utterance["resolved_by"] == "continuity"
+        assert run_calls == [("and also this", "owner")]
+
+    asyncio.run(run())
+
+
+def test_focus_continuity_expires_after_window(monkeypatch):
+    _patch_zoned(monkeypatch, zone="ABSTAIN", label="unknown", score=0.35, name=None)
+    monkeypatch.setattr(web_server, "_duplex_focus_mode_active", lambda cfg: True)
+
+    async def run():
+        session, ws = _make_focus_test_session()
+        session._last_owner_activity_at = time.monotonic() - 130.0  # older than 120s continuity window
+        session.stt_session.final_text = "still here"
+
+        async def fake_run_turn(text, speaker_label, cancel_event):
+            pass
+
+        session._run_turn = fake_run_turn
+        await session._finalize_utterance()
+        if session._speaking_task is not None:
+            await session._speaking_task
+
+        utterance = next(f for f in ws.sent if f["type"] == "utterance")
+        # Still not dropped (flag unarmed) -- just not relabeled as owner.
+        assert "ignored" not in utterance
+        assert utterance["speaker"] == "unknown"
+        assert utterance["resolved_by"] == "abstain_open"
+
+    asyncio.run(run())
+
+
+def test_focus_abstain_dropped_only_while_competing_flag_armed(monkeypatch):
+    _patch_zoned(monkeypatch, zone="ABSTAIN", label="unknown", score=0.35, name=None)
+    monkeypatch.setattr(web_server, "_duplex_focus_mode_active", lambda cfg: True)
+
+    async def run():
+        session, ws = _make_focus_test_session()
+        session._other_voice_active_until = time.monotonic() + 60.0  # armed
+        session.stt_session.final_text = "hmm"
+        run_calls = []
+
+        async def fake_run_turn(text, speaker_label, cancel_event):
+            run_calls.append((text, speaker_label))
+
+        session._run_turn = fake_run_turn
+        await session._finalize_utterance()
+
+        utterance = next(f for f in ws.sent if f["type"] == "utterance")
+        assert utterance["ignored"] is True
+        assert utterance["resolved_by"] == "competing_drop"
+        assert run_calls == []
+        assert session.state == "listening"
+
+    asyncio.run(run())
+
+
+def test_focus_competing_flag_decays_after_window(monkeypatch):
+    """The competing-voice flag naturally decays once
+    competing_window_seconds elapses -- nothing needs to actively disarm it."""
+    _patch_zoned(monkeypatch, zone="ABSTAIN", label="unknown", score=0.35, name=None)
+    monkeypatch.setattr(web_server, "_duplex_focus_mode_active", lambda cfg: True)
+
+    async def run():
+        session, ws = _make_focus_test_session()
+        session._other_voice_active_until = time.monotonic() - 1.0  # armed, but already expired
+        session.stt_session.final_text = "hmm"
+        run_calls = []
+
+        async def fake_run_turn(text, speaker_label, cancel_event):
+            run_calls.append((text, speaker_label))
+
+        session._run_turn = fake_run_turn
+        await session._finalize_utterance()
+        if session._speaking_task is not None:
+            await session._speaking_task
+
+        utterance = next(f for f in ws.sent if f["type"] == "utterance")
+        assert "ignored" not in utterance
+        assert run_calls == [("hmm", "unknown")]
+
+    asyncio.run(run())
+
+
+def test_focus_direct_owner_with_enough_audio_appends_adaptive_embedding(monkeypatch):
+    _patch_zoned(monkeypatch, zone="OWNER", label="owner", score=0.9, audio_ms=3500, embedding=[0.5, 0.5])
+    monkeypatch.setattr(web_server, "_duplex_focus_mode_active", lambda cfg: True)
+    appended = []
+    monkeypatch.setattr(web_server, "_duplex_append_adaptive_embedding", lambda embedding: appended.append(embedding))
+
+    async def run():
+        session, ws = _make_focus_test_session()
+        session.stt_session.final_text = "hey there"
+
+        async def fake_run_turn(text, speaker_label, cancel_event):
+            pass
+
+        session._run_turn = fake_run_turn
+        await session._finalize_utterance()
+        if session._speaking_task is not None:
+            await session._speaking_task
+
+        assert appended == [[0.5, 0.5]]
+
+    asyncio.run(run())
+
+
+def test_focus_direct_owner_below_adaptive_duration_floor_does_not_append(monkeypatch):
+    _patch_zoned(monkeypatch, zone="OWNER", label="owner", score=0.9, audio_ms=1000, embedding=[0.5, 0.5])
+    monkeypatch.setattr(web_server, "_duplex_focus_mode_active", lambda cfg: True)
+    appended = []
+    monkeypatch.setattr(web_server, "_duplex_append_adaptive_embedding", lambda embedding: appended.append(embedding))
+
+    async def run():
+        session, ws = _make_focus_test_session()
+        session.stt_session.final_text = "hey"
+
+        async def fake_run_turn(text, speaker_label, cancel_event):
+            pass
+
+        session._run_turn = fake_run_turn
+        await session._finalize_utterance()
+        if session._speaking_task is not None:
+            await session._speaking_task
+
+        assert appended == []
+
+    asyncio.run(run())
+
+
+def test_focus_continuity_resolved_owner_does_not_append_adaptive(monkeypatch):
+    """Only a DIRECT-score OWNER-zone acceptance feeds the adaptive ring --
+    a continuity-resolved ABSTAIN never does, even though its badge also
+    reads "owner" (spec Part 1.4: "not via continuity")."""
+    _patch_zoned(monkeypatch, zone="ABSTAIN", label="unknown", score=0.35, audio_ms=4000, embedding=[0.5, 0.5])
+    monkeypatch.setattr(web_server, "_duplex_focus_mode_active", lambda cfg: True)
+    appended = []
+    monkeypatch.setattr(web_server, "_duplex_append_adaptive_embedding", lambda embedding: appended.append(embedding))
+
+    async def run():
+        session, ws = _make_focus_test_session()
+        session._last_owner_activity_at = time.monotonic() - 5.0
+        session.stt_session.final_text = "still talking"
+
+        async def fake_run_turn(text, speaker_label, cancel_event):
+            pass
+
+        session._run_turn = fake_run_turn
+        await session._finalize_utterance()
+        if session._speaking_task is not None:
+            await session._speaking_task
+
+        assert appended == []
 
     asyncio.run(run())
 

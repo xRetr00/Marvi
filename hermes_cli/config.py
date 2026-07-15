@@ -2204,7 +2204,19 @@ DEFAULT_CONFIG = {
             "enabled": True,
         },
         "speaker_id": {
-            "threshold": 0.60,
+            # OWNER zone: score >= threshold. 2026-07-15 fail-open round
+            # realigned this to the spec's long-documented default (it had
+            # drifted to 0.60 here, stricter than intended -- see
+            # tools/voice_speaker_id.py's DEFAULT_THRESHOLD comment). The new
+            # companion keys (reject_threshold, continuity_seconds,
+            # competing_window_seconds, model) are deliberately NOT added
+            # here, per this repo's config-keys convention (cfg_get pattern,
+            # no DEFAULT_CONFIG changes for new keys) -- see
+            # tools/voice_speaker_id.py's reject_threshold()/
+            # continuity_seconds()/competing_window_seconds()/
+            # resolve_speaker_model_id(), which each read via cfg_get with
+            # their own in-module default.
+            "threshold": 0.45,
             # Speaker ID is voice FOCUS, not access control: "owner" filters
             # non-owner utterances out of the duplex conversation and gates
             # barge-in on an owner-voice match; "off" disables both.

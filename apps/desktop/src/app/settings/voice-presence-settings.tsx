@@ -50,7 +50,7 @@ export function VoicePresenceSettings({
   const [speakers, setSpeakers] = useState<VoiceSpeaker[]>([])
   const [enrolling, setEnrolling] = useState(false)
   const captureRef = useRef<DuplexMicCapture | null>(null)
-  const speakerIdThreshold = marvi.get('voice.speaker_id.threshold', 0.6)
+  const speakerIdThreshold = marvi.get('voice.speaker_id.threshold', 0.45)
   const voiceFocusMode = marvi.get<string>('voice.speaker_id.focus_mode', 'owner')
 
   useEffect(() => {
@@ -270,7 +270,7 @@ export function VoicePresenceSettings({
       <ListRow
         action={
           <DebouncedField
-            onCommit={value => void marvi.patch('voice.speaker_id.threshold', clampThreshold(value, 0.6))}
+            onCommit={value => void marvi.patch('voice.speaker_id.threshold', clampThreshold(value, 0.45))}
             type="number"
             value={String(speakerIdThreshold)}
           />

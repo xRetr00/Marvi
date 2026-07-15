@@ -19,6 +19,13 @@ refetch -- which is what keeps this cheap enough to run on every tick
 without burning API rate limits (the explicit anti-goal from the design
 spec: no OpenHuman-style polling waste).
 
+Alongside the configured Composio surfaces, "builtin" surfaces (local,
+non-Composio fetchers -- currently just ``smart_room``, see
+``cron.scripts.subconscious.base.BUILTIN_SURFACES``) are auto-included
+whenever their plugin looks active, no ``composio.surfaces`` entry needed.
+Both kinds go through the exact same per-surface fetch/throttle/backoff loop
+(:func:`_fetch_surface_section`).
+
 A surface that isn't connected, is rate-limited, or errors out is logged to
 stderr and skipped; it can never crash this script or block the other
 surfaces from being checked.
@@ -110,6 +117,105 @@ def _quiet_backoff_max(composio_cfg: Dict[str, Any]) -> int:
     return DEFAULT_QUIET_BACKOFF_MAX
 
 
+def _builtin_surfaces_disabled(root_config: Dict[str, Any]) -> set:
+    """Operator opt-out for builtin (non-Composio) surfaces.
+
+    ``subconscious.builtin_surfaces_disabled: [smart_room, ...]`` lets an
+    operator exclude a builtin surface from the tick even while its plugin
+    looks active -- the escape hatch for "the plugin runs but I don't want
+    it waking the subconscious".
+    """
+    from hermes_cli.config import cfg_get
+
+    disabled = cfg_get(root_config, "subconscious", "builtin_surfaces_disabled", default=[])
+    if not isinstance(disabled, list):
+        return set()
+    return {str(name or "").strip().lower() for name in disabled if str(name or "").strip()}
+
+
+def _active_builtin_surfaces(root_config: Dict[str, Any]) -> List[str]:
+    """Builtin surfaces (see ``cron.scripts.subconscious.base.BUILTIN_SURFACES``)
+    whose plugin looks active right now, minus any operator opt-out.
+
+    A builtin surface has no ``composio.surfaces`` entry to opt it in -- there's
+    no Composio connection to configure -- so it's auto-included based on a
+    cheap, RPC-free "is the plugin actually running" probe instead.
+    """
+    from cron.scripts.subconscious.base import BUILTIN_SURFACES
+
+    disabled = _builtin_surfaces_disabled(root_config)
+    active: List[str] = []
+    for name, probe in BUILTIN_SURFACES.items():
+        if name in disabled:
+            continue
+        try:
+            if probe():
+                active.append(name)
+        except Exception as exc:
+            _eprint(f"subconscious_snapshot: builtin surface {name!r} active-check failed ({exc})")
+    return active
+
+
+def _fetch_surface_section(
+    surface: str,
+    *,
+    min_interval_seconds: int,
+    quiet_backoff_max: int,
+) -> Optional[str]:
+    """Fetch one surface's delta through its store and return a ``## surface``
+    section, or None when nothing changed / the surface was skipped.
+
+    Shared by configured Composio surfaces and auto-included builtin
+    surfaces so both get identical throttle/backoff/error-handling
+    semantics -- a failing or unimplemented surface is a stderr warning and
+    a skip here, never a crash (see the module docstring's Contract 1
+    error-handling rule).
+    """
+    from cron.scripts.subconscious.base import get_fetcher, known_surfaces
+    from cron.scripts.subconscious.snapshot_store import open_store
+
+    fetcher = get_fetcher(surface)
+    if fetcher is None:
+        _eprint(
+            f"subconscious_snapshot: surface {surface!r} is configured but not "
+            f"implemented yet (known surfaces: {', '.join(known_surfaces())}); skipping"
+        )
+        return None
+
+    try:
+        store = open_store(
+            surface,
+            min_interval_seconds=min_interval_seconds,
+            quiet_backoff_max=quiet_backoff_max,
+        )
+    except Exception as e:
+        _eprint(f"subconscious_snapshot: surface {surface!r} has an invalid snapshot store ({e}); skipping")
+        return None
+
+    skip_reason = store.skip_reason()
+    if skip_reason:
+        _eprint(f"subconscious_snapshot: surface {surface!r} skipped ({skip_reason})")
+        return None
+
+    store.mark_attempt()
+    diff: Optional[str] = None
+    try:
+        diff = fetcher(store)
+        store.record_success(changed=bool(diff))
+    except Exception as e:
+        # A failing surface must NEVER crash the tick or block the other
+        # surfaces (design spec error-handling section: "Composio auth
+        # failure -> surface marked broken in status, never crash the
+        # tick"). record_failure() drives the exponential backoff that
+        # keeps a broken surface from being hammered every tick.
+        store.record_failure(str(e))
+        _eprint(f"subconscious_snapshot: surface {surface!r} fetch failed: {e}")
+    finally:
+        store.save()
+
+    return f"## {surface}\n{diff}" if diff else None
+
+
 def run() -> str:
     """Run one subconscious-tick sync pass over every configured surface.
 
@@ -118,7 +224,6 @@ def run() -> str:
     summary grouped by surface, one ``## <surface>`` section per surface
     that reported a change.
     """
-    from cron.scripts.subconscious.base import get_fetcher, known_surfaces
     from cron.scripts.subconscious.snapshot_store import open_store
 
     initiative_sections: List[str] = []
@@ -177,76 +282,30 @@ def run() -> str:
     except Exception as exc:
         _eprint(f"subconscious_snapshot: desktop context fetch failed ({exc})")
 
-    try:
-        smart_config = root_config.get("smart_room") if isinstance(root_config, dict) else None
-        if (
-            isinstance(smart_config, dict)
-            and smart_config.get("enabled", False)
-            and (smart_config.get("subconscious") or {}).get("enabled", True)
-        ):
-            from cron.scripts.subconscious.smart_room import fetch_delta as fetch_smart_room_delta
-
-            smart_store = open_store("smart_room", min_interval_seconds=0, quiet_backoff_max=1)
-            smart_store.mark_attempt()
-            smart_diff = fetch_smart_room_delta(smart_store)
-            smart_store.record_success(changed=bool(smart_diff))
-            smart_store.save()
-            if smart_diff:
-                initiative_sections.append(f"## smart_room\n{smart_diff}")
-    except Exception as exc:
-        _eprint(f"subconscious_snapshot: smart-room context fetch failed ({exc})")
-
     composio_cfg = _load_composio_config()
-    surfaces = _configured_surfaces(composio_cfg)
-    if not surfaces:
-        return "\n\n".join(initiative_sections) if initiative_sections else NO_CHANGE_MARKER
-
+    configured_surfaces = _configured_surfaces(composio_cfg)
     min_interval = _min_interval_seconds(composio_cfg)
     quiet_backoff_max = _quiet_backoff_max(composio_cfg)
+
     sections: List[str] = list(initiative_sections)
 
-    for surface in surfaces:
-        fetcher = get_fetcher(surface)
-        if fetcher is None:
-            _eprint(
-                f"subconscious_snapshot: surface {surface!r} is configured but not "
-                f"implemented yet (known surfaces: {', '.join(known_surfaces())}); skipping"
-            )
-            continue
+    for surface in configured_surfaces:
+        section = _fetch_surface_section(
+            surface, min_interval_seconds=min_interval, quiet_backoff_max=quiet_backoff_max
+        )
+        if section:
+            sections.append(section)
 
-        try:
-            store = open_store(
-                surface,
-                min_interval_seconds=min_interval,
-                quiet_backoff_max=quiet_backoff_max,
-            )
-        except Exception as e:
-            _eprint(f"subconscious_snapshot: surface {surface!r} has an invalid snapshot store ({e}); skipping")
-            continue
-
-        skip_reason = store.skip_reason()
-        if skip_reason:
-            _eprint(f"subconscious_snapshot: surface {surface!r} skipped ({skip_reason})")
-            continue
-
-        store.mark_attempt()
-        diff: Optional[str] = None
-        try:
-            diff = fetcher(store)
-            store.record_success(changed=bool(diff))
-        except Exception as e:
-            # A failing surface must NEVER crash the tick or block the other
-            # surfaces (design spec error-handling section: "Composio auth
-            # failure -> surface marked broken in status, never crash the
-            # tick"). record_failure() drives the exponential backoff that
-            # keeps a broken surface from being hammered every tick.
-            store.record_failure(str(e))
-            _eprint(f"subconscious_snapshot: surface {surface!r} fetch failed: {e}")
-        finally:
-            store.save()
-
-        if diff:
-            sections.append(f"## {surface}\n{diff}")
+    # Builtin (non-Composio) surfaces -- e.g. smart_room -- auto-included
+    # whenever their plugin looks active, regardless of composio.surfaces.
+    # These are local, cursor-based reads with no external API to rate
+    # limit, so they're never throttled/backed-off on the Composio cadence
+    # (min_interval_seconds=0, quiet_backoff_max=1 -- fetched every tick).
+    builtin_surfaces = [s for s in _active_builtin_surfaces(root_config) if s not in configured_surfaces]
+    for surface in builtin_surfaces:
+        section = _fetch_surface_section(surface, min_interval_seconds=0, quiet_backoff_max=1)
+        if section:
+            sections.append(section)
 
     if not sections:
         return NO_CHANGE_MARKER

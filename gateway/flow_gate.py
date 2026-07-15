@@ -70,6 +70,35 @@ def _flush_all_on_shutdown() -> None:
 
 atexit.register(_flush_all_on_shutdown)
 
+# A real threading.Event (not asyncio.Event) so request_flush_check() below
+# is safe to call from any thread, not just the gateway's event-loop thread
+# -- callers like gateway/world_trigger.py's watcher run as an asyncio task
+# on that same loop, but nothing here requires that. wait_if_gated's poll
+# loop below waits on this instead of a plain asyncio.sleep, so a nudge
+# wakes every currently-held delivery immediately instead of leaving it to
+# sleep out the rest of POLL_INTERVAL_SECONDS.
+_flush_requested = threading.Event()
+
+
+def request_flush_check() -> None:
+    """Ask every currently-held delivery to re-check ``should_gate`` right
+    now instead of waiting out the rest of its poll interval.
+
+    Intended for a moment that's a natural time to receive what's been
+    held -- e.g. the smart-room world-trigger watcher calling this on an
+    owner-arrival-in-room event (walking back into the room). Does NOT
+    force a flush: a held delivery still only flushes once
+    ``_focus_app_active()`` says the user has actually left the focus app
+    (or the max-hold ceiling / shutdown fires) -- this just makes that
+    check happen promptly instead of on the next scheduled poll.
+
+    Cheap no-op when nothing is currently held: there's no waiter to wake,
+    and the event is cleared by the very next ``wait_if_gated`` iteration
+    (any iteration, not just one triggered by a nudge) before it could
+    affect a later, unrelated hold.
+    """
+    _flush_requested.set()
+
 
 def is_cron_origin(metadata: Optional[Dict[str, Any]]) -> bool:
     """True when ``metadata`` marks this as a cron/scheduler-originated send.
@@ -157,7 +186,13 @@ async def wait_if_gated(metadata: Optional[Dict[str, Any]]) -> None:
         if _shutdown_event.is_set():
             logger.info("flow_gate: shutdown in progress -- flushing held delivery (job_id=%s)", job_id)
             return
-        await asyncio.sleep(min(POLL_INTERVAL_SECONDS, max(0.0, deadline - time.monotonic())))
+        # Waits up to the poll interval, same as a plain asyncio.sleep, but
+        # wakes immediately if request_flush_check() sets the event first
+        # (e.g. the owner just walked back into the smart room). Off-loaded
+        # to a thread since threading.Event.wait() blocks synchronously.
+        wait_for = min(POLL_INTERVAL_SECONDS, max(0.0, deadline - time.monotonic()))
+        await asyncio.to_thread(_flush_requested.wait, wait_for)
+        _flush_requested.clear()
         if _shutdown_event.is_set():
             logger.info("flow_gate: shutdown in progress -- flushing held delivery (job_id=%s)", job_id)
             return

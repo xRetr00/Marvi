@@ -11,8 +11,10 @@ enforcement are exercised without a real agent turn.
 
 from __future__ import annotations
 
+import sys
 import threading
 import time
+import types
 
 import pytest
 
@@ -900,6 +902,107 @@ class TestWarmInstantLane:
         assert result["ok"] is False
         assert "no instant model configured" in result["error"]
         assert transcript._instant_agent is None
+
+
+# ---------------------------------------------------------------------------
+# _build_deferred_context -- smart-room ambient context block
+# ---------------------------------------------------------------------------
+
+
+class TestDeferredContextSmartRoom:
+    """The smart-room ambient-context block in ``_build_deferred_context``
+    (v0.3 spec §B.2): config-gated, belt-and-suspenders with the generic
+    plugin-context-provider path (build_plugin_context_blocks), and never
+    duplicated. Uses a fake ``plugins.smart_room.context`` module -- never
+    imports the real plugin/runtime.
+    """
+
+    def _minimal_cfg(self, **smart_room_context):
+        cfg = {
+            "memory": {"memory_enabled": False, "user_profile_enabled": False},
+            "skills": {"enabled": False},
+        }
+        if smart_room_context:
+            cfg["smart_room"] = {"context": smart_room_context}
+        return cfg
+
+    def _fake_smart_room_context(self, monkeypatch, get_context_line):
+        fake_pkg = types.ModuleType("plugins.smart_room")
+        fake_context = types.ModuleType("plugins.smart_room.context")
+        fake_context.get_context_line = get_context_line
+        monkeypatch.setitem(sys.modules, "plugins.smart_room", fake_pkg)
+        monkeypatch.setitem(sys.modules, "plugins.smart_room.context", fake_context)
+
+    def _no_generic_plugin_context(self, monkeypatch, blocks=None):
+        import hermes_cli.plugins as plugins_mod
+
+        monkeypatch.setattr(plugins_mod, "discover_plugins", lambda: None)
+        monkeypatch.setattr(plugins_mod, "build_plugin_context_blocks", lambda: list(blocks or []))
+
+    def test_room_line_included_when_enabled(self, monkeypatch):
+        self._no_generic_plugin_context(monkeypatch)
+        self._fake_smart_room_context(monkeypatch, lambda: "Room: reading mode, Shereef present.")
+
+        result = vil._build_deferred_context(self._minimal_cfg(enabled=True))
+
+        assert "Room: reading mode, Shereef present." in result
+
+    def test_room_line_included_by_default_when_unconfigured(self, monkeypatch):
+        # smart_room.context.enabled defaults to True when absent from config.
+        self._no_generic_plugin_context(monkeypatch)
+        self._fake_smart_room_context(monkeypatch, lambda: "Room: light off, phone: home.")
+
+        result = vil._build_deferred_context(self._minimal_cfg())
+
+        assert "Room: light off, phone: home." in result
+
+    def test_room_line_omitted_when_config_disabled(self, monkeypatch):
+        self._no_generic_plugin_context(monkeypatch)
+        self._fake_smart_room_context(monkeypatch, lambda: "Room: reading mode, Shereef present.")
+
+        result = vil._build_deferred_context(self._minimal_cfg(enabled=False))
+
+        assert result == ""
+
+    def test_no_line_returned_is_a_silent_noop(self, monkeypatch):
+        self._no_generic_plugin_context(monkeypatch)
+        self._fake_smart_room_context(monkeypatch, lambda: None)
+
+        result = vil._build_deferred_context(self._minimal_cfg(enabled=True))
+
+        assert result == ""
+
+    def test_missing_plugin_is_silently_ignored(self, monkeypatch):
+        self._no_generic_plugin_context(monkeypatch)
+        monkeypatch.setitem(sys.modules, "plugins.smart_room", None)
+        monkeypatch.setitem(sys.modules, "plugins.smart_room.context", None)
+
+        result = vil._build_deferred_context(self._minimal_cfg(enabled=True))
+
+        assert result == ""
+
+    def test_get_context_line_exception_is_swallowed(self, monkeypatch):
+        self._no_generic_plugin_context(monkeypatch)
+
+        def _boom():
+            raise RuntimeError("bridge unreachable")
+
+        self._fake_smart_room_context(monkeypatch, _boom)
+
+        result = vil._build_deferred_context(self._minimal_cfg(enabled=True))
+
+        assert result == ""
+
+    def test_not_duplicated_when_generic_plugin_path_already_delivered_it(self, monkeypatch):
+        # build_plugin_context_blocks() (the generic path) already produced
+        # the identical line -- the dedicated call must not add it twice.
+        line = "Room: reading mode, Shereef present."
+        self._no_generic_plugin_context(monkeypatch, blocks=[line])
+        self._fake_smart_room_context(monkeypatch, lambda: line)
+
+        result = vil._build_deferred_context(self._minimal_cfg(enabled=True))
+
+        assert result.count(line) == 1
 
 
 # ---------------------------------------------------------------------------

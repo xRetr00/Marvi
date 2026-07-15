@@ -7485,6 +7485,21 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
         except Exception:  # noqa: BLE001 - must never block startup
             logger.debug("idle-trigger: failed to start watcher", exc_info=True)
 
+        # Start the smart-room world-trigger watcher — best-effort, always
+        # started; it no-ops (returns immediately, never polls) unless the
+        # smart_room plugin package actually imports, so an install without
+        # the plugin (or its pip extras) behaves exactly as before this
+        # feature existed. Fires an immediate subconscious tick on a
+        # meaningful room transition (arrival/departure, long-vacancy
+        # re-occupancy, device offline) instead of waiting for the next
+        # scheduled tick, debounced to at most one per
+        # smart_room.trigger.debounce_seconds. See gateway/world_trigger.py.
+        try:
+            from gateway.world_trigger import watch as _world_trigger_watch
+            asyncio.create_task(_world_trigger_watch(self))
+        except Exception:  # noqa: BLE001 - must never block startup
+            logger.debug("world-trigger: failed to start watcher", exc_info=True)
+
         # Start the presence resource-policy watcher — best-effort, polls
         # every 60s and demotes the voice stack to cold (+ defers the
         # subconscious tick, checked at its own call sites) whenever the
@@ -11100,6 +11115,32 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
                     context_prompt = context_prompt + "\n\n" + "\n".join(_plugin_context)
             except Exception:
                 logger.debug("Plugin session context skipped", exc_info=True)
+
+            # Smart-room ambient context (v0.3 spec §B.2): one compact room
+            # line ("Room: reading mode, Shereef present ..."), config-gated
+            # by smart_room.context.enabled (default true). The smart_room
+            # plugin is a bundled backend (auto-loaded, see hermes_cli/
+            # plugins.py) that ALSO registers this same line as a generic
+            # context provider consumed by build_plugin_context_blocks()
+            # just above -- that path has no config gate. This explicit,
+            # gated call is belt-and-suspenders: it's the only way to
+            # actually honor smart_room.context.enabled=false, and it's the
+            # sole source of the line whenever plugin discovery hasn't run
+            # (or the provider isn't registered for some other reason). The
+            # containment check is what keeps the two paths from ever
+            # double-appending the identical line when both are active.
+            try:
+                from hermes_cli.config import cfg_get, load_config
+                from plugins.smart_room.context import get_context_line
+
+                if cfg_get(load_config(), "smart_room", "context", "enabled", default=True):
+                    _room_line = get_context_line()
+                    if _room_line and _room_line not in context_prompt:
+                        context_prompt = context_prompt + "\n\n" + _room_line
+            except ImportError:
+                pass
+            except Exception:
+                logger.debug("Smart-room context priming skipped", exc_info=True)
 
         # If the previous session expired and was auto-reset, prepend a notice
         # so the agent knows this is a fresh conversation (not an intentional /reset).

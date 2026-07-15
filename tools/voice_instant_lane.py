@@ -307,11 +307,32 @@ class InstantLaneUnavailable(RuntimeError):
 # auxiliary.voice_instant.provider (or the user's main model.provider)
 # commonly names directly: openai/openai-codex and openrouter/groq have no
 # dedicated ProviderProfile in this repo.
+#
+# Refreshed 2026-07-15 -- gpt-4o-mini and llama-3.1-8b-instant were stale
+# picks for a "2026" instant lane:
+#   - openai/openai-codex -> gpt-5.4-mini, OpenAI's current fast/cheap chat
+#     tier (confirmed against the live OpenAI API pricing page as of this
+#     round -- gpt-5.4-mini/-nano are the current mini/nano tier, gpt-4o-mini
+#     itself is legacy).
+#   - openrouter -> deepseek/deepseek-v4-flash: cheap, fast, and good --
+#     also the exact model a real user had configured when the desktop
+#     Apply-button persistence bug (this round's Part 2) silently dropped
+#     it and fell back to gpt-4o-mini instead, so this is a doubly-grounded
+#     pick. anthropic/claude-haiku-4.5 is the documented alternative if a
+#     deployment prefers staying on one vendor.
+#   - groq -> llama-3.3-70b-versatile stays for now (still active, purely
+#     non-reasoning, and matches the last-known-good instant-lane profile),
+#     but Groq's own deprecations page has it retiring 2026-08-16 in favor
+#     of openai/gpt-oss-120b (a hybrid reasoning-capable model) -- swap the
+#     curated default to that once it's confirmed non-reasoning-by-default
+#     for this latency-critical path, or set
+#     auxiliary.voice_instant.{provider,model} explicitly before the
+#     deprecation date.
 _INSTANT_DEFAULT_MODELS_SUPPLEMENTAL: Dict[str, str] = {
-    "openai": "gpt-4o-mini",
-    "openai-codex": "gpt-4o-mini",
-    "openrouter": "openai/gpt-4o-mini",
-    "groq": "llama-3.1-8b-instant",
+    "openai": "gpt-5.4-mini",
+    "openai-codex": "gpt-5.4-mini",
+    "openrouter": "deepseek/deepseek-v4-flash",
+    "groq": "llama-3.3-70b-versatile",
 }
 
 # Generic auxiliary tasks favor quality; live voice favors first-token speed.
@@ -699,6 +720,30 @@ def _build_deferred_context(cfg: Optional[Dict[str, Any]]) -> str:
         blocks.extend(build_plugin_context_blocks())
     except Exception:
         logger.debug("voice_instant_lane: plugin world context failed", exc_info=True)
+
+    # Smart-room ambient context (v0.3 spec §B.2): one compact room line,
+    # config-gated by smart_room.context.enabled (default true). The
+    # smart_room plugin is a bundled backend that ALSO registers this same
+    # line as a generic context provider consumed by build_plugin_context_blocks()
+    # just above -- that generic path has no config gate. This explicit,
+    # gated call is belt-and-suspenders (mirrors the equivalent block in
+    # gateway/run.py's session-priming path): it's the only way to actually
+    # honor smart_room.context.enabled=false, and it's the sole source of
+    # the line whenever plugin discovery didn't already deliver it. The
+    # containment check keeps the two paths from ever double-appending the
+    # identical line when both are active.
+    try:
+        if cfg_get(cfg, "smart_room", "context", "enabled", default=True):
+            from plugins.smart_room.context import get_context_line
+
+            _room_line = get_context_line()
+            if _room_line and not any(_room_line in block for block in blocks):
+                blocks.append(_room_line)
+    except ImportError:
+        pass
+    except Exception:
+        logger.debug("voice_instant_lane: smart-room context failed", exc_info=True)
+
     return "\n\n".join(blocks)[:4500]
 
 

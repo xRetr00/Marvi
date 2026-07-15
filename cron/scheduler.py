@@ -369,12 +369,29 @@ def _pending_trigger_marker_path() -> Path:
     return get_hermes_home() / "subconscious" / "pending_trigger_reason.json"
 
 
+
+# Maps ``cron.subconscious.trigger_tick(reason=...)`` values to the
+# activity-log ``source`` tag a fired tick is attributed under. "idle"
+# (gateway/idle_trigger.py) and "world" (gateway/world_trigger.py, smart-room
+# transitions) are the two out-of-band triggers today; a plain scheduled tick
+# has no marker at all and falls back to "tick" below. "world" reuses the
+# same source the smart_room runtime already stamps individual room-event
+# activity entries with (state_store.append_transition) — the desktop
+# Activity panel's ``SubconsciousActivitySource`` enum already has a "World"
+# filter/chip for it, so a world-triggered tick's own activity entry shows up
+# there too, no UI change needed.
+_TRIGGER_REASON_TO_SOURCE = {
+    "idle": "idle_trigger",
+    "world": "world",
+}
+
+
 def _consume_pending_trigger_reason() -> Optional[str]:
     """Read-and-delete ``cron.subconscious``'s pending-trigger marker if
-    fresh, mapping ``reason="idle"`` to the activity-log source
-    ``"idle_trigger"``. Returns ``None`` (falls back to a plain ``"tick"``)
-    when the marker is absent, stale, or unreadable — best-effort, never
-    raises.
+    fresh, mapping its ``reason`` to an activity-log source via
+    :data:`_TRIGGER_REASON_TO_SOURCE`. Returns ``None`` (falls back to a
+    plain ``"tick"``) when the marker is absent, stale, unreadable, or its
+    reason isn't recognized — best-effort, never raises.
     """
     try:
         path = _pending_trigger_marker_path()
@@ -394,7 +411,7 @@ def _consume_pending_trigger_reason() -> Optional[str]:
         age = (_hermes_now() - marker_dt).total_seconds()
         if age < 0 or age > _PENDING_TRIGGER_MARKER_MAX_AGE_SECONDS:
             return None
-        return "idle_trigger" if data.get("reason") == "idle" else None
+        return _TRIGGER_REASON_TO_SOURCE.get(data.get("reason"))
     except Exception:
         return None
 

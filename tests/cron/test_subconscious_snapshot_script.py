@@ -8,6 +8,9 @@ that throttle/backoff skips a surface without attempting a fetch.
 
 from __future__ import annotations
 
+import importlib
+import sys
+
 import pytest
 
 import cron.scripts.subconscious.base as sub_base
@@ -263,6 +266,133 @@ def test_quiet_backoff_max_config_is_wired_through(monkeypatch):
 
     script.run()
     assert len(calls) == 1  # base interval (5s < 6s elapsed) allowed the fetch
+
+
+class TestBuiltinSurfaces:
+    """Builtin (non-Composio) surfaces -- e.g. smart_room -- are
+    auto-included based on an active-probe (``sub_base.BUILTIN_SURFACES``),
+    never on ``composio.surfaces``. Uses a fake ``fake_builtin`` entry so
+    these never import the real smart_room/plugin runtime.
+    """
+
+    def test_active_builtin_surface_is_auto_included(self, monkeypatch):
+        _set_composio_config(monkeypatch, surfaces=[])
+        monkeypatch.setitem(sub_base.FETCHERS, "fake_builtin", lambda store: "room diff")
+        monkeypatch.setitem(sub_base.BUILTIN_SURFACES, "fake_builtin", lambda: True)
+
+        output = script.run()
+
+        assert "## fake_builtin\nroom diff" in output
+
+    def test_inactive_builtin_surface_is_not_fetched(self, monkeypatch):
+        _set_composio_config(monkeypatch, surfaces=[])
+        calls = []
+        monkeypatch.setitem(
+            sub_base.FETCHERS, "fake_builtin", lambda store: calls.append(1) or "room diff"
+        )
+        monkeypatch.setitem(sub_base.BUILTIN_SURFACES, "fake_builtin", lambda: False)
+
+        output = script.run()
+
+        assert output == script.NO_CHANGE_MARKER
+        assert calls == []
+
+    def test_builtin_surfaces_disabled_escape_hatch(self, monkeypatch):
+        cfg = {
+            "composio": {"surfaces": []},
+            "subconscious": {"builtin_surfaces_disabled": ["fake_builtin"]},
+        }
+        monkeypatch.setattr(hermes_config, "load_config", lambda: cfg)
+        calls = []
+        monkeypatch.setitem(
+            sub_base.FETCHERS, "fake_builtin", lambda store: calls.append(1) or "room diff"
+        )
+        monkeypatch.setitem(sub_base.BUILTIN_SURFACES, "fake_builtin", lambda: True)
+
+        output = script.run()
+
+        assert output == script.NO_CHANGE_MARKER
+        assert calls == []
+
+    def test_active_probe_error_does_not_crash_the_tick(self, monkeypatch, capsys):
+        _set_composio_config(monkeypatch, surfaces=[])
+
+        def _boom():
+            raise RuntimeError("probe blew up")
+
+        monkeypatch.setitem(sub_base.BUILTIN_SURFACES, "fake_builtin", _boom)
+
+        output = script.run()
+
+        assert output == script.NO_CHANGE_MARKER
+        err = capsys.readouterr().err
+        assert "fake_builtin" in err
+
+    def test_builtin_surface_is_never_throttled(self, monkeypatch):
+        # min_interval_seconds=0 / quiet_backoff_max=1 for builtin surfaces:
+        # unlike a Composio surface, back-to-back ticks both attempt a fetch
+        # (a local cursor-based file read has no external rate limit).
+        _set_composio_config(monkeypatch, surfaces=[])
+        calls = []
+
+        def _fetcher(store):
+            calls.append(1)
+            return "diff" if len(calls) == 1 else None
+
+        monkeypatch.setitem(sub_base.FETCHERS, "fake_builtin", _fetcher)
+        monkeypatch.setitem(sub_base.BUILTIN_SURFACES, "fake_builtin", lambda: True)
+
+        script.run()
+        script.run()
+
+        assert len(calls) == 2
+
+    def test_surface_configured_in_composio_is_not_double_fetched_as_builtin(self, monkeypatch):
+        _set_composio_config(monkeypatch, surfaces=["fake_builtin"])
+        calls = []
+        monkeypatch.setitem(sub_base.FETCHERS, "fake_builtin", lambda store: calls.append(1) or None)
+        monkeypatch.setitem(sub_base.BUILTIN_SURFACES, "fake_builtin", lambda: True)
+
+        script.run()
+
+        assert len(calls) == 1
+
+
+class TestSmartRoomBuiltinRegistration:
+    """``cron.scripts.subconscious.base`` registers the real smart_room
+    fetcher as a builtin surface when the plugin package imports cleanly,
+    and simply omits it (never raises) when it doesn't -- e.g. an install
+    that never enabled the plugin, or is missing one of its pip extras.
+    """
+
+    def test_smart_room_registered_when_plugin_importable(self):
+        # This dev environment ships the plugin, so the guarded import at
+        # the top of base.py already succeeded when the module was first
+        # imported -- verify the real registration landed.
+        assert "smart_room" in sub_base.FETCHERS
+        assert "smart_room" in sub_base.BUILTIN_SURFACES
+
+    def test_missing_plugin_omits_smart_room_without_raising(self, monkeypatch):
+        # Simulate the plugin package being unimportable (not installed /
+        # missing a pip extra): sys.modules[name] = None makes the next
+        # fresh `import name` raise ImportError immediately. The parent
+        # package's `smart_room` attribute (set by the earlier real import)
+        # must also be cleared -- `from X import Y` resolves via getattr(X,
+        # "Y") first and only falls back to a fresh import when that's
+        # absent, so the sys.modules sentinel alone wouldn't be seen.
+        import cron.scripts.subconscious as subconscious_pkg
+
+        monkeypatch.delattr(subconscious_pkg, "smart_room", raising=False)
+        monkeypatch.setitem(sys.modules, "cron.scripts.subconscious.smart_room", None)
+        monkeypatch.setitem(sys.modules, "plugins.smart_room", None)
+        try:
+            importlib.reload(sub_base)
+            assert "smart_room" not in sub_base.FETCHERS
+            assert "smart_room" not in sub_base.BUILTIN_SURFACES
+        finally:
+            # Restore real registrations regardless of outcome -- base.py
+            # is a shared module object, not per-test state.
+            importlib.reload(sub_base)
 
 
 def test_invalid_surface_name_in_config_is_skipped_not_fatal(monkeypatch, capsys):

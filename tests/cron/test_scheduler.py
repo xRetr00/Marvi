@@ -3202,6 +3202,25 @@ class TestRunJobSubconsciousActivityLog:
         lines = self._activity_lines()
         assert lines[0]["source"] == "idle_trigger"
 
+    def test_world_triggered_run_is_logged_with_world_source(self):
+        """cron.subconscious.trigger_tick(reason="world") (fired by
+        gateway/world_trigger.py on a meaningful smart-room event) leaves a
+        marker consumed the same way as reason="idle" -- logged under
+        source="world" so it lands in the desktop Activity panel's existing
+        "World" filter/chip alongside individual room-event entries."""
+        import cron.scheduler as scheduler
+        from cron.subconscious import _mark_pending_trigger_reason
+
+        _mark_pending_trigger_reason("world")
+
+        with patch.object(scheduler, "_run_job_script", return_value=(True, "NO_CHANGE")), \
+             patch("run_agent.AIAgent") as agent_cls:
+            scheduler.run_job(self._make_subconscious_job())
+
+        agent_cls.assert_not_called()
+        lines = self._activity_lines()
+        assert lines[0]["source"] == "world"
+
     def test_marker_is_consumed_so_the_next_regular_tick_is_not_mislabeled(self):
         import cron.scheduler as scheduler
         from cron.subconscious import _mark_pending_trigger_reason

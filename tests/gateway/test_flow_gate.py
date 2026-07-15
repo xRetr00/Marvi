@@ -219,3 +219,83 @@ class TestWaitIfGated:
             await asyncio.wait_for(flow_gate.wait_if_gated({"job_id": "j1"}), timeout=1.0)
         finally:
             flow_gate._shutdown_event.clear()
+
+
+class TestRequestFlushCheck:
+    """The public nudge gateway/world_trigger.py calls on an owner-arrival
+    event to make a held delivery re-check should_gate promptly instead of
+    waiting out the rest of POLL_INTERVAL_SECONDS."""
+
+    def test_noop_when_nothing_is_held(self):
+        # No waiter to wake -- must not raise, must not leave stray state
+        # that affects a later, unrelated hold.
+        flow_gate.request_flush_check()
+        assert flow_gate._flush_requested.is_set()
+        flow_gate._flush_requested.clear()
+
+    @pytest.mark.asyncio
+    async def test_wakes_a_held_delivery_before_the_poll_interval_elapses(self, monkeypatch):
+        # A long poll interval that would never elapse within the test
+        # timeout on its own -- only request_flush_check() can end the wait.
+        monkeypatch.setattr(flow_gate, "POLL_INTERVAL_SECONDS", 30.0)
+        monkeypatch.setattr(flow_gate, "MAX_HOLD_SECONDS", 60.0)
+        _install_presence_cfg(monkeypatch, enabled=True, flow_gating=True)
+        fake = FakeAWClient(available=True, afk="not-afk", app="Code.exe")
+        _install_client(monkeypatch, fake)
+
+        async def _nudge_after_delay():
+            await asyncio.sleep(0.03)
+            fake.app = "chrome.exe"  # user left the focus app
+            flow_gate.request_flush_check()
+
+        nudger = asyncio.create_task(_nudge_after_delay())
+        # Would time out well before a 30s poll interval elapses if the
+        # nudge didn't wake the wait early.
+        await asyncio.wait_for(flow_gate.wait_if_gated({"job_id": "j1"}), timeout=2.0)
+        await nudger
+
+    @pytest.mark.asyncio
+    async def test_callable_from_a_worker_thread(self, monkeypatch):
+        # gateway/world_trigger.py's watcher may call this off the gateway's
+        # event-loop thread -- threading.Event is safe to set cross-thread.
+        monkeypatch.setattr(flow_gate, "POLL_INTERVAL_SECONDS", 30.0)
+        monkeypatch.setattr(flow_gate, "MAX_HOLD_SECONDS", 60.0)
+        _install_presence_cfg(monkeypatch, enabled=True, flow_gating=True)
+        fake = FakeAWClient(available=True, afk="not-afk", app="Code.exe")
+        _install_client(monkeypatch, fake)
+
+        async def _nudge_from_thread_after_delay():
+            await asyncio.sleep(0.03)
+            fake.app = "chrome.exe"
+            await asyncio.to_thread(flow_gate.request_flush_check)
+
+        nudger = asyncio.create_task(_nudge_from_thread_after_delay())
+        await asyncio.wait_for(flow_gate.wait_if_gated({"job_id": "j1"}), timeout=2.0)
+        await nudger
+
+    @pytest.mark.asyncio
+    async def test_nudge_before_any_hold_does_not_cause_early_flush_of_a_later_hold(self, monkeypatch):
+        # A stray nudge with nothing held must not make a LATER, unrelated
+        # hold flush before the user actually leaves the focus app -- the
+        # flag is consumed (cleared) by every wait_if_gated iteration, not
+        # just the one that observed it set.
+        monkeypatch.setattr(flow_gate, "POLL_INTERVAL_SECONDS", 0.02)
+        monkeypatch.setattr(flow_gate, "MAX_HOLD_SECONDS", 5.0)
+        _install_presence_cfg(monkeypatch, enabled=True, flow_gating=True)
+        fake = FakeAWClient(available=True, afk="not-afk", app="Code.exe")
+        _install_client(monkeypatch, fake)
+
+        flow_gate.request_flush_check()  # nothing held yet -- stray nudge
+
+        async def _flip_after_delay():
+            await asyncio.sleep(0.15)
+            fake.app = "chrome.exe"
+
+        flipper = asyncio.create_task(_flip_after_delay())
+        started = asyncio.get_event_loop().time()
+        await asyncio.wait_for(flow_gate.wait_if_gated({"job_id": "j1"}), timeout=2.0)
+        elapsed = asyncio.get_event_loop().time() - started
+        await flipper
+        # Must have actually waited for the app switch, not flushed instantly
+        # off the stray pre-existing nudge.
+        assert elapsed >= 0.1

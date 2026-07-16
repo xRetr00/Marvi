@@ -81,17 +81,19 @@ def test_clap_score_accepts_the_yamnet_hand_sound_family() -> None:
     assert sound_events._clap_score(Scores()) == 0.3
 
 
-def test_model_vetoes_speech_but_accepts_a_quiet_transient() -> None:
+def test_model_accepts_only_yamnet_hand_sound_confidence() -> None:
     class Scores:
-        def __init__(self, speech=0.0):
+        def __init__(self, clap=0.0):
             self.values = [0.0] * 521
-            self.values[0] = speech
+            self.values[400] = 0.99  # An unrelated sharp sound must not pass.
+            self.values[58] = clap
 
         def reshape(self, _size):
             return self.values
 
-    assert sound_events._model_accepts_transient(Scores(), 0.15)
-    assert not sound_events._model_accepts_transient(Scores(speech=0.8), 0.15)
+    assert not sound_events._model_accepts_transient(Scores(), 0.15)
+    assert not sound_events._model_accepts_transient(Scores(clap=0.14), 0.15)
+    assert sound_events._model_accepts_transient(Scores(clap=0.15), 0.15)
 
 
 def test_transient_gate_adapts_to_microphone_noise_without_accepting_broad_audio() -> None:

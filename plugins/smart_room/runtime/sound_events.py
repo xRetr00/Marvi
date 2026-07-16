@@ -39,11 +39,7 @@ def _clap_score(scores: Any) -> float:
 
 
 def _model_accepts_transient(scores: Any, confidence: float) -> bool:
-    flat_scores = scores.reshape(-1)
-    return _clap_score(scores) >= confidence or max(
-        float(flat_scores[0]),  # Speech
-        float(flat_scores[132]),  # Music
-    ) < 0.2
+    return _clap_score(scores) >= confidence
 
 
 def _transient_gate(

@@ -7,7 +7,7 @@
 - **Presence fusion**: BLE (ESP32/ESPresense) + mmWave (HE20) + OwnTracks geofence → room-level presence with iPhone deep-sleep handling
 - **Tuya LAN control**: Direct control of RGBCW bulb + HE20 sensor via tinytuya — no cloud
 - **Room automations**: Adaptive light, sleep/alarm behavior, work-return settle/cancel, evening sleep, and daily resets
-- **Sound controls**: Plugin-local quantized YAMNet detection — double clap toggles the light; triple clap enters Sleep; a lone clap is ignored
+- **Sound controls**: Plugin-local quantized YAMNet detection — double clap toggles the light; optional triple clap enters Sleep; a lone clap is ignored
 - **World-awareness**: Marvi knows where you are, what mode the room is in, light state — as ambient context, not memory writes
 - **Marvi integration**: Plugin tools (`smart_room_state`, `smart_room_set_mode`, etc.) + session context line + subconscious transitions
 
@@ -40,7 +40,8 @@ smart_room:
     broker: "127.0.0.1"
     port: 1883
   sound_events:
-    enabled: true
+    enabled: false              # enable only while calibrating in Settings
+    sleep_enabled: false       # opt in after calibrating the microphone
     # input_device: null       # default Windows recording device
     confidence: 0.15
     min_peak: 0.04
@@ -49,13 +50,14 @@ smart_room:
     speech_suppression_ms: 2500
     candidate_refractory_ms: 350
     min_gap_ms: 300
-    noise_multiplier: 8.0
-    min_crest: 3.0
-    candidate_refractory_ms: 250
     model_delay_ms: 150
     max_gap_ms: 900
     decision_ms: 650
     cooldown_ms: 3000
+  automations:
+    adaptive_light:
+      enabled: true
+      auto_off: false          # fail safe; opt in only after sensor soak testing
   # ... see NEEDS_YOU_AT_HOME.md for full config
 ```
 

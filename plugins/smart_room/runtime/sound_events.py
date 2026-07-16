@@ -320,6 +320,9 @@ class SoundEventListener:
             ).astype(np.float32, copy=False)
 
     def _dispatch_action(self, action: str) -> None:
+        if action == "sleep" and not self._config.get("sleep_enabled", False):
+            logger.info("Ignored triple clap because sound-event Sleep is disabled")
+            return
         self._status["last_action"] = action
         try:
             self._on_action(action)

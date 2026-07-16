@@ -60,6 +60,42 @@ def test_cancel_sleep_does_not_restore_light_in_empty_room():
     assert runtime._state.light.on is False
 
 
+def test_runtime_start_discards_persisted_sleep_without_touching_light():
+    state = load_state()
+    state.modes.active_mode = "sleep"
+    state.light.on = True
+    state.sleep_restore = {"mode": "reading", "light": {"on": True}}
+    save_state(state)
+
+    runtime = Runtime({})
+
+    assert runtime._state.modes.active_mode == "reading"
+    assert runtime._state.light.on is True
+    assert runtime._state.sleep_restore == {}
+
+
+def test_manual_light_control_leaves_sleep_mode():
+    runtime = Runtime({})
+    runtime._tuya = FakeTuya()
+    runtime._state.modes.active_mode = "sleep"
+    runtime._state.sleep_restore = {"mode": "reading", "light": {"on": False}}
+
+    runtime.set_light(on=True, manual=True)
+
+    assert runtime._state.modes.active_mode == "reading"
+    assert runtime._state.light.on is True
+
+
+def test_setting_a_non_sleep_mode_clears_stale_restore_state():
+    runtime = Runtime({})
+    runtime._tuya = FakeTuya()
+    runtime._state.sleep_restore = {"mode": "off", "light": {"on": False}}
+
+    runtime.set_mode("reading")
+
+    assert runtime._state.sleep_restore == {}
+
+
 def test_off_during_alarm_acknowledges_then_stays_off(monkeypatch):
     monkeypatch.setattr(app_module, "publish_alarm", lambda *_args, **_kwargs: None)
     runtime = Runtime({})

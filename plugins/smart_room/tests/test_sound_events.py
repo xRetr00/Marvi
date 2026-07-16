@@ -126,3 +126,13 @@ def test_sound_actions_use_room_state_and_tuya_status() -> None:
     runtime._on_sound_action("sleep")
     assert runtime._state.modes.active_mode == "sleep"
     assert runtime._tuya.commands[-1]["on"] is False
+
+
+def test_triple_clap_sleep_is_safe_by_default() -> None:
+    actions = []
+    listener = sound_events.SoundEventListener({"enabled": True}, actions.append)
+
+    listener._dispatch_action("sleep")
+
+    assert actions == []
+    assert listener.status()["last_action"] is None

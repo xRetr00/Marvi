@@ -11,6 +11,7 @@ import {
   saveHermesConfig,
   saveSmartRoomAlarm,
   saveSmartRoomSecrets,
+  setSmartRoomLight,
   setSmartRoomMode,
   setSmartRoomOverride,
   type SmartRoomAlarm,
@@ -44,7 +45,7 @@ interface SmartRoomConfig {
   enabled: boolean
   owner: string
   welcome: { enabled: boolean; identity_grace_seconds: number; reset_after_seconds: number }
-  sound_events: { enabled: boolean; confidence: number; min_peak: number; input_device: null | string }
+  sound_events: { enabled: boolean; sleep_enabled: boolean; confidence: number; min_peak: number; input_device: null | string }
   mqtt: { broker: string; port: number }
   context: { enabled: boolean }
   subconscious: { enabled: boolean }
@@ -80,7 +81,7 @@ interface SmartRoomConfig {
     zones: string[]
   }
   automations: {
-    adaptive_light: { enabled: boolean; debounce: number; exit_timeout: number }
+    adaptive_light: { enabled: boolean; auto_off: boolean; debounce: number; exit_timeout: number }
     evening_sleep: { enabled: boolean; time: string }
     work_return: { enabled: boolean; work_hours_start: string; work_hours_end: string; settle_delay: number }
     daily_reset: string
@@ -99,7 +100,7 @@ const DEFAULT_CONFIG: SmartRoomConfig = {
   enabled: false,
   owner: 'Shereef',
   welcome: { enabled: true, identity_grace_seconds: 4, reset_after_seconds: 3600 },
-  sound_events: { enabled: false, confidence: 0.15, min_peak: 0.04, input_device: null },
+  sound_events: { enabled: false, sleep_enabled: false, confidence: 0.15, min_peak: 0.04, input_device: null },
   mqtt: { broker: '127.0.0.1', port: 1883 },
   context: { enabled: true },
   subconscious: { enabled: true },
@@ -129,7 +130,7 @@ const DEFAULT_CONFIG: SmartRoomConfig = {
   presence: { wifi_ping: { enabled: false, ip: '', interval_seconds: 60 } },
   owntracks: { topic: 'owntracks/shereef/#', zones: ['home', 'university', 'bakery'] },
   automations: {
-    adaptive_light: { enabled: true, debounce: 3, exit_timeout: 60 },
+    adaptive_light: { enabled: true, auto_off: false, debounce: 3, exit_timeout: 60 },
     evening_sleep: { enabled: true, time: '18:00' },
     work_return: { enabled: true, work_hours_start: '06:00', work_hours_end: '10:00', settle_delay: 300 },
     daily_reset: '00:00',
@@ -179,6 +180,18 @@ const AUTOMATIONS = [
   { key: 'evening_sleep', label: 'Evening Sleep', desc: 'Auto sleep mode at 6 PM' },
   { key: 'work_return', label: 'Work Return Sleep', desc: 'Auto sleep when arriving home from work' },
 ] as const
+
+const LIGHT_COLORS = ['#ff8c2a', '#ffd0a0', '#fff1dc', '#ffffff', '#7ca9ff', '#ad72ff', '#ed78d1', '#ff6d55']
+
+function rgbToHex(rgb: number[] | null | undefined) {
+  return rgb?.length === 3
+    ? `#${rgb.map(value => Math.max(0, Math.min(255, value)).toString(16).padStart(2, '0')).join('')}`
+    : '#ffffff'
+}
+
+function hexToRgb(hex: string) {
+  return [1, 3, 5].map(offset => parseInt(hex.slice(offset, offset + 2), 16))
+}
 
 // ---------------------------------------------------------------------------
 // Sub-components
@@ -350,6 +363,8 @@ export function SmartRoomSettings() {
   const [secrets, setSecrets] = useState({ bulb_key: '', he20_key: '', mqtt_username: '', mqtt_password: '' })
   const [loading, setLoading] = useState(true)
   const [testingWelcome, setTestingWelcome] = useState<'owner' | 'guest' | null>(null)
+  const [lightBusy, setLightBusy] = useState(false)
+  const [lightDraft, setLightDraft] = useState({ brightness: 70, colorTemp: 3000, color: '#ffffff' })
 
   const [newAlarm, setNewAlarm] = useState<SmartRoomAlarm>({
     id: '', name: 'Alarm', time: '08:00', recurrence: 'once',
@@ -399,6 +414,18 @@ export function SmartRoomSettings() {
     return () => clearInterval(interval)
   }, [refreshStatus])
 
+  useEffect(() => {
+    const light = liveStatus?.state?.light
+
+    if (light) {
+      setLightDraft({
+        brightness: light.brightness ?? 70,
+        colorTemp: light.color_temp ?? 3000,
+        color: rgbToHex(light.rgb)
+      })
+    }
+  }, [liveStatus])
+
   const updateConfig = useCallback((newConfig: SmartRoomConfig) => {
     setConfig(newConfig)
     setSaving(true)
@@ -447,6 +474,19 @@ export function SmartRoomSettings() {
       notifyError(err, `Failed to test ${audience} greeting`)
     } finally {
       setTestingWelcome(null)
+    }
+  }
+
+  const controlLight = async (values: { on?: boolean; brightness?: number; color_temp?: number; rgb?: number[] }) => {
+    setLightBusy(true)
+
+    try {
+      await setSmartRoomLight(values)
+      await refreshStatus()
+    } catch (error) {
+      notifyError(error, 'Failed to control the room light')
+    } finally {
+      setLightBusy(false)
     }
   }
 
@@ -550,6 +590,12 @@ export function SmartRoomSettings() {
           description={t.settings.soundEvents.description}
           label={t.settings.soundEvents.enabled}
           onChange={(value) => updatePath('sound_events.enabled', value)}
+        />
+        <ToggleRow
+          checked={config.sound_events.sleep_enabled}
+          description="Off by default: prevents ambient/startup audio from putting the room to sleep."
+          label="Triple clap Sleep (experimental)"
+          onChange={(value) => updatePath('sound_events.sleep_enabled', value)}
         />
         <div className="mb-4 flex items-center gap-2 text-xs text-zinc-400">
           <StatusDot online={!!soundEvents?.running} />
@@ -664,6 +710,96 @@ export function SmartRoomSettings() {
         </div>
       </SectionCard>
 
+      <SectionCard icon={SlidersHorizontal} title="Light Control">
+        <div className="grid gap-5 md:grid-cols-[180px_1fr]">
+          <div className="flex flex-col items-center justify-center rounded-xl border border-zinc-800 bg-zinc-950/50 p-4">
+            <span className="text-3xl font-semibold text-zinc-100">{lightDraft.brightness}%</span>
+            <span className={`${CONTROL_TEXT} mt-1 text-zinc-500`}>{light?.on ? 'Powered on' : 'Powered off'}</span>
+            <div className="mt-4 flex gap-2">
+              <button
+                className={`rounded-md px-4 py-2 text-xs ${light?.on ? 'bg-primary text-primary-foreground' : 'border border-zinc-700 text-zinc-300'}`}
+                disabled={!runtimeUp || lightBusy}
+                onClick={() => void controlLight({ on: true })}
+                type="button"
+              >
+                On
+              </button>
+              <button
+                className={`rounded-md px-4 py-2 text-xs ${!light?.on ? 'bg-zinc-200 text-zinc-950' : 'border border-zinc-700 text-zinc-300'}`}
+                disabled={!runtimeUp || lightBusy}
+                onClick={() => void controlLight({ on: false })}
+                type="button"
+              >
+                Off
+              </button>
+            </div>
+          </div>
+          <div className="space-y-4">
+            <label className="block text-xs text-zinc-400">
+              <span className="mb-1 flex justify-between"><span>Brightness</span><span>{lightDraft.brightness}%</span></span>
+              <input
+                className="w-full accent-primary"
+                disabled={!runtimeUp || lightBusy}
+                max={100}
+                min={1}
+                onChange={event => setLightDraft(current => ({ ...current, brightness: Number(event.target.value) }))}
+                onKeyUp={event => void controlLight({ on: true, brightness: Number(event.currentTarget.value) })}
+                onPointerUp={event => void controlLight({ on: true, brightness: Number(event.currentTarget.value) })}
+                type="range"
+                value={lightDraft.brightness}
+              />
+            </label>
+            <label className="block text-xs text-zinc-400">
+              <span className="mb-1 flex justify-between"><span>White temperature</span><span>{lightDraft.colorTemp}K</span></span>
+              <input
+                className="w-full accent-amber-300"
+                disabled={!runtimeUp || lightBusy}
+                max={6500}
+                min={2200}
+                onChange={event => setLightDraft(current => ({ ...current, colorTemp: Number(event.target.value) }))}
+                onKeyUp={event => void controlLight({ on: true, color_temp: Number(event.currentTarget.value) })}
+                onPointerUp={event => void controlLight({ on: true, color_temp: Number(event.currentTarget.value) })}
+                step={100}
+                type="range"
+                value={lightDraft.colorTemp}
+              />
+            </label>
+            <div>
+              <p className="mb-2 text-xs text-zinc-400">Color</p>
+              <div className="flex flex-wrap items-center gap-2">
+                <input
+                  aria-label="Custom light color"
+                  className="h-10 w-10 cursor-pointer rounded-full border-0 bg-transparent p-0"
+                  disabled={!runtimeUp || lightBusy}
+                  onChange={event => {
+                    const color = event.target.value
+                    setLightDraft(current => ({ ...current, color }))
+                    void controlLight({ on: true, rgb: hexToRgb(color) })
+                  }}
+                  type="color"
+                  value={lightDraft.color}
+                />
+                {LIGHT_COLORS.map(color => (
+                  <button
+                    aria-label={`Set light color ${color}`}
+                    className="h-8 w-8 rounded-full border border-white/20 disabled:opacity-40"
+                    disabled={!runtimeUp || lightBusy}
+                    key={color}
+                    onClick={() => {
+                      setLightDraft(current => ({ ...current, color }))
+                      void controlLight({ on: true, rgb: hexToRgb(color) })
+                    }}
+                    style={{ backgroundColor: color }}
+                    type="button"
+                  />
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+        <p className={`${CONTROL_TEXT} mt-3 text-zinc-500`}>Manual changes cancel a stale Sleep state. Sliders apply when released.</p>
+      </SectionCard>
+
       {/* Mode Buttons */}
       <SectionCard icon={Zap} title="Modes">
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-7">
@@ -740,6 +876,17 @@ export function SmartRoomSettings() {
               </div>
             )
           })}
+          <div className="flex items-center justify-between border-t border-zinc-800 pt-3">
+            <div>
+              <p className="text-sm text-zinc-200">Auto-off when room clears</p>
+              <p className={`${CONTROL_TEXT} text-zinc-500`}>Disabled by default so a sensor failure cannot turn the light off.</p>
+            </div>
+            <Toggle
+              checked={config.automations.adaptive_light.auto_off}
+              label="Auto-off when room clears"
+              onChange={(value) => updatePath('automations.adaptive_light.auto_off', value)}
+            />
+          </div>
           <details className="border-t border-zinc-800 pt-3 text-xs text-zinc-400">
             <summary className="cursor-pointer">Automation timing</summary>
             <div className="mt-3 grid grid-cols-1 gap-x-4 sm:grid-cols-2">

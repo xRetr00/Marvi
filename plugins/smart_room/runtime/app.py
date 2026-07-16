@@ -77,6 +77,18 @@ class Runtime:
     def __init__(self, config: Dict[str, Any]):
         self._config = config
         self._state = load_state()
+        if self._state.modes.active_mode == "sleep":
+            restored = self._state.sleep_restore.get("mode")
+            self._state.modes.active_mode = (
+                restored if restored in VALID_MODES and restored not in {"sleep", "alarm"} else "off"
+            )
+            self._state.modes.work_return = False
+            self._state.sleep_restore = {}
+            save_state(self._state)
+            logger.warning("Discarded persisted Sleep mode during runtime startup")
+        elif self._state.sleep_restore:
+            self._state.sleep_restore = {}
+            save_state(self._state)
         self._bus = EventBus()
         self._running = False
         self._exit_event = threading.Event()
@@ -909,6 +921,8 @@ class Runtime:
                     }
                 self._state.modes.active_mode = mode
                 self._state.modes.work_return = mode == "sleep" and reason == "work_return"
+                if mode != "sleep":
+                    self._state.sleep_restore = {}
                 if reason == "work_return":
                     self._state.flags.work_sleep_done_today = True
                 elif reason == "evening":
@@ -978,6 +992,13 @@ class Runtime:
         if manual:
             self._cancel_pending_mode()
         with self._state_lock:
+            if manual and self._state.modes.active_mode == "sleep":
+                restored = self._state.sleep_restore.get("mode")
+                self._state.modes.active_mode = (
+                    restored if restored in VALID_MODES and restored not in {"sleep", "alarm"} else "off"
+                )
+                self._state.modes.work_return = False
+                self._state.sleep_restore = {}
             if on is not None:
                 self._state.light.on = on
             if brightness is not None:

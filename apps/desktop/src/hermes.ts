@@ -547,6 +547,12 @@ function smartRoomApi<T>(path: string, method = 'GET', body?: unknown): Promise<
 export const getSmartRoomStatus = () => smartRoomApi<SmartRoomStatus>('/status')
 export const applySmartRoomConfig = () => smartRoomApi<{ ok: boolean }>('/apply', 'POST')
 export const setSmartRoomMode = (mode: string) => smartRoomApi('/mode', 'POST', { mode })
+export const setSmartRoomLight = (light: {
+  on?: boolean
+  brightness?: number
+  color_temp?: number
+  rgb?: number[]
+}) => smartRoomApi('/light', 'POST', light)
 export const setSmartRoomOverride = (mode: 'hold_off' | 'hold_on' | 'none') => smartRoomApi('/override', 'POST', { mode })
 export const cancelSmartRoomSleep = () => smartRoomApi('/cancel-sleep', 'POST')
 export const testSmartRoomWelcome = (audience: 'owner' | 'guest') => smartRoomApi('/welcome/test', 'POST', { audience })

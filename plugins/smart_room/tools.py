@@ -2,7 +2,7 @@
 
 Tools:
   smart_room_state         — full room snapshot (presence, light, modes, devices)
-  smart_room_set_mode      — set mode: reading, focus, relax, night, sleep, alarm, off
+  smart_room_set_mode      — set mode: normal, reading, focus, relax, night, sleep, alarm, off
   smart_room_set_light     — direct light control (on/off, brightness, color)
   smart_room_cancel_sleep  — cancel sleep mode, restore previous state
   smart_room_override      — toggle manual override (disables presence automations)
@@ -62,7 +62,7 @@ SMART_ROOM_SET_MODE_SCHEMA: Dict[str, Any] = {
     "name": "smart_room_set_mode",
     "description": (
         "Set the smart room mode. Modes are mutually exclusive. "
-        "reading=warm 3000K 70%, focus=cool 5000K 100%, relax=warm amber 40%, night=dim warm 15%, "
+        "normal=white 4000K 70%, reading=warm 3000K 70%, focus=cool 5000K 100%, relax=warm amber 40%, night=dim warm 15%, "
         "sleep=lights off darkness enforced, alarm=flash bright white auto-expire, "
         "off=lights off no mode."
     ),
@@ -71,7 +71,7 @@ SMART_ROOM_SET_MODE_SCHEMA: Dict[str, Any] = {
         "properties": {
             "mode": {
                 "type": "string",
-                "enum": ["reading", "focus", "relax", "night", "sleep", "alarm", "off"],
+                "enum": ["normal", "reading", "focus", "relax", "night", "sleep", "alarm", "off"],
                 "description": "The mode to activate.",
             },
         },
@@ -174,7 +174,7 @@ def handle_smart_room_state(args: Dict[str, Any], **_kw) -> str:
 
 def handle_smart_room_set_mode(args: Dict[str, Any], **_kw) -> str:
     mode = (args.get("mode") or "").strip().lower()
-    if mode not in {"reading", "focus", "relax", "night", "sleep", "alarm", "off"}:
+    if mode not in {"normal", "reading", "focus", "relax", "night", "sleep", "alarm", "off"}:
         return _err(f"invalid mode: {mode!r}")
     try:
         return _json(call_runtime("set_mode", {"mode": mode}))

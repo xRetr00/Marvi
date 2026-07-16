@@ -80,7 +80,7 @@ async def get_status() -> dict:
 
 @router.post("/mode")
 async def set_mode(body: ModeBody) -> dict:
-    if body.mode not in {"reading", "focus", "relax", "night", "sleep", "alarm", "off"}:
+    if body.mode not in {"normal", "reading", "focus", "relax", "night", "sleep", "alarm", "off"}:
         raise HTTPException(status_code=400, detail="invalid mode")
     return await _rpc("set_mode", {"mode": body.mode})
 

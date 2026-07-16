@@ -73,7 +73,7 @@ class CommandRouter:
 
     def _handle_set_mode(self, params: Dict[str, Any]) -> Dict[str, Any]:
         mode = params.get("mode", "off")
-        if mode not in {"reading", "focus", "relax", "night", "sleep", "alarm", "off"}:
+        if mode not in {"normal", "reading", "focus", "relax", "night", "sleep", "alarm", "off"}:
             return {"success": False, "error": f"invalid mode: {mode}"}
         self._runtime.set_mode(mode, reason="manual")
         return {"success": True, "mode": mode, "state": self._state_dict()}

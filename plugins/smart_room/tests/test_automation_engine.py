@@ -36,6 +36,11 @@ class TestAutomationEngine:
         actions = evaluate_automations(self.state, {"type": "presence_cleared"}, self.config)
         assert not any(a.type == "turn_off" for a in actions)
 
+    def test_focus_mode_keeps_light_on_when_presence_clears(self):
+        self.state.modes.active_mode = "focus"
+        actions = evaluate_automations(self.state, {"type": "presence_cleared"}, self.config)
+        assert not any(a.type == "turn_off" for a in actions)
+
     def test_sleep_mode_triggers_darkness(self):
         actions = evaluate_automations(self.state, {"type": "mode_changed", "mode": "sleep"}, self.config)
         assert any(a.type == "turn_off" for a in actions)

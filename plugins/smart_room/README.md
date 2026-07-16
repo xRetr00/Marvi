@@ -57,7 +57,7 @@ smart_room:
   automations:
     adaptive_light:
       enabled: true
-      auto_off: false          # fail safe; opt in only after sensor soak testing
+      auto_off: true           # all modes except Focus
   # ... see NEEDS_YOU_AT_HOME.md for full config
 ```
 
@@ -87,7 +87,7 @@ python plugins/smart_room/scripts/create_owntracks_config.py `
 | Tool | Description |
 |------|-------------|
 | `smart_room_state` | Full room snapshot |
-| `smart_room_set_mode` | Set mode (reading/focus/relax/night/sleep/alarm/off) |
+| `smart_room_set_mode` | Set mode (normal/reading/focus/relax/night/sleep/alarm/off) |
 | `smart_room_set_light` | Direct light control |
 | `smart_room_cancel_sleep` | Cancel sleep mode |
 | `smart_room_override` | Keep presence automation on, hold light on, or hold light off |

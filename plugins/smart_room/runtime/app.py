@@ -1085,7 +1085,7 @@ class Runtime:
                 if occupied and light.get("scene"):
                     self._state.light.scene = str(light["scene"])
                 previous_mode = restore.get("mode")
-                if previous_mode in {"reading", "focus", "relax", "night"}:
+                if previous_mode in {"normal", "reading", "focus", "relax", "night"}:
                     self._state.modes.active_mode = previous_mode
                 self._state.sleep_restore = {}
                 save_state(self._state)
@@ -1287,6 +1287,7 @@ class Runtime:
 # ---------------------------------------------------------------------------
 
 _DEFAULT_SCENES = {
+    "normal": {"color_temp": 4000, "brightness": 70, "transition": 2},
     "reading": {"color_temp": 3000, "brightness": 70, "transition": 2},
     "focus": {"color_temp": 5000, "brightness": 100, "transition": 2},
     "relax": {"color_temp": 2700, "rgb": [255, 180, 80], "brightness": 40, "transition": 3},

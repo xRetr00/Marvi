@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 
-VALID_MODES = {"off", "reading", "focus", "relax", "night", "sleep", "alarm"}
+VALID_MODES = {"off", "normal", "reading", "focus", "relax", "night", "sleep", "alarm"}
 
 
 @dataclass
@@ -41,7 +41,7 @@ class LightState:
     brightness: int = 0  # 0-100
     color_temp: int = 3000  # Kelvin
     rgb: Optional[List[int]] = None  # [R, G, B] or None for white mode
-    scene: str = "off"  # "reading", "focus", "relax", "night", "alarm", "off", "custom"
+    scene: str = "off"  # "normal", "reading", "focus", "relax", "night", "alarm", "off", "custom"
     confirmed: bool = False
     last_error: Optional[str] = None
 
@@ -157,7 +157,7 @@ class RoomState:
             active = raw_modes.get("active_mode")
             if active not in VALID_MODES:
                 active = next(
-                    (name for name in ("reading", "focus", "relax", "night", "sleep", "alarm") if raw_modes.get(name)),
+                    (name for name in ("normal", "reading", "focus", "relax", "night", "sleep", "alarm") if raw_modes.get(name)),
                     "off",
                 )
             override = raw_modes.get("manual_override", "none")

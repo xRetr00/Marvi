@@ -96,6 +96,17 @@ def test_setting_a_non_sleep_mode_clears_stale_restore_state():
     assert runtime._state.sleep_restore == {}
 
 
+def test_normal_mode_is_neutral_white_at_seventy_percent():
+    runtime = Runtime({})
+    runtime._tuya = FakeTuya()
+
+    runtime.set_mode("normal")
+
+    assert runtime._state.modes.active_mode == "normal"
+    assert runtime._tuya.commands[-1]["brightness"] == 70
+    assert runtime._tuya.commands[-1]["color_temp"] == 4000
+
+
 def test_off_during_alarm_acknowledges_then_stays_off(monkeypatch):
     monkeypatch.setattr(app_module, "publish_alarm", lambda *_args, **_kwargs: None)
     runtime = Runtime({})

@@ -51,7 +51,7 @@ def evaluate_automations(
 
     # Don't run presence-based automations in sleep/alarm mode or with override
     suppress_on = state.modes.active_mode in {"sleep", "alarm"} or state.modes.manual_override == "hold_off"
-    suppress_off = state.modes.active_mode in {"sleep", "alarm"} or state.modes.manual_override == "hold_on"
+    suppress_off = state.modes.active_mode in {"focus", "sleep", "alarm"} or state.modes.manual_override == "hold_on"
 
     adaptive = auto_cfg.get("adaptive_light", {})
 

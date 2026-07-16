@@ -130,12 +130,13 @@ const DEFAULT_CONFIG: SmartRoomConfig = {
   presence: { wifi_ping: { enabled: false, ip: '', interval_seconds: 60 } },
   owntracks: { topic: 'owntracks/shereef/#', zones: ['home', 'university', 'bakery'] },
   automations: {
-    adaptive_light: { enabled: true, auto_off: false, debounce: 3, exit_timeout: 60 },
+    adaptive_light: { enabled: true, auto_off: true, debounce: 3, exit_timeout: 60 },
     evening_sleep: { enabled: true, time: '18:00' },
     work_return: { enabled: true, work_hours_start: '06:00', work_hours_end: '10:00', settle_delay: 300 },
     daily_reset: '00:00',
   },
   scenes: {
+    normal: { color_temp: 4000, brightness: 70, transition: 2 },
     reading: { color_temp: 3000, brightness: 70, transition: 2 },
     focus: { color_temp: 5000, brightness: 100, transition: 2 },
     relax: { color_temp: 2700, rgb: [255, 180, 80], brightness: 40, transition: 3 },
@@ -166,6 +167,7 @@ function mergeDefaults<T>(defaults: T, value: unknown): T {
 }
 
 const MODES = [
+  { id: 'normal', label: 'Normal', icon: '💡', desc: 'White 4000K @ 70%' },
   { id: 'reading', label: 'Reading', icon: '📖', desc: 'Warm 3000K @ 70%' },
   { id: 'focus', label: 'Focus', icon: '🧠', desc: 'Cool 5000K @ 100%' },
   { id: 'relax', label: 'Relax', icon: '😌', desc: 'Amber 2700K @ 40%' },
@@ -802,7 +804,7 @@ export function SmartRoomSettings() {
 
       {/* Mode Buttons */}
       <SectionCard icon={Zap} title="Modes">
-        <div className="grid grid-cols-2 gap-2 sm:grid-cols-7">
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-8">
           {MODES.map((mode) => (
             <button
               className={`flex flex-col items-center rounded-lg border p-3 transition-colors ${
@@ -879,7 +881,7 @@ export function SmartRoomSettings() {
           <div className="flex items-center justify-between border-t border-zinc-800 pt-3">
             <div>
               <p className="text-sm text-zinc-200">Auto-off when room clears</p>
-              <p className={`${CONTROL_TEXT} text-zinc-500`}>Disabled by default so a sensor failure cannot turn the light off.</p>
+              <p className={`${CONTROL_TEXT} text-zinc-500`}>Turns off after the exit timeout in every mode except Focus.</p>
             </div>
             <Toggle
               checked={config.automations.adaptive_light.auto_off}

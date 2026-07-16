@@ -210,7 +210,7 @@ export function useWakeWord({
   }
 
   const stopStreamingSession = () => {
-    void streamingSessionRef.current?.finish().catch(() => '')
+    void Promise.resolve(streamingSessionRef.current?.finish()).catch(() => '')
     streamingSessionRef.current = null
     streamingOpenRef.current = null
     streamedCommandFramesRef.current = 0
@@ -220,7 +220,9 @@ export function useWakeWord({
     clearTimers()
     stopWakeSession()
     stopStreamingSession()
-    handleRef.current.cancel()
+    if (statusRef.current !== 'idle') {
+      handleRef.current.cancel()
+    }
     detectedRef.current = false
     resumeCaptureRef.current = false
     pendingRestartAfterSubmitRef.current = false

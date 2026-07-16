@@ -79,6 +79,21 @@ class TestGeneratePocketTts:
         fake_model.generate_audio.assert_called_once_with("voice-state", "Hello world")
         fake_wavfile.write.assert_called_once()
 
+    def test_cuda_audio_moves_to_cpu_before_numpy(self, tmp_path, mock_pockettts_modules):
+        from tools.tts_tool import _generate_pockettts
+
+        fake_model, _, _ = mock_pockettts_modules
+        cuda_audio = MagicMock()
+        cpu_audio = _FakeAudio()
+        cuda_audio.detach.return_value = cuda_audio
+        cuda_audio.cpu.return_value = cpu_audio
+        fake_model.generate_audio.return_value = cuda_audio
+
+        _generate_pockettts("Hello", str(tmp_path / "cuda.wav"), {})
+
+        cuda_audio.detach.assert_called_once()
+        cuda_audio.cpu.assert_called_once()
+
     def test_config_passes_voice(self, tmp_path, mock_pockettts_modules):
         from tools.tts_tool import _generate_pockettts
 

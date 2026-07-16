@@ -164,6 +164,27 @@ def test_welcome_preview_uses_voice_instant_without_recording_arrival(monkeypatc
     assert runtime._state.last_welcome_at is None
 
 
+def test_guest_welcome_always_says_the_configured_owner_is_away(monkeypatch):
+    import agent.auxiliary_client as auxiliary_client
+    import plugins.smart_room.runtime.app as app_module
+
+    monkeypatch.setitem(sys.modules, "agent.prompt_builder", SimpleNamespace(load_soul_md=lambda: ""))
+    monkeypatch.setattr(
+        auxiliary_client,
+        "call_llm",
+        lambda **_kwargs: SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(content="Welcome to Shereef's system."))]
+        ),
+    )
+    published = []
+    monkeypatch.setattr(app_module, "publish_welcome", published.append)
+
+    Runtime({"owner": "Shereef"})._publish_welcome(False, "Shereef", record_arrival=False)
+
+    assert "Shereef" in published[0]
+    assert "isn't here" in published[0]
+
+
 def test_location_event_is_idempotent_and_schedules_work_return(monkeypatch):
     runtime = Runtime({
         "owner": "shereef",

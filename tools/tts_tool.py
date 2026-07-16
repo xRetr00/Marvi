@@ -2161,6 +2161,10 @@ def _generate_pockettts(text: str, output_path: str, tts_config: Dict[str, Any])
 
     model, voice_state = _resolve_pockettts_model_and_voice(tts_config)
     audio = model.generate_audio(voice_state, text)
+    if hasattr(audio, "detach"):
+        audio = audio.detach()
+    if hasattr(audio, "cpu"):
+        audio = audio.cpu()
     samples = audio.numpy() if hasattr(audio, "numpy") else audio
 
     wav_path = output_path

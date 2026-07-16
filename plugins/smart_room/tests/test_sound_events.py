@@ -46,6 +46,16 @@ def test_bad_model_download_is_rejected(monkeypatch, tmp_path) -> None:
     assert not (tmp_path / "profile/smart_room/models/yamnet_clap_quantized.tflite").exists()
 
 
+def test_clap_score_accepts_the_yamnet_hand_sound_family() -> None:
+    class Scores:
+        def reshape(self, _size):
+            values = [0.0] * 521
+            values[57] = 0.3  # A close microphone often calls a clap a finger snap.
+            return values
+
+    assert sound_events._clap_score(Scores()) == 0.3
+
+
 def test_sound_actions_use_room_state_and_tuya_status() -> None:
     class Tuya:
         def __init__(self) -> None:

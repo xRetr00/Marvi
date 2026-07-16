@@ -122,7 +122,7 @@ function surface(run: ProactiveRun): void {
   })
 
   // Voice Presence is the user's consent switch for unsolicited audio.
-  if ($presenceEnabled.get() && $voicePlayback.get().status === 'idle') {
+  if (run.source === 'smart_room_welcome' || ($presenceEnabled.get() && $voicePlayback.get().status === 'idle')) {
     void playSpeechText(message, { messageId: id, source: 'read-aloud' }).catch(() => undefined)
   }
 }

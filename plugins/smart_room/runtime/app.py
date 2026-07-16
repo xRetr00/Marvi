@@ -648,7 +648,11 @@ class Runtime:
     ) -> None:
         """Generate through auxiliary.voice_instant and publish to the TTS lane."""
 
-        fallback = f"Welcome back, {owner_name}." if owner_detected else "Welcome."
+        fallback = (
+            f"Welcome back, {owner_name}."
+            if owner_detected
+            else f"Welcome. {owner_name}, the owner, isn't here right now."
+        )
         try:
             from agent.auxiliary_client import call_llm
             from agent.message_content import flatten_message_text
@@ -657,7 +661,11 @@ class Runtime:
             identity = (
                 f"The detected person is the owner, named {owner_name}. Include that exact name."
                 if owner_detected
-                else "The detected person is a guest whose name is unknown. Do not invent a name."
+                else (
+                    "The detected person is a guest whose name is unknown. Do not invent a name. "
+                    f"Warmly tell the guest that {owner_name}, the owner, isn't here right now, "
+                    f"and include the exact name {owner_name}."
+                )
             )
             soul = (load_soul_md() or "")[:4000]
             response = call_llm(
@@ -682,6 +690,11 @@ class Runtime:
                 greeting = fallback
             if owner_detected and owner_name.casefold() not in greeting.casefold():
                 greeting = f"{owner_name}, {greeting[:1].lower()}{greeting[1:]}"
+            elif not owner_detected and (
+                owner_name.casefold() not in greeting.casefold()
+                or not any(marker in greeting.casefold() for marker in ("isn't here", "is not here", "not home", "away"))
+            ):
+                greeting = f"{greeting} {owner_name}, the owner, isn't here right now."
             greeting = greeting[:300]
         except Exception:
             logger.warning("Could not generate room welcome; using fallback", exc_info=True)

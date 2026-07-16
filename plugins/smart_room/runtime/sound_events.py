@@ -30,7 +30,12 @@ _MODEL_URL = (
 _MODEL_SHA256 = "b8cc7ebd9edf3c16fcd79230e4c105316e8872c51ce447348176f75d6d35d570"
 _MODEL_SAMPLES = 15_600
 _MODEL_RATE = 16_000
-_CLAPPING_CLASS = 58
+_CLAP_CLASSES = (56, 57, 58)  # Hands, finger snapping, clapping.
+
+
+def _clap_score(scores: Any) -> float:
+    flat_scores = scores.reshape(-1)
+    return max(float(flat_scores[index]) for index in _CLAP_CLASSES)
 
 
 class ClapSequence:
@@ -205,9 +210,9 @@ class SoundEventListener:
                     interpreter.set_tensor(input_index, waveform)
                     interpreter.invoke()
                     scores = interpreter.get_tensor(output_index)
-                    score = float(scores.reshape(-1)[_CLAPPING_CLASS])
+                    score = _clap_score(scores)
                     self._status["last_score"] = round(score, 4)
-                    if score >= float(self._config.get("confidence", 0.45)):
+                    if score >= float(self._config.get("confidence", 0.15)):
                         self._status["confirmed_claps"] += 1
                         self._sequence.add(detected_at + delay)
                 self._sequence.tick(now)

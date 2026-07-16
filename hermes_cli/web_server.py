@@ -10,6 +10,8 @@ Usage:
 """
 
 from contextlib import asynccontextmanager, contextmanager
+from array import array
+from collections import deque
 
 import asyncio
 import atexit
@@ -27,24 +29,28 @@ import json
 import logging
 import mimetypes
 import os
+import queue
 import re
 import secrets
 import shlex
 import shutil
+import socket
 import stat
 import subprocess
 import sys
 import tempfile
 import threading
 import time
+import traceback
 import urllib.error
 import urllib.parse
+import wave
 import zipfile
 
 from hermes_cli._subprocess_compat import windows_detach_flags, windows_hide_flags
 import urllib.request
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import yaml
 
@@ -97,7 +103,7 @@ try:
         WebSocket, WebSocketDisconnect,
     )
     from fastapi.middleware.cors import CORSMiddleware
-    from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
+    from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response, StreamingResponse
     from fastapi.staticfiles import StaticFiles
     from pydantic import BaseModel, SecretStr
     from starlette.concurrency import run_in_threadpool
@@ -113,7 +119,7 @@ except ImportError:
             WebSocket, WebSocketDisconnect,
         )
         from fastapi.middleware.cors import CORSMiddleware
-        from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
+        from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response, StreamingResponse
         from fastapi.staticfiles import StaticFiles
         from pydantic import BaseModel, SecretStr
         from starlette.concurrency import run_in_threadpool
@@ -166,6 +172,395 @@ def _warm_gateway_module() -> None:
         pass
 
 
+class _ParakeetSubprocessSession:
+    def __init__(self, stt_config: dict[str, Any]) -> None:
+        self._stt_config = stt_config
+        self._proc: subprocess.Popen | None = None
+        self._log_file = None
+        self.last_eou = False
+        self.last_eou_prob = 0.0
+
+    def _ensure_process(self) -> None:
+        # Spawn the PERSISTENT helper once. The helper loads NeMo/CUDA (~12-20s)
+        # on its first utterance and then stays alive across turns, so subsequent
+        # turns are instant. Previously we spawned+killed per turn, reloading the
+        # model every time (slow start + GPU thrash that froze the device).
+        if self._proc is not None and self._proc.poll() is None:
+            return
+
+        from tools.parakeet_streaming_stt import (
+            parakeet_stdio_command,
+            parakeet_venv_python,
+        )
+
+        py = parakeet_venv_python()
+        if not py.exists():
+            raise RuntimeError(
+                "Parakeet venv is missing. Run: hermes tools post-setup parakeet_stt"
+            )
+
+        log_path = get_hermes_home() / "logs" / "parakeet-stt.log"
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        self._log_file = log_path.open("ab")
+        env = {**os.environ, "PYTHONPATH": str(PROJECT_ROOT)}
+        self._proc = subprocess.Popen(
+            parakeet_stdio_command(),
+            cwd=str(PROJECT_ROOT),
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=self._log_file,
+            text=True,
+            bufsize=1,
+            env=env,
+            creationflags=windows_hide_flags(),
+        )
+
+    def begin(self) -> None:
+        """Start a new utterance on the (persistent) helper process."""
+        self._ensure_process()
+        try:
+            from tools.voice_residency import note_voice_activity
+
+            note_voice_activity()
+        except Exception:
+            pass
+        self.last_eou = False
+        self.last_eou_prob = 0.0
+        self._send({"type": "start", "stt_config": self._stt_config})
+        payload = self._read()
+        if payload.get("type") == "ready":
+            return
+        raise RuntimeError(
+            str(payload.get("error") or "Parakeet helper did not become ready")
+        )
+
+    # Back-compat alias.
+    def start(self) -> None:
+        self.begin()
+
+    def warm(self) -> None:
+        """Load the model without capturing audio, leaving the process idle+warm."""
+        self.begin()
+        self.finish()
+
+    def accept_bytes(self, chunk: bytes) -> str:
+        self._send({"type": "audio", "data": base64.b64encode(chunk).decode("ascii")})
+        payload = self._read()
+        self.last_eou = bool(payload.get("eou"))
+        self.last_eou_prob = float(
+            payload.get("eou_prob") or (1.0 if self.last_eou else 0.0)
+        )
+        if payload.get("type") == "partial":
+            return str(payload.get("text") or "").strip()
+        if payload.get("type") == "ok":
+            return ""
+        raise RuntimeError(str(payload.get("error") or "Parakeet helper failed"))
+
+    def finish(self) -> str:
+        self._send({"type": "stop"})
+        while True:
+            payload = self._read()
+            if payload.get("type") == "final":
+                return str(payload.get("text") or "").strip()
+            if payload.get("type") == "error":
+                raise RuntimeError(
+                    str(payload.get("error") or "Parakeet helper failed")
+                )
+
+    def close(self) -> None:
+        proc = self._proc
+        if proc is not None and proc.poll() is None:
+            try:
+                self._send({"type": "close"})
+            except Exception:
+                pass
+            proc.terminate()
+        if self._log_file is not None:
+            try:
+                self._log_file.close()
+            except Exception:
+                pass
+        self._proc = None
+
+    def shutdown(self) -> None:
+        """Alias for close(): terminate the subprocess, close the log file
+        handle, and null out ``_proc``. Named for the tools.voice_residency
+        demote-hook contract; ``_ensure_process()`` respawns lazily on the
+        next utterance so this is safe to call any time the helper is idle."""
+        self.close()
+
+    def running(self) -> bool:
+        return self._proc is not None and self._proc.poll() is None
+
+    def _send(self, payload: dict[str, Any]) -> None:
+        proc = self._proc
+        if proc is None or proc.stdin is None:
+            raise RuntimeError("Parakeet helper is not running")
+        proc.stdin.write(json.dumps(payload, separators=(",", ":")) + "\n")
+        proc.stdin.flush()
+
+    def _read(self) -> dict[str, Any]:
+        proc = self._proc
+        if proc is None or proc.stdout is None:
+            raise RuntimeError("Parakeet helper is not running")
+        line = proc.stdout.readline()
+        if not line:
+            code = proc.poll()
+            raise RuntimeError(
+                f"Parakeet helper exited unexpectedly (code={code}); see logs/parakeet-stt.log"
+            )
+        payload = json.loads(line)
+        if payload.get("type") == "error":
+            raise RuntimeError(str(payload.get("error") or "Parakeet helper failed"))
+        return payload
+
+
+_WARM_PARAKEET_SESSION: _ParakeetSubprocessSession | None = None
+_WARM_PARAKEET_SIGNATURE = ""
+_WARM_PARAKEET_LOCK = threading.Lock()
+
+
+def _parakeet_config_signature(stt_config: dict[str, Any]) -> str:
+    streaming = stt_config.get("streaming") if isinstance(stt_config, dict) else {}
+    return json.dumps(
+        streaming if isinstance(streaming, dict) else {}, sort_keys=True, default=str
+    )
+
+
+def _close_warm_parakeet_session() -> None:
+    """Drop the warm Parakeet helper singleton. Also used as the
+    tools.voice_residency demote hook — ``_ensure_process()`` respawns the
+    helper lazily on the next utterance, so this is safe to call any time."""
+    global _WARM_PARAKEET_SESSION, _WARM_PARAKEET_SIGNATURE
+    with _WARM_PARAKEET_LOCK:
+        session = _WARM_PARAKEET_SESSION
+        _WARM_PARAKEET_SESSION = None
+        _WARM_PARAKEET_SIGNATURE = ""
+    if session is not None:
+        session.shutdown()
+
+
+def _warm_parakeet_session(stt_config: dict[str, Any]) -> None:
+    global _WARM_PARAKEET_SESSION, _WARM_PARAKEET_SIGNATURE
+    signature = _parakeet_config_signature(stt_config)
+    stale: _ParakeetSubprocessSession | None = None
+    with _WARM_PARAKEET_LOCK:
+        if (
+            _WARM_PARAKEET_SESSION is not None
+            and _WARM_PARAKEET_SESSION.running()
+            and _WARM_PARAKEET_SIGNATURE == signature
+        ):
+            return
+        stale = _WARM_PARAKEET_SESSION
+        _WARM_PARAKEET_SESSION = None
+        _WARM_PARAKEET_SIGNATURE = ""
+        session = _ParakeetSubprocessSession(stt_config)
+        session.warm()
+        _WARM_PARAKEET_SESSION = session
+        _WARM_PARAKEET_SIGNATURE = signature
+    if stale is not None:
+        stale.close()
+    _log.info("Warmed Parakeet Realtime EOU STT helper")
+
+
+def _return_warm_parakeet_session(
+    session: _ParakeetSubprocessSession, stt_config: dict[str, Any]
+) -> None:
+    """Return a still-running helper to the warm pool so the next turn reuses its
+    loaded model instead of respawning. Replaces any existing warm session."""
+    global _WARM_PARAKEET_SESSION, _WARM_PARAKEET_SIGNATURE
+    if not session.running():
+        session.close()
+        return
+    stale: _ParakeetSubprocessSession | None = None
+    with _WARM_PARAKEET_LOCK:
+        if _WARM_PARAKEET_SESSION is session:
+            return
+        stale = _WARM_PARAKEET_SESSION
+        _WARM_PARAKEET_SESSION = session
+        _WARM_PARAKEET_SIGNATURE = _parakeet_config_signature(stt_config)
+    if stale is not None:
+        stale.close()
+
+
+def _take_warm_parakeet_session(
+    stt_config: dict[str, Any],
+) -> _ParakeetSubprocessSession | None:
+    global _WARM_PARAKEET_SESSION, _WARM_PARAKEET_SIGNATURE
+    signature = _parakeet_config_signature(stt_config)
+    with _WARM_PARAKEET_LOCK:
+        session = _WARM_PARAKEET_SESSION
+        if (
+            session is None
+            or not session.running()
+            or _WARM_PARAKEET_SIGNATURE != signature
+        ):
+            return None
+        _WARM_PARAKEET_SESSION = None
+        _WARM_PARAKEET_SIGNATURE = ""
+        _log.info("Using warmed Parakeet Realtime EOU STT helper")
+        return session
+
+
+atexit.register(_close_warm_parakeet_session)
+
+
+# Warmup status for the desktop status bar. Each engine: pending -> warming ->
+# ready | skipped | failed. `done` flips true once all have resolved.
+_VOICE_WARMUP_STATUS: dict[str, Any] = {
+    "tts": "pending",
+    "stt": "pending",
+    "wake": "pending",
+    "done": False,
+    "started": False,
+}
+_VOICE_WARMUP_LOCK = threading.Lock()
+_VOICE_PREWARMED_BEFORE_LOOP = False
+
+
+def _set_warmup(**updates: Any) -> None:
+    with _VOICE_WARMUP_LOCK:
+        _VOICE_WARMUP_STATUS.update(updates)
+
+
+def get_voice_warmup_status() -> dict[str, Any]:
+    with _VOICE_WARMUP_LOCK:
+        return dict(_VOICE_WARMUP_STATUS)
+
+
+def _demote_voice_residency_for_memory_pressure() -> None:
+    """gateway.memory_monitor pressure callback: demote the voice stack.
+
+    Named function (not a lambda) so tools.voice_residency's per-function
+    idempotency check dedupes it if _warm_desktop_voice_models ever runs
+    more than once in a process.
+    """
+    from tools.voice_residency import demote
+
+    demote("memory-pressure")
+
+
+def _warm_desktop_voice_models() -> None:
+    # Warm ALL THREE voice engines once at desktop startup (in this background
+    # thread, while the app shows "connecting") so the first use of each is
+    # instant and never triggers a mid-session model load / GPU stall:
+    #   1) PocketTTS  2) Parakeet STT  3) wake word.
+    cfg = load_config()
+    if not isinstance(cfg, dict):
+        _set_warmup(
+            tts="skipped", stt="skipped", wake="skipped", done=True, started=True
+        )
+        return
+
+    _set_warmup(started=True)
+    _log.info("Warming desktop voice models (TTS + STT + wake word)…")
+
+    # Register the tiered-residency demote hooks once, up front — they only
+    # drop caches/kill the helper subprocess, so it's harmless to register
+    # them even if the corresponding engine below ends up skipped/failed.
+    # Each subsystem's existing lazy loader re-warms on next use.
+    try:
+        from tools.voice_residency import register_demote_hook
+
+        register_demote_hook(_close_warm_parakeet_session)
+
+        from tools.tts_tool import unload_tts_provider
+
+        register_demote_hook(unload_tts_provider)
+    except Exception:
+        _log.debug("Could not register voice residency demote hooks", exc_info=True)
+
+    try:
+        from gateway.memory_monitor import (
+            register_pressure_callback,
+            start_memory_monitoring,
+        )
+
+        register_pressure_callback(_demote_voice_residency_for_memory_pressure)
+        # The desktop backend is the long-lived resident process — start the
+        # RSS monitor here so the max_rss_mb soft ceiling is live, not inert.
+        start_memory_monitoring()
+    except Exception:
+        _log.debug(
+            "Could not register voice residency memory-pressure callback", exc_info=True
+        )
+
+    tts_cfg = cfg.get("tts") or {}
+    if (
+        isinstance(tts_cfg, dict)
+        and str(tts_cfg.get("provider") or "").strip().lower() == "pockettts"
+    ):
+        _set_warmup(tts="warming")
+        try:
+            from tools.tts_tool import warm_tts_provider
+
+            warm_tts_provider(tts_cfg)
+            _set_warmup(tts="ready")
+            _log.info("Warmed PocketTTS for desktop streaming")
+        except Exception as exc:
+            _set_warmup(tts="failed")
+            _log.warning("Could not warm PocketTTS: %s", exc)
+    else:
+        _set_warmup(tts="skipped")
+
+    stt_cfg = cfg.get("stt") or {}
+    streaming = (stt_cfg.get("streaming") or {}) if isinstance(stt_cfg, dict) else {}
+    if (
+        isinstance(streaming, dict)
+        and streaming.get("enabled") is True
+        and str(streaming.get("provider") or "").strip().lower() == "parakeet"
+    ):
+        _set_warmup(stt="warming")
+        try:
+            _warm_parakeet_session(stt_cfg)
+            _set_warmup(stt="ready")
+        except Exception as exc:
+            _set_warmup(stt="failed")
+            _log.warning("Could not warm Parakeet Realtime EOU STT: %s", exc)
+    else:
+        _set_warmup(stt="skipped")
+
+    # Moonshine bundles an older onnxruntime.dll on Windows. Load Sherpa before
+    # the server accepts Moonshine sessions so both bind to Sherpa's
+    # backward-compatible runtime; otherwise speaker ID terminates the process.
+    try:
+        import sherpa_onnx  # noqa: F401
+
+        from tools.voice_speaker_id import warm_speaker_id
+
+        if warm_speaker_id(cfg):
+            _log.info("Warmed speaker-ID model")
+    except ImportError:
+        pass
+    except Exception as exc:
+        _log.warning("Could not warm speaker ID: %s", exc)
+
+    # Wake word: preload its model so the first arm at startup is instant.
+    _set_warmup(wake="warming")
+    try:
+        from tools.streaming_stt import warm_wake_word
+
+        if warm_wake_word(cfg):
+            _set_warmup(wake="ready")
+            _log.info("Warmed wake-word model")
+        else:
+            _set_warmup(wake="skipped")
+    except Exception as exc:
+        _set_warmup(wake="failed")
+        _log.warning("Could not warm wake word: %s", exc)
+
+    try:
+        from tools.voice_residency import start_idle_watch
+
+        idle_minutes = cfg_get(cfg, "voice", "idle_unload_minutes", default=30)
+        start_idle_watch(float(idle_minutes))
+    except Exception:
+        _log.debug("Could not start voice residency idle watch", exc_info=True)
+
+    _set_warmup(done=True)
+    _log.info("Desktop voice models warmed")
+
+
 def _resolve_restart_drain_timeout() -> float:
     try:
         from hermes_cli.gateway import _get_restart_drain_timeout
@@ -175,11 +570,36 @@ def _resolve_restart_drain_timeout() -> float:
         return DEFAULT_GATEWAY_RESTART_DRAIN_TIMEOUT
 
 
+# Concurrency budget for streaming-STT work (transcribe_audio_stream_ws's
+# Parakeet path, the one-shot /api/audio/transcribe upload path, AND
+# /api/voice/duplex's own STT session -- see _get_audio_transcribe_lock).
+#
+# Was a plain asyncio.Lock() (max 1) HELD FOR THE ENTIRE WS CONNECTION
+# LIFETIME in transcribe_audio_stream_ws, not just the STT-session-spawn
+# step. That over-serializes: a second legitimate streaming-STT connection
+# (e.g. a barge-in listener opened while a main capture session is still
+# open, or a second duplex session) doesn't get a fast, clear rejection --
+# it just hangs on lock.acquire() with no feedback until the first
+# connection closes or the client's own ~120s timeout fires. The real
+# constraint _ParakeetSubprocessSession.begin() is protecting against is
+# concurrent NeMo/CUDA model LOADS thrashing the GPU (see its docstring),
+# not concurrent STEADY-STATE use of already-loaded sessions -- so a small
+# bounded semaphore (2: the warm/reused session + one lightweight overflow
+# session, matching the duplex spec's "mic stays open during TTS playback"
+# barge-in design, which legitimately wants a second STT stream alongside
+# the main one) is the right shape, paired with a bounded acquire timeout
+# (_STREAMING_STT_ACQUIRE_TIMEOUT) so a THIRD+ concurrent attempt fails
+# fast and audibly instead of hanging silently.
+_STREAMING_STT_MAX_CONCURRENT = 2
+_STREAMING_STT_ACQUIRE_TIMEOUT = 8.0  # seconds
+
+
 @asynccontextmanager
 async def _lifespan(app: "FastAPI"):
     app.state.event_channels = {}  # dict[str, set]
     app.state.event_lock = asyncio.Lock()
     app.state.pty_active_session_files = {}  # dict[str, Path]
+    app.state.audio_transcribe_lock = asyncio.Semaphore(_STREAMING_STT_MAX_CONCURRENT)
     # Serializes chat-argv resolution so concurrent /api/pty connections
     # don't trigger overlapping ``npm install`` / ``npm run build`` work.
     # On app.state (not a module global) so the Lock binds to the running
@@ -208,6 +628,12 @@ async def _lifespan(app: "FastAPI"):
             name="desktop-cron-ticker",
         )
         cron_thread.start()
+        if not _VOICE_PREWARMED_BEFORE_LOOP:
+            threading.Thread(
+                target=_warm_desktop_voice_models,
+                daemon=True,
+                name="desktop-voice-warmup",
+            ).start()
 
     # Reap idle/dead keep-alive PTY sessions in the background (30-min TTL).
     pty_reaper_task = asyncio.create_task(run_reaper(PTY_REGISTRY))
@@ -250,6 +676,17 @@ def _get_chat_argv_lock(app: "FastAPI") -> asyncio.Lock:
     except AttributeError:
         app.state.chat_argv_lock = asyncio.Lock()
         return app.state.chat_argv_lock
+
+
+def _get_audio_transcribe_lock(app: "FastAPI") -> "asyncio.Semaphore":
+    """Return the process-wide bounded streaming-STT semaphore."""
+    try:
+        return app.state.audio_transcribe_lock
+    except AttributeError:
+        app.state.audio_transcribe_lock = asyncio.Semaphore(
+            _STREAMING_STT_MAX_CONCURRENT,
+        )
+        return app.state.audio_transcribe_lock
 
 
 def _get_pty_active_session_files(app: "FastAPI") -> dict[str, Path]:
@@ -963,6 +1400,37 @@ _MAX_TRANSCRIPTION_UPLOAD_BYTES = 25 * 1024 * 1024
 def _audio_extension_for_mime(mime_type: str) -> str:
     normalized = (mime_type or "").split(";", 1)[0].strip().lower()
     return _AUDIO_MIME_EXTENSIONS.get(normalized, ".webm")
+
+
+def _float32_samples_from_bytes(chunk: bytes) -> list[float]:
+    if len(chunk) % 4:
+        raise ValueError("Audio frame byte length must be divisible by 4")
+
+    samples = array("f")
+    samples.frombytes(chunk)
+    if sys.byteorder != "little":
+        samples.byteswap()
+
+    return [max(-1.0, min(1.0, float(sample))) for sample in samples]
+
+
+def _write_float32_chunks_as_wav(
+    chunks: list[bytes], path: Path, sample_rate: int = 16000
+) -> None:
+    with wave.open(str(path), "wb") as wav:
+        wav.setnchannels(1)
+        wav.setsampwidth(2)
+        wav.setframerate(sample_rate)
+
+        for chunk in chunks:
+            pcm = array("h")
+            pcm.extend(
+                int(sample * (32767 if sample >= 0 else 32768))
+                for sample in _float32_samples_from_bytes(chunk)
+            )
+            if sys.byteorder != "little":
+                pcm.byteswap()
+            wav.writeframes(pcm.tobytes())
 
 
 class ModelAssignment(BaseModel):
@@ -16060,6 +16528,2827 @@ def _ws_close_reason(text: str) -> str:
 
 
 # ---------------------------------------------------------------------------
+async def _accept_audio_ws(ws: WebSocket, label: str) -> bool:
+    peer = ws.client.host if ws.client else "?"
+    request_reason = _ws_request_reason(ws)
+    if request_reason is not None:
+        _log.warning("%s refused: %s peer=%s", label, request_reason, peer)
+        await ws.close(code=4403, reason=_ws_close_reason(request_reason))
+        return False
+
+    auth_reason, credential = _ws_auth_reason(ws)
+    if auth_reason is not None:
+        _log.warning(
+            "%s refused: %s credential=%s peer=%s", label, auth_reason, credential, peer
+        )
+        await ws.close(code=4401, reason=_ws_close_reason(auth_reason))
+        return False
+
+    await ws.accept()
+    return True
+
+
+@app.websocket("/api/audio/transcribe/stream")
+async def transcribe_audio_stream_ws(ws: WebSocket) -> None:
+    if not await _accept_audio_ws(ws, "audio-transcribe-stream"):
+        return
+
+    cfg = load_config()
+    stt_cfg = (cfg.get("stt") or {}) if isinstance(cfg, dict) else {}
+    streaming_cfg = (
+        (stt_cfg.get("streaming") or {}) if isinstance(stt_cfg, dict) else {}
+    )
+    streaming_provider = (
+        str(streaming_cfg.get("provider") or "").strip().lower()
+        if isinstance(streaming_cfg, dict)
+        else ""
+    )
+    streaming_session = None
+    chunks: list[bytes] = []
+    sample_rate = 16000
+    total_bytes = 0
+    transcribe_lock = _get_audio_transcribe_lock(app)
+    try:
+        await asyncio.wait_for(
+            transcribe_lock.acquire(), timeout=_STREAMING_STT_ACQUIRE_TIMEOUT
+        )
+    except asyncio.TimeoutError:
+        # _STREAMING_STT_MAX_CONCURRENT concurrent streaming-STT sessions are
+        # already active -- fail fast and audibly instead of hanging this
+        # connection open with no feedback (see _STREAMING_STT_MAX_CONCURRENT's
+        # comment). The client sees a clean WS close, not a silent stall.
+        _log.warning(
+            "audio-transcribe-stream refused: streaming-STT concurrency budget "
+            "(max=%d) exhausted for %.0fs",
+            _STREAMING_STT_MAX_CONCURRENT,
+            _STREAMING_STT_ACQUIRE_TIMEOUT,
+        )
+        try:
+            await ws.send_json({
+                "type": "error",
+                "error": "Too many concurrent speech-recognition sessions; try again shortly",
+            })
+        except Exception:
+            pass
+        await ws.close(code=1013)  # 1013 Try Again Later
+        return
+    acquired = True
+
+    try:
+        while True:
+            msg = await ws.receive()
+            msg_type = msg.get("type")
+            if msg_type == "websocket.disconnect":
+                return
+
+            if "bytes" in msg and msg["bytes"] is not None:
+                chunk = msg["bytes"]
+                total_bytes += len(chunk)
+                if total_bytes > _MAX_TRANSCRIPTION_UPLOAD_BYTES:
+                    await ws.send_json({
+                        "type": "error",
+                        "error": "Audio recording is too large",
+                    })
+                    await ws.close(code=1009)
+                    if streaming_session is not None:
+                        await asyncio.to_thread(streaming_session.close)
+                    return
+                if streaming_session is not None:
+                    partial = await asyncio.to_thread(
+                        streaming_session.accept_bytes, chunk
+                    )
+                    if partial:
+                        # eou_prob forwarded for future client-side turn/barge-in tuning
+                        # (duplex phase 1/2); harmless extra field for older clients.
+                        await ws.send_json({
+                            "type": "partial",
+                            "text": partial,
+                            "eou_prob": streaming_session.last_eou_prob,
+                        })
+                    chunks.append(chunk)
+                    continue
+                chunks.append(chunk)
+                continue
+
+            text = msg.get("text")
+            if not text:
+                continue
+            payload = json.loads(text)
+            event_type = payload.get("type")
+            if event_type == "start":
+                sample_rate = int(payload.get("sample_rate") or 16000)
+                if streaming_provider in {"parakeet", "moonshine"}:
+                    if sample_rate != 16000:
+                        await ws.send_json({
+                            "type": "error",
+                            "error": "Local streaming STT requires 16 kHz mic audio",
+                        })
+                        if streaming_session is not None:
+                            await asyncio.to_thread(streaming_session.close)
+                        return
+                    try:
+                        streaming_session = await asyncio.to_thread(
+                            _duplex_stt_session, stt_cfg
+                        )
+                        await asyncio.to_thread(streaming_session.begin)
+                    except Exception as exc:
+                        _log.warning(
+                            "%s streaming STT unavailable; falling back to buffered STT: %s",
+                            streaming_provider,
+                            exc,
+                        )
+                        if streaming_session is not None:
+                            await asyncio.to_thread(streaming_session.close)
+                        streaming_session = None
+                await ws.send_json({"type": "ready"})
+            elif event_type == "turn":
+                # Parakeet reports semantic EOU itself. Moonshine reports a
+                # pause-delimited line completion, which Smart Turn must
+                # classify before it becomes a conversational end-of-turn.
+                if streaming_session is not None and streaming_provider == "parakeet":
+                    complete = streaming_session.last_eou
+                else:
+                    from tools.semantic_turn import pipecat_smart_turn_complete
+
+                    segment_complete = True
+                    if streaming_session is not None:
+                        consume = getattr(streaming_session, "consume_eou", None)
+                        segment_complete = (
+                            consume()
+                            if callable(consume)
+                            else streaming_session.last_eou
+                        )
+                    if (
+                        segment_complete
+                        and (cfg.get("voice") or {}).get("semantic_turn", True)
+                        is not False
+                    ):
+                        complete = await asyncio.to_thread(
+                            pipecat_smart_turn_complete, chunks, sample_rate
+                        )
+                        if complete is None:
+                            complete = True
+                    else:
+                        complete = segment_complete
+                await ws.send_json({"type": "turn", "complete": complete})
+            elif event_type == "stop":
+                break
+
+        if streaming_session is not None:
+            text = await asyncio.to_thread(streaming_session.finish)
+            await ws.send_json({"type": "final", "text": text})
+            if streaming_provider == "parakeet":
+                await asyncio.to_thread(
+                    _return_warm_parakeet_session, streaming_session, stt_cfg
+                )
+            else:
+                await asyncio.to_thread(streaming_session.close)
+            return
+
+        if not chunks:
+            await ws.send_json({"type": "final", "text": ""})
+            return
+
+        temp_path = ""
+        try:
+            with tempfile.NamedTemporaryFile(
+                prefix="hermes-desktop-stream-", suffix=".wav", delete=False
+            ) as tmp:
+                temp_path = tmp.name
+            await asyncio.to_thread(
+                _write_float32_chunks_as_wav, chunks, Path(temp_path), sample_rate
+            )
+
+            from tools.transcription_tools import transcribe_audio
+
+            result = await asyncio.to_thread(transcribe_audio, temp_path)
+            if not result.get("success"):
+                await ws.send_json({
+                    "type": "error",
+                    "error": result.get("error") or "Transcription failed",
+                })
+                return
+            await ws.send_json({
+                "type": "final",
+                "text": str(result.get("transcript") or "").strip(),
+            })
+        finally:
+            if temp_path:
+                try:
+                    os.unlink(temp_path)
+                except OSError:
+                    pass
+    except WebSocketDisconnect:
+        if streaming_session is not None:
+            await asyncio.to_thread(streaming_session.close)
+        return
+    except Exception as exc:
+        if streaming_session is not None:
+            await asyncio.to_thread(streaming_session.close)
+        _log.exception("Desktop streaming transcription failed")
+        try:
+            await ws.send_json({
+                "type": "error",
+                "error": f"Streaming transcription failed: {exc}",
+            })
+        except Exception:
+            pass
+    finally:
+        transcribe_lock.release()
+
+
+@app.websocket("/api/audio/wake-word/stream")
+async def wake_word_stream_ws(ws: WebSocket) -> None:
+    if not await _accept_audio_ws(ws, "wake-word-stream"):
+        return
+
+    spotter = None
+    sample_rate = 16000
+
+    try:
+        while True:
+            msg = await ws.receive()
+            msg_type = msg.get("type")
+            if msg_type == "websocket.disconnect":
+                break
+
+            text = msg.get("text")
+            if text:
+                payload = json.loads(text)
+                event_type = payload.get("type")
+                if event_type == "start":
+                    sample_rate = int(payload.get("sample_rate") or 16000)
+                    from tools.streaming_stt import (
+                        WakeWordFactory,
+                        take_warm_wake_word_spotter,
+                    )
+
+                    cfg = load_config()
+                    spotter = await asyncio.to_thread(take_warm_wake_word_spotter, cfg)
+                    if spotter is None:
+                        spotter = await asyncio.to_thread(WakeWordFactory().create, cfg)
+                    await asyncio.to_thread(spotter.start, sample_rate)
+                    await ws.send_json({"type": "ready"})
+                elif event_type == "stop":
+                    break
+                continue
+
+            chunk = msg.get("bytes")
+            if chunk is None or spotter is None:
+                continue
+
+            phrase = await asyncio.to_thread(
+                spotter.accept_waveform, _float32_samples_from_bytes(chunk)
+            )
+            if phrase:
+                try:
+                    from tools.voice_residency import note_voice_activity
+
+                    note_voice_activity()
+                except Exception:
+                    pass
+                await ws.send_json({"type": "detected", "phrase": phrase})
+    except WebSocketDisconnect:
+        return
+    except Exception as exc:
+        _log.exception("Desktop wake-word stream failed")
+        try:
+            await ws.send_json({
+                "type": "error",
+                "error": f"Wake-word detection failed: {exc}",
+            })
+        except Exception:
+            pass
+    finally:
+        if spotter is not None:
+            try:
+                await asyncio.to_thread(spotter.stop)
+            except Exception:
+                pass
+
+
+# ---------------------------------------------------------------------------
+# /api/voice/duplex — Marvi duplex voice: instant lane + escalation router.
+#
+# Protocol pinned in
+# docs/superpowers/specs/2026-07-10-marvi-duplex-voice-splitbrain-design.md
+# (shared contract with the desktop client workstream — event names/shapes
+# below must not drift from that doc).
+#
+# Reuses, rather than reinvents:
+#   - The Parakeet streaming-session pattern (partials + EOU) from
+#     ``transcribe_audio_stream_ws`` above (_ParakeetSubprocessSession,
+#     the warm-session pool).
+#   - The streaming TTS generator ``tools.tts_tool.stream_text_to_speech_chunks``
+#     (same one ``/api/audio/speak/stream`` drives).
+#   - ``tools.vad.SpeechGate`` for barge-in detection during the TTS window.
+#   - ``run_agent.AIAgent`` itself (via ``_duplex_run_deep_task``) for the
+#     escalated deep task — full real system-prompt building (persona, tool
+#     definitions, context files, memory), the same "child gets a real agent"
+#     shape ``tools/delegate_tool.py`` uses for subagents. No hand-rolled
+#     prompt, no new agent runner.
+# ---------------------------------------------------------------------------
+
+_DUPLEX_ROLLING_TURNS = 20
+_DUPLEX_BARGE_IN_STREAK_MS = 320.0
+_DUPLEX_SMART_TURN_COMMIT_DELAY_MS = 1200
+_DUPLEX_SMART_TURN_VAD_FALLBACK_MS = 1500
+_DUPLEX_TURN_VAD_HARD_STOP_MS = 2800
+_DUPLEX_BARGE_CANDIDATE_TIMEOUT_MS = 1800
+_DUPLEX_UTTERANCE_AUDIO_CAP_CHUNKS = 1000
+# Confirm-NEGATIVE barge-in (spec §3, 2026-07-15 fail-open round -- replaces
+# the old positive-owner-confirmation gate, _barge_owner_gate_blocks, which
+# required a POSITIVE owner match before ANY barge could fire and so
+# suppressed real interruptions almost always (live logs: barge-in candidate
+# audio scored 0.34-0.40 against the 0.45 owner threshold, i.e. legitimate
+# barge-in, and was blocked essentially every time). A VAD+text-confirmed
+# candidate now barges IMMEDIATELY unless its buffered audio confidently
+# matches a NEGATIVE reference -- Marvi's own TTS voice (self-echo) or a
+# CONFIDENT_OTHER speaker while the competing-voice flag is armed. Anything
+# uncertain barges. Still buffers up to ~700ms of candidate audio (unchanged
+# -- other machinery reads it), but the negative screen itself only needs
+# ~300ms to run, so it no longer delays the common (real interruption) case.
+# Only enforced when tools.voice_speaker_id.focus_mode_active() is True
+# (owner enrolled + model available + focus_mode != "off"); otherwise
+# unchanged VAD-only behavior, exactly as before this feature existed.
+_DUPLEX_BARGE_CONFIRM_WINDOW_MS = 700.0
+_DUPLEX_BARGE_CONFIRM_WINDOW_BYTES = int(16000 * 2 * (_DUPLEX_BARGE_CONFIRM_WINDOW_MS / 1000.0))
+_DUPLEX_BARGE_NEGATIVE_SCREEN_MIN_MS = 300.0
+_DUPLEX_BARGE_NEGATIVE_SCREEN_MIN_BYTES = int(16000 * 2 * (_DUPLEX_BARGE_NEGATIVE_SCREEN_MIN_MS / 1000.0))
+# Self-adaptation (spec Part 1.4): a direct-score OWNER-zone utterance with
+# at least this much clean audio appends its embedding to the owner's
+# adaptive ring -- short utterances are noisier speaker-embedding material,
+# so they're excluded from ever entering the ring.
+_DUPLEX_ADAPTIVE_MIN_AUDIO_MS = 3000.0
+# TTS self-enrollment (spec Part 1.3): short, distinct phrases synthesized
+# through Marvi's OWN configured TTS voice and embedded once (then cached,
+# refreshed only when the tts.* config block changes -- see
+# _duplex_tts_fingerprint) so barge-in's negative screen can recognize "this
+# is Marvi's own voice playing back" without needing a positive owner match.
+_DUPLEX_TTS_SELF_ENROLL_PHRASES = (
+    "Hi, I'm here and I'm listening.",
+    "Sure, let me help you with that.",
+    "One moment, I'm thinking it through.",
+)
+# Fallback only -- used when a tts_chunk stream never reports its own
+# sample_rate (shouldn't happen with tools.tts_tool.stream_text_to_speech_chunks,
+# which always yields a "start" event carrying one; kept as a safety net so
+# tts_start always carries a sample_rate field even if a future TTS backend
+# forgets to). Matches PocketTTS's own fallback default (tools/tts_tool.py)
+# and the desktop GaplessPlayer's prior hardcoded assumption.
+_DUPLEX_DEFAULT_TTS_SAMPLE_RATE = 24000
+_DUPLEX_DEEP_CUE_INTERVAL_SECONDS = 15.0
+# Sentinel telling _pump_deep_tasks to stop -- distinct from None, which
+# _get_deep_task_item also returns on a plain poll timeout (no item yet).
+_DUPLEX_DEEP_TASK_STOP = object()
+
+
+def _duplex_meaningful_barge_text(text: str, assistant_text: str = "") -> bool:
+    """Return whether an STT partial is strong enough to interrupt playback.
+
+    TEN VAD intentionally only answers "voice-like sound"; coughs, keyboard
+    transients, and fillers can all cross that boundary.  Barge-in therefore
+    requires lexical evidence too.  Short control words are accepted
+    immediately; ordinary speech needs two non-filler tokens.  A partial that
+    is simply the currently-playing assistant text is treated as acoustic echo.
+    """
+    normalized = " ".join(re.findall(r"[a-z0-9']+", (text or "").lower()))
+    if not normalized:
+        return False
+    assistant_normalized = " ".join(
+        re.findall(r"[a-z0-9']+", (assistant_text or "").lower())
+    )
+    if (
+        assistant_normalized
+        and len(normalized) >= 4
+        and normalized in assistant_normalized
+    ):
+        return False
+    fillers = {
+        "ah",
+        "ahem",
+        "er",
+        "erm",
+        "hm",
+        "hmm",
+        "mhm",
+        "mm",
+        "uh",
+        "uhh",
+        "um",
+        "umm",
+        "cough",
+        "coughing",
+        "sneeze",
+        "sneezing",
+        "breath",
+        "breathing",
+        "noise",
+    }
+    words = [word for word in normalized.split() if word not in fillers]
+    if not words:
+        return False
+    controls = {
+        "actually",
+        "cancel",
+        "enough",
+        "hey",
+        "hold",
+        "marvi",
+        "no",
+        "pause",
+        "quiet",
+        "stop",
+        "wait",
+        "what",
+    }
+    return words[0] in controls or len(words) >= 2
+
+
+_DUPLEX_ACTIVITY_CUES = {
+    "web": "Let me search for that.",
+    "file": "Wait a second, let me read that.",
+    "memory": "I'll remember that.",
+    "session": "Let me look through our past conversations.",
+    "thinking": "Let me think about that.",
+    "delegation": "The sub-agent is working on it.",
+}
+
+# ---------------------------------------------------------------------------
+# [VOICE-PERF] structured, grep-friendly timing lines -- mirrors
+# gateway/memory_monitor.py's single-line "[TAG] key=value ..." style
+# (see that module's docstring). Logged via the normal ``_log`` logger (so
+# it lands in agent.log/errors.log routing like any other record) AND
+# appended to a dedicated ~/.hermes/logs/voice-perf.log so a slow turn is
+# diagnosable with one grep, without wading through unrelated log noise.
+# One line per turn (_log_voice_perf_turn) and one line per session open
+# with warm-up timings (_log_voice_perf_session_open).
+# ---------------------------------------------------------------------------
+
+_VOICE_PERF_FILE_LOCK = threading.Lock()
+
+
+def _voice_perf_log_path() -> Path:
+    return get_hermes_home() / "logs" / "voice-perf.log"
+
+
+def _append_voice_perf_line(line: str) -> None:
+    """Best-effort append to the dedicated voice-perf.log.
+
+    Never raises -- a logging hiccup must not take down a live voice turn.
+    Uses a plain locked append rather than the shared rotating-handler/queue
+    machinery in hermes_logging.py: this file is small, append-only, and
+    purely a diagnostic convenience seam, not part of the main log-routing
+    contract.
+    """
+    try:
+        path = _voice_perf_log_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+        with _VOICE_PERF_FILE_LOCK:
+            with path.open("a", encoding="utf-8") as f:
+                f.write(f"{ts} {line}\n")
+    except Exception:
+        _log.debug("Voice duplex: failed to append to voice-perf.log", exc_info=True)
+
+
+def _fmt_ms(value: Optional[float]) -> str:
+    """Render a millisecond timing for a [VOICE-PERF] line: an int-rounded
+    value, or ``"-"`` when unavailable -- keeps every line the same shape
+    for easy ``awk`` field-splitting even when a stage was skipped/unknown."""
+    return "-" if value is None else str(int(round(value)))
+
+
+def _log_voice_perf_turn(
+    *,
+    session_id: str,
+    utterance_id: str,
+    eou_to_instant_start_ms: Optional[float],
+    instant_first_delta_ms: Optional[float],
+    first_delta_to_first_tts_chunk_ms: Optional[float],
+    total_first_audio_ms: Optional[float],
+    agent_warm_hit: Optional[bool],
+    agent_warm_construct_ms: Optional[float],
+    deferred_context_status: str,
+    deferred_context_load_ms: Optional[float],
+    tts_max_gap_ms: Optional[float],
+    escalated: bool,
+) -> None:
+    """One line per finalized voice-duplex turn -- see this module's
+    [VOICE-PERF] header comment. Field order matches the latency pipeline
+    end-to-end (EOU -> instant lane -> first TTS audio) so a slow turn's
+    bottleneck is visible by eyeballing which field is large, without any
+    further correlation across log lines.
+    """
+    agent_warm = (
+        "unknown" if agent_warm_hit is None else ("hit" if agent_warm_hit else "miss")
+    )
+    line = (
+        "[VOICE-PERF] turn session_id=%s utterance_id=%s "
+        "eou_to_instant_start_ms=%s instant_first_delta_ms=%s "
+        "first_delta_to_first_tts_chunk_ms=%s total_first_audio_ms=%s "
+        "agent_warm=%s agent_warm_construct_ms=%s "
+        "deferred_context=%s deferred_context_load_ms=%s "
+        "tts_max_gap_ms=%s escalated=%s"
+    ) % (
+        session_id,
+        utterance_id,
+        _fmt_ms(eou_to_instant_start_ms),
+        _fmt_ms(instant_first_delta_ms),
+        _fmt_ms(first_delta_to_first_tts_chunk_ms),
+        _fmt_ms(total_first_audio_ms),
+        agent_warm,
+        _fmt_ms(agent_warm_construct_ms),
+        deferred_context_status,
+        _fmt_ms(deferred_context_load_ms),
+        _fmt_ms(tts_max_gap_ms),
+        "true" if escalated else "false",
+    )
+    _log.info(line)
+    _append_voice_perf_line(line)
+
+
+def _log_voice_perf_session_open(
+    *, session_id: str, warmup: Dict[str, Any], stt_ready: bool
+) -> None:
+    """One line per duplex session open, once instant-lane warm-up (see
+    ``_DuplexSession._start_instant_lane_warmup``) finishes -- reports
+    whether it succeeded and how long agent construction took, so a session
+    whose FIRST turn is still slow is distinguishable from "warm-up never
+    got a chance to finish" vs. "warm-up itself failed"."""
+    line = (
+        "[VOICE-PERF] session_open session_id=%s agent_warm_ok=%s "
+        "agent_warm_construct_ms=%s provider=%s model=%s stt_ready=%s"
+    ) % (
+        session_id,
+        "true" if warmup.get("ok") else "false",
+        _fmt_ms(warmup.get("construct_ms")),
+        warmup.get("provider") or "-",
+        warmup.get("model") or "-",
+        "true" if stt_ready else "false",
+    )
+    _log.info(line)
+    _append_voice_perf_line(line)
+
+
+_SENTENCE_END_CHARS = ".!?\n"
+
+
+def _split_ready_sentences(buffer: str) -> tuple[list[str], str]:
+    """Pop complete sentence-ish segments off ``buffer``; return (segments, remainder).
+
+    Flushes everything up to and including the LAST sentence-ending
+    character seen so far, leaving any trailing partial sentence buffered
+    for the next call. Pure and dependency-free so it's trivially unit
+    tested without a TTS provider.
+    """
+    idx = -1
+    for i, ch in enumerate(buffer):
+        if ch in _SENTENCE_END_CHARS:
+            idx = i
+    if idx < 0:
+        return [], buffer
+    ready = buffer[: idx + 1].strip()
+    rest = buffer[idx + 1:]
+    return ([ready] if ready else []), rest
+
+
+def _duplex_pcm16_to_float32(chunk: bytes) -> list[float]:
+    """Decode 16 kHz mono PCM16 bytes to float32 samples in [-1, 1] for
+    ``tools.vad.SpeechGate.accept`` (which expects float samples, unlike the
+    raw bytes ``_ParakeetSubprocessSession.accept_bytes`` and
+    ``tools.voice_speaker_id.identify`` take directly)."""
+    if len(chunk) % 2:
+        chunk = chunk[: len(chunk) - 1]
+    pcm = array("h")
+    pcm.frombytes(chunk)
+    if sys.byteorder != "little":
+        pcm.byteswap()
+    return [max(-1.0, min(1.0, sample / 32768.0)) for sample in pcm]
+
+
+def _duplex_pcm16_to_float32_bytes(chunk: bytes) -> bytes:
+    """Convert renderer PCM16 frames to the Float32 byte protocol used by
+    streaming STT helpers."""
+    samples = array("f", _duplex_pcm16_to_float32(chunk))
+    if sys.byteorder != "little":
+        samples.byteswap()
+    return samples.tobytes()
+
+
+class _InstantLaneUnavailable(RuntimeError):
+    """Raised when the instant-lane model can't be reached at all (as opposed
+    to failing mid-reply, which is treated as a partial answer)."""
+
+
+def _duplex_stt_session(stt_cfg: dict[str, Any]):
+    """Acquire the configured local streaming STT session.
+
+    Thin seam: tests monkeypatch this instead of spawning the real
+    subprocess helper.
+    """
+    streaming = stt_cfg.get("streaming", {}) if isinstance(stt_cfg, dict) else {}
+    provider = str(streaming.get("provider") or "parakeet").strip().lower()
+    if provider == "moonshine":
+        from tools.moonshine_streaming_stt import MoonshineStreamingSession
+
+        return MoonshineStreamingSession(stt_cfg)
+    session = _take_warm_parakeet_session(stt_cfg)
+    if session is None:
+        session = _ParakeetSubprocessSession(stt_cfg)
+    return session
+
+
+def _streaming_stt_provider(stt_cfg: dict[str, Any]) -> str:
+    streaming = stt_cfg.get("streaming", {}) if isinstance(stt_cfg, dict) else {}
+    return str(streaming.get("provider") or "parakeet").strip().lower()
+
+
+def _duplex_identify_speaker(pcm16_bytes: bytes) -> Tuple[str, float, Optional[str]]:
+    from tools.voice_speaker_id import identify_details
+
+    return identify_details(pcm16_bytes)
+
+
+def _duplex_focus_mode_active(cfg: Dict[str, Any]) -> bool:
+    """Seam: tests monkeypatch this instead of touching the real speaker
+    store/model. See ``tools.voice_speaker_id.focus_mode_active`` -- true
+    only when ``voice.speaker_id.focus_mode`` isn't "off" AND an owner is
+    enrolled AND the embedding model can be loaded; False (never
+    filter/gate) otherwise, including on a bare install with nothing
+    enrolled yet."""
+    from tools.voice_speaker_id import focus_mode_active
+
+    return focus_mode_active(cfg)
+
+
+def _duplex_identify_speaker_zoned(pcm16_bytes: bytes, cfg: Dict[str, Any]) -> Dict[str, Any]:
+    """Seam: tests monkeypatch this instead of touching the real speaker
+    store/model. See ``tools.voice_speaker_id.identify_zoned`` -- the
+    fail-open three-zone (OWNER/CONFIDENT_OTHER/ABSTAIN) resolution behind
+    both utterance-focus filtering and barge-in's negative screen."""
+    from tools.voice_speaker_id import identify_zoned
+
+    return identify_zoned(pcm16_bytes, cfg=cfg)
+
+
+def _duplex_tts_echo_score(pcm16_bytes: bytes, cfg: Dict[str, Any]) -> float:
+    """Seam: cosine similarity of ``pcm16_bytes`` against the cached
+    ``__marvi_tts__`` self-voice profile (spec Part 1.3)."""
+    from tools.voice_speaker_id import compute_embedding, tts_echo_score
+
+    embedding = compute_embedding(pcm16_bytes, cfg=cfg)
+    if embedding is None:
+        return -1.0
+    return tts_echo_score(embedding)
+
+
+def _duplex_append_adaptive_embedding(embedding: List[float]) -> None:
+    """Seam: tests monkeypatch this instead of touching the real speaker
+    store. See ``tools.voice_speaker_id.append_adaptive_embedding`` (spec
+    Part 1.4 self-adaptation)."""
+    from tools.voice_speaker_id import append_adaptive_embedding
+
+    append_adaptive_embedding(embedding)
+
+
+def _duplex_owner_threshold(cfg: Dict[str, Any]) -> float:
+    from tools.voice_speaker_id import owner_threshold
+
+    return owner_threshold(cfg)
+
+
+def _duplex_competing_window_seconds(cfg: Dict[str, Any]) -> float:
+    from tools.voice_speaker_id import competing_window_seconds
+
+    return competing_window_seconds(cfg)
+
+
+def _duplex_continuity_seconds(cfg: Dict[str, Any]) -> float:
+    from tools.voice_speaker_id import continuity_seconds
+
+    return continuity_seconds(cfg)
+
+
+def _duplex_tts_fingerprint(cfg: Dict[str, Any]) -> str:
+    """Coarse fingerprint of the current ``tts.*`` config block -- any
+    change re-triggers TTS self-enrollment (spec Part 1.3). Deliberately
+    whole-block rather than picking apart per-provider voice keys: cheap,
+    and a false-positive refresh (re-synthesizing on an unrelated tts.*
+    change) costs a few seconds once, while a false negative (a stale
+    profile silently mismatching the real TTS voice) would quietly break
+    echo suppression."""
+    try:
+        return json.dumps((cfg or {}).get("tts") or {}, sort_keys=True, default=str)
+    except Exception:
+        return ""
+
+
+def _duplex_resample_pcm16(pcm_bytes: bytes, src_rate: int, dst_rate: int = 16000) -> bytes:
+    """Linear-interpolation PCM16 resample -- good enough for TTS
+    self-enrollment (matching Marvi's own synthesized voice against itself,
+    not identifying a human), avoiding a real DSP dependency for this one
+    narrow use."""
+    if not pcm_bytes or src_rate == dst_rate:
+        return pcm_bytes
+    try:
+        import numpy as np
+
+        usable = pcm_bytes[: len(pcm_bytes) - (len(pcm_bytes) % 2)]
+        samples = np.frombuffer(usable, dtype="<i2")
+        if samples.size == 0:
+            return b""
+        n_dst = max(1, int(round(samples.size * dst_rate / src_rate)))
+        src_x = np.linspace(0, samples.size - 1, num=samples.size)
+        dst_x = np.linspace(0, samples.size - 1, num=n_dst)
+        resampled = np.interp(dst_x, src_x, samples.astype(np.float64))
+        return resampled.astype("<i2").tobytes()
+    except Exception:
+        _log.debug("Voice duplex: PCM resample failed", exc_info=True)
+        return b""
+
+
+def _duplex_synthesize_tts_pcm16_16k(text: str) -> bytes:
+    """Synthesize ``text`` through the configured TTS backend and return
+    16 kHz mono PCM16 bytes, resampling from whatever rate the backend
+    actually reports. Best-effort: returns ``b""`` on any failure."""
+    try:
+        pcm_chunks: List[bytes] = []
+        src_rate = _DUPLEX_DEFAULT_TTS_SAMPLE_RATE
+        for event in _duplex_stream_tts_chunks(text):
+            event_type = event.get("type")
+            if event_type in ("start", "sample_rate"):
+                src_rate = int(event.get("sample_rate") or src_rate)
+            elif event_type == "chunk":
+                try:
+                    pcm_chunks.append(base64.b64decode(event.get("audio") or ""))
+                except (binascii.Error, ValueError):
+                    continue
+        raw = b"".join(pcm_chunks)
+        if not raw:
+            return b""
+        return _duplex_resample_pcm16(raw, src_rate, 16000)
+    except Exception:
+        _log.debug("Voice duplex: TTS self-enrollment synthesis failed", exc_info=True)
+        return b""
+
+
+def _duplex_ensure_tts_self_enrollment(cfg: Dict[str, Any]) -> None:
+    """Lazily (re-)synthesize + enroll Marvi's own TTS voice as the reserved
+    ``__marvi_tts__`` negative-match profile (spec Part 1.3). Cheap
+    fingerprint check first -- only actually re-synthesizes when the tts.*
+    config block changed since the cached profile, or nothing is cached yet.
+    Never raises: this is best-effort infrastructure, not a user-facing
+    action -- a failure here just means the barge-in negative screen falls
+    back to "uncertain -> barge" for the echo-suppression half of the check.
+    """
+    try:
+        from tools.voice_speaker_id import (
+            compute_embedding,
+            store_tts_profile,
+            stored_tts_fingerprint,
+        )
+
+        fingerprint = _duplex_tts_fingerprint(cfg)
+        if fingerprint and stored_tts_fingerprint() == fingerprint:
+            return
+
+        embeddings: List[List[float]] = []
+        for phrase in _DUPLEX_TTS_SELF_ENROLL_PHRASES:
+            pcm16 = _duplex_synthesize_tts_pcm16_16k(phrase)
+            if not pcm16:
+                continue
+            embedding = compute_embedding(pcm16, cfg=cfg)
+            if embedding:
+                embeddings.append(embedding)
+
+        if embeddings:
+            store_tts_profile(embeddings, fingerprint=fingerprint)
+            _log.info(
+                "Voice duplex TTS self-enrollment refreshed samples=%d", len(embeddings)
+            )
+        else:
+            _log.debug("Voice duplex TTS self-enrollment produced no usable samples")
+    except Exception:
+        _log.debug("Voice duplex TTS self-enrollment failed", exc_info=True)
+
+
+def _log_voice_id(
+    *,
+    session_id: str,
+    context: str,
+    zone: str,
+    label: str,
+    score: float,
+    audio_ms: int,
+    resolved_by: str,
+    ignored: bool,
+    extra: str = "",
+) -> None:
+    """Single grep-friendly ``[VOICE-ID]`` line per voice-focus decision
+    (spec Part 1.5) -- one line whether the decision was made at utterance
+    finalize (``context="utterance"``) or during barge-in's negative screen
+    (``context="barge"``), with the same field set both times so a week of
+    logs is `grep '\\[VOICE-ID\\]'`-able into a single table for tuning
+    thresholds/windows without cross-referencing anything else.
+    """
+    line = (
+        "[VOICE-ID] context=%s session_id=%s zone=%s label=%s score=%.4f "
+        "audio_ms=%d resolved_by=%s ignored=%s%s"
+    ) % (
+        context,
+        session_id,
+        zone,
+        label,
+        score,
+        audio_ms,
+        resolved_by,
+        "true" if ignored else "false",
+        (" " + extra) if extra else "",
+    )
+    _log.info(line)
+
+
+def _duplex_warm_instant_lane(transcript, cfg) -> Dict[str, Any]:
+    """Seam: tests monkeypatch this instead of constructing a real AIAgent.
+    See ``_DuplexSession._start_instant_lane_warmup``."""
+    from tools.voice_instant_lane import warm_instant_lane
+
+    return warm_instant_lane(transcript, cfg)
+
+
+def _duplex_stream_instant_reply(
+    transcript,
+    utterance: str,
+    *,
+    allow_escalation: bool,
+    activity_callback=None,
+    warm_status_callback=None,
+):
+    from tools.voice_instant_lane import stream_instant_reply
+
+    return stream_instant_reply(
+        transcript,
+        utterance,
+        allow_escalation=allow_escalation,
+        activity_callback=activity_callback,
+        warm_status_callback=warm_status_callback,
+    )
+
+
+def _duplex_stream_tts_chunks(text: str):
+    from tools.tts_tool import stream_text_to_speech_chunks
+
+    return stream_text_to_speech_chunks(text)
+
+
+def _duplex_make_vad_gate():
+    from tools.vad import make_speech_gate
+
+    return make_speech_gate()
+
+
+class _VoiceSpeakerEnrollBody(BaseModel):
+    name: str
+    audio: List[str]
+
+
+@app.get("/api/voice/speakers")
+def voice_speakers_list():
+    from tools.voice_speaker_id import list_speakers
+
+    return {"speakers": list_speakers(cfg=load_config())}
+
+
+@app.get("/api/voice/instant/status")
+def voice_instant_status():
+    """Resolved instant-lane provider/model, for the settings panel's
+    "currently using" line (spec Part 2 fix: a silent fallback -- e.g. the
+    Apply button not persisting, or a configured reasoning model getting
+    swapped out under is_instant_capable -- must never be invisible again).
+
+    Never raises: reports ``resolved: false`` with the raise's message
+    instead of a 500, since this is a read-only status probe the panel
+    polls, not an action.
+    """
+    from tools.voice_instant_lane import InstantLaneUnavailable, resolve_instant_runtime
+
+    cfg = load_config()
+    configured_provider = str(
+        cfg_get(cfg, "auxiliary", "voice_instant", "provider", default="") or ""
+    ).strip()
+    configured_model = str(
+        cfg_get(cfg, "auxiliary", "voice_instant", "model", default="") or ""
+    ).strip()
+    try:
+        runtime = resolve_instant_runtime(cfg)
+        resolved_provider = runtime.get("provider") or ""
+        resolved_model = runtime.get("model") or ""
+        return {
+            "resolved": True,
+            "provider": resolved_provider,
+            "model": resolved_model,
+            "configured_provider": configured_provider,
+            "configured_model": configured_model,
+            "is_fallback": (
+                bool(configured_provider and configured_model)
+                and (
+                    configured_provider.lower() != (resolved_provider or "").lower()
+                    or configured_model != resolved_model
+                )
+            ),
+        }
+    except InstantLaneUnavailable as exc:
+        return {
+            "resolved": False,
+            "error": str(exc),
+            "configured_provider": configured_provider,
+            "configured_model": configured_model,
+        }
+    except Exception as exc:
+        _log.warning("GET /api/voice/instant/status: resolution failed: %s", exc)
+        return {
+            "resolved": False,
+            "error": "instant-lane status unavailable",
+            "configured_provider": configured_provider,
+            "configured_model": configured_model,
+        }
+
+
+@app.post("/api/voice/speakers")
+def voice_speakers_enroll(body: _VoiceSpeakerEnrollBody):
+    from tools.voice_speaker_id import SpeakerIdUnavailable, enroll, list_speakers
+
+    name = body.name.strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="speaker name is required")
+    try:
+        pcm = b"".join(base64.b64decode(chunk, validate=True) for chunk in body.audio)
+    except (binascii.Error, ValueError) as exc:
+        raise HTTPException(status_code=400, detail="invalid speaker audio") from exc
+    if not pcm or len(pcm) > 16 * 1024 * 1024:
+        raise HTTPException(
+            status_code=400, detail="speaker audio must be between 1 byte and 16 MB"
+        )
+    try:
+        enroll(name, pcm)
+    except SpeakerIdUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    return {"speakers": list_speakers()}
+
+
+@app.delete("/api/voice/speakers/{name}")
+def voice_speakers_remove(name: str):
+    from tools.voice_speaker_id import list_speakers, remove_speaker
+
+    if not remove_speaker(name):
+        raise HTTPException(status_code=404, detail="speaker not found")
+    return {"speakers": list_speakers()}
+
+
+# Owner-gated background worker. This is the delegated sub-agent itself; it
+# gets execution tools so a work request can be completed and verified rather
+# than merely analyzed. It cannot recursively delegate or ask unattended
+# clarification questions.
+_DUPLEX_DEEP_TASK_TOOLSETS = [
+    "file",
+    "search",
+    "web",
+    "memory",
+    "terminal",
+    "code_execution",
+]
+
+
+def _duplex_run_deep_task(
+    transcript_messages: List[Dict[str, str]],
+    task_text: str,
+    *,
+    mode: str = "thinking",
+    activity_callback=None,
+) -> str:
+    """Run the escalated ask on a REAL tool-armed agent turn.
+
+    Deliberately NOT the desktop chat WS's machinery: that runs through
+    ``/api/pty`` spawning a full ``hermes`` CLI subprocess (see
+    ``hermes_cli/web_server.py``'s ``pty_ws``) or the ``tui_gateway`` JSON-RPC
+    session dispatcher (``/api/ws``) — both built around an interactive
+    client attached to a live session, neither a fit for a one-shot
+    background turn. Also deliberately NOT a hand-rolled "you are an
+    assistant" prompt — that's exactly the hallucination risk full system-
+    prompt building avoids.
+
+    Instead this constructs a fresh :class:`run_agent.AIAgent` pinned to the
+    user's configured MAIN runtime and builds its full real system prompt
+    (persona, tool definitions, context files, memory) exactly like an
+    ordinary top-level ``hermes`` conversation — the same "child gets a real
+    agent" shape ``tools/delegate_tool.py`` uses to spawn subagents (goal +
+    context -> ephemeral history, restricted toolset), adapted here for a
+    standalone turn since there's no live parent ``AIAgent`` in this process
+    to inherit runtime/toolsets from.
+
+    ``transcript_messages`` (the duplex session's rolling transcript) is
+    threaded in as ``conversation_history`` so the deep turn has the voice
+    conversation as context. Blocks the calling thread until the turn
+    completes; callers run this on a background thread.
+    """
+    from run_agent import AIAgent
+
+    cfg = load_config()
+    model_cfg = cfg.get("model") if isinstance(cfg, dict) else {}
+    model_cfg = model_cfg if isinstance(model_cfg, dict) else {"default": model_cfg}
+
+    history = [
+        dict(m) for m in transcript_messages if isinstance(m, dict) and m.get("content")
+    ]
+
+    worker_prompt = (
+        "You are Marvi's background voice worker. Complete the requested work now, use tools as needed, "
+        "and verify the result before reporting success. Your final response will be spoken aloud: summarize "
+        "what you did, whether verification passed, and any remaining problem in a few conversational sentences. "
+        "Do not return a plan or progress update as the final answer."
+        if mode == "delegating"
+        else "You are Marvi's background reasoning lane. Research or reason through the request fully, verify factual "
+        "claims with tools when needed, and return a concise conversational answer that can be spoken aloud."
+    )
+
+    def _activity(tool_name: str) -> Tuple[str, str]:
+        if tool_name in {"web_search", "web_extract"}:
+            return "web", "Researching on the web"
+        if tool_name in {"read_file", "search_files"}:
+            return "file", "Reviewing files"
+        if tool_name == "session_search":
+            return "session", "Searching past conversations"
+        if tool_name == "memory":
+            return "memory", "Updating memory"
+        if tool_name in {"terminal", "process", "execute_code"}:
+            return "delegation", "Sub-agent is working"
+        return (
+            ("delegation", "Sub-agent is working")
+            if mode == "delegating"
+            else ("thinking", "Thinking deeper")
+        )
+
+    def _tool_start(_call_id, tool_name, _args):
+        if activity_callback:
+            kind, label = _activity(tool_name)
+            activity_callback({
+                "status": "started",
+                "kind": kind,
+                "label": label,
+                "tool": tool_name,
+            })
+
+    def _tool_complete(_call_id, tool_name, _args, _result):
+        if activity_callback:
+            kind, label = _activity(tool_name)
+            activity_callback({
+                "status": "completed",
+                "kind": kind,
+                "label": label,
+                "tool": tool_name,
+            })
+
+    agent = AIAgent(
+        model=str(
+            model_cfg.get("default")
+            or model_cfg.get("model")
+            or model_cfg.get("name")
+            or ""
+        ).strip(),
+        provider=str(model_cfg.get("provider") or "").strip() or None,
+        base_url=str(model_cfg.get("base_url") or "").strip() or None,
+        api_mode=str(model_cfg.get("api_mode") or "").strip() or None,
+        quiet_mode=True,
+        verbose_logging=False,
+        enabled_toolsets=_DUPLEX_DEEP_TASK_TOOLSETS,
+        ephemeral_system_prompt=worker_prompt,
+        tool_start_callback=_tool_start,
+        tool_complete_callback=_tool_complete,
+        platform="voice-subagent" if mode == "delegating" else "voice",
+    )
+    result = agent.run_conversation(task_text, conversation_history=history or None)
+    if isinstance(result, dict):
+        final_response = str(result.get("final_response") or "").strip()
+        if not final_response and result.get("error"):
+            raise RuntimeError(str(result.get("error")))
+        return final_response
+    return str(result or "").strip()
+
+
+class _DuplexTtsCycle:
+    """Tracks one ``tts_start``/``tts_chunk``*/``tts_end`` cycle.
+
+    A "cycle" spans the WHOLE reply (possibly several synthesized segments
+    as text accumulates sentence-by-sentence) — NOT each individual call to
+    ``stream_text_to_speech_chunks``, whose own per-call "start"/"end"
+    framing events are intentionally swallowed here. Their ``sample_rate``
+    payload is NOT swallowed, though — see :data:`_DUPLEX_DEFAULT_TTS_SAMPLE_RATE`.
+
+    ``speak()`` synthesizes AND emits a single sentence inline (used for
+    one-off utterances: activity cues, escalation acks, background replies).
+    ``emit_events()`` is the split-out emission half, reused by
+    :class:`_DuplexTtsPipeline` (see below) so its synthesis workers can
+    hand back pre-collected event lists to be emitted strictly in order,
+    without duplicating the tts_start/tts_chunk framing logic.
+    """
+
+    def __init__(
+        self,
+        session: "_DuplexSession",
+        *,
+        on_first_chunk: Optional[Callable[[], None]] = None,
+    ) -> None:
+        self._session = session
+        self._started = False
+        self._seq = 0
+        self._sample_rate: Optional[int] = None
+        self._on_first_chunk = on_first_chunk
+
+    def speak(self, text: str, cancel_event: threading.Event) -> bool:
+        """Synthesize + emit ``text``. Returns False if cancelled mid-flight."""
+        text = (text or "").strip()
+        if not text:
+            return True
+        try:
+            events = _duplex_stream_tts_chunks(text)
+        except Exception as exc:
+            _log.warning("Voice duplex: TTS unavailable: %s", exc)
+            return True  # degrade silently — no audio, don't kill the turn
+        return self.emit_events(events, cancel_event)
+
+    def emit_events(self, events, cancel_event: threading.Event) -> bool:
+        """Emit a (possibly already fully-materialized) sequence of TTS
+        stream events -- ``tools.tts_tool.stream_text_to_speech_chunks``'s
+        ``start``/``sample_rate``/``chunk`` shape. Returns False if
+        cancelled mid-flight."""
+        try:
+            for event in events:
+                if cancel_event.is_set():
+                    return False
+                if not isinstance(event, dict):
+                    continue
+                etype = event.get("type")
+                if etype in ("start", "sample_rate"):
+                    # tools.tts_tool.stream_text_to_speech_chunks reports the
+                    # ACTUAL sample rate of the PCM it's about to stream (it
+                    # reads the loaded TTS model's native rate, which is not
+                    # guaranteed to be 24 kHz for every provider/voice) --
+                    # captured here so tts_start can pass it to the client
+                    # instead of the client assuming a fixed rate.
+                    sr = event.get("sample_rate")
+                    if sr:
+                        try:
+                            self._sample_rate = int(sr)
+                        except (TypeError, ValueError):
+                            pass
+                    continue
+                if etype != "chunk":
+                    continue
+                if not self._started:
+                    # The server must remain in speaking/barge-in mode until
+                    # the desktop confirms that queued audio actually
+                    # drained. Sending the last byte is not playback done.
+                    self._session._playback_pending.set()
+                    self._session._assistant_audio_started.set()
+                    self._session._emit_sync({
+                            "type": "tts_start",
+                        "sample_rate": self._sample_rate
+                        or _DUPLEX_DEFAULT_TTS_SAMPLE_RATE,
+                    })
+                    self._started = True
+                    if self._on_first_chunk is not None:
+                        try:
+                            self._on_first_chunk()
+                        except Exception:
+                            _log.debug(
+                                "Voice duplex: on_first_chunk callback failed",
+                                exc_info=True,
+                )
+                self._seq += 1
+                self._session._emit_sync({
+                    "type": "tts_chunk",
+                    "data": event.get("audio"),
+                    "seq": self._seq,
+                })
+        except Exception as exc:
+            _log.warning("Voice duplex: TTS stream failed mid-reply: %s", exc)
+        return not cancel_event.is_set()
+
+    def end(self) -> None:
+        if self._started:
+            self._session._emit_sync({"type": "tts_end"})
+            self._started = False
+            self._seq = 0
+
+
+class _DuplexTtsPipeline:
+    """Pipelines TTS synthesis across a turn's sentences so text -> speech
+    has no "wait for TTS after this sentence before even starting the next"
+    serialization gap -- the audible speaking/thinking/speaking flap seen in
+    voice-presence.log.
+
+    Producer/consumer split:
+
+    - ``submit(sentence)`` is called by the caller (the instant-lane delta
+      loop) as soon as a sentence's text is ready. Synthesis for that
+      sentence is handed to a small bounded thread pool (``_LOOKAHEAD``
+      workers, default 2) -- so up to two sentences can be mid-synthesis
+      concurrently, meaning sentence N+1's synthesis can already be running
+      WHILE sentence N's audio is being emitted/played, instead of only
+      starting once N's TTS call (and emission) has fully returned.
+    - A dedicated emitter thread drains completed syntheses STRICTLY IN
+      SUBMISSION ORDER (even though synthesis itself may finish
+      out-of-order across the two workers) and streams their chunks over
+      the WS via a single shared :class:`_DuplexTtsCycle` -- so ordering on
+      the wire is never at risk from the concurrency underneath.
+
+    Each worker synthesizes into a fully-materialized list of events rather
+    than emitting directly (unlike :meth:`_DuplexTtsCycle.speak`) --
+    necessary so two concurrent workers never race to call ``_emit_sync``
+    for different sentences at once, which would scramble chunk order on
+    the wire. The tradeoff is that one sentence's own chunks aren't
+    streamed until its whole synthesis call returns; the win is eliminating
+    the gap BETWEEN sentences, which is what was actually audible.
+
+    Barge-in: :meth:`cancel` stops future submissions from being emitted;
+    ``cancel_event`` (shared with the rest of the turn) is checked before
+    submitting, inside the emitter's drain loop, and inside
+    ``_DuplexTtsCycle.emit_events`` itself -- so emission stops within one
+    chunk's latency. An in-flight synthesis call on the executor may keep
+    running to completion in the background (raw threads can't be
+    preempted), but its result is simply discarded by the emitter once
+    cancelled -- the same "let it finish harmlessly, don't wait for it"
+    pattern ``tools/voice_instant_lane.py`` already uses for a cancelled
+    provider call.
+    """
+
+    _LOOKAHEAD = 2
+
+    def __init__(
+        self,
+        session: "_DuplexSession",
+        cancel_event: threading.Event,
+        *,
+        on_first_chunk: Optional[Callable[[], None]] = None,
+    ) -> None:
+        self._session = session
+        self._cancel_event = cancel_event
+        self._tts = _DuplexTtsCycle(session, on_first_chunk=on_first_chunk)
+        self._executor = concurrent.futures.ThreadPoolExecutor(
+            max_workers=self._LOOKAHEAD,
+            thread_name_prefix="voice-tts-synth",
+        )
+        self._pending: "queue.Queue[Optional[concurrent.futures.Future]]" = (
+            queue.Queue()
+        )
+        self._emit_windows: List[Tuple[float, float]] = []
+        self._closed = False
+        self._emit_error = False
+        self._emitter = threading.Thread(
+            target=self._emit_loop, name="voice-tts-emit", daemon=True
+        )
+        self._emitter.start()
+
+    def submit(self, sentence: str) -> None:
+        """Queue ``sentence`` for (possibly concurrent) synthesis. Bounded
+        lookahead: the executor has only ``_LOOKAHEAD`` worker threads, so a
+        3rd+ submission naturally waits for a worker slot -- this IS the
+        "bounded lookahead of 1-2 sentences" the caller doesn't need to
+        manage explicitly."""
+        sentence = (sentence or "").strip()
+        if not sentence or self._closed or self._cancel_event.is_set():
+            return
+        future = self._executor.submit(self._synthesize, sentence)
+        self._pending.put(future)
+
+    @staticmethod
+    def _synthesize(sentence: str) -> list:
+        """Runs on the executor: fully materialize this sentence's TTS
+        stream events (see the class docstring for why this can't emit
+        directly). Mirrors ``_DuplexTtsCycle.speak``'s own degrade-silently
+        error handling."""
+        try:
+            return list(_duplex_stream_tts_chunks(sentence))
+        except Exception as exc:
+            _log.warning("Voice duplex: TTS unavailable: %s", exc)
+            return []
+
+    def _emit_loop(self) -> None:
+        while True:
+            future = self._pending.get()
+            if future is None:
+                return  # close() sentinel
+            if self._cancel_event.is_set():
+                future.cancel()  # no-op if already running; harmless either way
+                continue
+            try:
+                events = future.result()
+            except Exception as exc:
+                _log.warning("Voice duplex: TTS synthesis failed: %s", exc)
+                continue
+            if self._cancel_event.is_set():
+                continue
+            window_start = time.monotonic()
+            ok = self._tts.emit_events(events, self._cancel_event)
+            self._emit_windows.append((window_start, time.monotonic()))
+            if not ok:
+                self._emit_error = True
+
+    def finish(self, *, cancelled: bool = False) -> Tuple[bool, Optional[float]]:
+        """Idempotent end-of-turn cleanup -- call exactly once (from a
+        ``finally`` block covering every exit path of the caller's turn) so
+        pending work is always drained/cancelled and the executor/emitter
+        thread never leaks.
+
+        Drains remaining submissions in submission order, waits (bounded)
+        for the emitter to finish, and closes out the shared TTS cycle
+        (``tts_end``) if any audio was actually emitted and the turn wasn't
+        cancelled. Safe to call when nothing was ever submitted (no-op
+        ``tts_end``) and safe to call more than once.
+
+        Returns ``(ok, max_gap_ms)`` -- ``ok`` mirrors
+        :meth:`_DuplexTtsCycle.speak`'s "not cancelled" contract;
+        ``max_gap_ms`` is the largest gap between consecutive sentences'
+        emission windows (``None`` if fewer than two sentences were
+        emitted), reported by callers as ``tts_max_gap_ms`` in [VOICE-PERF]
+        turn logging.
+        """
+        if not self._closed:
+            self._closed = True
+            self._pending.put(None)
+        self._emitter.join(timeout=30.0)
+        self._executor.shutdown(wait=False, cancel_futures=True)
+        cancelled = cancelled or self._cancel_event.is_set()
+        if not cancelled and not self._emit_error:
+            self._tts.end()
+        max_gap_ms: Optional[float] = None
+        for i in range(1, len(self._emit_windows)):
+            gap = (self._emit_windows[i][0] - self._emit_windows[i - 1][1]) * 1000.0
+            if max_gap_ms is None or gap > max_gap_ms:
+                max_gap_ms = gap
+        return (not cancelled and not self._emit_error), max_gap_ms
+
+
+class _DuplexSession:
+    """Per-connection orchestrator for ``/api/voice/duplex``.
+
+    Two states:
+
+    - ``listening``: incoming audio feeds the configured streaming STT session.
+      Parakeet supplies semantic EOU directly; Moonshine line completions are
+      checked by Smart Turn before the utterance is finalized and handed to
+      the instant lane / escalation pipeline (state flips to ``speaking``).
+    - ``speaking``: incoming audio instead feeds a VAD gate watching for
+      barge-in; sustained speech cancels the in-flight instant/TTS turn,
+      emits ``barge_in``, and the triggering audio seeds the next utterance
+      (state flips back to ``listening``).
+
+    The instant-lane + TTS pipeline for one turn runs synchronously on a
+    single worker thread (via ``asyncio.to_thread``) so it can stream
+    ``instant_delta``/``tts_chunk`` events out as they're produced while the
+    event loop keeps servicing incoming audio (barge-in) concurrently. That
+    worker thread schedules its outbound events back onto the loop with
+    ``asyncio.run_coroutine_threadsafe`` (see ``_emit_sync``), mirroring
+    ``tui_gateway.ws.WSTransport``'s cross-thread write pattern.
+    """
+
+    def __init__(self, ws: WebSocket, cfg: Dict[str, Any]) -> None:
+        self.ws = ws
+        self.cfg = cfg
+        self.stt_cfg = (cfg.get("stt") or {}) if isinstance(cfg, dict) else {}
+        self.loop = asyncio.get_event_loop()
+        self.send_lock = asyncio.Lock()
+        self.transcript = None
+        self.stt_session: Optional["_ParakeetSubprocessSession"] = None
+        self.state = "listening"
+        self.vad_gate = None
+        self._barge_vad_unavailable = False
+        self.turn_vad_gate = None
+        self._turn_vad_unavailable = False
+        self._smart_turn_rejected_at: Optional[float] = None
+        self._smart_turn_accepted_at: Optional[float] = None
+        self._turn_speech_started = False
+        self._last_turn_speech_at: Optional[float] = None
+        self._last_barge_log_at = 0.0
+        self._barge_streak_ms = 0.0
+        self._barge_preroll = deque(maxlen=6)
+        self._barge_candidate_audio: List[bytes] = []
+        self._barge_candidate_text = ""
+        self._barge_candidate_started_at: Optional[float] = None
+        self._barge_candidate_eou = False
+        # Confirm-negative barge-in (spec §3) bookkeeping -- see
+        # _barge_negative_match_blocks.
+        self._barge_negative_confirmed = False
+        self._barge_last_confirm_len = 0
+        self._barge_candidate_bytes_seen = 0
+        # Fail-open voice-focus zone bookkeeping (spec §4, 2026-07-15 round)
+        # -- see _finalize_utterance and _barge_negative_match_blocks.
+        self._last_owner_activity_at: Optional[float] = None
+        self._other_voice_active_until: Optional[float] = None
+        self._speaker_model_mismatch_warned = False
+        self._active_assistant_text = ""
+        self._end_after_playback = False
+        self._assistant_audio_started = threading.Event()
+        self._playback_pending = threading.Event()
+        self._utterance_audio: List[bytes] = []
+        self._pending_user_text: Optional[str] = None
+        self._speaking_task: Optional[asyncio.Task] = None
+        self._cancel_speaking = threading.Event()
+        self._deep_task_queue: "queue.Queue[Optional[dict]]" = queue.Queue()
+        self._deep_task_pump: Optional[asyncio.Task] = None
+        self._deep_tasks: Dict[str, Dict[str, Any]] = {}
+        self._deep_tasks_lock = threading.Lock()
+        self._background_speech_lock = asyncio.Lock()
+        self._task_counter = 0
+        self._utterance_counter = 0
+        self._closed = False
+        self._stt_slot_acquired = False
+        # [VOICE-PERF] correlation id + warm-up bookkeeping (see
+        # _start_instant_lane_warmup / _log_voice_perf_session_open).
+        self._session_id = secrets.token_hex(4)
+        self._warmup_result: Optional[Dict[str, Any]] = None
+        self._last_eou_monotonic: Optional[float] = None
+        self._last_instant_turn: Optional[Dict[str, Any]] = None
+
+    def _start_instant_lane_warmup(self) -> None:
+        """Resolve + construct the instant-lane agent AND kick the deferred
+        personal-context load on a background thread, right at WS connect --
+        ahead of (not blocking) the ``ready`` event. Previously both only
+        happened lazily on the FIRST utterance (agent construction) or after
+        first audio (deferred context), stalling early turns. If this
+        hasn't finished by the time the first utterance arrives,
+        ``stream_instant_reply``'s own lazy construct-if-missing path is the
+        fallback -- unchanged from before this method existed.
+        """
+
+        def _run() -> None:
+            result = _duplex_warm_instant_lane(self.transcript, self.cfg)
+            self._warmup_result = result
+            _log_voice_perf_session_open(
+                session_id=self._session_id,
+                warmup=result,
+                stt_ready=self.stt_session is not None,
+            )
+
+        threading.Thread(target=_run, name="voice-instant-warmup", daemon=True).start()
+
+    def _start_tts_self_enrollment(self) -> None:
+        """Kick TTS self-enrollment (spec Part 1.3) on a background thread at
+        session start -- lazy in the sense that a cheap fingerprint check
+        (see ``_duplex_tts_fingerprint``) skips the actual synthesis on every
+        session once a profile matching the current tts.* config is already
+        cached; only a real config change or a first-ever run pays the
+        synthesis cost. Never blocks ``ready`` or any turn -- barge-in's
+        negative screen just has no TTS-echo signal to use until this
+        finishes (falls back to "uncertain -> barge", same as before this
+        feature existed)."""
+        threading.Thread(
+            target=_duplex_ensure_tts_self_enrollment,
+            args=(self.cfg,),
+            name="voice-tts-self-enroll",
+            daemon=True,
+        ).start()
+
+    async def start(self) -> None:
+        from tools.voice_instant_lane import RollingTranscript
+
+        self.transcript = RollingTranscript(max_turns=_DUPLEX_ROLLING_TURNS)
+        # Kick warm-up immediately -- before the STT concurrency-budget wait
+        # below, so construction/deferred-context loading overlaps with the
+        # rest of session setup instead of waiting for it.
+        self._start_instant_lane_warmup()
+        self._start_tts_self_enrollment()
+
+        # Share the SAME streaming-STT concurrency budget as
+        # transcribe_audio_stream_ws (see _STREAMING_STT_MAX_CONCURRENT) --
+        # previously this endpoint bypassed that budget entirely, so a
+        # legacy /api/audio/transcribe/stream connection (e.g. the desktop
+        # wake-word flow) and a duplex session could independently spawn
+        # concurrent Parakeet subprocess loads with no shared cap between
+        # them. Bounded wait, not indefinite: if the budget is exhausted the
+        # session still starts (functional, just without a live STT session
+        # this turn) rather than hanging the WS open with no feedback.
+        transcribe_lock = _get_audio_transcribe_lock(app)
+        try:
+            await asyncio.wait_for(
+                transcribe_lock.acquire(), timeout=_STREAMING_STT_ACQUIRE_TIMEOUT
+            )
+            self._stt_slot_acquired = True
+        except asyncio.TimeoutError:
+            _log.warning(
+                "Voice duplex: streaming-STT concurrency budget (max=%d) exhausted -- "
+                "starting this session without a live STT session",
+                _STREAMING_STT_MAX_CONCURRENT,
+            )
+            await self._send({
+                "type": "error",
+                "error": "speech recognition temporarily unavailable (too many concurrent voice sessions)",
+            })
+            self._deep_task_pump = asyncio.create_task(self._pump_deep_tasks())
+            await self._send({"type": "ready"})
+            return
+
+        try:
+            self.stt_session = await asyncio.to_thread(
+                _duplex_stt_session, self.stt_cfg
+            )
+            await asyncio.to_thread(self.stt_session.begin)
+        except Exception as exc:
+            _log.warning("Voice duplex: STT session unavailable: %s", exc)
+            self.stt_session = None
+            await self._send({
+                "type": "error",
+                "error": f"speech recognition unavailable: {exc}",
+            })
+        self._deep_task_pump = asyncio.create_task(self._pump_deep_tasks())
+        await self._send({"type": "ready"})
+
+    async def _send(self, payload: dict) -> None:
+        if self._closed:
+            return
+        async with self.send_lock:
+            try:
+                await self.ws.send_json(payload)
+            except Exception:
+                self._closed = True
+
+    def _emit_sync(self, payload: dict) -> None:
+        """Schedule an outbound frame from a worker thread — fire-and-forget.
+
+        Deliberately does NOT block the calling worker thread on the send's
+        completion (no ``future.result()`` wait): raw Python threads are not
+        preemptible, so a worker blocked on a cross-thread wait can only be
+        unblocked by that wait itself returning. A stalled/disconnected
+        client can make ``self.ws.send_json`` (and thus ``self._send``) hang
+        indefinitely; if this method waited on that, the worker thread would
+        hang too, and since ``asyncio.to_thread`` runs on the loop's default
+        executor, an eventual ``executor.shutdown(wait=True)`` at interpreter/
+        loop teardown would then hang the whole process (in-progress
+        ``ThreadPoolExecutor`` work cannot be cancelled). Scheduling via
+        ``call_soon_threadsafe`` + ``create_task`` instead hands the actual
+        send to the event loop, which — unlike a raw thread — DOES get
+        cancelled cleanly on shutdown. Ordering is preserved: callbacks
+        scheduled via ``call_soon_threadsafe`` from one thread run in
+        scheduling order, and ``_send``'s ``send_lock`` serializes the actual
+        writes to match.
+        """
+        if self._closed:
+            return
+        try:
+            self.loop.call_soon_threadsafe(self._schedule_send, payload)
+        except Exception:
+            pass
+
+    def _schedule_send(self, payload: dict) -> None:
+        """Runs on the loop thread (via ``call_soon_threadsafe``); creates
+        the actual send as a task instead of awaiting it inline so the
+        ``call_soon_threadsafe`` callback itself returns immediately."""
+        if self._closed:
+            return
+        self.loop.create_task(self._send(payload))
+
+    # -- inbound audio -----------------------------------------------------
+
+    async def on_audio(self, chunk: bytes) -> None:
+        if not chunk:
+            return
+        if self.state == "listening":
+            await self._feed_stt(chunk)
+        else:
+            await self._feed_barge_in(chunk)
+
+    async def on_playback_done(self) -> None:
+        if not self._playback_pending.is_set():
+            return
+        self._playback_pending.clear()
+        self._assistant_audio_started.clear()
+        self._active_assistant_text = ""
+        self._barge_streak_ms = 0.0
+        self.vad_gate = None
+        await self._reset_barge_candidate(rearm_stt=True)
+        if self.state == "speaking":
+            self.state = "listening"
+        if self._end_after_playback:
+            self._end_after_playback = False
+            await self._send({"type": "conversation_end"})
+
+    def _reset_turn_endpoint_state(self) -> None:
+        self._smart_turn_rejected_at = None
+        self._smart_turn_accepted_at = None
+        self._turn_speech_started = False
+        self._last_turn_speech_at = None
+        if self.turn_vad_gate is not None:
+            reset = getattr(self.turn_vad_gate, "reset", None)
+            if callable(reset):
+                reset()
+
+    async def _feed_turn_vad(self, chunk: bytes) -> bool:
+        """Feed TEN VAD and report speech in the current audio frame.
+
+        This gate is independent from the speaking-state barge-in gate. It
+        is only a timeout safety net after Smart Turn rejects an endpoint.
+        """
+        if self._turn_vad_unavailable:
+            return False
+        if self.turn_vad_gate is None:
+            self.turn_vad_gate = await asyncio.to_thread(_duplex_make_vad_gate)
+        if self.turn_vad_gate is None:
+            self._turn_vad_unavailable = True
+            _log.warning(
+                "Voice duplex Smart Turn fallback unavailable: TEN VAD did not initialize"
+            )
+            return False
+        samples = _duplex_pcm16_to_float32(chunk)
+        speech_in_batch = await asyncio.to_thread(self.turn_vad_gate.accept, samples)
+        if isinstance(speech_in_batch, bool):
+            return speech_in_batch
+        # Compatibility with simple test/dummy gates whose legacy accept()
+        # returns None rather than the production SpeechGate's bool.
+        chunk_ms = max(16, int((len(chunk) / 2.0) / 16000.0 * 1000.0))
+        return bool(
+            await asyncio.to_thread(
+                self.turn_vad_gate.has_recent_speech, max(80, chunk_ms + 40)
+            )
+        )
+
+    def _accept_stt_chunk(self, chunk: bytes) -> Tuple[str, bool, float]:
+        partial = self.stt_session.accept_bytes(_duplex_pcm16_to_float32_bytes(chunk))
+        eou_prob = float(getattr(self.stt_session, "last_eou_prob", 0.0) or 0.0)
+        consume = getattr(self.stt_session, "consume_eou", None)
+        eou = bool(
+            consume()
+            if callable(consume)
+            else getattr(self.stt_session, "last_eou", False)
+        )
+        return partial, eou, eou_prob
+
+    async def _feed_stt(self, chunk: bytes) -> None:
+        if self.stt_session is None:
+            return
+        provider = _streaming_stt_provider(self.stt_cfg)
+        voice_cfg = self.cfg.get("voice") or {}
+        semantic_fallback = (
+            provider == "moonshine"
+            and voice_cfg.get("semantic_turn", True) is not False
+        )
+        speech_now = await self._feed_turn_vad(chunk) if semantic_fallback else False
+        if speech_now:
+            self._turn_speech_started = True
+            self._last_turn_speech_at = time.monotonic()
+            self._smart_turn_accepted_at = None
+        if speech_now and self._smart_turn_rejected_at is not None:
+            # The user resumed after Smart Turn's rejection. A later STT
+            # pause must start a fresh fallback timer.
+            self._smart_turn_rejected_at = None
+        self._utterance_audio.append(chunk)
+        if len(self._utterance_audio) > _DUPLEX_UTTERANCE_AUDIO_CAP_CHUNKS:
+            self._utterance_audio.pop(0)
+        try:
+            partial, eou, eou_prob = await asyncio.to_thread(
+                self._accept_stt_chunk, chunk
+            )
+        except Exception as exc:
+            _log.warning("Voice duplex: STT accept failed: %s", exc)
+            return
+        if partial:
+            await self._send({"type": "partial", "text": partial, "eou_prob": eou_prob})
+        complete = eou
+        if eou and provider == "moonshine":
+            if semantic_fallback:
+                from tools.semantic_turn import pipecat_smart_turn_complete
+
+                float_chunks = [
+                    _duplex_pcm16_to_float32_bytes(part)
+                    for part in self._utterance_audio
+                ]
+                smart_turn = await asyncio.to_thread(
+                    pipecat_smart_turn_complete, float_chunks, 16000
+                )
+                _log.info(
+                    "Voice duplex Moonshine pause smart-turn complete=%s audio_ms=%d",
+                    smart_turn,
+                    int(
+                        sum(len(part) for part in self._utterance_audio)
+                        / 2
+                        / 16000
+                        * 1000
+                    ),
+                )
+                complete = False
+                if smart_turn is False:
+                    if self._smart_turn_rejected_at is None:
+                        self._smart_turn_rejected_at = time.monotonic()
+                else:
+                    self._smart_turn_rejected_at = None
+                    if self._smart_turn_accepted_at is None:
+                        self._smart_turn_accepted_at = time.monotonic()
+
+        if not complete and semantic_fallback and self._smart_turn_accepted_at is not None:
+            try:
+                commit_delay_ms = max(
+                    250,
+                    int(
+                        voice_cfg.get(
+                            "smart_turn_commit_delay_ms",
+                            _DUPLEX_SMART_TURN_COMMIT_DELAY_MS,
+                        )
+                    ),
+                )
+            except (TypeError, ValueError):
+                commit_delay_ms = _DUPLEX_SMART_TURN_COMMIT_DELAY_MS
+            waited_ms = (time.monotonic() - self._smart_turn_accepted_at) * 1000.0
+            if waited_ms >= commit_delay_ms:
+                _log.info(
+                    "Voice duplex Smart Turn commit confirmed silence_ms=%d",
+                    int(waited_ms),
+                )
+                complete = True
+
+        if (
+            not complete
+            and self._smart_turn_rejected_at is not None
+            and self.turn_vad_gate is not None
+        ):
+            voice_cfg = self.cfg.get("voice") or {}
+            try:
+                fallback_ms = max(
+                    250,
+                    int(
+                        voice_cfg.get(
+                            "smart_turn_vad_fallback_ms",
+                            _DUPLEX_SMART_TURN_VAD_FALLBACK_MS,
+                        )
+                    ),
+                )
+            except (TypeError, ValueError):
+                fallback_ms = _DUPLEX_SMART_TURN_VAD_FALLBACK_MS
+            waited_ms = (time.monotonic() - self._smart_turn_rejected_at) * 1000.0
+            if waited_ms >= fallback_ms:
+                speech_recent = await asyncio.to_thread(
+                    self.turn_vad_gate.has_recent_speech, fallback_ms
+                )
+                if not speech_recent:
+                    _log.info(
+                        "Voice duplex Smart Turn TEN VAD fallback complete=true silence_ms=%d",
+                        int(waited_ms),
+                    )
+                    complete = True
+        if (
+            not complete
+            and semantic_fallback
+            and self._turn_speech_started
+            and self._last_turn_speech_at is not None
+        ):
+            try:
+                hard_stop_ms = max(
+                    1000,
+                    int(
+                        voice_cfg.get(
+                            "turn_vad_hard_stop_ms", _DUPLEX_TURN_VAD_HARD_STOP_MS
+                        )
+                    ),
+                )
+            except (TypeError, ValueError):
+                hard_stop_ms = _DUPLEX_TURN_VAD_HARD_STOP_MS
+            silence_ms = (time.monotonic() - self._last_turn_speech_at) * 1000.0
+            if silence_ms >= hard_stop_ms:
+                _log.info(
+                    "Voice duplex TEN VAD hard-stop complete=true silence_ms=%d audio_ms=%d",
+                    int(silence_ms),
+                    int(
+                        sum(len(part) for part in self._utterance_audio)
+                        / 2
+                        / 16000
+                        * 1000
+                    ),
+                )
+                complete = True
+        if complete:
+            await self._finalize_utterance()
+
+    async def _finalize_utterance(self) -> None:
+        # [VOICE-PERF]: end-of-utterance timestamp -- the reference point
+        # every downstream turn-latency field (eou_to_instant_start_ms,
+        # total_first_audio_ms, ...) is measured from.
+        self._last_eou_monotonic = time.monotonic()
+        try:
+            text = (await asyncio.to_thread(self.stt_session.finish) or "").strip()
+        except Exception as exc:
+            _log.warning("Voice duplex: STT finalize failed: %s", exc)
+            text = ""
+
+        pcm = b"".join(self._utterance_audio)
+        self._utterance_audio = []
+        self._reset_turn_endpoint_state()
+        try:
+            # Re-arm immediately so the next utterance isn't dropped while
+            # this one is being answered.
+            await asyncio.to_thread(self.stt_session.begin)
+        except Exception as exc:
+            _log.warning("Voice duplex: STT re-arm failed: %s", exc)
+
+        if not text:
+            return
+
+        try:
+            from tools.voice_residency import note_voice_activity
+
+            note_voice_activity()
+        except Exception:
+            pass
+
+        focus_active = await asyncio.to_thread(_duplex_focus_mode_active, self.cfg)
+        resolved_by: Optional[str] = None
+
+        if not focus_active:
+            # Never active (never filters) on a bare/un-enrolled install, or
+            # with focus_mode off -- plain single-threshold identify exactly
+            # as before this round, no zones/continuity/competing-flag.
+            speaker_label, score, speaker_name = await asyncio.to_thread(
+                _duplex_identify_speaker, pcm
+            )
+            _log.info(
+                "Voice duplex speaker identified label=%s score=%.4f audio_ms=%d",
+                speaker_label,
+                score,
+                int(len(pcm) / 2 / 16000 * 1000),
+            )
+            focus_ignore = False
+        else:
+            # Fail-open voice-focus redesign (spec §4, 2026-07-15 round):
+            # three zones instead of one threshold. ABSTAIN (short/degraded
+            # audio, or a score between reject_threshold and threshold) is
+            # resolved by SESSION CONTEXT, not dropped outright -- dropping
+            # only ever happens for a CONFIDENT_OTHER match, or an ABSTAIN
+            # while the competing-voice flag is armed. Net effect: alone in
+            # a room, no utterance is ever dropped regardless of score.
+            zoned = await asyncio.to_thread(_duplex_identify_speaker_zoned, pcm, self.cfg)
+            zone = zoned["zone"]
+            speaker_label = zoned["label"]
+            score = zoned["score"]
+            speaker_name = zoned.get("name")
+            audio_ms = zoned["audio_ms"]
+            now = time.monotonic()
+            focus_ignore = False
+            resolved_by = "score"
+
+            if zoned.get("model_mismatch") and not self._speaker_model_mismatch_warned:
+                self._speaker_model_mismatch_warned = True
+                _log.warning(
+                    "Voice duplex: speaker store embeddings were captured under a "
+                    "different voice.speaker_id.model than is currently configured -- "
+                    "re-enrollment needed (run `hermes voice enroll`); every utterance "
+                    "ABSTAINs until then."
+                )
+
+            if zone == "OWNER":
+                if speaker_label == "owner":
+                    self._last_owner_activity_at = now
+            elif zone == "CONFIDENT_OTHER":
+                focus_ignore = True
+                competing_secs = await asyncio.to_thread(
+                    _duplex_competing_window_seconds, self.cfg
+                )
+                self._other_voice_active_until = now + competing_secs
+            else:  # ABSTAIN
+                if self._other_voice_active():
+                    focus_ignore = True
+                    resolved_by = "competing_drop"
+                else:
+                    continuity_secs = await asyncio.to_thread(
+                        _duplex_continuity_seconds, self.cfg
+                    )
+                    if (
+                        self._last_owner_activity_at is not None
+                        and (now - self._last_owner_activity_at) <= continuity_secs
+                    ):
+                        resolved_by = "continuity"
+                        speaker_label = "owner"
+                        self._last_owner_activity_at = now
+                    else:
+                        resolved_by = "abstain_open"
+
+            _log_voice_id(
+                session_id=self._session_id, context="utterance", zone=zone,
+                label=speaker_label, score=score, audio_ms=audio_ms,
+                resolved_by=resolved_by, ignored=focus_ignore,
+            )
+
+            # Self-adaptation (Part 1.4): a DIRECT-score OWNER-zone
+            # acceptance (never a continuity-resolved one) with enough
+            # clean audio feeds the owner's adaptive ring.
+            if (
+                zone == "OWNER"
+                and zoned["label"] == "owner"
+                and audio_ms >= _DUPLEX_ADAPTIVE_MIN_AUDIO_MS
+                and zoned.get("embedding")
+            ):
+                await asyncio.to_thread(_duplex_append_adaptive_embedding, zoned["embedding"])
+
+        utterance_event: Dict[str, Any] = {
+            "type": "utterance",
+            "text": text,
+            "speaker": speaker_label,
+            "speaker_name": speaker_name,
+        }
+        if focus_ignore:
+            utterance_event["ignored"] = True
+        if resolved_by is not None:
+            utterance_event["resolved_by"] = resolved_by
+        await self._send(utterance_event)
+
+        if focus_ignore:
+            _log.info(
+                "Voice duplex focus mode ignoring utterance label=%s score=%.4f resolved_by=%s",
+                speaker_label,
+                score,
+                resolved_by,
+            )
+            return
+
+        # A quick correction after a completed instant-lane answer is weak but
+        # useful evidence that the previous request belonged in the deep lane.
+        # Detection is pure; the local ledger write stays off the event loop.
+        prior = self._last_instant_turn
+        self._last_instant_turn = None
+        if prior is not None:
+            try:
+                from agent.learning.escalation import is_correction
+                from hermes_cli.config import cfg_get
+
+                window = float(cfg_get(self.cfg, "learning", "escalation", "followup_window_seconds", default=20))
+                enabled = bool(cfg_get(self.cfg, "learning", "escalation", "enabled", default=True))
+                if enabled and (time.monotonic() - float(prior["at"])) <= window and is_correction(
+                    str(prior["utterance"]), str(prior["reply"]), text
+                ):
+                    def _record_correction() -> None:
+                        from agent.learning.outcomes import record
+
+                        record(
+                            "escalation", "voice", "corrected",
+                            ref=str(prior.get("utterance_id") or ""),
+                            detail={
+                                "prior_utterance": str(prior["utterance"]),
+                                "utterance": text,
+                                "prior_reply_len": len(str(prior["reply"])),
+                            },
+                        )
+
+                    self.loop.run_in_executor(None, _record_correction)
+            except Exception:
+                _log.debug("Voice escalation learning signal unavailable", exc_info=True)
+
+        self.transcript.add("user", text)
+        self._pending_user_text = text
+
+        self.state = "speaking"
+        self._active_assistant_text = ""
+        self._assistant_audio_started.clear()
+        self._cancel_speaking = threading.Event()
+        cancel_event = self._cancel_speaking
+        self._speaking_task = asyncio.create_task(
+            self._run_turn(text, speaker_label, cancel_event)
+        )
+
+    async def _feed_barge_in(self, chunk: bytes) -> None:
+        # Do not mistake the tail of the user's just-finalized utterance for
+        # an interruption. Barge-in becomes meaningful only once the client
+        # has received assistant audio it can actually interrupt.
+        if not self._assistant_audio_started.is_set():
+            return
+        if self.stt_session is None:
+            return
+        self._barge_preroll.append(chunk)
+        if self._barge_vad_unavailable:
+            return
+        if self.vad_gate is None:
+            self.vad_gate = await asyncio.to_thread(_duplex_make_vad_gate)
+        if self.vad_gate is None:
+            self._barge_vad_unavailable = True
+            _log.warning("Voice duplex barge-in unavailable: VAD did not initialize")
+            return
+        if self._last_barge_log_at == 0.0:
+            _log.info(
+                "Voice duplex barge-in armed threshold_ms=%d",
+                _DUPLEX_BARGE_IN_STREAK_MS,
+            )
+        samples = _duplex_pcm16_to_float32(chunk)
+        speech_in_batch = await asyncio.to_thread(self.vad_gate.accept, samples)
+        chunk_ms = (len(chunk) / 2.0) / 16000.0 * 1000.0
+        has_speech = (
+            speech_in_batch
+            if isinstance(speech_in_batch, bool)
+            else await asyncio.to_thread(
+            self.vad_gate.has_recent_speech, max(80, int(chunk_ms) + 40)
+        )
+        )
+        self._barge_streak_ms = (
+            (self._barge_streak_ms + chunk_ms) if has_speech else 0.0
+        )
+        now = time.monotonic()
+        if now - self._last_barge_log_at >= 1.0:
+            _log.info(
+                "Voice duplex barge-in monitoring speech=%s streak_ms=%d",
+                has_speech,
+                int(self._barge_streak_ms),
+            )
+            self._last_barge_log_at = now
+        chunks_to_feed: List[bytes] = []
+        if has_speech and self._barge_candidate_started_at is None:
+            self._barge_candidate_started_at = now
+            self._barge_candidate_audio = list(self._barge_preroll)
+            self._barge_candidate_bytes_seen = sum(len(c) for c in self._barge_candidate_audio)
+            chunks_to_feed = list(self._barge_candidate_audio)
+            try:
+                await asyncio.to_thread(self.stt_session.begin)
+            except Exception as exc:
+                _log.warning("Voice duplex: barge-in STT begin failed: %s", exc)
+                await self._reset_barge_candidate(rearm_stt=False)
+                return
+        elif self._barge_candidate_started_at is not None:
+            self._barge_candidate_audio.append(chunk)
+            self._barge_candidate_bytes_seen += len(chunk)
+            if len(self._barge_candidate_audio) > 100:
+                self._barge_candidate_audio.pop(0)
+            chunks_to_feed = [chunk]
+
+        for candidate_chunk in chunks_to_feed:
+            try:
+                partial, eou, _eou_prob = await asyncio.to_thread(
+                    self._accept_stt_chunk, candidate_chunk
+                )
+            except Exception as exc:
+                _log.warning("Voice duplex: barge-in STT accept failed: %s", exc)
+                await self._reset_barge_candidate(rearm_stt=True)
+                return
+            if partial:
+                self._barge_candidate_text = partial
+            self._barge_candidate_eou = self._barge_candidate_eou or eou
+
+        actionable = _duplex_meaningful_barge_text(
+            self._barge_candidate_text,
+            self._active_assistant_text,
+        )
+        enough_speech = self._barge_streak_ms >= _DUPLEX_BARGE_IN_STREAK_MS
+        if actionable and (enough_speech or self._barge_candidate_eou):
+            if await self._barge_negative_match_blocks():
+                return
+            audio = list(self._barge_candidate_audio)
+            text = self._barge_candidate_text
+            eou = self._barge_candidate_eou
+            _log.info(
+                "Voice duplex barge-in transcript confirmed text=%r streak_ms=%d eou=%s",
+                text[:80],
+                int(self._barge_streak_ms),
+                eou,
+            )
+            await self._trigger_barge_in(audio, stt_seeded=True, eou=eou, partial=text)
+            return
+
+        candidate_age_ms = (
+            (now - self._barge_candidate_started_at) * 1000.0
+            if self._barge_candidate_started_at is not None
+            else 0.0
+        )
+        if self._barge_candidate_started_at is not None and (
+            (self._barge_candidate_eou and not actionable)
+            or (
+                candidate_age_ms >= _DUPLEX_BARGE_CANDIDATE_TIMEOUT_MS
+                and not actionable
+            )
+        ):
+            _log.info(
+                "Voice duplex barge-in rejected as noise/filler text=%r age_ms=%d",
+                self._barge_candidate_text[:80],
+                int(candidate_age_ms),
+            )
+            await self._reset_barge_candidate(rearm_stt=True)
+
+    async def _reset_barge_candidate(self, *, rearm_stt: bool) -> None:
+        had_candidate = self._barge_candidate_started_at is not None
+        self._barge_candidate_audio = []
+        self._barge_candidate_text = ""
+        self._barge_candidate_started_at = None
+        self._barge_candidate_eou = False
+        self._barge_streak_ms = 0.0
+        self._barge_preroll.clear()
+        self._barge_negative_confirmed = False
+        self._barge_last_confirm_len = 0
+        self._barge_candidate_bytes_seen = 0
+        if rearm_stt and had_candidate and self.stt_session is not None:
+            try:
+                await asyncio.to_thread(self.stt_session.begin)
+            except Exception as exc:
+                _log.warning(
+                    "Voice duplex: STT re-arm after rejected barge-in failed: %s", exc
+                )
+
+    async def _barge_negative_match_blocks(self) -> bool:
+        """Confirm-NEGATIVE barge-in (spec §3, 2026-07-15 fail-open round).
+
+        A VAD+text-confirmed candidate barges IMMEDIATELY unless its
+        buffered audio confidently matches a NEGATIVE reference: (a) Marvi's
+        own TTS voice (self-echo -- see ``_duplex_ensure_tts_self_enrollment``)
+        at/above the owner threshold, or (b) a CONFIDENT_OTHER speaker while
+        the competing-voice flag is armed (``_other_voice_active``).
+        Uncertainty is no longer a reason to withhold barge-in -- contrast
+        the old fail-closed ``_barge_owner_gate_blocks`` this replaces, which
+        required a POSITIVE owner match before ANY barge could fire and so
+        suppressed real interruptions almost always (live logs: genuine
+        barge-in candidates scored 0.34-0.40, below the 0.45 owner
+        threshold, and were blocked essentially every time).
+
+        Returns True to suppress this attempt (the caller keeps buffering
+        the candidate rather than resetting it; a fresh ~300ms window is
+        re-checked on the next call once enough new audio has accumulated).
+        Returns False -- the default -- as soon as there's nothing
+        confidently negative to say, which lets the caller barge right away;
+        this includes whenever focus mode is off, no owner is enrolled, the
+        speaker model is unavailable, or not enough buffered audio exists
+        yet for a negative screen (never regress the plain VAD-only
+        behavior in those cases, and never delay a real interruption on
+        mere uncertainty).
+
+        # ponytail: this identifies the dominant speaker in the buffered
+        # window, not true target-speaker extraction -- the owner talking
+        # *simultaneously* with a TV/other person needs real diarization/
+        # segmentation (sherpa-onnx ships segmentation models for this).
+        # Utterance- and barge-level focus is the full v1 scope.
+        """
+        if not await asyncio.to_thread(_duplex_focus_mode_active, self.cfg):
+            return False
+
+        # Tracked separately from ``_barge_candidate_audio``'s own length:
+        # that buffer is capped (~2s) and evicts its oldest chunks under
+        # sustained speech, so comparing against its length would stall the
+        # "fresh window" check forever once the cap is hit. This counter
+        # only grows, so re-checks stay on schedule for however long the
+        # candidate keeps accumulating.
+        seen = self._barge_candidate_bytes_seen
+        if seen < _DUPLEX_BARGE_NEGATIVE_SCREEN_MIN_BYTES:
+            return False  # not enough buffered audio for a screen yet -- fail OPEN, barge now
+        if (
+            self._barge_last_confirm_len
+            and (seen - self._barge_last_confirm_len) < _DUPLEX_BARGE_NEGATIVE_SCREEN_MIN_BYTES
+        ):
+            return self._barge_negative_confirmed  # reuse the last screen's verdict
+
+        candidate_pcm = b"".join(self._barge_candidate_audio)
+        self._barge_last_confirm_len = seen
+        audio_ms = int(len(candidate_pcm) / 2 / 16000 * 1000)
+
+        tts_score = await asyncio.to_thread(_duplex_tts_echo_score, candidate_pcm, self.cfg)
+        tts_thr = await asyncio.to_thread(_duplex_owner_threshold, self.cfg)
+        if tts_score >= tts_thr:
+            self._barge_negative_confirmed = True
+            _log_voice_id(
+                session_id=self._session_id, context="barge", zone="-", label="tts_echo",
+                score=tts_score, audio_ms=audio_ms, resolved_by="tts_echo", ignored=True,
+            )
+            return True
+
+        if self._other_voice_active():
+            zoned = await asyncio.to_thread(_duplex_identify_speaker_zoned, candidate_pcm, self.cfg)
+            if zoned["zone"] == "CONFIDENT_OTHER":
+                self._barge_negative_confirmed = True
+                _log_voice_id(
+                    session_id=self._session_id, context="barge", zone=zoned["zone"],
+                    label=zoned["label"], score=zoned["score"], audio_ms=audio_ms,
+                    resolved_by="competing_other", ignored=True,
+                )
+                return True
+
+        self._barge_negative_confirmed = False
+        _log_voice_id(
+            session_id=self._session_id, context="barge", zone="-", label="-",
+            score=tts_score, audio_ms=audio_ms, resolved_by="uncertain_barge", ignored=False,
+        )
+        return False
+
+    def _other_voice_active(self) -> bool:
+        """True while the "a confidently different voice was just heard"
+        flag is armed (spec Part 1.2 competing-voice flag) -- a
+        CONFIDENT_OTHER utterance arms it for
+        ``voice.speaker_id.competing_window_seconds`` (default 90s); it
+        decays on its own once that window elapses, nothing disarms it
+        early."""
+        return (
+            self._other_voice_active_until is not None
+            and time.monotonic() < self._other_voice_active_until
+        )
+
+    async def _trigger_barge_in(
+        self,
+        triggering_audio,
+        *,
+        stt_seeded: bool = False,
+        eou: bool = False,
+        partial: str = "",
+    ) -> None:
+        _log.info(
+            "Voice duplex barge-in accepted streak_ms=%d", int(self._barge_streak_ms)
+        )
+        audio_chunks = (
+            list(triggering_audio)
+            if isinstance(triggering_audio, list)
+            else [triggering_audio]
+        )
+        self._cancel_speaking.set()
+        self._playback_pending.clear()
+        self._assistant_audio_started.clear()
+        if self._pending_user_text and self.transcript is not None:
+            self.transcript.discard_last("user", self._pending_user_text)
+            self._pending_user_text = None
+        await self._send({"type": "barge_in"})
+        task = self._speaking_task
+        if task is not None:
+            self._speaking_task = None
+            task.add_done_callback(
+                lambda done: None if done.cancelled() else done.exception()
+            )
+        self._barge_streak_ms = 0.0
+        self.vad_gate = None
+        self.state = "listening"
+        self._utterance_audio = list(audio_chunks) if stt_seeded else []
+        self._reset_turn_endpoint_state()
+        self._barge_candidate_audio = []
+        self._barge_candidate_text = ""
+        self._barge_candidate_started_at = None
+        self._barge_candidate_eou = False
+        self._barge_preroll.clear()
+        self._barge_negative_confirmed = False
+        self._barge_last_confirm_len = 0
+        self._barge_candidate_bytes_seen = 0
+        if self.stt_session is None:
+            return
+        if partial:
+            await self._send({"type": "partial", "text": partial})
+        if stt_seeded:
+            self._turn_speech_started = True
+            self._last_turn_speech_at = time.monotonic()
+            if eou:
+                if _streaming_stt_provider(self.stt_cfg) == "moonshine":
+                    self._smart_turn_accepted_at = time.monotonic()
+                else:
+                    await self._finalize_utterance()
+            return
+        # Compatibility/direct-call path: seed the next STT turn through the
+        # normal endpoint logic.
+        for audio_chunk in audio_chunks:
+            await self._feed_stt(audio_chunk)
+
+    # -- turn orchestration (instant lane + TTS + escalation) --------------
+
+    async def _run_turn(
+        self, utterance_text: str, speaker_label: str, cancel_event: threading.Event
+    ) -> None:
+        # Escalation gating is purely the feature toggle now -- speaker ID
+        # is voice FOCUS (see _finalize_utterance), not access control, so
+        # every speaker who reaches this point (focus already filtered out
+        # non-owner speech when focus mode is active) may escalate.
+        from tools.voice_instant_lane import escalation_enabled
+
+        allow_escalation = escalation_enabled(self.cfg)
+        self._utterance_counter += 1
+        utterance_id = f"utt-{self._utterance_counter}"
+        try:
+            result_text, task_id = await asyncio.to_thread(
+                self._drive_instant_lane_sync,
+                utterance_text,
+                allow_escalation,
+                cancel_event,
+                utterance_id,
+            )
+        except _InstantLaneUnavailable as exc:
+            await self._send({"type": "error", "error": str(exc)})
+            if allow_escalation:
+                self._task_counter += 1
+                task_id = f"voice-{self._task_counter}"
+                self._start_deep_task_sync(task_id, utterance_text, cancel_event)
+                self._pending_user_text = None
+            elif (
+                self._pending_user_text == utterance_text
+                and self.transcript is not None
+            ):
+                self.transcript.discard_last("user", utterance_text)
+                self._pending_user_text = None
+            if not cancel_event.is_set() and not self._playback_pending.is_set():
+                self.state = "listening"
+            return
+
+        if result_text:
+            self.transcript.add("assistant", result_text)
+            if task_id is None and not cancel_event.is_set():
+                self._last_instant_turn = {
+                    "at": time.monotonic(),
+                    "utterance": utterance_text,
+                    "reply": result_text,
+                    "utterance_id": f"utt-{self._utterance_counter}",
+                }
+            if self._pending_user_text == utterance_text:
+                self._pending_user_text = None
+        elif task_id is not None and self._pending_user_text == utterance_text:
+            # The background result will complete this transcript turn;
+            # barge-in on its spoken acknowledgement must not delete it.
+            self._pending_user_text = None
+        if not cancel_event.is_set() and not self._playback_pending.is_set():
+            self.state = "listening"
+
+    def _drive_instant_lane_sync(
+        self,
+        utterance_text: str,
+        allow_escalation: bool,
+        cancel_event: threading.Event,
+        utterance_id: str = "utt-0",
+    ) -> Tuple[Optional[str], Optional[str]]:
+        from tools.voice_instant_lane import EscalationStream, deferred_context_status
+
+        # [VOICE-PERF] absolute monotonic timestamps -- deltas between these
+        # are computed once, in the `finally` block, so every exit path
+        # (normal reply, escalation, mid-turn failure, barge-in cancel)
+        # emits exactly one turn line. See _log_voice_perf_turn.
+        t_eou = self._last_eou_monotonic
+        t_instant_start = time.monotonic()
+        t_first_delta: Optional[float] = None
+        t_first_tts_chunk: Optional[float] = None
+        warm_status: Dict[str, Any] = {}
+        escalated = False
+        tts_max_gap_ms: Optional[float] = None
+
+        def _on_warm_status(status: Dict[str, Any]) -> None:
+            warm_status.update(status)
+
+        def _on_first_tts_chunk() -> None:
+            nonlocal t_first_tts_chunk
+            if t_first_tts_chunk is None:
+                t_first_tts_chunk = time.monotonic()
+
+        parser = EscalationStream()
+        pipeline = _DuplexTtsPipeline(
+            self, cancel_event, on_first_chunk=_on_first_tts_chunk
+        )
+        tts_buffer = ""
+        full_reply = ""
+        got_any_delta = False
+        pipeline_result: Dict[str, Any] = {}
+
+        def _finish_pipeline() -> bool:
+            # Exactly one real pipeline.finish() call no matter which exit
+            # path runs it first (normal completion, an early return, or the
+            # `finally` safety net below) -- callers that need the "did
+            # emission complete cleanly" bool call this; `finally` always
+            # calls it too (a cheap no-op if already computed) purely to
+            # guarantee tts_max_gap_ms is populated for logging even on a
+            # cancelled/errored turn that never reached the normal-path call.
+            if "ok" not in pipeline_result:
+                ok, gap_ms = pipeline.finish(cancelled=cancel_event.is_set())
+                pipeline_result["ok"] = ok
+                pipeline_result["gap_ms"] = gap_ms
+            return pipeline_result["ok"]
+
+        def _activity(event: Dict[str, Any]) -> None:
+            if event.get("status") == "started" and event.get("tool") == "show_card" and isinstance(event.get("card"), dict):
+                raw = event["card"]
+                actions = [
+                    {
+                        "id": str(action.get("id") or "action"),
+                        "label": str(action.get("label") or "Open"),
+                        **({"value": str(action["value"])} if action.get("value") is not None else {}),
+                    }
+                    for action in (raw.get("actions") or [])
+                    if isinstance(action, dict)
+                ]
+                kind = str(raw.get("kind") or "info")
+                self._emit_sync({
+                    "type": "card_show",
+                    "card": {
+                        "id": f"voice-{secrets.token_hex(6)}",
+                        "kind": kind if kind in {"info", "result", "approval"} else "info",
+                        "body": str(raw.get("body") or "")[:400],
+                        **({"title": str(raw["title"])[:80]} if raw.get("title") else {}),
+                        **({"duration": int(raw["duration_ms"])} if isinstance(raw.get("duration_ms"), int) else {}),
+                        **({"actions": actions[:3]} if actions else {}),
+                    },
+                })
+                return
+            if event.get("tool") == "show_card":
+                return
+            payload = {"type": "activity", **event}
+            self._emit_sync(payload)
+            if event.get("status") == "started":
+                cue = _DUPLEX_ACTIVITY_CUES.get(event.get("kind", ""))
+                if cue:
+                    self._speak_full_sync(cue, cancel_event)
+
+        try:
+            try:
+                deltas = _duplex_stream_instant_reply(
+                    self.transcript,
+                    utterance_text,
+                    allow_escalation=allow_escalation,
+                    activity_callback=_activity,
+                    warm_status_callback=_on_warm_status,
+                )
+                for delta in deltas:
+                    if cancel_event.is_set():
+                        return None, None
+                    if not delta:
+                        continue
+                    if t_first_delta is None:
+                        t_first_delta = time.monotonic()
+                    got_any_delta = True
+                    reply_piece = parser.feed(delta)
+                    if not reply_piece:
+                        continue
+                    full_reply += reply_piece
+                    self._active_assistant_text = full_reply
+                    self._emit_sync({"type": "instant_delta", "text": reply_piece})
+                    tts_buffer += reply_piece
+                    ready, tts_buffer = _split_ready_sentences(tts_buffer)
+                    for sentence in ready:
+                        if cancel_event.is_set():
+                            return None, None
+                        pipeline.submit(sentence)
+            except Exception as exc:
+                if got_any_delta:
+                    _log.warning("Voice duplex: instant lane failed mid-reply: %s", exc)
+                else:
+                    raise _InstantLaneUnavailable(
+                        f"instant voice lane unavailable: {exc}"
+                    ) from exc
+
+            if cancel_event.is_set():
+                return None, None
+
+            result = parser.finish()
+            if result.escalate and allow_escalation:
+                escalated = True
+                self._task_counter += 1
+                task_id = f"voice-{self._task_counter}"
+                self._emit_sync({"type": "instant_done", "text": ""})
+                mode = result.mode or "thinking"
+                self._active_assistant_text = result.text
+                self._emit_sync({
+                    "type": "escalated",
+                    "task_id": task_id,
+                    "ack_text": result.text,
+                    "mode": mode,
+                })
+                ack_cycle = _DuplexTtsCycle(self)
+                ack_cycle.speak(result.text, cancel_event)
+                ack_cycle.end()
+                self._start_deep_task_sync(
+                    task_id, utterance_text, cancel_event, mode=mode
+                )
+                return None, task_id
+
+            if result.escalate:
+                full_reply = result.text
+                tts_buffer = result.text
+
+            if result.end_voice:
+                full_reply = result.text or "Talk soon."
+                tts_buffer = full_reply
+                self._active_assistant_text = full_reply
+                self._end_after_playback = True
+
+            if tts_buffer.strip():
+                pipeline.submit(tts_buffer)
+            if not _finish_pipeline():
+                return None, None
+            if not full_reply.strip():
+                raise _InstantLaneUnavailable(
+                    "instant voice lane returned an empty response"
+                )
+            self._emit_sync({"type": "instant_done", "text": full_reply})
+            if result.end_voice and not self._playback_pending.is_set():
+                self._end_after_playback = False
+                self._emit_sync({"type": "conversation_end"})
+            return full_reply, None
+        finally:
+            _finish_pipeline()  # safety net: guarantees tts_max_gap_ms below is populated even on an early-return/exception exit path
+            tts_max_gap_ms = pipeline_result.get("gap_ms")
+            dctx_status, dctx_load_ms = deferred_context_status(self.transcript)
+            _log_voice_perf_turn(
+                session_id=self._session_id,
+                utterance_id=utterance_id,
+                eou_to_instant_start_ms=(
+                    (t_instant_start - t_eou) * 1000.0 if t_eou is not None else None
+                ),
+                instant_first_delta_ms=(
+                    (t_first_delta - t_instant_start) * 1000.0
+                    if t_first_delta is not None
+                    else None
+                ),
+                first_delta_to_first_tts_chunk_ms=(
+                    (t_first_tts_chunk - t_first_delta) * 1000.0
+                    if t_first_tts_chunk is not None and t_first_delta is not None
+                    else None
+                ),
+                total_first_audio_ms=(
+                    (t_first_tts_chunk - t_eou) * 1000.0
+                    if t_first_tts_chunk is not None and t_eou is not None
+                    else None
+                ),
+                agent_warm_hit=warm_status.get("hit"),
+                agent_warm_construct_ms=warm_status.get("construct_ms"),
+                deferred_context_status=dctx_status,
+                deferred_context_load_ms=dctx_load_ms,
+                tts_max_gap_ms=tts_max_gap_ms,
+                escalated=escalated,
+            )
+
+    def _start_deep_task_sync(
+        self,
+        task_id: str,
+        utterance_text: str,
+        _cancel_event: threading.Event,
+        *,
+        mode: str = "thinking",
+    ) -> None:
+        # Barge-in during the escalation ack does NOT cancel the background
+        # deep task (spec) — this thread is deliberately independent of
+        # cancel_event once started.
+        transcript_messages = (
+            self.transcript.as_messages() if self.transcript is not None else []
+        )
+        if (
+            transcript_messages
+            and transcript_messages[-1].get("role") == "user"
+            and transcript_messages[-1].get("content") == utterance_text
+        ):
+            # run_conversation receives utterance_text as its new user turn;
+            # don't also seed that same turn in conversation_history.
+            transcript_messages.pop()
+        with self._deep_tasks_lock:
+            self._deep_tasks[task_id] = {
+                "mode": mode,
+                "last_cue": time.monotonic(),
+                "cue_count": 0,
+                "label": "Sub-agent is working"
+                if mode == "delegating"
+                else "Thinking deeper",
+            }
+
+        def _worker() -> None:
+            def _activity(event: Dict[str, str]) -> None:
+                self._deep_task_queue.put({
+                    "type": "activity",
+                    "task_id": task_id,
+                    **event,
+                })
+
+            try:
+                result_text = _duplex_run_deep_task(
+                    transcript_messages,
+                    utterance_text,
+                    mode=mode,
+                    activity_callback=_activity,
+                )
+                self._deep_task_queue.put({
+                    "task_id": task_id,
+                    "text": result_text,
+                    "ok": True,
+                })
+            except Exception as exc:
+                self._deep_task_queue.put({
+                    "task_id": task_id,
+                    "error": str(exc),
+                    "ok": False,
+                })
+
+        threading.Thread(
+            target=_worker, name=f"voice-duplex-deep-{task_id}", daemon=True
+        ).start()
+
+    def _get_deep_task_item(self, timeout: float = 1.0) -> Optional[dict]:
+        """Bounded poll of the deep-task result queue.
+
+        A plain (unbounded) ``queue.Queue.get()`` here — run via
+        ``asyncio.to_thread`` — would occupy an executor thread until an item
+        arrives, with no way to interrupt it if the ``close()``-time stop
+        sentinel is ever lost to a race; that thread would then hang
+        ``executor.shutdown(wait=True)`` at loop/interpreter teardown (worker
+        threads aren't cancellable). Polling with a short timeout instead
+        bounds every iteration, so :meth:`close` setting ``self._closed`` is
+        always observed within ``timeout`` seconds even without the sentinel.
+        """
+        try:
+            return self._deep_task_queue.get(timeout=timeout)
+        except queue.Empty:
+            return None
+
+    async def _pump_deep_tasks(self) -> None:
+        while True:
+            item = await asyncio.to_thread(self._get_deep_task_item)
+            if item is None:
+                if self._closed:
+                    return
+                now = time.monotonic()
+                due = []
+                with self._deep_tasks_lock:
+                    for task_id, task in self._deep_tasks.items():
+                        if (
+                            now - float(task.get("last_cue", now))
+                            < _DUPLEX_DEEP_CUE_INTERVAL_SECONDS
+                        ):
+                            continue
+                        task["last_cue"] = now
+                        task["cue_count"] = int(task.get("cue_count", 0)) + 1
+                        due.append((task_id, str(task.get("mode") or "thinking")))
+                for task_id, mode in due:
+                    label = (
+                        "Sub-agent is still working"
+                        if mode == "delegating"
+                        else "Still thinking"
+                    )
+                    cue = (
+                        "The sub-agent is still working. I'll tell you when it's finished."
+                        if mode == "delegating"
+                        else "I'm still working through that."
+                    )
+                    kind = "delegation" if mode == "delegating" else "thinking"
+                    await self._send({
+                            "type": "activity",
+                            "task_id": task_id,
+                            "status": "started",
+                            "kind": kind,
+                            "label": label,
+                    })
+                    if self.state == "listening":
+                        await self._speak_background(cue)
+                continue  # poll timeout, nothing queued yet — keep waiting
+            if item is _DUPLEX_DEEP_TASK_STOP:
+                return
+            task_id = item.get("task_id")
+            if item.get("type") == "activity":
+                with self._deep_tasks_lock:
+                    task = self._deep_tasks.get(task_id)
+                    if task is not None:
+                        task["label"] = item.get("label") or task.get("label")
+                        task["last_cue"] = time.monotonic()
+                await self._send({"type": "activity", **item})
+                if item.get("status") == "started":
+                    cue = _DUPLEX_ACTIVITY_CUES.get(str(item.get("kind") or ""))
+                    if cue and self.state == "listening":
+                        await self._speak_background(cue)
+                continue
+            if item.get("ok"):
+                with self._deep_tasks_lock:
+                    self._deep_tasks.pop(task_id, None)
+                text = item.get("text") or ""
+                if self.transcript is not None:
+                    self.transcript.add("assistant", text)
+                await self._wait_until_listening()
+                await self._send({
+                    "type": "deep_result",
+                    "task_id": task_id,
+                    "text": text,
+                })
+                await self._speak_background(text)
+            else:
+                with self._deep_tasks_lock:
+                    self._deep_tasks.pop(task_id, None)
+                err = item.get("error") or "deep task failed"
+                await self._send({"type": "error", "error": err})
+                apology = "Sorry, I hit a snag working on that — want me to try again?"
+                await self._wait_until_listening()
+                await self._send({
+                    "type": "deep_result",
+                    "task_id": task_id,
+                    "text": apology,
+                })
+                await self._speak_background(apology)
+
+    async def _wait_until_listening(self) -> None:
+        while not self._closed and self.state != "listening":
+            await asyncio.sleep(0.05)
+
+    async def _speak_background(self, text: str) -> None:
+        async with self._background_speech_lock:
+            await self._wait_until_listening()
+            if self._closed:
+                return
+            cancel_event = threading.Event()
+            self._cancel_speaking = cancel_event
+            self.state = "speaking"
+            self._active_assistant_text = text
+            await asyncio.to_thread(self._speak_full_sync, text, cancel_event)
+            if self.state == "speaking" and not self._playback_pending.is_set():
+                self.state = "listening"
+
+    def _speak_full_sync(
+        self, text: str, cancel_event: Optional[threading.Event] = None
+    ) -> None:
+        cycle = _DuplexTtsCycle(self)
+        cycle.speak(text, cancel_event or threading.Event())
+        cycle.end()
+
+    async def close(self) -> None:
+        self._closed = True
+        self._cancel_speaking.set()
+        self._playback_pending.clear()
+        task = self._speaking_task
+        if task is not None:
+            try:
+                # Bounded defense-in-depth: cancel_event makes the worker
+                # thread return promptly in the normal case, but a raw
+                # thread blocked in a real network call can't be preempted.
+                # Give up waiting rather than hang the WS teardown forever;
+                # the orphaned thread finishes on its own and is harmless.
+                await asyncio.wait_for(task, timeout=30.0)
+            except Exception:
+                pass
+        if self._deep_task_pump is not None:
+            try:
+                self._deep_task_queue.put(_DUPLEX_DEEP_TASK_STOP)
+            except Exception:
+                pass
+            try:
+                await asyncio.wait_for(self._deep_task_pump, timeout=30.0)
+            except Exception:
+                pass
+        if self.stt_session is not None:
+            try:
+                if _streaming_stt_provider(self.stt_cfg) == "parakeet":
+                    await asyncio.to_thread(
+                        _return_warm_parakeet_session, self.stt_session, self.stt_cfg
+                    )
+                else:
+                    await asyncio.to_thread(self.stt_session.close)
+            except Exception:
+                try:
+                    await asyncio.to_thread(self.stt_session.close)
+                except Exception:
+                    pass
+        if self._stt_slot_acquired:
+            _get_audio_transcribe_lock(app).release()
+            self._stt_slot_acquired = False
+
+
+@app.websocket("/api/voice/duplex")
+async def voice_duplex_ws(ws: WebSocket) -> None:
+    if not await _accept_audio_ws(ws, "voice-duplex"):
+        return
+
+    cfg = load_config()
+    session = _DuplexSession(ws, cfg)
+    try:
+        await session.start()
+    except Exception:
+        _log.exception("Voice duplex: session start failed")
+        try:
+            await ws.close(code=1011)
+        except Exception:
+            pass
+        return
+
+    try:
+        while True:
+            msg = await ws.receive()
+            if msg.get("type") == "websocket.disconnect":
+                break
+
+            text = msg.get("text")
+            if not text:
+                continue
+            try:
+                payload = json.loads(text)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(payload, dict):
+                continue
+
+            mtype = payload.get("type")
+            if mtype == "audio":
+                raw = payload.get("data")
+                if not raw:
+                    continue
+                try:
+                    chunk = base64.b64decode(raw)
+                except (binascii.Error, ValueError):
+                    continue
+                await session.on_audio(chunk)
+            elif mtype == "playback_done":
+                await session.on_playback_done()
+            elif mtype == "stop":
+                break
+    except WebSocketDisconnect:
+        pass
+    except Exception:
+        _log.exception("Voice duplex session failed")
+        try:
+            await ws.send_json({
+                "type": "error",
+                "error": "voice duplex session failed",
+            })
+        except Exception:
+            pass
+    finally:
+        await session.close()
+
+
 # /api/console — safe Hermes Console command WebSocket.
 #
 # Unlike /api/pty, this endpoint never spawns a PTY, shell, or full Hermes CLI

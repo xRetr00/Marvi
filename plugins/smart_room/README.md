@@ -67,6 +67,13 @@ leaves the PC and is not sent to STT or an LLM. If claps are missed, first lower
 `min_peak` slightly; if other sharp sounds trigger candidates, raise it. The
 YAMNet confidence check remains the final decision.
 
+Each accepted clap also creates a local, roughly one-second review sample under
+`<profile>/smart_room/clap_dataset`. Marvi asks for a Yes/No label in a small
+Desktop side popup: only Yes counts toward the 200-clap personalization target,
+while No is retained as a hard negative. This passive dataset is never uploaded
+or used to change live automation until a future personalized model is trained
+and explicitly enabled.
+
 The plugin is bundled with Marvi; no symlink or second repository is needed.
 
 ### 4. Hardware setup

@@ -39,6 +39,14 @@ class ClapDataset:
         filename = f"{sample_id}.wav"
 
         with self._lock:
+            index = self._load()
+            confirmed = sum(item.get("label") == "clap" for item in index["samples"])
+            pending = sum(item.get("label") == "pending" for item in index["samples"])
+            if confirmed >= TARGET_CONFIRMED_CLAPS:
+                return {"skipped": "target_complete"}
+            if pending >= TARGET_CONFIRMED_CLAPS:
+                return {"skipped": "review_queue_full"}
+
             self.samples_dir.mkdir(parents=True, exist_ok=True)
             temporary = self.samples_dir / f".{filename}.tmp"
             final = self.samples_dir / filename
@@ -58,7 +66,6 @@ class ClapDataset:
                 output.writeframes(pcm.tobytes())
             os.replace(temporary, final)
 
-            index = self._load()
             sample = {
                 "id": sample_id,
                 "captured_at": captured_at,

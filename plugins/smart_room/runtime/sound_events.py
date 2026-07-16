@@ -38,6 +38,26 @@ def _clap_score(scores: Any) -> float:
     return max(float(flat_scores[index]) for index in _CLAP_CLASSES)
 
 
+def _model_accepts_transient(scores: Any, confidence: float) -> bool:
+    flat_scores = scores.reshape(-1)
+    return _clap_score(scores) >= confidence or max(
+        float(flat_scores[0]),  # Speech
+        float(flat_scores[132]),  # Music
+    ) < 0.2
+
+
+def _transient_gate(
+    peak: float, rms: float, noise_floor: float, config: Dict[str, Any]
+) -> tuple[bool, float, float]:
+    threshold = max(
+        float(config.get("min_peak", 0.04)),
+        noise_floor * float(config.get("noise_multiplier", 4.0)),
+    )
+    crest = peak / max(rms, 1e-6)
+    accepted = peak >= threshold and crest >= float(config.get("min_crest", 2.0))
+    return accepted, threshold, crest
+
+
 class ClapSequence:
     """Convert confirmed claps into deliberate two/three-clap actions."""
 
@@ -45,11 +65,13 @@ class ClapSequence:
         self,
         on_action: Callable[[str], None],
         *,
+        min_gap: float = 0.3,
         max_gap: float = 0.9,
         decision_delay: float = 0.65,
         cooldown: float = 3.0,
     ) -> None:
         self._on_action = on_action
+        self._min_gap = max(0.1, min(min_gap, max_gap))
         self._max_gap = max(0.2, max_gap)
         self._decision_delay = min(self._max_gap, max(0.2, decision_delay))
         self._cooldown = max(0.0, cooldown)
@@ -60,6 +82,8 @@ class ClapSequence:
         """Add one model-confirmed clap; return whether it was accepted."""
         now = time.monotonic() if at is None else at
         if now < self._cooldown_until:
+            return False
+        if self._claps and now - self._claps[-1] < self._min_gap:
             return False
         if self._claps and now - self._claps[-1] > self._max_gap:
             self._claps.clear()
@@ -75,6 +99,12 @@ class ClapSequence:
             self._fire("toggle_light", current)
         elif len(self._claps) == 1 and current >= self._claps[0] + self._max_gap:
             self._claps.clear()
+
+    def suppress(self, at: Optional[float] = None, duration: float = 2.0) -> None:
+        """Discard pending claps and ignore transients while speech/music is audible."""
+        now = time.monotonic() if at is None else at
+        self._claps.clear()
+        self._cooldown_until = max(self._cooldown_until, now + max(0.0, duration))
 
     def _fire(self, action: str, now: float) -> None:
         self._claps.clear()
@@ -105,13 +135,19 @@ class SoundEventListener:
             "microphone": None,
             "last_error": None,
             "last_score": None,
+            "last_top_scores": [],
             "noise_floor": self._noise_floor,
+            "last_peak": 0.0,
+            "max_peak": 0.0,
+            "last_crest": 0.0,
+            "threshold": 0.0,
             "candidates": 0,
             "confirmed_claps": 0,
             "last_action": None,
         }
         self._sequence = ClapSequence(
             self._dispatch_action,
+            min_gap=float(self._config.get("min_gap_ms", 300)) / 1000,
             max_gap=float(self._config.get("max_gap_ms", 900)) / 1000,
             decision_delay=float(self._config.get("decision_ms", 650)) / 1000,
             cooldown=float(self._config.get("cooldown_ms", 3000)) / 1000,
@@ -212,9 +248,22 @@ class SoundEventListener:
                     scores = interpreter.get_tensor(output_index)
                     score = _clap_score(scores)
                     self._status["last_score"] = round(score, 4)
-                    if score >= float(self._config.get("confidence", 0.15)):
-                        self._status["confirmed_claps"] += 1
-                        self._sequence.add(detected_at + delay)
+                    flat_scores = scores.reshape(-1)
+                    self._status["last_top_scores"] = [
+                        {"class": int(index), "score": round(float(flat_scores[index]), 4)}
+                        for index in flat_scores.argsort()[-5:][::-1]
+                    ]
+                    if max(float(flat_scores[0]), float(flat_scores[132])) >= 0.2:
+                        self._sequence.suppress(
+                            detected_at + delay,
+                            float(self._config.get("speech_suppression_ms", 2500)) / 1000,
+                        )
+                        continue
+                    if _model_accepts_transient(
+                        scores, float(self._config.get("confidence", 0.15))
+                    ):
+                        if self._sequence.add(detected_at + delay):
+                            self._status["confirmed_claps"] += 1
                 self._sequence.tick(now)
         except Exception as exc:
             self._status["last_error"] = f"{type(exc).__name__}: {exc}"
@@ -244,14 +293,16 @@ class SoundEventListener:
         peak = float(np.max(np.abs(samples))) if count else 0.0
         rms = float(np.sqrt(np.mean(np.square(samples)))) if count else 0.0
         self._noise_floor = 0.995 * self._noise_floor + 0.005 * min(rms, 0.05)
-        threshold = max(
-            float(self._config.get("min_peak", 0.12)),
-            self._noise_floor * float(self._config.get("noise_multiplier", 8.0)),
+        accepted, threshold, crest = _transient_gate(
+            peak, rms, self._noise_floor, self._config
         )
-        crest = peak / max(rms, 1e-6)
+        self._status["last_peak"] = round(peak, 4)
+        self._status["max_peak"] = round(max(float(self._status["max_peak"]), peak), 4)
+        self._status["last_crest"] = round(crest, 2)
+        self._status["threshold"] = round(threshold, 4)
         now = time.monotonic()
-        refractory = float(self._config.get("candidate_refractory_ms", 250)) / 1000
-        if peak >= threshold and crest >= float(self._config.get("min_crest", 3.0)) and now - self._last_candidate >= refractory:
+        refractory = float(self._config.get("candidate_refractory_ms", 350)) / 1000
+        if accepted and now - self._last_candidate >= refractory:
             self._last_candidate = now
             self._status["candidates"] += 1
             due = now + float(self._config.get("model_delay_ms", 150)) / 1000

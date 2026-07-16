@@ -95,7 +95,7 @@ def append_transition(event: Dict[str, Any]) -> None:
         from cron.scheduler import record_subconscious_activity
 
         record_subconscious_activity(
-            source="smart_room_welcome",
+            source="world",
             outcome="diff_silent",
             summary=str(event.get("summary") or event.get("type") or "Room changed"),
             diff=json.dumps(event, ensure_ascii=False),
@@ -110,7 +110,7 @@ def publish_welcome(message: str) -> None:
         from cron.scheduler import record_subconscious_activity
 
         record_subconscious_activity(
-            source="world",
+            source="smart_room_welcome",
             outcome="message",
             summary="Smart Room welcome",
             thought=message,

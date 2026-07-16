@@ -99,7 +99,7 @@ const DEFAULT_CONFIG: SmartRoomConfig = {
   enabled: false,
   owner: 'Shereef',
   welcome: { enabled: true, identity_grace_seconds: 4, reset_after_seconds: 3600 },
-  sound_events: { enabled: false, confidence: 0.15, min_peak: 0.12, input_device: null },
+  sound_events: { enabled: false, confidence: 0.15, min_peak: 0.04, input_device: null },
   mqtt: { broker: '127.0.0.1', port: 1883 },
   context: { enabled: true },
   subconscious: { enabled: true },

@@ -43,7 +43,12 @@ smart_room:
     enabled: true
     # input_device: null       # default Windows recording device
     confidence: 0.15
-    min_peak: 0.12
+    min_peak: 0.04
+    noise_multiplier: 4
+    min_crest: 2
+    speech_suppression_ms: 2500
+    candidate_refractory_ms: 350
+    min_gap_ms: 300
     noise_multiplier: 8.0
     min_crest: 3.0
     candidate_refractory_ms: 250

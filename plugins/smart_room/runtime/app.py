@@ -664,7 +664,7 @@ class Runtime:
                 else (
                     "The detected person is a guest whose name is unknown. Do not invent a name. "
                     f"Warmly tell the guest that {owner_name}, the owner, isn't here right now, "
-                    f"and include the exact name {owner_name}."
+                    f"and include the exact name {owner_name}. State this only once."
                 )
             )
             soul = (load_soul_md() or "")[:4000]
@@ -692,7 +692,18 @@ class Runtime:
                 greeting = f"{owner_name}, {greeting[:1].lower()}{greeting[1:]}"
             elif not owner_detected and (
                 owner_name.casefold() not in greeting.casefold()
-                or not any(marker in greeting.casefold() for marker in ("isn't here", "is not here", "not home", "away"))
+                or not any(
+                    marker in greeting.casefold()
+                    for marker in (
+                        "isn't here",
+                        "is not here",
+                        "isn't around",
+                        "is not around",
+                        "not home",
+                        "not present",
+                        "away",
+                    )
+                )
             ):
                 greeting = f"{greeting} {owner_name}, the owner, isn't here right now."
             greeting = greeting[:300]

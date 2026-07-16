@@ -185,6 +185,40 @@ def test_guest_welcome_always_says_the_configured_owner_is_away(monkeypatch):
     assert "isn't here" in published[0]
 
 
+def test_guest_welcome_does_not_repeat_an_llm_generated_absence(monkeypatch):
+    import agent.auxiliary_client as auxiliary_client
+    import plugins.smart_room.runtime.app as app_module
+
+    monkeypatch.setitem(sys.modules, "agent.prompt_builder", SimpleNamespace(load_soul_md=lambda: ""))
+    monkeypatch.setattr(
+        auxiliary_client,
+        "call_llm",
+        lambda **_kwargs: SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(
+                content="Welcome! Shereef isn't around at the moment, but I'm here to help."
+            ))]
+        ),
+    )
+    published = []
+    monkeypatch.setattr(app_module, "publish_welcome", published.append)
+
+    Runtime({"owner": "Shereef"})._publish_welcome(False, "Shereef", record_arrival=False)
+
+    assert published == ["Welcome! Shereef isn't around at the moment, but I'm here to help."]
+
+
+def test_welcome_activity_has_a_dedicated_tts_source(monkeypatch):
+    from cron import scheduler
+    from plugins.smart_room.runtime.state_store import publish_welcome
+
+    recorded = []
+    monkeypatch.setattr(scheduler, "record_subconscious_activity", lambda **row: recorded.append(row))
+
+    publish_welcome("Welcome")
+
+    assert recorded[0]["source"] == "smart_room_welcome"
+
+
 def test_location_event_is_idempotent_and_schedules_work_return(monkeypatch):
     runtime = Runtime({
         "owner": "shereef",

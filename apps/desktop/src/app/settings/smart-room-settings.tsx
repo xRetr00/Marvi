@@ -2,14 +2,18 @@ import { useCallback, useEffect, useId, useRef, useState } from 'react'
 
 import { Switch } from '@/components/ui/switch'
 import {
+  acknowledgeSmartRoomAlarm,
   applySmartRoomConfig,
   cancelSmartRoomSleep,
+  deleteSmartRoomAlarm,
   getHermesConfigRecord,
   getSmartRoomStatus,
   saveHermesConfig,
+  saveSmartRoomAlarm,
   saveSmartRoomSecrets,
   setSmartRoomMode,
   setSmartRoomOverride,
+  type SmartRoomAlarm,
   type SmartRoomStatus,
   testSmartRoomWelcome
 } from '@/hermes'
@@ -40,11 +44,12 @@ interface SmartRoomConfig {
   enabled: boolean
   owner: string
   welcome: { enabled: boolean; identity_grace_seconds: number; reset_after_seconds: number }
-  sound_events: { enabled: boolean; confidence: number; min_peak: number }
+  sound_events: { enabled: boolean; confidence: number; min_peak: number; input_device: null | string }
   mqtt: { broker: string; port: number }
   context: { enabled: boolean }
   subconscious: { enabled: boolean }
   tuya: {
+    worker: { timeout_seconds: number; retries: number; queue_size: number }
     bulb: {
       ip: string
       device_id: string
@@ -63,6 +68,7 @@ interface SmartRoomConfig {
     status_topic: string
     rssi_enter_threshold: number
     rssi_exit_threshold: number
+    enter_debounce_seconds: number
     exit_timeout: number
     missing_timeout_seconds: number
   }
@@ -75,7 +81,6 @@ interface SmartRoomConfig {
   }
   automations: {
     adaptive_light: { enabled: boolean; debounce: number; exit_timeout: number }
-    alarm: { enabled: boolean; daily_time: string; duration_minutes: number; flash_interval_ms: number }
     evening_sleep: { enabled: boolean; time: string }
     work_return: { enabled: boolean; work_hours_start: string; work_hours_end: string; settle_delay: number }
     daily_reset: string
@@ -94,11 +99,12 @@ const DEFAULT_CONFIG: SmartRoomConfig = {
   enabled: false,
   owner: 'Shereef',
   welcome: { enabled: true, identity_grace_seconds: 4, reset_after_seconds: 3600 },
-  sound_events: { enabled: false, confidence: 0.45, min_peak: 0.12 },
+  sound_events: { enabled: false, confidence: 0.45, min_peak: 0.12, input_device: null },
   mqtt: { broker: '127.0.0.1', port: 1883 },
   context: { enabled: true },
   subconscious: { enabled: true },
   tuya: {
+    worker: { timeout_seconds: 4, retries: 1, queue_size: 16 },
     bulb: {
       ip: '', device_id: '', protocol: '3.3', brightness_max: 255, color_temp_max: 255,
       dps: { switch: 1, brightness: 2, color_temp: 3, color: 5 }
@@ -116,6 +122,7 @@ const DEFAULT_CONFIG: SmartRoomConfig = {
     status_topic: 'espresense/rooms/smart_room/#',
     rssi_enter_threshold: -70,
     rssi_exit_threshold: -85,
+    enter_debounce_seconds: 3,
     exit_timeout: 60,
     missing_timeout_seconds: 30,
   },
@@ -123,7 +130,6 @@ const DEFAULT_CONFIG: SmartRoomConfig = {
   owntracks: { topic: 'owntracks/shereef/#', zones: ['home', 'university', 'bakery'] },
   automations: {
     adaptive_light: { enabled: true, debounce: 3, exit_timeout: 60 },
-    alarm: { enabled: false, daily_time: '', duration_minutes: 30, flash_interval_ms: 500 },
     evening_sleep: { enabled: true, time: '18:00' },
     work_return: { enabled: true, work_hours_start: '06:00', work_hours_end: '10:00', settle_delay: 300 },
     daily_reset: '00:00',
@@ -162,6 +168,7 @@ const MODES = [
   { id: 'reading', label: 'Reading', icon: '📖', desc: 'Warm 3000K @ 70%' },
   { id: 'focus', label: 'Focus', icon: '🧠', desc: 'Cool 5000K @ 100%' },
   { id: 'relax', label: 'Relax', icon: '😌', desc: 'Amber 2700K @ 40%' },
+  { id: 'night', label: 'Night', icon: '🌙', desc: 'Dim warm light @ 15%' },
   { id: 'sleep', label: 'Sleep', icon: '😴', desc: 'Lights off, darkness' },
   { id: 'alarm', label: 'Alarm', icon: '🚨', desc: 'Flash bright white' },
   { id: 'off', label: 'Off', icon: '⏻', desc: 'Lights off' },
@@ -169,7 +176,6 @@ const MODES = [
 
 const AUTOMATIONS = [
   { key: 'adaptive_light', label: 'Adaptive Light (Presence)', desc: 'Turn on/off based on room presence' },
-  { key: 'alarm', label: 'Daily Alarm Flash', desc: 'Bright flash alarm at scheduled time' },
   { key: 'evening_sleep', label: 'Evening Sleep', desc: 'Auto sleep mode at 6 PM' },
   { key: 'work_return', label: 'Work Return Sleep', desc: 'Auto sleep when arriving home from work' },
 ] as const
@@ -257,6 +263,81 @@ function TextField({ label, value, onChange, placeholder, type = 'text', hint, m
   )
 }
 
+function AlarmEditor({ alarm, onDelete, onSaved }: {
+  alarm: SmartRoomAlarm
+  onDelete: (id: string) => Promise<void>
+  onSaved: () => Promise<void>
+}) {
+  const [draft, setDraft] = useState(alarm)
+  const [busy, setBusy] = useState(false)
+
+  useEffect(() => setDraft(alarm), [alarm])
+
+  const patch = <K extends keyof SmartRoomAlarm>(key: K, value: SmartRoomAlarm[K]) =>
+    setDraft(current => ({ ...current, [key]: value }))
+
+  return (
+    <div className="rounded-lg border border-zinc-800 bg-zinc-950 p-3">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-6">
+        <TextField label="Name" onChange={value => patch('name', value)} value={draft.name} />
+        <TextField label="Time" onChange={value => patch('time', value)} type="time" value={draft.time} />
+        <div className="mb-3">
+          <label className={`mb-1 block ${CONTROL_TEXT} text-zinc-400`}>Repeat</label>
+          <select
+            className="w-full rounded-md border border-zinc-800 bg-zinc-950 px-3 py-1.5 text-sm text-zinc-200"
+            onChange={event => patch('recurrence', event.target.value as SmartRoomAlarm['recurrence'])}
+            value={draft.recurrence}
+          >
+            <option value="once">One day</option>
+            <option value="daily">Every day</option>
+          </select>
+        </div>
+        {draft.recurrence === 'once' ? (
+          <TextField label="Date" onChange={value => patch('date', value)} type="date" value={draft.date || ''} />
+        ) : <div />}
+        <TextField
+          label="Duration (minutes)"
+          max={180}
+          min={1}
+          onChange={value => patch('duration_minutes', Math.max(1, parseInt(value) || 30))}
+          type="number"
+          value={draft.duration_minutes}
+        />
+        <div className="flex items-center justify-between gap-2 pb-3 pt-5">
+          <Toggle checked={draft.enabled} label={`${draft.name} enabled`} onChange={value => patch('enabled', value)} />
+          <button
+            className="rounded-md bg-primary px-3 py-1.5 text-xs text-primary-foreground disabled:opacity-50"
+            disabled={busy || !draft.name.trim() || !draft.time || (draft.recurrence === 'once' && !draft.date)}
+            onClick={() => {
+              setBusy(true)
+              void saveSmartRoomAlarm(draft)
+                .then(onSaved)
+                .catch(error => notifyError(error, 'Failed to save alarm'))
+                .finally(() => setBusy(false))
+            }}
+            type="button"
+          >
+            Save
+          </button>
+          {draft.id ? (
+            <button
+              className="rounded-md border border-red-900/60 px-3 py-1.5 text-xs text-red-400 disabled:opacity-50"
+              disabled={busy}
+              onClick={() => {
+                setBusy(true)
+                void onDelete(draft.id).finally(() => setBusy(false))
+              }}
+              type="button"
+            >
+              Delete
+            </button>
+          ) : null}
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // ---------------------------------------------------------------------------
 // Main component
 // ---------------------------------------------------------------------------
@@ -269,7 +350,15 @@ export function SmartRoomSettings() {
   const [secrets, setSecrets] = useState({ bulb_key: '', he20_key: '', mqtt_username: '', mqtt_password: '' })
   const [loading, setLoading] = useState(true)
   const [testingWelcome, setTestingWelcome] = useState<'owner' | 'guest' | null>(null)
+
+  const [newAlarm, setNewAlarm] = useState<SmartRoomAlarm>({
+    id: '', name: 'Alarm', time: '08:00', recurrence: 'once',
+    date: new Date().toISOString().slice(0, 10), enabled: true, duration_minutes: 30
+  })
+
   const saveQueue = useRef<Promise<void>>(Promise.resolve())
+
+  const refreshStatus = useCallback(async () => setLiveStatus(await getSmartRoomStatus()), [])
 
   // Load config
   useEffect(() => {
@@ -278,7 +367,15 @@ export function SmartRoomSettings() {
         const sr = cfg?.smart_room
 
         if (sr) {
-          setConfig(mergeDefaults(DEFAULT_CONFIG, sr))
+          const migrated = mergeDefaults(DEFAULT_CONFIG, sr)
+
+          delete (migrated.automations as any).alarm
+          setConfig(migrated)
+
+          if (sr.automations?.alarm) {
+            cfg.smart_room = migrated
+            void saveHermesConfig(cfg).catch(() => undefined)
+          }
         }
       })
       .catch(() => {})
@@ -290,7 +387,7 @@ export function SmartRoomSettings() {
   useEffect(() => {
     const poll = async () => {
       try {
-        setLiveStatus(await getSmartRoomStatus())
+        await refreshStatus()
       } catch {
         setLiveStatus(null)
       }
@@ -300,7 +397,7 @@ export function SmartRoomSettings() {
     const interval = setInterval(poll, 10000)
 
     return () => clearInterval(interval)
-  }, [])
+  }, [refreshStatus])
 
   const updateConfig = useCallback((newConfig: SmartRoomConfig) => {
     setConfig(newConfig)
@@ -373,9 +470,10 @@ export function SmartRoomSettings() {
     microphone?: string | null
   } | undefined
 
-  const activeMode = liveState?.modes
-    ? Object.entries(liveState.modes as Record<string, boolean>).find(([k, v]) => v && !['manual_override', 'work_return'].includes(k))?.[0]
-    : null
+  const activeMode = liveState?.modes?.active_mode || null
+  const overrideMode = (liveState?.modes?.manual_override || 'none') as 'hold_off' | 'hold_on' | 'none'
+  const alarms = (liveState?.alarms || []) as SmartRoomAlarm[]
+  const activeAlarm = liveState?.active_alarm as { id: string; name: string; phase: string } | null | undefined
 
   return (
     <SettingsContent>
@@ -472,7 +570,7 @@ export function SmartRoomSettings() {
             <p className={`${CONTROL_TEXT} text-zinc-500`}>{t.settings.soundEvents.tripleClapDesc}</p>
           </div>
         </div>
-        <div className="grid grid-cols-1 gap-x-4 sm:grid-cols-2">
+        <div className="grid grid-cols-1 gap-x-4 sm:grid-cols-3">
           <TextField
             hint={t.settings.soundEvents.confidenceHint}
             label={t.settings.soundEvents.confidence}
@@ -504,6 +602,13 @@ export function SmartRoomSettings() {
             step={0.01}
             type="number"
             value={config.sound_events.min_peak}
+          />
+          <TextField
+            hint="Leave empty for the Windows default recording device."
+            label="Microphone device"
+            onChange={value => updatePath('sound_events.input_device', value.trim() || null)}
+            placeholder={soundEvents?.microphone || 'Default input'}
+            value={config.sound_events.input_device || ''}
           />
         </div>
         <p className={`${CONTROL_TEXT} text-zinc-500`}>{t.settings.soundEvents.applyHint}</p>
@@ -561,7 +666,7 @@ export function SmartRoomSettings() {
 
       {/* Mode Buttons */}
       <SectionCard icon={Zap} title="Modes">
-        <div className="grid grid-cols-3 gap-2 sm:grid-cols-6">
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-7">
           {MODES.map((mode) => (
             <button
               className={`flex flex-col items-center rounded-lg border p-3 transition-colors ${
@@ -588,16 +693,26 @@ export function SmartRoomSettings() {
           Save changes automatically, then use the refresh button above to apply them to the runtime.
         </p>
         <div className="mt-3 flex flex-wrap gap-2">
+          <label className="flex items-center gap-2 text-xs text-zinc-400">
+            Presence override
+            <select
+              className="rounded-md border border-zinc-700 bg-zinc-950 px-2 py-1.5 text-zinc-300"
+              disabled={!runtimeUp}
+              onChange={event => {
+                void setSmartRoomOverride(event.target.value as typeof overrideMode)
+                  .then(refreshStatus)
+                  .catch(err => notifyError(err, 'Failed to change manual override'))
+              }}
+              value={overrideMode}
+            >
+              <option value="none">Automatic</option>
+              <option value="hold_on">Keep light on</option>
+              <option value="hold_off">Keep light off</option>
+            </select>
+          </label>
           <button
             className="rounded-md border border-zinc-700 px-3 py-1.5 text-xs text-zinc-300 disabled:opacity-40"
-            disabled={!runtimeUp}
-            onClick={() => void setSmartRoomOverride(!liveState?.modes?.manual_override).then(() => getSmartRoomStatus()).then(setLiveStatus).catch(err => notifyError(err, 'Failed to change manual override'))}
-          >
-            Manual override: {liveState?.modes?.manual_override ? 'On' : 'Off'}
-          </button>
-          <button
-            className="rounded-md border border-zinc-700 px-3 py-1.5 text-xs text-zinc-300 disabled:opacity-40"
-            disabled={!runtimeUp || !liveState?.modes?.sleep}
+            disabled={!runtimeUp || activeMode !== 'sleep'}
             onClick={() => void cancelSmartRoomSleep().then(() => getSmartRoomStatus()).then(setLiveStatus).catch(err => notifyError(err, 'Failed to cancel sleep'))}
           >
             Cancel sleep
@@ -628,8 +743,6 @@ export function SmartRoomSettings() {
           <details className="border-t border-zinc-800 pt-3 text-xs text-zinc-400">
             <summary className="cursor-pointer">Automation timing</summary>
             <div className="mt-3 grid grid-cols-1 gap-x-4 sm:grid-cols-2">
-              <TextField hint="Empty keeps the daily alarm disabled; Alarm mode still works manually." label="Alarm Time" onChange={(v) => updatePath('automations.alarm.daily_time', v)} type="time" value={config.automations.alarm.daily_time} />
-              <TextField label="Alarm Duration (minutes)" onChange={(v) => updatePath('automations.alarm.duration_minutes', parseInt(v) || 30)} type="number" value={config.automations.alarm.duration_minutes} />
               <TextField label="Evening Sleep Time" onChange={(v) => updatePath('automations.evening_sleep.time', v)} type="time" value={config.automations.evening_sleep.time} />
               <TextField label="Work Return Settle (seconds)" onChange={(v) => updatePath('automations.work_return.settle_delay', parseInt(v) || 300)} type="number" value={config.automations.work_return.settle_delay} />
               <TextField label="Arrival Window Start" onChange={(v) => updatePath('automations.work_return.work_hours_start', v)} type="time" value={config.automations.work_return.work_hours_start} />
@@ -649,6 +762,53 @@ export function SmartRoomSettings() {
               value={config.automations.daily_reset}
             />
           </div>
+        </div>
+      </SectionCard>
+
+      <SectionCard icon={Moon} title="Alarms">
+        <p className={`mb-3 ${CONTROL_TEXT} text-zinc-500`}>
+          Named one-day or every-day alarms flash for one minute, stay bright, start Voice Instant, and restore the previous room state when acknowledged.
+        </p>
+        {activeAlarm ? (
+          <div className="mb-3 flex items-center justify-between rounded-lg border border-amber-500/40 bg-amber-500/10 p-3">
+            <div>
+              <p className="text-sm font-medium text-amber-300">{activeAlarm.name}</p>
+              <p className={`${CONTROL_TEXT} capitalize text-amber-200/70`}>{activeAlarm.phase}</p>
+            </div>
+            <button
+              className="rounded-md bg-amber-300 px-3 py-1.5 text-sm font-medium text-zinc-950"
+              onClick={() => void acknowledgeSmartRoomAlarm().then(refreshStatus).catch(error => notifyError(error, 'Failed to stop alarm'))}
+              type="button"
+            >
+              I&apos;m awake
+            </button>
+          </div>
+        ) : null}
+        <div className="space-y-3">
+          {alarms.map(alarm => (
+            <AlarmEditor
+              alarm={alarm}
+              key={alarm.id}
+              onDelete={async id => {
+                await deleteSmartRoomAlarm(id)
+                await refreshStatus()
+              }}
+              onSaved={refreshStatus}
+            />
+          ))}
+          <details className="rounded-lg border border-dashed border-zinc-700 p-3">
+            <summary className="cursor-pointer text-sm text-zinc-300">Add alarm</summary>
+            <div className="mt-3">
+              <AlarmEditor
+                alarm={newAlarm}
+                onDelete={async () => undefined}
+                onSaved={async () => {
+                  await refreshStatus()
+                  setNewAlarm(current => ({ ...current, id: '', name: 'Alarm' }))
+                }}
+              />
+            </div>
+          </details>
         </div>
       </SectionCard>
 
@@ -717,6 +877,14 @@ export function SmartRoomSettings() {
             </details>
           </div>
         </div>
+        <details className="mt-3 rounded-md border border-zinc-800 p-2 text-xs text-zinc-400">
+          <summary className="cursor-pointer">Reliability worker</summary>
+          <div className="mt-3 grid grid-cols-1 gap-x-3 sm:grid-cols-3">
+            <TextField label="Socket timeout (seconds)" min={1} onChange={value => updatePath('tuya.worker.timeout_seconds', Math.max(1, parseInt(value) || 4))} type="number" value={config.tuya.worker.timeout_seconds} />
+            <TextField label="Retries" max={3} min={0} onChange={value => updatePath('tuya.worker.retries', Math.max(0, Math.min(3, parseInt(value) || 0)))} type="number" value={config.tuya.worker.retries} />
+            <TextField label="Queue capacity" min={4} onChange={value => updatePath('tuya.worker.queue_size', Math.max(4, parseInt(value) || 16))} type="number" value={config.tuya.worker.queue_size} />
+          </div>
+        </details>
         <button
           className="mt-3 rounded-md bg-primary px-3 py-1.5 text-sm text-primary-foreground"
           onClick={() => {
@@ -741,6 +909,7 @@ export function SmartRoomSettings() {
           <div>
             <TextField hint="dBm — closer = higher. -70 is typical." label="RSSI Enter Threshold" onChange={(v) => updatePath('esp32.rssi_enter_threshold', parseInt(v) || -70)} type="number" value={config.esp32.rssi_enter_threshold} />
             <TextField hint="dBm — must drop below this to leave." label="RSSI Exit Threshold" onChange={(v) => updatePath('esp32.rssi_exit_threshold', parseInt(v) || -85)} type="number" value={config.esp32.rssi_exit_threshold} />
+            <TextField hint="Require sustained BLE signal before entering." label="BLE Entry Debounce (seconds)" onChange={(v) => updatePath('esp32.enter_debounce_seconds', Math.max(0, parseInt(v) || 0))} type="number" value={config.esp32.enter_debounce_seconds} />
             <TextField label="Exit Timeout (seconds)" onChange={(v) => updatePath('esp32.exit_timeout', parseInt(v) || 60)} type="number" value={config.esp32.exit_timeout} />
             <TextField hint="BLE silence alone never clears presence; this only enters sticky fusion." label="BLE Missing Timeout (seconds)" onChange={(v) => updatePath('esp32.missing_timeout_seconds', parseInt(v) || 30)} type="number" value={config.esp32.missing_timeout_seconds} />
           </div>

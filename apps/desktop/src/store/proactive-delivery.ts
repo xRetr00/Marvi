@@ -1,7 +1,8 @@
+import { requestVoiceStart, requestVoiceStop } from '@/app/chat/composer/focus'
 import { translateNow } from '@/i18n'
 import { playSpeechText } from '@/lib/voice-playback'
 
-import { showIslandCard } from './island-cards'
+import { dismissIslandCard, showIslandCard } from './island-cards'
 import { dispatchNativeNotification } from './native-notifications'
 import { notify } from './notifications'
 import { $voicePlayback } from './voice-playback'
@@ -26,6 +27,7 @@ interface ProactiveActivityResponse {
 
 let timer: number | null = null
 let polling = false
+let activeAlarmCardId: null | string = null
 
 function runKey(run: ProactiveRun): string {
   return `${run.at ?? ''}:${run.job_id ?? ''}:${run.source ?? ''}`
@@ -64,6 +66,13 @@ export function unseenProactiveRuns(runs: readonly ProactiveRun[], lastSeen: str
   return candidates.filter(run => run.outcome === 'message' && Boolean(proactiveMessage(run)))
 }
 
+function unseenRuns(runs: readonly ProactiveRun[], lastSeen: string): ProactiveRun[] {
+  const chronological = [...runs].reverse()
+  const index = chronological.findIndex(run => runKey(run) === lastSeen)
+
+  return index >= 0 ? chronological.slice(index + 1) : chronological
+}
+
 function surface(run: ProactiveRun): void {
   const message = proactiveMessage(run)
 
@@ -74,6 +83,26 @@ function surface(run: ProactiveRun): void {
   const id = `proactive:${runKey(run)}`
   const body = message.length > 600 ? `${message.slice(0, 597)}…` : message
   const title = translateNow('mind.proactiveTitle')
+
+  if (run.source === 'smart_room_alarm') {
+    activeAlarmCardId = id
+    showIslandCard(
+      {
+        id,
+        kind: 'approval',
+        title: run.summary || 'Alarm',
+        body,
+        actions: [{ id: 'awake', label: "I'm awake", value: "I'm awake. Acknowledge and stop the active Smart Room alarm now." }]
+      },
+      { allowWhenFocused: true }
+    )
+    dispatchNativeNotification({ kind: 'backgroundDone', title: run.summary || 'Alarm', body, global: true, silent: false })
+    void playSpeechText(message, { messageId: id, source: 'read-aloud' })
+      .catch(() => undefined)
+      .finally(() => requestVoiceStart())
+
+    return
+  }
 
   showIslandCard({ id, kind: 'result', title, body })
   notify({
@@ -114,9 +143,22 @@ async function poll(): Promise<void> {
     const newest = runs[0]
     const previous = cursor()
 
-    if (previous) {
-      for (const run of unseenProactiveRuns(runs, previous)) {
-        surface(run)
+    if (!previous && newest?.source === 'smart_room_alarm' && newest.outcome === 'message') {
+      // An active alarm must survive a Desktop restart instead of being silently
+      // adopted as the initial cursor like ordinary background activity.
+      surface(newest)
+    } else if (previous) {
+      for (const run of unseenRuns(runs, previous)) {
+        if (run.source === 'smart_room_alarm' && run.outcome === 'diff_silent') {
+          if (activeAlarmCardId) {
+            dismissIslandCard(activeAlarmCardId)
+            activeAlarmCardId = null
+          }
+
+          requestVoiceStop()
+        } else if (run.outcome === 'message' && proactiveMessage(run)) {
+          surface(run)
+        }
       }
     }
 

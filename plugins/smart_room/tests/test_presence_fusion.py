@@ -77,7 +77,7 @@ class TestFusionAxioms:
         p = Presence(detected=False)
         mm = MmWaveState(occupied=False)
         loc = PhoneLocation()
-        p, mm, loc, _, _ = fuse(
+        p, mm, loc, light_on, _ = fuse(
             p, mm, loc, ble_detected=False, ble_rssi=None,
             mmwave_occupied=True, geofence_zone=None, exit_timeout_elapsed=False
         )
@@ -85,6 +85,7 @@ class TestFusionAxioms:
         assert p.detected is False
         assert p.source == "mmwave_only"
         assert p.confidence == 0.0
+        assert light_on is True
 
     def test_axiom5b_mmwave_alone_with_geofence_home_can_upgrade(self):
         """mmWave + geofence home → identity can be established (geofence is identity signal)."""

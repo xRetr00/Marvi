@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { SegmentedControl } from '@/components/ui/segmented-control'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { enrollVoiceSpeaker, getVoiceSpeakers, removeVoiceSpeaker, type VoiceSpeaker } from '@/hermes'
 import { triggerHaptic } from '@/lib/haptics'
 import { Loader2, Mic, Settings2, Trash2 } from '@/lib/icons'
@@ -32,6 +33,12 @@ function clampThreshold(value: string, fallback: number): number {
   return Number.isFinite(n) ? Math.max(0, Math.min(1, n)) : fallback
 }
 
+const SPEAKER_ID_MODELS = [
+  { id: 'wespeaker-en-voxceleb-cam++', label: 'WeSpeaker CAM++ (fast)' },
+  { id: 'wespeaker-en-voxceleb-resnet293-lm', label: 'WeSpeaker ResNet293 (stronger)' },
+  { id: '3dspeaker-eres2net-en-voxceleb', label: '3D-Speaker ERes2Net' }
+] as const
+
 export function VoicePresenceSettings({
   marvi,
   onOpenModelConfig,
@@ -51,6 +58,7 @@ export function VoicePresenceSettings({
   const [enrolling, setEnrolling] = useState(false)
   const captureRef = useRef<DuplexMicCapture | null>(null)
   const speakerIdThreshold = marvi.get('voice.speaker_id.threshold', 0.45)
+  const speakerIdModel = marvi.get<string>('voice.speaker_id.model', 'wespeaker-en-voxceleb-cam++')
   const voiceFocusMode = marvi.get<string>('voice.speaker_id.focus_mode', 'owner')
 
   useEffect(() => {
@@ -274,6 +282,28 @@ export function VoicePresenceSettings({
       ) : (
         <Caption>No speakers enrolled.</Caption>
       )}
+
+      <ListRow
+        action={
+          <Select
+            onValueChange={model => void marvi.patch('voice.speaker_id.model', model)}
+            value={speakerIdModel}
+          >
+            <SelectTrigger className="min-w-64">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {SPEAKER_ID_MODELS.map(model => (
+                <SelectItem key={model.id} value={model.id}>
+                  {model.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        }
+        description="Choose the local voice-embedding model. Changing it requires fresh enrollment samples."
+        title="Speaker-ID model"
+      />
 
       <ListRow
         action={

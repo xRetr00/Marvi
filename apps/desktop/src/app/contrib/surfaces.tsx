@@ -13,7 +13,12 @@ import { Navigate, Route, Routes, useParams } from 'react-router-dom'
 
 import { ContribBoundary } from '@/contrib/react/boundary'
 import { useContributions } from '@/contrib/react/use-contributions'
+import { cn } from '@/lib/utils'
 import { $freshDraftReady, $gatewayState } from '@/store/session'
+import { $voicePlayback } from '@/store/voice-playback'
+import { $wakeStatus } from '@/store/voice-presence'
+import { $presenceEnabled, setPresenceEnabled } from '@/store/voice-presence-settings'
+import { $voiceWarmup } from '@/store/voice-warmup'
 
 import { ChatView } from '../chat'
 import { ChatSidebar } from '../chat/sidebar'
@@ -23,6 +28,7 @@ import { useStatusSnapshot } from '../shell/hooks/use-status-snapshot'
 import { useStatusbarItems } from '../shell/hooks/use-statusbar-items'
 import { ModelMenuPanel } from '../shell/model-menu-panel'
 import { StatusbarControls } from '../shell/statusbar-controls'
+import type { StatusbarItem } from '../shell/statusbar-controls'
 
 import { setStatusbarItemGroup, useStatusbarContributions } from './panes'
 import type { SidebarActions, WiringActions } from './types'
@@ -59,6 +65,54 @@ export const TerminalSurface = memo(function TerminalSurface() {
   )
 })
 
+function VoicePipelineDots({ sttActive, ttsActive }: { sttActive: boolean; ttsActive: boolean }) {
+  const dot = (active: boolean) => (
+    <span aria-hidden="true" className={cn('size-1.5 rounded-full', active ? 'bg-emerald-400' : 'bg-muted-foreground/45')} />
+  )
+
+  return <span className="inline-flex items-center gap-1">{dot(sttActive)}{dot(ttsActive)}</span>
+}
+
+function useMarviVoiceStatusItems(): readonly StatusbarItem[] {
+  const presenceEnabled = useStore($presenceEnabled)
+  const playback = useStore($voicePlayback)
+  const wakeStatus = useStore($wakeStatus)
+  const warmup = useStore($voiceWarmup)
+  const listening = wakeStatus === 'woken' || wakeStatus === 'listening'
+  const transcribing = wakeStatus === 'transcribing'
+  const warming = warmup.started && !warmup.done
+
+  return useMemo(() => {
+    const presence = {
+      className: !presenceEnabled ? 'opacity-45' : listening || transcribing ? 'text-(--ui-text-accent)' : undefined,
+      detail: !presenceEnabled ? 'Presence off' : listening ? 'Listening' : transcribing ? 'Finalizing speech' : undefined,
+      id: 'voice-presence',
+      label: 'Presence',
+      onSelect: () => setPresenceEnabled(!presenceEnabled),
+      title: presenceEnabled ? 'Voice presence is on; click to turn off' : 'Voice presence is off; click to turn on',
+      variant: 'action' as const
+    }
+    const pipeline = warming
+      ? {
+          className: 'justify-center gap-1.5 px-2',
+          icon: <VoicePipelineDots sttActive={listening || transcribing} ttsActive={playback.status !== 'idle'} />,
+          id: 'voice-pipeline',
+          label: `Warming voice ${['tts', 'stt', 'wake'].filter(key => warmup[key as keyof typeof warmup] === 'ready').length}/3`,
+          title: `Warming voice models - TTS ${warmup.tts} - STT ${warmup.stt} - wake ${warmup.wake}`,
+          variant: 'text' as const
+        }
+      : {
+          className: 'w-8 justify-center px-0',
+          icon: <VoicePipelineDots sttActive={listening || transcribing} ttsActive={playback.status !== 'idle'} />,
+          id: 'voice-pipeline',
+          title: 'Voice pipeline',
+          variant: 'text' as const
+        }
+
+    return [presence, pipeline]
+  }, [listening, playback.status, presenceEnabled, transcribing, warmup, warming])
+}
+
 /** Owns the statusbar's own data hooks (status snapshot poll, contributed
  *  items) so its 15s refresh — and any statusbar-only churn — re-renders the
  *  bar alone, never the chat/sidebar/terminal. */
@@ -75,6 +129,7 @@ export const StatusbarSurface = memo(function StatusbarSurface({
 }) {
   const gatewayState = useStore($gatewayState)
   const freshDraftReady = useStore($freshDraftReady)
+  const marviVoiceStatusItems = useMarviVoiceStatusItems()
   const { inferenceStatus, statusSnapshot } = useStatusSnapshot(gatewayState, actions.requestGateway)
   const extraLeftItems = useStatusbarContributions('left')
   const extraRightItems = useStatusbarContributions('right')
@@ -83,7 +138,7 @@ export const StatusbarSurface = memo(function StatusbarSurface({
     agentsOpen,
     chatOpen,
     commandCenterOpen,
-    extraLeftItems,
+    extraLeftItems: [...marviVoiceStatusItems, ...extraLeftItems],
     extraRightItems,
     freshDraftReady,
     gatewayState,

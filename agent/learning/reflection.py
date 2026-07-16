@@ -28,6 +28,33 @@ def _enabled(cfg: Dict[str, Any], loop: str, default: bool = True) -> bool:
     return bool(cfg_get(cfg, "learning", loop, "enabled", default=default))
 
 
+def episodes_for_prompt(cfg: Optional[Dict[str, Any]] = None, *, limit: int = 15) -> str:
+    """Compact "recent episodes" block for the nightly reflection prompt
+    (memory-maturity spec §1.4) so reflection reasons over the day's actual
+    events, not just diffs. Filters to episodes at/above
+    ``memory.episodic.min_importance_for_prompt`` (default 0.4). Fetches a
+    wider recent window first so importance filtering doesn't starve the
+    block when the newest few episodes happen to be low-importance. Never
+    raises — reflection input assembly must never break the reflection job.
+    """
+    try:
+        from agent.memory.episodic import episodic_config, format_episode, query
+
+        cfg = cfg if cfg is not None else load_config()
+        econfig = episodic_config(cfg)
+        if not econfig["enabled"]:
+            return "Episodic memory disabled."
+        min_importance = float(econfig["min_importance_for_prompt"])
+        episodes = query(limit=max(int(limit) * 4, 50))
+        filtered = [ep for ep in episodes if float(ep.get("importance") or 0.0) >= min_importance][: int(limit)]
+        if not filtered:
+            return "No meaningful recent episodes."
+        return "\n".join(format_episode(ep) for ep in filtered)
+    except Exception:  # noqa: BLE001 - reflection input must never break the job
+        logger.debug("reflection: episodes_for_prompt failed", exc_info=True)
+        return "Recent episodes unavailable."
+
+
 def _weekly(cfg: Dict[str, Any], loop: str, now: datetime) -> bool:
     return now.astimezone().weekday() == int(cfg_get(cfg, "learning", loop, "review_weekday", default=6))
 

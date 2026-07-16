@@ -220,7 +220,33 @@ def print_digest_for_cron() -> None:
         digest = ""
     if digest:
         print(digest)
+        _record_digest_episode(digest)
     mark_run()
+
+
+def _record_digest_episode(digest: str) -> None:
+    """Mirror a non-empty presence digest into episodic memory (Loop 1,
+    memory-maturity spec §1.2). Uses the raw digest text computed above —
+    zero additional LLM cost. Idempotent by (source, ref): ``ref`` is the
+    run's own last-run marker (about to be overwritten by ``mark_run()``),
+    so a re-run before ``mark_run()`` persists can't double-record. Guarded:
+    a failure here must never break the cron script's stdout contract.
+    """
+    try:
+        from agent.memory.episodic import record_episode
+
+        since = get_last_run_iso() or ""
+        title = digest.splitlines()[0].strip() if digest.strip() else "Presence digest"
+        record_episode(
+            kind="room",
+            title=title[:120] or "Presence digest",
+            summary=digest[:4000],
+            actor="marvi",
+            source="distill",
+            ref=since or None,
+        )
+    except Exception:
+        logger.debug("distill: episodic mirror failed", exc_info=True)
 
 
 if __name__ == "__main__":

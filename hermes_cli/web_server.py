@@ -13227,6 +13227,60 @@ async def get_marvi_knowledge():
         raise HTTPException(status_code=500, detail="Failed to read Marvi's memory")
 
 
+# ---------------------------------------------------------------------------
+# Episodic memory (Loop 1, memory-maturity spec §1.5) — the Mind page's
+# "Timeline" tab. Additive-only new section; mirrors the /api/subconscious/*
+# and /api/marvi/knowledge error shape above (run_in_threadpool + a bare
+# {"detail": "..."} 500 on failure).
+# ---------------------------------------------------------------------------
+
+_EPISODIC_NO_HISTORY_NOTE = "Marvi's episodic memory starts filling as it observes your days."
+
+
+def _read_memory_episodes_sync(
+    since: Optional[str], kind: Optional[str], q: Optional[str], limit: int
+) -> Dict[str, Any]:
+    from agent.memory.episodic import VALID_KINDS, query as query_episodes
+
+    kind = (kind or "").strip() or None
+    if kind is not None and kind not in VALID_KINDS:
+        raise ValueError(f"Invalid kind '{kind}'. Use one of: {', '.join(sorted(VALID_KINDS))}.")
+
+    limit = max(1, min(int(limit or 50), 200))
+    episodes = query_episodes(text=(q or "").strip() or None, kind=kind, since=(since or "").strip() or None, limit=limit)
+    result = {
+        "episodes": [
+            {
+                "id": ep.get("id"),
+                "ts": ep.get("ts"),
+                "kind": ep.get("kind"),
+                "actor": ep.get("actor"),
+                "title": ep.get("title"),
+                "summary": ep.get("summary"),
+                "source": ep.get("source"),
+            }
+            for ep in episodes
+        ]
+    }
+    if not episodes:
+        result["note"] = _EPISODIC_NO_HISTORY_NOTE
+    return result
+
+
+@app.get("/api/memory/episodes")
+async def get_memory_episodes(
+    since: Optional[str] = None, kind: Optional[str] = None, q: Optional[str] = None, limit: int = 50
+):
+    try:
+        result = await run_in_threadpool(_read_memory_episodes_sync, since, kind, q, limit)
+        return {"ok": True, **result}
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception:
+        _log.exception("GET /api/memory/episodes failed")
+        raise HTTPException(status_code=500, detail="Failed to read episodic memory")
+
+
 def _mind_state_sync(history: bool = False) -> Dict[str, Any]:
     from agent.goal_store import list_goal_templates
     from cron.subconscious import read_narrative, read_narrative_history, status

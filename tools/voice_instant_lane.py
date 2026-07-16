@@ -772,6 +772,25 @@ def _build_deferred_context(cfg: Optional[Dict[str, Any]]) -> str:
     except Exception:
         logger.debug("voice_instant_lane: smart-room context failed", exc_info=True)
 
+    # Episodic memory hint (Loop 1, memory-maturity spec §1.3): a one-line
+    # pointer so the instant lane reaches for recall_episode ("has this
+    # happened before?") instead of assuming something is new. The tool
+    # itself needs no whitelist entry here -- it's registered under the
+    # "memory" toolset (tools/episodic_tool.py), the same toolset
+    # recall_files/memory already flow through to this agent via its normal
+    # configured toolset (see module docstring: "Tools: the user's normal
+    # configured toolset"). Additive only, capped to a single short line.
+    try:
+        from agent.memory.episodic import episodic_config
+
+        if episodic_config(cfg)["enabled"]:
+            blocks.append(
+                "Episodic memory is available: call recall_episode(query=...) to check "
+                "whether something has happened before instead of assuming it's new."
+            )
+    except Exception:
+        logger.debug("voice_instant_lane: episodic hint failed", exc_info=True)
+
     return "\n\n".join(blocks)[:4500]
 
 

@@ -467,6 +467,76 @@ def _append_activity_record(record: dict) -> None:
         _rotate_subconscious_activity(path)
     except Exception:
         logger.debug("subconscious activity log append failed", exc_info=True)
+    # Episodic memory mirror (Loop 1, memory-maturity spec §1.2). Every
+    # activity-log record ultimately flows through this one function
+    # (record_subconscious_activity -> _append_activity_record), regardless
+    # of whether it originated from the tracked tick/reflection job runner
+    # above or a direct caller (tools/presence/goblin.py's shoulder-taps,
+    # the smart-room world-trigger path via state_store.append_transition) —
+    # so mirroring here catches every source uniformly without touching any
+    # of those call sites. Best-effort and fully separate from the jsonl
+    # write above: a mirror failure must never affect activity logging.
+    try:
+        _mirror_activity_to_episodic(record)
+    except Exception:
+        logger.debug("episodic activity mirror failed", exc_info=True)
+
+
+# Only these outcomes are "meaningful" enough for an episode — a message
+# actually delivered, or a new automation suggestion registered. Everything
+# else (no_change, diff_silent, error) is a quiet pass and never recorded.
+_EPISODIC_MEANINGFUL_OUTCOMES = frozenset({"message", "suggestion"})
+# activity-log `source` -> episode `kind` (spec §1.2: "Map source→kind").
+# "distiller" is intentionally absent: tools/presence/distill.py records its
+# own richer `room` episode straight from the digest (source="distill"), so
+# mirroring the distiller's activity-log entry here would double-record the
+# same run under a less informative summary.
+_EPISODIC_SOURCE_TO_KIND = {
+    "world": "room",
+    "goblin": "proactive",
+    "reflection": "task",
+}
+
+
+def _mirror_activity_to_episodic(record: dict) -> None:
+    """Record a compact episode for MEANINGFUL activity-log entries.
+
+    Meaningful = the tick actually said something (outcome "message") or
+    registered a new automation suggestion (outcome "suggestion") — never a
+    quiet "no_change"/"diff_silent" pass. Idempotent by (source, ref) via
+    ``record_episode`` itself, so a caller that logs the same activity twice
+    (shouldn't happen, but never assume) can't create duplicate episodes.
+    """
+    source = record.get("source")
+    if source == "distiller":
+        return
+    outcome = record.get("outcome")
+    if outcome not in _EPISODIC_MEANINGFUL_OUTCOMES:
+        return
+
+    from agent.memory.episodic import record_episode
+
+    if outcome == "suggestion":
+        kind = "learning"
+    else:
+        kind = _EPISODIC_SOURCE_TO_KIND.get(str(source or ""), "proactive")
+
+    summary = record.get("summary") or record.get("thought") or ""
+    summary = str(summary).strip()
+    title = summary[:120] if summary else f"Marvi {kind} activity ({source or 'tick'})"
+    job_id = record.get("job_id") or "x"
+    at = record.get("at") or ""
+
+    record_episode(
+        kind=kind,
+        title=title,
+        summary=summary,
+        actor="marvi",
+        source=f"activity:{source or 'tick'}",
+        ref=f"{job_id}:{at}",
+        importance=0.6 if outcome == "message" else 0.5,
+        ts=at or None,
+    )
 
 
 def record_subconscious_activity(

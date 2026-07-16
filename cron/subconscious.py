@@ -278,11 +278,19 @@ def build_runtime_context(job_name: str) -> str:
             presence_digest = build_digest()[:6000]
         except Exception:
             presence_digest = "Presence digest unavailable."
+        try:
+            from agent.learning.reflection import episodes_for_prompt
+
+            recent_episodes = episodes_for_prompt(limit=15)
+        except Exception:
+            logger.debug("subconscious: recent episodes unavailable", exc_info=True)
+            recent_episodes = "Recent episodes unavailable."
         parts.extend(
             [
                 f"## Last 24 hours\n{_recent_activity_summary()}",
                 f"## Presence digest\n{presence_digest}",
                 f"## Rhythm\n{rhythm}",
+                f"## Recent episodes\n{recent_episodes}",
                 format_active_goals_for_prompt() or "## Active goals\nNone",
                 "## Deterministic learning review\n" + json.dumps(learning_review, ensure_ascii=False),
                 "## Pending suggestions\n" + json.dumps(list_pending(), ensure_ascii=False)[:6000],

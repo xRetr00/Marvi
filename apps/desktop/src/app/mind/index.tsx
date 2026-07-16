@@ -5,7 +5,7 @@ import { Input } from '@/components/ui/input'
 import { Switch } from '@/components/ui/switch'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Textarea } from '@/components/ui/textarea'
-import { Brain, FolderOpen, Link as LinkIcon, Search } from '@/lib/icons'
+import { Activity, Brain, Clock, FolderOpen, Link as LinkIcon, Search } from '@/lib/icons'
 import { notify, notifyError } from '@/store/notifications'
 
 import { Pill, SectionHeading } from '../settings/primitives'
@@ -16,6 +16,7 @@ import { KnowledgeViewer } from '../settings/subconscious/knowledge-viewer'
 import { useMarviConfig } from '../settings/subconscious/use-marvi-config'
 
 import { ComposioTab } from './composio-tab'
+import { TimelineTab } from './timeline-tab'
 
 interface Initiative {
   id: string
@@ -50,7 +51,7 @@ interface BrainResult {
   score: number
 }
 
-type MindTab = 'overview' | 'goals' | 'brain' | 'knowledge' | 'composio'
+type MindTab = 'overview' | 'noticed' | 'goals' | 'brain' | 'knowledge' | 'composio' | 'timeline'
 
 export function MindView() {
   const [tab, setTab] = useState<MindTab>('overview')
@@ -97,9 +98,17 @@ export function MindView() {
           <Tabs className="mt-4" onValueChange={value => setTab(value as MindTab)} value={tab}>
             <TabsList>
               <TabsTrigger value="overview">Overview</TabsTrigger>
+              <TabsTrigger value="noticed">
+                <Activity className="mr-1.5 size-3.5" />
+                Noticed
+              </TabsTrigger>
               <TabsTrigger value="goals">Goals</TabsTrigger>
               <TabsTrigger value="brain">Brain</TabsTrigger>
               <TabsTrigger value="knowledge">What Marvi knows</TabsTrigger>
+              <TabsTrigger value="timeline">
+                <Clock className="mr-1.5 size-3.5" />
+                Timeline
+              </TabsTrigger>
               <TabsTrigger value="composio">
                 <LinkIcon className="mr-1.5 size-3.5" />
                 Composio
@@ -122,8 +131,18 @@ export function MindView() {
             <Overview learning={learning} onRefresh={load} state={state} />
           ) : tab === 'goals' ? (
             <GoalsPanel templates={state?.goal_templates ?? []} />
+          ) : tab === 'noticed' ? (
+            <div className="grid gap-3">
+              <p className="text-xs text-muted-foreground">
+                A durable inbox for proactive notices, Goblin shoulder taps, background thoughts, and suggestions you
+                may have missed.
+              </p>
+              <ActivitySection />
+            </div>
           ) : tab === 'brain' ? (
             <BrainPanel brain={state?.brain ?? null} onRefresh={load} />
+          ) : tab === 'timeline' ? (
+            <TimelineTab />
           ) : tab === 'composio' ? (
             <ComposioTab />
           ) : (
@@ -198,8 +217,6 @@ function Overview({
       </section>
 
       <LearningPanel learning={learning} onRefresh={onRefresh} />
-
-      <ActivitySection />
     </div>
   )
 }
@@ -213,13 +230,23 @@ const LEARNING_DESCRIPTIONS: Record<string, string> = {
   timing: 'Experiments with quieter proactive delivery windows; off until you enable it.'
 }
 
-function LearningPanel({ learning, onRefresh }: { learning: LearningSummaryResponse | null; onRefresh: () => Promise<void> }) {
+function LearningPanel({
+  learning,
+  onRefresh
+}: {
+  learning: LearningSummaryResponse | null
+  onRefresh: () => Promise<void>
+}) {
   const marvi = useMarviConfig()
   const rows = learning?.loops ?? []
 
   return (
     <section>
-      <SectionHeading icon={Brain} meta={`${rows.reduce((sum, row) => sum + row.pending, 0)} pending`} title="What Marvi is learning" />
+      <SectionHeading
+        icon={Brain}
+        meta={`${rows.reduce((sum, row) => sum + row.pending, 0)} pending`}
+        title="What Marvi is learning"
+      />
       <p className="mb-3 text-xs text-muted-foreground">
         Local, consent-first learning loops. Every config or automation change waits in Suggestions for your approval.
       </p>
@@ -241,14 +268,14 @@ function LearningPanel({ learning, onRefresh }: { learning: LearningSummaryRespo
                     {row.pending > 0 && <Pill>{row.pending} pending</Pill>}
                   </div>
                   <p className="mt-0.5 text-xs text-muted-foreground">{LEARNING_DESCRIPTIONS[row.loop]}</p>
-                  {row.last_proposal && <p className="mt-1 truncate text-xs text-foreground/70">Last: {row.last_proposal}</p>}
+                  {row.last_proposal && (
+                    <p className="mt-1 truncate text-xs text-foreground/70">Last: {row.last_proposal}</p>
+                  )}
                 </div>
                 <Switch
                   checked={Boolean(checked)}
                   disabled={marvi.isLoading || marvi.savingPath === row.config_path}
-                  onCheckedChange={value =>
-                    void marvi.patch(row.config_path, value).then(() => onRefresh())
-                  }
+                  onCheckedChange={value => void marvi.patch(row.config_path, value).then(() => onRefresh())}
                 />
               </div>
             )

@@ -15,6 +15,7 @@ import {
   Globe,
   Info,
   KeyRound,
+  Package,
   RefreshCw,
   Settings2,
   Upload,
@@ -37,6 +38,7 @@ import { GatewaySettings } from './gateway-settings'
 import { KEYS_VIEWS, KeysSettings, type KeysView } from './keys-settings'
 import { NotificationsSettings } from './notifications-settings'
 import { PresenceSettings } from './presence'
+import { PluginsSettings } from './plugins-settings'
 import { PROVIDER_VIEWS, ProvidersSettings, type ProviderView } from './providers-settings'
 import { SessionsSettings } from './sessions-settings'
 import { SmartRoomSettings } from './smart-room-settings'
@@ -50,6 +52,7 @@ const SETTINGS_VIEWS: readonly SettingsViewId[] = [
   'notifications',
   'presence',
   'smart-room',
+  'plugins',
   'sessions',
   'about'
 ]
@@ -219,6 +222,13 @@ export function SettingsView({ onClose, onConfigSaved, onMainModelChanged }: Set
       onSelect: () => setActiveView('keys')
     },
     {
+      active: activeView === 'plugins',
+      icon: Package,
+      id: 'plugins',
+      label: t.settings.nav.plugins,
+      onSelect: () => setActiveView('plugins')
+    },
+    {
       active: activeView === 'sessions',
       icon: Archive,
       id: 'sessions',
@@ -298,6 +308,8 @@ export function SettingsView({ onClose, onConfigSaved, onMainModelChanged }: Set
             />
           ) : activeView === 'smart-room' ? (
             <SmartRoomSettings />
+          ) : activeView === 'plugins' ? (
+            <PluginsSettings />
           ) : (
             <SessionsSettings />
           )}

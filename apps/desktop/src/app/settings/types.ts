@@ -10,6 +10,7 @@ export type SettingsView =
   | 'keys'
   | 'notifications'
   | 'presence'
+  | 'plugins'
   | 'providers'
   | 'sessions'
   | 'smart-room'

@@ -11,6 +11,7 @@ import { $messages } from '@/store/session'
 import { $autoSpeakReplies, setAutoSpeakReplies } from '@/store/voice-prefs'
 import { publishBargeInEnabled, publishConversation, setUserCaption, type VoiceStatus } from '@/store/voice-presence'
 
+import type { ComposerTarget } from '../focus'
 import { onComposerVoiceStartRequest, onComposerVoiceStopRequest, onComposerVoiceToggleRequest } from '../focus'
 import type { ChatBarProps } from '../types'
 
@@ -33,6 +34,9 @@ interface UseComposerVoiceArgs {
   sessionId: string | null | undefined
   semanticTurnEnabled?: boolean
   streamingSttEnabled?: boolean
+  /** This composer's focus-bus key — voice toggles targeting another
+   *  composer (or the active one, when not us) are ignored. */
+  target: ComposerTarget
 }
 
 /**
@@ -54,7 +58,8 @@ export function useComposerVoice({
   onTranscribeAudio,
   sessionId,
   semanticTurnEnabled,
-  streamingSttEnabled
+  streamingSttEnabled,
+  target
 }: UseComposerVoiceArgs) {
   const { t } = useI18n()
   const [voiceConversationActive, setVoiceConversationActive] = useState(false)
@@ -201,7 +206,10 @@ export function useComposerVoice({
     }
   }, [conversation, disabled, voiceConversationActive])
 
-  useEffect(() => onComposerVoiceToggleRequest(toggleVoiceConversation), [toggleVoiceConversation])
+  useEffect(
+    () => onComposerVoiceToggleRequest(toggled => toggled === target && toggleVoiceConversation()),
+    [target, toggleVoiceConversation]
+  )
 
   useEffect(() => onComposerVoiceStartRequest(() => !disabled && setVoiceConversationActive(true)), [disabled])
   useEffect(

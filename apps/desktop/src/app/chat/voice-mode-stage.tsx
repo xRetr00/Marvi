@@ -147,7 +147,7 @@ export function VoiceModeStage() {
 
           <button
             className="mt-3 rounded-full border border-white/8 bg-white/4 px-3.5 py-1.5 text-[0.68rem] font-medium text-foreground/45 transition-colors hover:bg-white/8 hover:text-foreground/80 focus-visible:outline-2 focus-visible:outline-offset-3 focus-visible:outline-foreground/60"
-            onClick={requestVoiceToggle}
+            onClick={() => requestVoiceToggle()}
             type="button"
           >
             End voice mode

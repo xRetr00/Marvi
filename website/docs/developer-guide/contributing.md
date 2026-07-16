@@ -56,6 +56,13 @@ modes, alarms, welcomes, dashboard/tools APIs, world snapshots, proactive
 delivery, Desktop Settings UI, and the associated navigation, types,
 localization, IPC/REST contracts, and tests.
 
+Preserve the `hermes_cli/web_server.py` API contract for `/api/mind`,
+`/api/subconscious/*`, `/api/presence/*`, `/api/learning/*`,
+`/api/marvi/knowledge`, and `/api/brain/*`. The contribution desktop shell
+must keep the `/mind` workspace route/sidebar entry and the Voice Presence and
+provider-aware voice pipeline/warmup statusbar items; do not drop them when
+retiring or restructuring `desktop-controller.tsx`.
+
 NeuTTS and KittenTTS are deliberately blocked in Marvi. Do not reintroduce
 their providers, installers, documentation, setup options, or UI wiring from
 upstream.

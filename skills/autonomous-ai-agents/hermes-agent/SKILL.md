@@ -590,6 +590,13 @@ alarms, welcomes, dashboard/tools APIs, world snapshots, proactive delivery,
 and Desktop Settings UI. When upstream rewrites nearby files, reapply these
 contracts and their navigation, types, localization, IPC/REST paths, and tests.
 
+Keep the `hermes_cli/web_server.py` Mind contract: `/api/mind`,
+`/api/subconscious/*`, `/api/presence/*`, `/api/learning/*`,
+`/api/marvi/knowledge`, and `/api/brain/*`. In the contribution desktop shell,
+keep the `/mind` route/sidebar entry and the Voice Presence plus provider-aware
+voice pipeline/warmup statusbar items; they replaced integrations previously
+owned by `desktop-controller.tsx`, not the Marvi features themselves.
+
 NeuTTS and KittenTTS are intentionally blocked in Marvi. Do not restore their
 providers, installers, setup options, documentation, or UI wiring from upstream.
 

@@ -73,7 +73,23 @@ function VoicePipelineDots({ sttActive, ttsActive }: { sttActive: boolean; ttsAc
   return <span className="inline-flex items-center gap-1">{dot(sttActive)}{dot(ttsActive)}</span>
 }
 
-function useMarviVoiceStatusItems(): readonly StatusbarItem[] {
+function useMarviVoiceStatusItems({
+  sttEnabled,
+  streamingSttEnabled,
+  streamingSttProvider,
+  sttProvider,
+  ttsProvider,
+  voiceBargeInEnabled,
+  voiceSemanticTurnEnabled
+}: {
+  sttEnabled: boolean
+  streamingSttEnabled: boolean
+  streamingSttProvider: string
+  sttProvider: string
+  ttsProvider: string
+  voiceBargeInEnabled: boolean
+  voiceSemanticTurnEnabled: boolean
+}): readonly StatusbarItem[] {
   const presenceEnabled = useStore($presenceEnabled)
   const playback = useStore($voicePlayback)
   const wakeStatus = useStore($wakeStatus)
@@ -83,6 +99,14 @@ function useMarviVoiceStatusItems(): readonly StatusbarItem[] {
   const warming = warmup.started && !warmup.done
 
   return useMemo(() => {
+    const sttActive = sttEnabled && (streamingSttEnabled || listening || transcribing)
+    const ttsActive = ttsProvider === 'pockettts' && playback.status !== 'idle'
+    const streamingLabel = streamingSttEnabled ? streamingSttProvider || 'on' : 'off'
+    const pipelineTitle = `STT ${sttProvider || 'off'} · streaming ${streamingLabel} · TTS ${ttsProvider || 'off'} · smart turn ${voiceSemanticTurnEnabled ? 'on' : 'off'} · barge-in ${voiceBargeInEnabled ? 'on' : 'off'}`
+    const engines = [warmup.tts, warmup.stt, warmup.wake]
+    const counted = engines.filter(status => status !== 'skipped')
+    const ready = counted.filter(status => status === 'ready').length
+    const failed = engines.filter(status => status === 'failed')
     const presence = {
       className: !presenceEnabled ? 'opacity-45' : listening || transcribing ? 'text-(--ui-text-accent)' : undefined,
       detail: !presenceEnabled ? 'Presence off' : listening ? 'Listening' : transcribing ? 'Finalizing speech' : undefined,
@@ -95,22 +119,22 @@ function useMarviVoiceStatusItems(): readonly StatusbarItem[] {
     const pipeline = warming
       ? {
           className: 'justify-center gap-1.5 px-2',
-          icon: <VoicePipelineDots sttActive={listening || transcribing} ttsActive={playback.status !== 'idle'} />,
+          icon: <VoicePipelineDots sttActive={sttActive} ttsActive={ttsActive} />,
           id: 'voice-pipeline',
-          label: `Warming voice ${['tts', 'stt', 'wake'].filter(key => warmup[key as keyof typeof warmup] === 'ready').length}/3`,
-          title: `Warming voice models - TTS ${warmup.tts} - STT ${warmup.stt} - wake ${warmup.wake}`,
+          label: `Warming voice ${ready}/${counted.length || 3}`,
+          title: `Warming voice models · TTS ${warmup.tts} · STT ${warmup.stt} · wake ${warmup.wake}`,
           variant: 'text' as const
         }
       : {
           className: 'w-8 justify-center px-0',
-          icon: <VoicePipelineDots sttActive={listening || transcribing} ttsActive={playback.status !== 'idle'} />,
+          icon: <VoicePipelineDots sttActive={sttActive} ttsActive={ttsActive} />,
           id: 'voice-pipeline',
-          title: 'Voice pipeline',
+          title: failed.length ? `${pipelineTitle} · warmup failed: ${failed.join(', ')}` : pipelineTitle,
           variant: 'text' as const
         }
 
     return [presence, pipeline]
-  }, [listening, playback.status, presenceEnabled, transcribing, warmup, warming])
+  }, [listening, playback.status, presenceEnabled, sttEnabled, streamingSttEnabled, streamingSttProvider, sttProvider, transcribing, ttsProvider, voiceBargeInEnabled, voiceSemanticTurnEnabled, warmup, warming])
 }
 
 /** Owns the statusbar's own data hooks (status snapshot poll, contributed
@@ -120,16 +144,38 @@ export const StatusbarSurface = memo(function StatusbarSurface({
   actions,
   agentsOpen,
   chatOpen,
-  commandCenterOpen
+  commandCenterOpen,
+  sttEnabled,
+  streamingSttEnabled,
+  streamingSttProvider,
+  sttProvider,
+  ttsProvider,
+  voiceBargeInEnabled,
+  voiceSemanticTurnEnabled
 }: {
   actions: WiringActions
   agentsOpen: boolean
   chatOpen: boolean
   commandCenterOpen: boolean
+  sttEnabled: boolean
+  streamingSttEnabled: boolean
+  streamingSttProvider: string
+  sttProvider: string
+  ttsProvider: string
+  voiceBargeInEnabled: boolean
+  voiceSemanticTurnEnabled: boolean
 }) {
   const gatewayState = useStore($gatewayState)
   const freshDraftReady = useStore($freshDraftReady)
-  const marviVoiceStatusItems = useMarviVoiceStatusItems()
+  const marviVoiceStatusItems = useMarviVoiceStatusItems({
+    sttEnabled,
+    streamingSttEnabled,
+    streamingSttProvider,
+    sttProvider,
+    ttsProvider,
+    voiceBargeInEnabled,
+    voiceSemanticTurnEnabled
+  })
   const { inferenceStatus, statusSnapshot } = useStatusSnapshot(gatewayState, actions.requestGateway)
   const extraLeftItems = useStatusbarContributions('left')
   const extraRightItems = useStatusbarContributions('right')

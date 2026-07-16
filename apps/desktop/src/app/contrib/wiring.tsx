@@ -221,7 +221,17 @@ export function ContribWiring({ children }: { children: ReactNode }) {
     requestGateway
   })
 
-  const { refreshHermesConfig, sttEnabled, voiceMaxRecordingSeconds } = useHermesConfig({
+  const {
+    refreshHermesConfig,
+    sttEnabled,
+    streamingSttEnabled,
+    streamingSttProvider,
+    sttProvider,
+    ttsProvider,
+    voiceBargeInEnabled,
+    voiceMaxRecordingSeconds,
+    voiceSemanticTurnEnabled
+  } = useHermesConfig({
     activeSessionIdRef,
     refreshProjectBranch
   })
@@ -770,9 +780,28 @@ export function ContribWiring({ children }: { children: ReactNode }) {
         agentsOpen={agentsOpen}
         chatOpen={chatOpen}
         commandCenterOpen={commandCenterOpen}
+        sttEnabled={sttEnabled}
+        streamingSttEnabled={streamingSttEnabled}
+        streamingSttProvider={streamingSttProvider}
+        sttProvider={sttProvider}
+        ttsProvider={ttsProvider}
+        voiceBargeInEnabled={voiceBargeInEnabled}
+        voiceSemanticTurnEnabled={voiceSemanticTurnEnabled}
       />
     ),
-    [actions, agentsOpen, chatOpen, commandCenterOpen]
+    [
+      actions,
+      agentsOpen,
+      chatOpen,
+      commandCenterOpen,
+      sttEnabled,
+      streamingSttEnabled,
+      streamingSttProvider,
+      sttProvider,
+      ttsProvider,
+      voiceBargeInEnabled,
+      voiceSemanticTurnEnabled
+    ]
   )
 
   // The voice cap changes only on config load; the gateway instance + all

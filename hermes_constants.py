@@ -13,6 +13,12 @@ from contextvars import ContextVar, Token
 from pathlib import Path
 
 
+# Product identity. Referenced by the banner and skin engine; kept here so the
+# rebrand has a single source of truth. (Restored: the rebrand commit imported
+# these but a later cleanup dropped them, breaking every module downstream.)
+PRODUCT_NAME = "Marvi Agent"
+PRODUCT_SHORT_NAME = "Marvi"
+
 _profile_fallback_warned: bool = False
 _UNSET = object()
 _HERMES_HOME_OVERRIDE: ContextVar[str | object] = ContextVar(

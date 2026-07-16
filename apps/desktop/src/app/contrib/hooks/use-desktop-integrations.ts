@@ -1,8 +1,10 @@
 import { useEffect, useRef } from 'react'
 
 import { closeActiveTab } from '@/app/chat/close-tab'
+import { getSmartRoomClapDataset, reviewSmartRoomClap } from '@/hermes'
 import { storedSessionIdForNotification } from '@/lib/session-ids'
 import { respondToApprovalAction } from '@/store/native-notifications'
+import { notify, notifyError } from '@/store/notifications'
 import { getRememberedRoute, getRememberedSessionId, setRememberedRoute, setRememberedSessionId } from '@/store/session'
 import { onSessionsChanged } from '@/store/session-sync'
 import { openUpdatesWindow, startUpdatePoller, stopUpdatePoller } from '@/store/updates'
@@ -57,6 +59,61 @@ export function useDesktopIntegrations({
       stopVoiceIslandBridge?.()
       stopProactiveDeliveryPolling()
       stopUpdatePoller()
+    }
+  }, [])
+
+  useEffect(() => {
+    if (isSecondaryWindow()) {
+      return
+    }
+
+    let stopped = false
+    const shown = new Set<string>()
+
+    const poll = async () => {
+      try {
+        const { dataset } = await getSmartRoomClapDataset()
+        const sample = dataset.next_pending
+
+        if (stopped || !sample || shown.has(sample.id)) {
+          return
+        }
+
+        shown.add(sample.id)
+        const captured = new Date(sample.captured_at)
+        const time = captured.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+        const today = new Date().toDateString() === captured.toDateString()
+        const when = today ? `${time} today` : captured.toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })
+        const answer = (confirmed: boolean) => {
+          void reviewSmartRoomClap(sample.id, confirmed)
+            .then(() => window.setTimeout(() => void poll(), 250))
+            .catch(error => notifyError(error, 'Could not save clap feedback'))
+        }
+
+        notify({
+          id: `smart-room-clap-${sample.id}`,
+          kind: 'info',
+          title: 'Clap detected',
+          message: `Did you clap at ${when}?`,
+          detail: `${dataset.confirmed} of ${dataset.target} confirmed claps collected locally.`,
+          durationMs: 0,
+          placement: 'bottom-right',
+          actions: [
+            { label: 'Yes', onClick: () => answer(true) },
+            { label: 'No', onClick: () => answer(false) }
+          ]
+        })
+      } catch {
+        // Smart Room may be disabled or still starting; the next poll retries.
+      }
+    }
+
+    void poll()
+    const timer = window.setInterval(() => void poll(), 8_000)
+
+    return () => {
+      stopped = true
+      window.clearInterval(timer)
     }
   }, [])
 

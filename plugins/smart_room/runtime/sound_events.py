@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, Optional
 
 from hermes_constants import get_hermes_home
+from plugins.smart_room.runtime.clap_dataset import ClapDataset
 
 logger = logging.getLogger(__name__)
 
@@ -124,6 +125,7 @@ class SoundEventListener:
         self._candidates: queue.Queue[tuple[float, float]] = queue.Queue(maxsize=8)
         self._last_candidate = 0.0
         self._noise_floor = 0.005
+        self._dataset = ClapDataset()
         self._status: Dict[str, Any] = {
             "enabled": bool(self._config.get("enabled", False)),
             "running": False,
@@ -174,7 +176,14 @@ class SoundEventListener:
         with self._lock:
             result = dict(self._status)
             result["noise_floor"] = round(self._noise_floor, 5)
+            result["dataset"] = self._dataset.status()
             return result
+
+    def dataset_status(self) -> Dict[str, Any]:
+        return self._dataset.status()
+
+    def review_clap(self, sample_id: str, confirmed: bool) -> Dict[str, Any]:
+        return self._dataset.review(sample_id, confirmed)
 
     def _run(self) -> None:
         try:
@@ -260,6 +269,20 @@ class SoundEventListener:
                     ):
                         if self._sequence.add(detected_at + delay):
                             self._status["confirmed_claps"] += 1
+                            try:
+                                self._dataset.record(
+                                    waveform,
+                                    score=score,
+                                    metadata={
+                                        "model": "quantized_yamnet",
+                                        "peak": self._status["last_peak"],
+                                        "crest": self._status["last_crest"],
+                                        "noise_floor": round(self._noise_floor, 5),
+                                        "gate_threshold": self._status["threshold"],
+                                    },
+                                )
+                            except Exception:
+                                logger.warning("Could not save clap review sample", exc_info=True)
                 self._sequence.tick(now)
         except Exception as exc:
             self._status["last_error"] = f"{type(exc).__name__}: {exc}"

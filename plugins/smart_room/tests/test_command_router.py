@@ -35,6 +35,12 @@ class TestCommandRouter:
                 "sound_events": {"enabled": True, "running": True},
             }
         )
+        self.runtime.get_clap_dataset_status = MagicMock(
+            return_value={"confirmed": 12, "target": 200, "next_pending": None}
+        )
+        self.runtime.review_clap_sample = MagicMock(
+            return_value={"confirmed": 13, "target": 200, "next_pending": None}
+        )
         self.router = CommandRouter(self.state, self.config, self.runtime)
 
     def test_get_state_returns_snapshot(self):
@@ -94,3 +100,14 @@ class TestCommandRouter:
         assert created["request_id"] == "cmd-1"
         acknowledged = self.router.dispatch("acknowledge_alarm", {})
         assert acknowledged["active"] is False
+
+    def test_clap_dataset_feedback_requires_explicit_boolean(self):
+        status = self.router.dispatch("get_clap_dataset", {})
+        assert status["dataset"]["target"] == 200
+
+        invalid = self.router.dispatch("review_clap", {"id": "sample", "confirmed": "yes"})
+        assert invalid["success"] is False
+
+        reviewed = self.router.dispatch("review_clap", {"id": "sample", "confirmed": True})
+        assert reviewed["dataset"]["confirmed"] == 13
+        self.runtime.review_clap_sample.assert_called_once_with("sample", True)

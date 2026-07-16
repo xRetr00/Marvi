@@ -1225,6 +1225,20 @@ class Runtime:
             },
         }
 
+    def get_clap_dataset_status(self) -> Dict[str, Any]:
+        if self._sound_events:
+            return self._sound_events.dataset_status()
+        from plugins.smart_room.runtime.clap_dataset import ClapDataset
+
+        return ClapDataset().status()
+
+    def review_clap_sample(self, sample_id: str, confirmed: bool) -> Dict[str, Any]:
+        if self._sound_events:
+            return self._sound_events.review_clap(sample_id, confirmed)
+        from plugins.smart_room.runtime.clap_dataset import ClapDataset
+
+        return ClapDataset().review(sample_id, confirmed)
+
     def run_diagnostic(self) -> Dict[str, Any]:
         from plugins.smart_room.runtime.command_router import _redact_config
 

@@ -38,6 +38,11 @@ class WelcomeTestBody(BaseModel):
     audience: Literal["owner", "guest"]
 
 
+class ClapReviewBody(BaseModel):
+    id: str = Field(min_length=1, max_length=64)
+    confirmed: bool
+
+
 class LightBody(BaseModel):
     on: Optional[bool] = None
     brightness: Optional[int] = Field(default=None, ge=0, le=100)
@@ -108,6 +113,16 @@ async def cancel_sleep() -> dict:
 @router.post("/welcome/test")
 async def test_welcome(body: WelcomeTestBody) -> dict:
     return await _rpc("test_welcome", {"audience": body.audience})
+
+
+@router.get("/clap-dataset")
+async def get_clap_dataset() -> dict:
+    return await _rpc("get_clap_dataset", {})
+
+
+@router.post("/clap-dataset/review")
+async def review_clap(body: ClapReviewBody) -> dict:
+    return await _rpc("review_clap", body.model_dump())
 
 
 @router.get("/alarms")

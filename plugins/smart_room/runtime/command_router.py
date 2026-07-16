@@ -126,6 +126,22 @@ class CommandRouter:
         )
         return {"success": True, "health": health}
 
+    def _handle_get_clap_dataset(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        return {"success": True, "dataset": self._runtime.get_clap_dataset_status()}
+
+    def _handle_review_clap(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        sample_id = str(params.get("id") or "").strip()
+        if not sample_id:
+            return {"success": False, "error": "clap sample id is required"}
+        if not isinstance(params.get("confirmed"), bool):
+            return {"success": False, "error": "confirmed must be a boolean"}
+        return {
+            "success": True,
+            "dataset": self._runtime.review_clap_sample(
+                sample_id, bool(params["confirmed"])
+            ),
+        }
+
     def _handle_phone_location_changed(self, params: Dict[str, Any]) -> Dict[str, Any]:
         required = {"who", "transition", "zone", "at", "delivery_id", "source"}
         missing = sorted(required.difference(params))

@@ -4,6 +4,7 @@ import pytest
 
 from plugins.smart_room.runtime import sound_events
 from plugins.smart_room.runtime.app import Runtime
+from plugins.smart_room.runtime.clap_dataset import ClapDataset
 from plugins.smart_room.runtime.sound_events import ClapSequence
 
 
@@ -138,3 +139,25 @@ def test_triple_clap_sleep_is_safe_by_default() -> None:
 
     assert actions == []
     assert listener.status()["last_action"] is None
+
+
+def test_clap_dataset_requires_human_confirmation_and_tracks_200_target(tmp_path) -> None:
+    dataset = ClapDataset(tmp_path)
+    first = dataset.record([0.0, 0.5, -0.5], score=0.8)
+    second = dataset.record([0.0, 0.2, -0.2], score=0.7)
+
+    pending = dataset.status()
+    assert pending["confirmed"] == 0
+    assert pending["pending"] == 2
+    assert pending["target"] == 200
+    assert pending["next_pending"]["id"] == first["id"]
+
+    accepted = dataset.review(first["id"], True)
+    rejected = dataset.review(second["id"], False)
+
+    assert accepted["confirmed"] == 1
+    assert rejected["confirmed"] == 1
+    assert rejected["rejected"] == 1
+    assert rejected["remaining"] == 199
+    assert rejected["next_pending"] is None
+    assert len(list((tmp_path / "samples").glob("*.wav"))) == 2

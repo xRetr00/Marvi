@@ -510,6 +510,7 @@ export function SmartRoomSettings() {
     enabled?: boolean
     running?: boolean
     microphone?: string | null
+    dataset?: { confirmed: number; pending: number; rejected: number; target: number }
   } | undefined
 
   const activeMode = liveState?.modes?.active_mode || null
@@ -608,6 +609,27 @@ export function SmartRoomSettings() {
             </span>
           )}
         </div>
+        {soundEvents?.dataset && (
+          <div className="mb-4 rounded-md border border-zinc-800 bg-zinc-950/40 px-3 py-2">
+            <div className="flex items-center justify-between text-xs text-zinc-300">
+              <span>Human-confirmed clap dataset</span>
+              <span>
+                {soundEvents.dataset.confirmed} / {soundEvents.dataset.target}
+              </span>
+            </div>
+            <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-zinc-800">
+              <div
+                className="h-full rounded-full bg-primary transition-[width]"
+                style={{
+                  width: `${Math.min(100, (soundEvents.dataset.confirmed / soundEvents.dataset.target) * 100)}%`
+                }}
+              />
+            </div>
+            <p className={`${CONTROL_TEXT} mt-1.5 text-zinc-500`}>
+              {soundEvents.dataset.pending} awaiting review · {soundEvents.dataset.rejected} saved as hard negatives
+            </p>
+          </div>
+        )}
         <div className="mb-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
           <div>
             <p className="text-sm text-zinc-200">{t.settings.soundEvents.doubleClap}</p>

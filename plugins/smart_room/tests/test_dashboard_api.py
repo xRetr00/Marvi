@@ -53,6 +53,26 @@ def test_welcome_preview_calls_private_runtime_bridge(monkeypatch):
     assert calls == [("test_welcome", {"audience": "owner"})]
 
 
+def test_clap_dataset_review_calls_private_runtime_bridge(monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        plugin_api,
+        "call_runtime",
+        lambda method, params: calls.append((method, params)) or {"success": True},
+    )
+    client = _client()
+
+    assert client.get("/api/plugins/smart_room/clap-dataset").status_code == 200
+    assert client.post(
+        "/api/plugins/smart_room/clap-dataset/review",
+        json={"id": "candidate", "confirmed": False},
+    ).status_code == 200
+    assert calls == [
+        ("get_clap_dataset", {}),
+        ("review_clap", {"id": "candidate", "confirmed": False}),
+    ]
+
+
 def test_named_alarm_crud_calls_runtime(monkeypatch):
     calls = []
     monkeypatch.setattr(plugin_api, "call_runtime", lambda method, params: calls.append((method, params)) or {"success": True})

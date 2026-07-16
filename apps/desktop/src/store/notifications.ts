@@ -20,6 +20,7 @@ export interface AppNotification {
   message: string
   detail?: string
   action?: NotificationAction
+  actions?: NotificationAction[]
   onDismiss?: () => void
   createdAt: number
   placement?: NotificationPlacement
@@ -33,6 +34,7 @@ interface NotificationInput {
   message: string
   detail?: string
   action?: NotificationAction
+  actions?: NotificationAction[]
   onDismiss?: () => void
   durationMs?: number
   placement?: NotificationPlacement
@@ -134,6 +136,7 @@ export function notify(input: NotificationInput): string {
     message: input.message,
     detail: input.detail,
     action: input.action,
+    actions: input.actions,
     onDismiss: input.onDismiss,
     createdAt: Date.now(),
     placement: input.placement ?? defaultPlacement(kind, input.action)

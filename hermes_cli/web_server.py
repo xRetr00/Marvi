@@ -4227,8 +4227,9 @@ async def transcribe_audio_upload(payload: AudioTranscriptionRequest):
 
         from tools.transcription_tools import transcribe_audio
 
-        loop = asyncio.get_running_loop()
-        result = await loop.run_in_executor(None, transcribe_audio, temp_path)
+        async with _get_audio_transcribe_lock(app):
+            loop = asyncio.get_running_loop()
+            result = await loop.run_in_executor(None, transcribe_audio, temp_path)
     except HTTPException:
         raise
     except Exception as exc:
@@ -4418,6 +4419,37 @@ async def speak_text(payload: TTSSpeakRequest):
         "mime_type": mime_type,
         "provider": result.get("provider"),
     }
+
+
+@app.post("/api/audio/speak/stream")
+async def speak_text_stream(payload: TTSSpeakRequest):
+    """Stream TTS PCM chunks as newline-delimited JSON."""
+    text = (payload.text or "").strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="Text is required")
+
+    def event_stream():
+        try:
+            from tools.tts_tool import stream_text_to_speech_chunks
+
+            for event in stream_text_to_speech_chunks(text):
+                yield json.dumps(event, separators=(",", ":")) + "\n"
+        except Exception as exc:
+            _log.warning("Desktop streaming TTS unavailable: %s", exc)
+            yield json.dumps(
+                {"type": "error", "error": str(exc)}, separators=(",", ":")
+            ) + "\n"
+
+    return StreamingResponse(
+        event_stream(),
+        headers={"Cache-Control": "no-store"},
+        media_type="application/x-ndjson",
+    )
+
+
+@app.get("/api/audio/voice-warmup")
+async def voice_warmup_status():
+    return get_voice_warmup_status()
 
 
 @app.get("/api/actions/{name}/status")
@@ -5979,6 +6011,7 @@ _AUX_TASK_SLOTS: Tuple[str, ...] = (
     "kanban_decomposer",
     "profile_describer",
     "curator",
+    "voice_instant",
 )
 
 

@@ -535,6 +535,16 @@ export interface SmartRoomAlarm {
   last_fired_at?: null | string
 }
 
+export interface SmartRoomClapDataset {
+  complete: boolean
+  confirmed: number
+  next_pending: null | { captured_at: string; id: string; score?: number }
+  pending: number
+  rejected: number
+  remaining: number
+  target: number
+}
+
 function smartRoomApi<T>(path: string, method = 'GET', body?: unknown): Promise<T> {
   return window.hermesDesktop.api<T>({
     ...profileScoped(),
@@ -561,6 +571,10 @@ export const saveSmartRoomAlarm = (alarm: Omit<SmartRoomAlarm, 'last_fired_at'>)
   smartRoomApi<{ alarm: SmartRoomAlarm }>('/alarms', 'PUT', alarm)
 export const deleteSmartRoomAlarm = (id: string) => smartRoomApi(`/alarms/${encodeURIComponent(id)}`, 'DELETE')
 export const acknowledgeSmartRoomAlarm = () => smartRoomApi('/alarms/acknowledge', 'POST')
+export const getSmartRoomClapDataset = () =>
+  smartRoomApi<{ dataset: SmartRoomClapDataset }>('/clap-dataset')
+export const reviewSmartRoomClap = (id: string, confirmed: boolean) =>
+  smartRoomApi<{ dataset: SmartRoomClapDataset }>('/clap-dataset/review', 'POST', { id, confirmed })
 
 export interface VoiceSpeaker {
   consistency: number | null

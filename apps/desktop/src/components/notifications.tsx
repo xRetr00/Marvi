@@ -200,6 +200,24 @@ function NotificationItem({ notification }: { notification: AppNotification }) {
               {notification.action.label}
             </Button>
           )}
+          {notification.actions && (
+            <div className="mt-1.5 flex gap-2">
+              {notification.actions.map(action => (
+                <Button
+                  key={action.label}
+                  onClick={() => {
+                    action.onClick()
+                    dismissNotification(notification.id)
+                  }}
+                  size="xs"
+                  type="button"
+                  variant="textStrong"
+                >
+                  {action.label}
+                </Button>
+              ))}
+            </div>
+          )}
         </AlertDescription>
       </div>
       <Button

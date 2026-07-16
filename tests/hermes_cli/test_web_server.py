@@ -1845,18 +1845,18 @@ class TestWebServerEndpoints:
         assert "base64" in resp.json()["detail"]
 
     def test_desktop_audio_routes_registered(self):
-        """All three desktop voice endpoints must exist.
+        """All desktop voice endpoints must survive upstream merges.
 
-        The renderer (apps/desktop) calls /api/audio/transcribe, /speak, and
-        /elevenlabs/voices. /speak + /voices were silently dropped in a merge
-        once; this guards the contract so a future merge can't lose them
-        without failing CI.
+        The renderer calls these directly; losing one silently degrades duplex
+        voice into the legacy recorder or removes streaming playback/status.
         """
         from hermes_cli.web_server import app
 
         paths = {getattr(r, "path", None) for r in app.routes}
         assert "/api/audio/transcribe" in paths
         assert "/api/audio/speak" in paths
+        assert "/api/audio/speak/stream" in paths
+        assert "/api/audio/voice-warmup" in paths
         assert "/api/audio/elevenlabs/voices" in paths
 
     def test_elevenlabs_voices_unavailable_without_key(self, monkeypatch):

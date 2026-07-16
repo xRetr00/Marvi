@@ -723,6 +723,32 @@ class TestSubconsciousSuggestionsEndpoints:
         assert resp.status_code == 200
         assert resp.json()["suggestions"] == []
 
+    def test_config_suggestion_lists_evidence_and_applies_guarded_value(self, client):
+        from agent.learning.registry import current_value
+
+        record = self._add_pending(
+            title="Tune speaker threshold",
+            job_spec=None,
+            kind="config",
+            config_spec={
+                "path": "voice.speaker_id.threshold",
+                "current": current_value("voice.speaker_id.threshold"),
+                "value": 0.4,
+                "rationale": "Owner scores consistently cluster below the current boundary.",
+                "scope": "user",
+            },
+            loop="voice_threshold",
+        )
+
+        listed = client.get("/api/subconscious/suggestions").json()["suggestions"][0]
+        assert listed["kind"] == "config"
+        assert listed["tier"] == "propose"
+        assert listed["config_spec"]["human"] == "speaker owner threshold"
+
+        accepted = client.post(f"/api/subconscious/suggestions/{record['id']}/accept")
+        assert accepted.status_code == 200
+        assert accepted.json()["result"]["value"] == 0.4
+
     def test_accept_creates_job_and_clears_pending(self, client):
         record = self._add_pending()
 
@@ -766,6 +792,41 @@ class TestSubconsciousSuggestionsEndpoints:
 
         assert resp.status_code == 500
         assert "boom" not in resp.json()["detail"]
+
+    def test_accept_stale_config_proposal_returns_conflict(self, client):
+        with patch(
+            "hermes_cli.web_server._accept_subconscious_suggestion_sync",
+            side_effect=ValueError("stale config proposal"),
+        ):
+            resp = client.post("/api/subconscious/suggestions/x/accept")
+
+        assert resp.status_code == 409
+
+
+class TestLearningEndpoints:
+    def test_summary_is_threadpooled_and_preserves_loop_config_paths(self, client):
+        with patch(
+            "hermes_cli.web_server._read_learning_summary_sync",
+            return_value={
+                "loops": [{"loop": "voice_threshold", "config_path": "learning.voice_tuning.enabled", "enabled": True, "samples": 200, "last_proposal": None, "pending": 0}],
+                "learned_tiers": ["calendar"],
+            },
+        ):
+            response = client.get("/api/learning/summary")
+
+        assert response.status_code == 200
+        assert response.json()["loops"][0]["config_path"] == "learning.voice_tuning.enabled"
+
+    def test_outcomes_filter_and_validation(self, client, _isolate_hermes_home):
+        from agent.learning.outcomes import record
+
+        record("trust", "calendar", "accepted", ref="cal-1")
+        record("escalation", "voice", "corrected", ref="voice-1")
+
+        response = client.get("/api/learning/outcomes?loop=trust")
+        assert response.status_code == 200
+        assert [row["loop"] for row in response.json()["outcomes"]] == ["trust"]
+        assert client.get("/api/learning/outcomes?loop=unknown").status_code == 400
 
     def test_dismiss_failure_returns_structured_500(self, client):
         with patch(

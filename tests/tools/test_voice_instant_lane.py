@@ -256,6 +256,18 @@ class TestVoiceModeAddendum:
         assert "all tools enabled by the user's configuration" in addendum
         assert vil.END_VOICE_MARKER in addendum
 
+    def test_learning_hints_are_loaded_once_per_session(self, monkeypatch):
+        from agent.learning import escalation
+
+        monkeypatch.setattr(escalation, "read_hints", lambda: "Escalate asks like: compare every option")
+        transcript = vil.RollingTranscript()
+        first = vil._load_learning_hints_once(transcript, {})
+        monkeypatch.setattr(escalation, "read_hints", lambda: "changed mid-session")
+        second = vil._load_learning_hints_once(transcript, {})
+
+        assert first == second
+        assert first in vil.build_voice_mode_addendum(allow_escalation=True, learning_hints=first)
+
 
 # ---------------------------------------------------------------------------
 # Config resolution

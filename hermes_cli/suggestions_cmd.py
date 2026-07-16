@@ -27,12 +27,19 @@ def _fmt_pending(pending: list) -> str:
             "Try `/suggestions catalog` to see the curated starter set, or "
             "install a blueprint skill to get one."
         )
-    lines = ["Suggested automations — `/suggestions accept N` or `dismiss N`:\n"]
+    lines = ["Suggestions — `/suggestions accept N` or `dismiss N`:\n"]
     for i, s in enumerate(pending, 1):
+        kind = s.get("kind", "job")
         spec = s.get("job_spec", {}) or {}
-        sched = spec.get("schedule", "?")
+        if kind == "config":
+            config_spec = s.get("config_spec") or {}
+            marker = f"change {config_spec.get('human') or config_spec.get('path')} from {config_spec.get('current')!r} to {config_spec.get('value')!r}"
+        elif kind == "goal":
+            marker = "goal"
+        else:
+            marker = str(spec.get("schedule", "?"))
         src = s.get("source", "?")
-        lines.append(f"  {i}. {s.get('title', '(untitled)')}  [{sched}]  ({src})")
+        lines.append(f"  {i}. {s.get('title', '(untitled)')}  [{marker}]  ({src})")
         desc = s.get("description", "").strip()
         if desc:
             lines.append(f"     {desc}")
@@ -97,11 +104,17 @@ def handle_suggestions_command(
     if sub in ("accept", "add", "schedule"):
         if not rest:
             return "Usage: /suggestions accept <number|id>"
-        job = store.accept_suggestion(rest, origin=origin)
-        if job is None:
+        suggestion = store.get_suggestion(rest)
+        result = store.accept_suggestion(rest, origin=origin)
+        if result is None:
             return f"No pending suggestion matches '{rest}'. Run /suggestions to list them."
-        sched = job.get("schedule_display") or (job.get("job_spec", {}) or {}).get("schedule", "")
-        name = job.get("name", "automation")
+        kind = (suggestion or {}).get("kind", "job")
+        if kind == "config":
+            return f"Changed {result.get('human') or result.get('path')} to {result.get('value')!r}."
+        if kind == "goal":
+            return "Goal suggestion accepted."
+        sched = result.get("schedule_display") or (result.get("job_spec", {}) or {}).get("schedule", "")
+        name = result.get("name", "automation")
         manage = (
             "Manage it with /cron."
             if surface == "cli"

@@ -260,6 +260,13 @@ def build_runtime_context(job_name: str) -> str:
         parts.append("## Due initiatives\n" + json.dumps(due, ensure_ascii=False))
     if job_name == REFLECTION_JOB_NAME:
         try:
+            from agent.learning.reflection import run_reflection
+
+            learning_review = run_reflection()
+        except Exception:
+            logger.debug("subconscious: learning review unavailable", exc_info=True)
+            learning_review = {"error": "unavailable"}
+        try:
             from tools.presence.rhythm import rhythm_summary_line
 
             rhythm = rhythm_summary_line() or "No learned rhythm yet."
@@ -277,6 +284,7 @@ def build_runtime_context(job_name: str) -> str:
                 f"## Presence digest\n{presence_digest}",
                 f"## Rhythm\n{rhythm}",
                 format_active_goals_for_prompt() or "## Active goals\nNone",
+                "## Deterministic learning review\n" + json.dumps(learning_review, ensure_ascii=False),
                 "## Pending suggestions\n" + json.dumps(list_pending(), ensure_ascii=False)[:6000],
             ]
         )

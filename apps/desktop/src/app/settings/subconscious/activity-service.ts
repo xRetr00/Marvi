@@ -7,7 +7,14 @@
 // surfaces (+ two suggestion actions) rather than config-flipping toggles.
 
 /** Which background-thinking surface produced an activity row. */
-export type SubconsciousActivitySource = 'distiller' | 'goblin' | 'idle_trigger' | 'tick' | 'world'
+export type SubconsciousActivitySource =
+  | 'distiller'
+  | 'goblin'
+  | 'idle_trigger'
+  | 'reflection'
+  | 'smart_room_alarm'
+  | 'tick'
+  | 'world'
 
 /** One row from `GET /api/subconscious/activity` — a single background-thinking run. */
 export interface SubconsciousActivityRun {
@@ -63,6 +70,31 @@ export interface SubconsciousSuggestion {
   category: string
   tier: 'auto' | 'notify' | 'propose'
   created: null | string
+  kind?: 'config' | 'goal' | 'job'
+  loop?: null | string
+  config_spec?: {
+    path: string
+    value: unknown
+    current: unknown
+    rationale: string
+    human?: string
+    scope: 'user'
+  } | null
+}
+
+export interface LearningLoopSummary {
+  loop: string
+  config_path: string
+  enabled: boolean
+  samples: number
+  last_proposal: null | string
+  pending: number
+}
+
+export interface LearningSummaryResponse {
+  ok: boolean
+  loops: LearningLoopSummary[]
+  learned_tiers: string[]
 }
 
 export interface SubconsciousSuggestionsResponse {
@@ -82,6 +114,10 @@ export function fetchSubconsciousSurfaces(): Promise<SubconsciousSurfacesRespons
 
 export function fetchSubconsciousSuggestions(): Promise<SubconsciousSuggestionsResponse> {
   return window.hermesDesktop.api<SubconsciousSuggestionsResponse>({ path: '/api/subconscious/suggestions' })
+}
+
+export function fetchLearningSummary(): Promise<LearningSummaryResponse> {
+  return window.hermesDesktop.api<LearningSummaryResponse>({ path: '/api/learning/summary' })
 }
 
 export function acceptSubconsciousSuggestion(id: string): Promise<{ job: Record<string, unknown>; ok: boolean }> {

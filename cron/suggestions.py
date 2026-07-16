@@ -20,9 +20,10 @@ flows through, regardless of where it came from:
                    interrupting the user (Contract 2, design spec
                    2026-07-09-marvi-subconscious-presence).
 
-Accepting a suggestion just calls the existing ``cron.jobs.create_job`` with
-the stored ``job_spec`` — there is NO second job engine. Suggestions never
-auto-create jobs; acceptance is always explicit (consent-first). Dismissed
+Accepting a job suggestion calls the existing ``cron.jobs.create_job`` with
+the stored ``job_spec``; goal and guarded learned-config suggestions use their
+existing stores. There is NO second job engine. Suggestions never auto-create
+jobs or apply learned config; acceptance is always explicit (consent-first). Dismissed
 suggestions latch by a stable ``dedup_key`` so the same proposal is not
 re-offered after the user says no.
 
@@ -190,6 +191,8 @@ def add_suggestion(
     job_spec: Optional[Dict[str, Any]] = None,
     kind: str = "job",
     goal_spec: Optional[Dict[str, Any]] = None,
+    config_spec: Optional[Dict[str, Any]] = None,
+    loop: Optional[str] = None,
     dedup_key: str,
     category: str = DEFAULT_CATEGORY,
 ) -> Optional[Dict[str, Any]]:
@@ -203,6 +206,10 @@ def add_suggestion(
     the suggestion passes it straight through, so there is no second schema to
     keep in sync.
 
+    ``config_spec`` is normalized against ``agent.learning.registry`` before
+    it reaches disk. Acceptance repeats validation and uses a stale-current
+    compare-and-set guard before writing config.yaml.
+
     ``category`` (default ``"general"``) is the key used to look up the
     user's proactivity tier for this proposal (``resolve_tier``); it is
     stored on the record purely for display/filtering — this call always
@@ -210,12 +217,21 @@ def add_suggestion(
     """
     if source not in VALID_SOURCES:
         raise ValueError(f"unknown suggestion source: {source!r}")
-    if kind not in {"job", "goal"}:
-        raise ValueError("kind must be 'job' or 'goal'")
+    if kind not in {"job", "goal", "config"}:
+        raise ValueError("kind must be 'job', 'goal', or 'config'")
     if kind == "job" and not isinstance(job_spec, dict):
         raise ValueError("job_spec is required for job suggestions")
     if kind == "goal" and not isinstance(goal_spec, dict):
         raise ValueError("goal_spec is required for goal suggestions")
+    if kind == "config":
+        from agent.learning.config_registry import validate_config_spec
+
+        config_spec = validate_config_spec(config_spec or {})
+    if loop is not None:
+        from agent.learning.outcomes import VALID_LOOPS
+
+        if loop not in VALID_LOOPS:
+            raise ValueError(f"unknown learning loop: {loop!r}")
     if not title.strip() or not dedup_key.strip():
         raise ValueError("title and dedup_key are required")
     category = (category or DEFAULT_CATEGORY).strip() or DEFAULT_CATEGORY
@@ -246,6 +262,8 @@ def add_suggestion(
             "kind": kind,
             "job_spec": job_spec,
             "goal_spec": goal_spec,
+            "config_spec": config_spec,
+            "loop": loop,
             "dedup_key": dedup_key.strip(),
             "status": _STATUS_PENDING,
             "created_at": _hermes_now().isoformat(),
@@ -293,16 +311,51 @@ def _set_status(suggestion_id: str, status: str) -> bool:
 def dismiss_suggestion(ref: str) -> bool:
     """Dismiss a suggestion (latched — never re-offered for its dedup_key)."""
     s = get_suggestion(ref)
-    if not s:
+    if not s or s.get("status") != _STATUS_PENDING:
         return False
-    return _set_status(s["id"], _STATUS_DISMISSED)
+    changed = _set_status(s["id"], _STATUS_DISMISSED)
+    if changed:
+        _record_suggestion_outcome(s, "dismissed", accepted_by="user")
+    return changed
 
 
-def accept_suggestion(ref: str, *, origin: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
-    """Accept a suggestion: create the real cron job from its ``job_spec``.
+def _record_suggestion_outcome(suggestion: Dict[str, Any], event: str, *, accepted_by: str) -> None:
+    """Best-effort feedback hook; the suggestion action has already succeeded."""
+    try:
+        from agent.learning.outcomes import record
 
-    Returns the created cron job dict, or None if the suggestion isn't found /
-    not pending. The job_spec is passed straight to ``cron.jobs.create_job``;
+        loop = suggestion.get("loop") or "trust"
+        outcome_event = event if accepted_by == "user" else "observed"
+        detail = {
+            "suggestion_id": suggestion.get("id"),
+            "kind": suggestion.get("kind", "job"),
+            "title": suggestion.get("title", ""),
+            "accepted_by": accepted_by,
+        }
+        config_spec = suggestion.get("config_spec")
+        if isinstance(config_spec, dict):
+            detail.update({"path": config_spec.get("path"), "value": config_spec.get("value")})
+        record(
+            str(loop),
+            outcome_event,
+            category=str(suggestion.get("category") or DEFAULT_CATEGORY),
+            ref=str(suggestion.get("dedup_key") or suggestion.get("id") or ""),
+            detail=detail,
+        )
+    except Exception:
+        logger.debug("Could not record suggestion learning outcome", exc_info=True)
+
+
+def accept_suggestion(
+    ref: str,
+    *,
+    origin: Optional[Dict[str, Any]] = None,
+    accepted_by: str = "user",
+) -> Optional[Dict[str, Any]]:
+    """Accept a pending job, goal, or guarded config suggestion.
+
+    Returns the created object/change dict, or None if the suggestion isn't found /
+    not pending. A job_spec is passed straight to ``cron.jobs.create_job``;
     an ``origin`` (platform/chat) is merged so "origin" delivery routes back to
     the chat where the user accepted.
     """
@@ -310,7 +363,16 @@ def accept_suggestion(ref: str, *, origin: Optional[Dict[str, Any]] = None) -> O
     if not s or s.get("status") != _STATUS_PENDING:
         return None
 
-    if s.get("kind", "job") == "goal":
+    kind = s.get("kind", "job")
+    if kind == "config":
+        from agent.learning.config_registry import apply_config_spec
+
+        result = apply_config_spec(dict(s.get("config_spec") or {}))
+        _set_status(s["id"], _STATUS_ACCEPTED)
+        _record_suggestion_outcome(s, "accepted", accepted_by=accepted_by)
+        return result
+
+    if kind == "goal":
         from agent.goal_store import add_goal, update_goal
 
         spec = dict(s.get("goal_spec") or {})
@@ -329,6 +391,7 @@ def accept_suggestion(ref: str, *, origin: Optional[Dict[str, Any]] = None) -> O
         else:
             raise ValueError(f"unknown goal suggestion action: {action!r}")
         _set_status(s["id"], _STATUS_ACCEPTED)
+        _record_suggestion_outcome(s, "accepted", accepted_by=accepted_by)
         return result
 
     from cron.jobs import create_job
@@ -339,6 +402,7 @@ def accept_suggestion(ref: str, *, origin: Optional[Dict[str, Any]] = None) -> O
 
     job = create_job(**spec)
     _set_status(s["id"], _STATUS_ACCEPTED)
+    _record_suggestion_outcome(s, "accepted", accepted_by=accepted_by)
     return job
 
 

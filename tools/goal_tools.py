@@ -153,7 +153,7 @@ def _handle_suggest_automation(args: dict, **kw) -> str:
     # failure degrades to the plain pending suggestion rather than erroring.
     if is_auto_tier(str(category)):
         try:
-            job = accept_suggestion(record["id"])
+            job = accept_suggestion(record["id"], accepted_by="auto")
         except Exception:
             logger.exception("suggest_automation: auto-tier accept failed; left as pending")
             job = None

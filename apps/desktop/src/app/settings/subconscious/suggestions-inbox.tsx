@@ -22,6 +22,13 @@ function SuggestionCard({
           <span className="truncate text-xs font-medium text-foreground">{suggestion.title}</span>
           <Pill>{suggestion.category}</Pill>
         </div>
+        {suggestion.kind === 'config' && suggestion.config_spec && (
+          <p className="mt-1 text-xs font-medium text-foreground/80">
+            Change {suggestion.config_spec.human || suggestion.config_spec.path} from{' '}
+            <span className="font-mono">{JSON.stringify(suggestion.config_spec.current)}</span> to{' '}
+            <span className="font-mono">{JSON.stringify(suggestion.config_spec.value)}</span>
+          </p>
+        )}
         {suggestion.summary && <p className="mt-0.5 line-clamp-2 text-xs text-muted-foreground">{suggestion.summary}</p>}
       </div>
       <div className="flex shrink-0 items-center gap-1.5">

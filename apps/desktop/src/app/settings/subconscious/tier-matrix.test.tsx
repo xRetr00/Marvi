@@ -43,4 +43,10 @@ describe('TierMatrix', () => {
 
     expect(onChange).toHaveBeenCalledWith({ overnight_diff: 'notify' })
   })
+
+  it('marks tiers whose current value came from an accepted trust proposal', () => {
+    render(<TierMatrix learned={['calendar']} onChange={vi.fn()} tiers={{ calendar: 'auto', mail: 'auto' }} />)
+
+    expect(screen.getByText('learned')).toBeTruthy()
+  })
 })

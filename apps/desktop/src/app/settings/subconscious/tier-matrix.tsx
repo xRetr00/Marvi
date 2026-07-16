@@ -26,11 +26,13 @@ const SUGGESTED_CATEGORIES = ['goals', 'overnight_diff', 'calendar', 'mail', 'pr
 export function TierMatrix({
   tiers,
   onChange,
-  disabled
+  disabled,
+  learned = []
 }: {
   tiers: TierMap
   onChange: (next: TierMap) => void
   disabled?: boolean
+  learned?: string[]
 }) {
   const [newCategory, setNewCategory] = useState('')
   const savedCategories = Object.keys(tiers).sort((a, b) => a.localeCompare(b))
@@ -62,13 +64,18 @@ export function TierMatrix({
     <div className="rounded-md border border-(--ui-stroke-secondary)">
       {savedCategories.length === 0 ? (
         <div className="px-3 py-4 text-center text-xs text-muted-foreground">
-          No categories configured yet — Marvi defaults new suggestions to <span className="font-mono">notify</span>.
+          No categories configured yet — Marvi defaults new suggestions to <span className="font-mono">propose</span>.
         </div>
       ) : (
         <div className="divide-y divide-(--ui-stroke-secondary)">
           {savedCategories.map(category => (
             <div className="flex items-center justify-between gap-2 px-3 py-2" key={category}>
-              <span className="min-w-0 truncate font-mono text-xs text-foreground">{category}</span>
+              <span className="flex min-w-0 items-center gap-1.5 truncate font-mono text-xs text-foreground">
+                {category}
+                {learned.includes(category) && (
+                  <span className="rounded-full bg-primary/10 px-1.5 py-0.5 font-sans text-[0.6rem] text-primary">learned</span>
+                )}
+              </span>
               <div className="flex shrink-0 items-center gap-1">
                 <Select
                   disabled={disabled}

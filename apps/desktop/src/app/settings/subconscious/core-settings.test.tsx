@@ -84,7 +84,8 @@ describe('SubconsciousCoreSettings', () => {
     expect(marvi.patch).not.toHaveBeenCalledWith('subconscious.enabled', expect.anything())
   })
 
-  it('commits the tick interval on blur as a plain config patch', () => {
+  it('updates the tick interval through the activation endpoint', async () => {
+    const { enableSubconscious } = await import('./activation-service')
     const marvi = fakeMarvi({ 'subconscious.enabled': true, 'subconscious.interval': '20m' })
     render(<SubconsciousCoreSettings marvi={marvi} />)
 
@@ -92,7 +93,13 @@ describe('SubconsciousCoreSettings', () => {
     fireEvent.change(field, { target: { value: '1h' } })
     fireEvent.blur(field)
 
-    expect(marvi.patch).toHaveBeenCalledWith('subconscious.interval', '1h')
+    expect(marvi.activate).toHaveBeenCalledWith(
+      'subconscious.interval',
+      '1h',
+      expect.any(Function),
+      'Failed to update the subconscious schedule'
+    )
+    await waitFor(() => expect(enableSubconscious).toHaveBeenCalledWith('1h'))
   })
 })
 

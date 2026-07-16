@@ -107,6 +107,10 @@ class RollingTranscript:
     # until a load has completed at least once. Read by [VOICE-PERF] logging
     # (hermes_cli.web_server) to report deferred_context=ready load_ms=N.
     _deferred_context_load_ms: Optional[float] = field(default=None, init=False, repr=False)
+    # Loaded once per duplex session. Keeping the learned suffix on the
+    # transcript preserves a byte-stable system prompt across all turns.
+    _learning_escalation_hints: Optional[str] = field(default=None, init=False, repr=False)
+    _learning_hints_lock: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)
 
     def add(self, role: str, text: str) -> None:
         text = (text or "").strip()
@@ -219,7 +223,7 @@ _ESCALATION_CONTRACT = (
 )
 
 
-def build_voice_mode_addendum(*, allow_escalation: bool = True) -> str:
+def build_voice_mode_addendum(*, allow_escalation: bool = True, learning_hints: str = "") -> str:
     """The voice-mode + escalation-contract text APPENDED to the real system
     prompt (see :func:`stream_instant_reply`) -- never interleaved into the
     stable identity/persona block, so the cacheable prompt prefix a normal
@@ -231,7 +235,31 @@ def build_voice_mode_addendum(*, allow_escalation: bool = True) -> str:
     addendum = _VOICE_MODE_ADDENDUM
     if allow_escalation:
         addendum += _ESCALATION_CONTRACT
+        if learning_hints:
+            addendum += "\n\n" + learning_hints[:600]
     return addendum
+
+
+def _load_learning_hints_once(transcript: RollingTranscript, cfg: Optional[Dict[str, Any]]) -> str:
+    if transcript._learning_escalation_hints is not None:
+        return transcript._learning_escalation_hints
+    with transcript._learning_hints_lock:
+        if transcript._learning_escalation_hints is not None:
+            return transcript._learning_escalation_hints
+        try:
+            from hermes_cli.config import cfg_get, load_config
+
+            effective = cfg if cfg is not None else load_config()
+            enabled = bool(cfg_get(effective, "learning", "escalation", "enabled", default=True))
+            if enabled:
+                from agent.learning.escalation import read_hints
+
+                transcript._learning_escalation_hints = read_hints()[:600]
+            else:
+                transcript._learning_escalation_hints = ""
+        except Exception:
+            transcript._learning_escalation_hints = ""
+    return transcript._learning_escalation_hints
 
 
 # ---------------------------------------------------------------------------
@@ -855,6 +883,7 @@ def warm_instant_lane(
     """
     start = time.monotonic()
     try:
+        _load_learning_hints_once(transcript, cfg)
         runtime = resolve_instant_runtime(cfg)
         max_tokens = _resolve_instant_max_tokens(cfg)
         key = _runtime_key(runtime, max_tokens)
@@ -927,7 +956,10 @@ def stream_instant_reply(
     history = transcript.as_messages()
     if history and history[-1] == {"role": "user", "content": utterance.strip()}:
         history.pop()
-    system_message = build_voice_mode_addendum(allow_escalation=allow_escalation)
+    system_message = build_voice_mode_addendum(
+        allow_escalation=allow_escalation,
+        learning_hints=_load_learning_hints_once(transcript, cfg),
+    )
 
     key = _runtime_key(runtime, max_tokens)
     cached_agent = transcript._instant_agent

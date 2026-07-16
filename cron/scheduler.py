@@ -1801,6 +1801,21 @@ def _deliver_result(job: dict, content: str, adapters=None, loop=None) -> Option
         logger.error("Job '%s': %s", job["id"], msg)
         return msg
 
+    # An accepted learned quiet window is consumed here, at the single cron
+    # delivery waist. The loop is off by default and this never alters job
+    # execution or persistence—only proactive delivery during that hour.
+    try:
+        from agent.learning.timing import is_quiet_now
+        from hermes_cli.config import cfg_get
+
+        timing_enabled = bool(cfg_get(user_cfg, "learning", "timing", "enabled", default=False))
+        quiet_windows = cfg_get(user_cfg, "learning", "timing", "quiet_hours", default=[]) or []
+        if timing_enabled and is_quiet_now(quiet_windows):
+            logger.info("Job '%s': proactive delivery suppressed by learned quiet window", job["id"])
+            return None
+    except Exception:
+        logger.debug("Learned timing gate unavailable", exc_info=True)
+
     delivery_errors = []
 
     for target in targets:
@@ -2281,6 +2296,18 @@ def _deliver_result(job: dict, content: str, adapters=None, loop=None) -> Option
                 thread_id=thread_id, user_id=origin_user_id,
                 enabled=mirror_this_target and not thread_seeded,
             )
+
+        try:
+            from agent.learning.timing import record_delivery
+
+            record_delivery(
+                platform=platform_name,
+                chat_id=str(chat_id),
+                thread_id=str(thread_id or ""),
+                ref=f"{job.get('id', '')}:{platform_name}:{chat_id}:{thread_id or ''}:{time.time_ns()}",
+            )
+        except Exception:
+            logger.debug("Proactive timing delivery signal unavailable", exc_info=True)
 
     if delivery_errors:
         return "; ".join(delivery_errors)

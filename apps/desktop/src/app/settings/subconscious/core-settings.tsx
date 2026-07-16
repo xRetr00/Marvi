@@ -1,9 +1,12 @@
+import { useEffect, useState } from 'react'
+
 import { Activity, Brain } from '@/lib/icons'
 import { notifyError } from '@/store/notifications'
 
 import { Caption, DebouncedField, ListRow, Pill, SectionHeading, ToggleRow } from '../primitives'
 
 import { disableSubconscious, enableSubconscious, pausePresence, setupPresence } from './activation-service'
+import { fetchLearningSummary } from './activity-service'
 import { StringListEditor } from './string-list-editor'
 import { TierMatrix } from './tier-matrix'
 import type { TierMap } from './types'
@@ -15,6 +18,31 @@ export function SubconsciousCoreSettings({ marvi }: { marvi: ReturnType<typeof u
   const interval = marvi.get('subconscious.interval', '20m')
   const idleTrigger = marvi.get('subconscious.idle_trigger_minutes', 15)
   const tiers = marvi.get<TierMap>('subconscious.tiers', {})
+  const [learnedTiers, setLearnedTiers] = useState<string[]>([])
+
+  useEffect(() => {
+    let active = true
+
+    void (async () => {
+      try {
+        const result = await fetchLearningSummary()
+
+        if (active) {
+          setLearnedTiers(result.learned_tiers || [])
+        }
+      } catch {
+        // Older/offline backends simply omit provenance badges; tier editing
+        // remains fully usable.
+        if (active) {
+          setLearnedTiers([])
+        }
+      }
+    })()
+
+    return () => {
+      active = false
+    }
+  }, [])
 
   return (
     <>
@@ -83,6 +111,7 @@ export function SubconsciousCoreSettings({ marvi }: { marvi: ReturnType<typeof u
           <div className="mt-2">
             <TierMatrix
               disabled={!enabled}
+              learned={learnedTiers}
               onChange={next => void marvi.patch('subconscious.tiers', next)}
               tiers={tiers}
             />

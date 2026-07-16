@@ -10,8 +10,10 @@ import { notify, notifyError } from '@/store/notifications'
 
 import { Pill, SectionHeading } from '../settings/primitives'
 import { ActivitySection } from '../settings/subconscious/activity-section'
+import { fetchLearningSummary, type LearningSummaryResponse } from '../settings/subconscious/activity-service'
 import { GoalsPanel, type GoalTemplate } from '../settings/subconscious/goals-panel'
 import { KnowledgeViewer } from '../settings/subconscious/knowledge-viewer'
+import { useMarviConfig } from '../settings/subconscious/use-marvi-config'
 
 import { ComposioTab } from './composio-tab'
 
@@ -54,10 +56,18 @@ export function MindView() {
   const [tab, setTab] = useState<MindTab>('overview')
   const [state, setState] = useState<MindState | null>(null)
   const [error, setError] = useState(false)
+  const [learning, setLearning] = useState<LearningSummaryResponse | null>(null)
 
   const load = useCallback(async () => {
     try {
       setState(await window.hermesDesktop.api<MindState>({ path: '/api/mind' }))
+
+      try {
+        setLearning(await fetchLearningSummary())
+      } catch {
+        setLearning(null)
+      }
+
       setError(false)
     } catch (err) {
       setError(true)
@@ -109,7 +119,7 @@ export function MindView() {
               </button>
             </div>
           ) : tab === 'overview' ? (
-            <Overview onRefresh={load} state={state} />
+            <Overview learning={learning} onRefresh={load} state={state} />
           ) : tab === 'goals' ? (
             <GoalsPanel templates={state?.goal_templates ?? []} />
           ) : tab === 'brain' ? (
@@ -125,7 +135,15 @@ export function MindView() {
   )
 }
 
-function Overview({ state, onRefresh }: { state: MindState | null; onRefresh: () => Promise<void> }) {
+function Overview({
+  state,
+  learning,
+  onRefresh
+}: {
+  state: MindState | null
+  learning: LearningSummaryResponse | null
+  onRefresh: () => Promise<void>
+}) {
   const pending = state?.initiatives.filter(item => item.status === 'pending') ?? []
 
   async function cancel(id: string) {
@@ -179,8 +197,65 @@ function Overview({ state, onRefresh }: { state: MindState | null; onRefresh: ()
         )}
       </section>
 
+      <LearningPanel learning={learning} onRefresh={onRefresh} />
+
       <ActivitySection />
     </div>
+  )
+}
+
+const LEARNING_DESCRIPTIONS: Record<string, string> = {
+  trust: 'Learns which suggestion categories have earned more or less autonomy.',
+  room_habit: 'Notices repeated manual room modes, lighting changes, and cancellations.',
+  voice_threshold: 'Tunes speaker recognition only after enough labelled voice evidence.',
+  focus_apps: 'Finds applications where you repeatedly spend uninterrupted focus time.',
+  escalation: 'Learns which voice requests should go straight to the deeper reasoning lane.',
+  timing: 'Experiments with quieter proactive delivery windows; off until you enable it.'
+}
+
+function LearningPanel({ learning, onRefresh }: { learning: LearningSummaryResponse | null; onRefresh: () => Promise<void> }) {
+  const marvi = useMarviConfig()
+  const rows = learning?.loops ?? []
+
+  return (
+    <section>
+      <SectionHeading icon={Brain} meta={`${rows.reduce((sum, row) => sum + row.pending, 0)} pending`} title="What Marvi is learning" />
+      <p className="mb-3 text-xs text-muted-foreground">
+        Local, consent-first learning loops. Every config or automation change waits in Suggestions for your approval.
+      </p>
+      {rows.length === 0 ? (
+        <div className="rounded-lg border border-dashed p-6 text-center text-xs text-muted-foreground">
+          Collecting data — first tuning proposal after a week of use.
+        </div>
+      ) : (
+        <div className="divide-y divide-(--ui-stroke-secondary) rounded-lg border border-(--ui-stroke-secondary)">
+          {rows.map(row => {
+            const checked = marvi.get(row.config_path, row.enabled)
+
+            return (
+              <div className="flex items-center justify-between gap-4 p-3" key={row.loop}>
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2 text-sm font-medium capitalize">
+                    {row.loop.replaceAll('_', ' ')}
+                    <Pill>{row.samples} samples</Pill>
+                    {row.pending > 0 && <Pill>{row.pending} pending</Pill>}
+                  </div>
+                  <p className="mt-0.5 text-xs text-muted-foreground">{LEARNING_DESCRIPTIONS[row.loop]}</p>
+                  {row.last_proposal && <p className="mt-1 truncate text-xs text-foreground/70">Last: {row.last_proposal}</p>}
+                </div>
+                <Switch
+                  checked={Boolean(checked)}
+                  disabled={marvi.isLoading || marvi.savingPath === row.config_path}
+                  onCheckedChange={value =>
+                    void marvi.patch(row.config_path, value).then(() => onRefresh())
+                  }
+                />
+              </div>
+            )
+          })}
+        </div>
+      )}
+    </section>
   )
 }
 

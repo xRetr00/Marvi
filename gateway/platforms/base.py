@@ -4624,6 +4624,20 @@ class BasePlatformAdapter(ABC):
         # Offloaded: the sync hook must not block the loop.
         await asyncio.to_thread(self._apply_topic_recovery, event)
 
+        try:
+            from agent.learning.timing import record_engagement
+
+            asyncio.create_task(
+                asyncio.to_thread(
+                    record_engagement,
+                    platform=_platform_name(event.source.platform),
+                    chat_id=str(event.source.chat_id),
+                    thread_id=str(event.source.thread_id or ""),
+                )
+            )
+        except Exception:
+            logger.debug("Proactive timing engagement signal unavailable", exc_info=True)
+
         session_key = build_session_key(
             event.source,
             group_sessions_per_user=self.config.extra.get("group_sessions_per_user", True),

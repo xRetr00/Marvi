@@ -13545,10 +13545,14 @@ def _read_subconscious_suggestions_sync() -> Dict[str, Any]:
                 "summary": s.get("description"),
                 "source": s.get("source"),
                 "category": category,
-                "tier": resolve_tier(category),
+                # Learned proposals always require an explicit tap even when
+                # the surrounding category has already earned auto status.
+                "tier": "propose" if s.get("loop") else resolve_tier(category),
                 "created": s.get("created_at"),
                 "kind": s.get("kind", "job"),
                 "goal_spec": s.get("goal_spec"),
+                "config_spec": s.get("config_spec"),
+                "loop": s.get("loop"),
         })
     return {"suggestions": out}
 
@@ -13582,19 +13586,48 @@ def _dismiss_subconscious_suggestion_sync(suggestion_id: str) -> bool:
 @app.post("/api/subconscious/suggestions/{suggestion_id}/accept")
 async def accept_subconscious_suggestion(suggestion_id: str):
     try:
-        job = await run_in_threadpool(
+        result = await run_in_threadpool(
             _accept_subconscious_suggestion_sync, suggestion_id
         )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     except Exception:
         _log.exception(
             "POST /api/subconscious/suggestions/%s/accept failed", suggestion_id
         )
         raise HTTPException(status_code=500, detail="Failed to accept suggestion")
-    if job is None:
+    if result is None:
         raise HTTPException(
             status_code=404, detail="No pending suggestion with that id"
         )
-    return {"ok": True, "job": job}
+    return {"ok": True, "job": result, "result": result}
+
+
+def _read_learning_summary_sync() -> Dict[str, Any]:
+    from agent.learning.summary import build_summary
+
+    return build_summary()
+
+
+@app.get("/api/learning/summary")
+async def get_learning_summary():
+    try:
+        result = await run_in_threadpool(_read_learning_summary_sync)
+        return {"ok": True, **result}
+    except Exception:
+        _log.exception("GET /api/learning/summary failed")
+        raise HTTPException(status_code=500, detail="Failed to read learning summary")
+
+
+@app.get("/api/learning/outcomes")
+async def get_learning_outcomes(loop: Optional[str] = None, limit: int = 100):
+    from agent.learning.outcomes import VALID_LOOPS, recent
+
+    if loop is not None and loop not in VALID_LOOPS:
+        raise HTTPException(status_code=400, detail="Unknown learning loop")
+    capped = max(1, min(int(limit), 500))
+    rows = await run_in_threadpool(recent, loop=loop, limit=capped)
+    return {"ok": True, "outcomes": rows}
 
 
 @app.post("/api/subconscious/suggestions/{suggestion_id}/dismiss")
@@ -18712,6 +18745,7 @@ class _DuplexSession:
         self._session_id = secrets.token_hex(4)
         self._warmup_result: Optional[Dict[str, Any]] = None
         self._last_eou_monotonic: Optional[float] = None
+        self._last_instant_turn: Optional[Dict[str, Any]] = None
 
     def _start_instant_lane_warmup(self) -> None:
         """Resolve + construct the instant-lane agent AND kick the deferred
@@ -19209,6 +19243,38 @@ class _DuplexSession:
             )
             return
 
+        # A quick correction after a completed instant-lane answer is weak but
+        # useful evidence that the previous request belonged in the deep lane.
+        # Detection is pure; the local ledger write stays off the event loop.
+        prior = self._last_instant_turn
+        self._last_instant_turn = None
+        if prior is not None:
+            try:
+                from agent.learning.escalation import is_correction
+                from hermes_cli.config import cfg_get
+
+                window = float(cfg_get(self.cfg, "learning", "escalation", "followup_window_seconds", default=20))
+                enabled = bool(cfg_get(self.cfg, "learning", "escalation", "enabled", default=True))
+                if enabled and (time.monotonic() - float(prior["at"])) <= window and is_correction(
+                    str(prior["utterance"]), str(prior["reply"]), text
+                ):
+                    def _record_correction() -> None:
+                        from agent.learning.outcomes import record
+
+                        record(
+                            "escalation", "voice", "corrected",
+                            ref=str(prior.get("utterance_id") or ""),
+                            detail={
+                                "prior_utterance": str(prior["utterance"]),
+                                "utterance": text,
+                                "prior_reply_len": len(str(prior["reply"])),
+                            },
+                        )
+
+                    self.loop.run_in_executor(None, _record_correction)
+            except Exception:
+                _log.debug("Voice escalation learning signal unavailable", exc_info=True)
+
         self.transcript.add("user", text)
         self._pending_user_text = text
 
@@ -19549,6 +19615,13 @@ class _DuplexSession:
 
         if result_text:
             self.transcript.add("assistant", result_text)
+            if task_id is None and not cancel_event.is_set():
+                self._last_instant_turn = {
+                    "at": time.monotonic(),
+                    "utterance": utterance_text,
+                    "reply": result_text,
+                    "utterance_id": f"utt-{self._utterance_counter}",
+                }
             if self._pending_user_text == utterance_text:
                 self._pending_user_text = None
         elif task_id is not None and self._pending_user_text == utterance_text:

@@ -976,6 +976,16 @@ def _ensure_hermes_home_managed(home: Path):
 
 DEFAULT_CONFIG = {
     "model": "",
+    # Learning-loop toggles are edited by Desktop's Mind panel. Analytical
+    # thresholds stay code-defaulted via cfg_get so config.yaml remains terse.
+    "learning": {
+        "trust": {"enabled": True},
+        "room": {"enabled": True},
+        "voice_tuning": {"enabled": True},
+        "focus_apps": {"enabled": True},
+        "escalation": {"enabled": True},
+        "timing": {"enabled": False},
+    },
     "providers": {},
     "fallback_providers": [],
     "credential_pool_strategies": {},

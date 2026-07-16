@@ -24,6 +24,8 @@ const SOURCE_META: Record<SubconsciousActivitySource, { label: string; icon: typ
   tick: { label: 'Tick', icon: RefreshCw },
   idle_trigger: { label: 'Idle', icon: Moon },
   distiller: { label: 'Distiller', icon: Brain },
+  reflection: { label: 'Reflection', icon: Brain },
+  smart_room_alarm: { label: 'Room alarm', icon: Bell },
   goblin: { label: 'Goblin', icon: Bell },
   world: { label: 'World', icon: Cloud }
 }

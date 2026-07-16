@@ -61,6 +61,33 @@ describe('SuggestionsInbox', () => {
     expect(screen.getByText('Summarize yesterday every morning.')).toBeTruthy()
   })
 
+  it('renders the guarded before/after evidence for config proposals', () => {
+    render(
+      <SuggestionsInbox
+        busyId={null}
+        isAvailable={true}
+        isLoading={false}
+        onAccept={vi.fn()}
+        onDismiss={vi.fn()}
+        suggestions={[
+          makeSuggestion({
+            kind: 'config',
+            config_spec: {
+              path: 'voice.speaker_id.threshold',
+              human: 'speaker owner threshold',
+              current: 0.45,
+              value: 0.4,
+              rationale: 'Owner turns clustered below the current threshold.',
+              scope: 'user'
+            }
+          })
+        ]}
+      />
+    )
+
+    expect(screen.getByText(/Change speaker owner threshold/)).toBeTruthy()
+  })
+
   it('calls onAccept / onDismiss with the suggestion id', () => {
     const onAccept = vi.fn()
     const onDismiss = vi.fn()

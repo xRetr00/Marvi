@@ -41,6 +41,21 @@ distilled-memory viewer, activation REST endpoints, CLI commands, and the
 Settings -> Presence/Subconscious UI. The UI must use activation endpoints;
 writing config values alone does not start or stop its jobs and watchers.
 
+Protect the Mind UI and local learning loops: narrative, reflections,
+initiatives, activity, outcomes, timing, focus-app, trust, escalation,
+voice-threshold, and room-habit signals, plus their configuration, scheduler,
+suggestions, APIs, UI, and tests. Preserve the instant voice lane and
+duplex/speaker-focus behavior, including fast model selection,
+escalation/delegation, barge-in, speaker identity/self-enrollment, and
+world-context contracts.
+
+The `smart_room` plugin is also downstream Marvi functionality. Keep its skill
+and manifest, Windows runtime supervision, secret/config boundaries,
+BLE/mmWave/OwnTracks presence fusion, MQTT/Tuya integration, clap events,
+modes, alarms, welcomes, dashboard/tools APIs, world snapshots, proactive
+delivery, Desktop Settings UI, and the associated navigation, types,
+localization, IPC/REST contracts, and tests.
+
 NeuTTS and KittenTTS are deliberately blocked in Marvi. Do not reintroduce
 their providers, installers, documentation, setup options, or UI wiring from
 upstream.

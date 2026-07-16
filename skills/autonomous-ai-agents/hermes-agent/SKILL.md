@@ -573,6 +573,23 @@ Presence/Subconscious UI. The UI must use the activation endpoints; raw config
 writes alone do not create or pause the associated jobs/watchers. Reapply these
 features over upstream rewrites rather than removing them as conflict cleanup.
 
+### Marvi Mind, Learning, and Smart Room
+
+Also preserve the Mind surface (narrative, reflections, initiatives, and
+activity), local learning loops (outcomes, reflection, timing, focus apps,
+trust, escalation, voice thresholds, and room habits), and their config,
+scheduled jobs, suggestions, APIs, UI, and tests. Preserve the instant voice
+lane and duplex/speaker-focus path, including fast model selection,
+escalation/delegation, barge-in, speaker identity/self-enrollment, and
+world-context contracts.
+
+The `smart_room` plugin is protected downstream functionality. Keep its skill
+and manifest, Windows runtime supervision, secret/config boundaries, BLE/
+mmWave/OwnTracks presence fusion, MQTT/Tuya control, clap events, modes,
+alarms, welcomes, dashboard/tools APIs, world snapshots, proactive delivery,
+and Desktop Settings UI. When upstream rewrites nearby files, reapply these
+contracts and their navigation, types, localization, IPC/REST paths, and tests.
+
 NeuTTS and KittenTTS are intentionally blocked in Marvi. Do not restore their
 providers, installers, setup options, documentation, or UI wiring from upstream.
 

@@ -2733,6 +2733,7 @@ def cached_provider_model_ids(
     provider: Optional[str],
     *,
     force_refresh: bool = False,
+    allow_network: bool = True,
     ttl_seconds: int = _PROVIDER_MODELS_CACHE_TTL,
 ) -> list[str]:
     """Disk-cached wrapper around :func:`provider_model_ids`.
@@ -2758,6 +2759,15 @@ def cached_provider_model_ids(
         and (now - float(entry.get("at", 0))) < ttl_seconds
     ):
         return list(entry["models"])
+
+    if not allow_network:
+        if (
+            isinstance(entry, dict)
+            and entry.get("fp") == fp
+            and isinstance(entry.get("models"), list)
+        ):
+            return list(entry["models"])
+        return []
 
     # Cache miss / stale / forced refresh — call the live path.
     live = provider_model_ids(normalized, force_refresh=force_refresh)

@@ -11974,6 +11974,891 @@ async def reset_memory(body: MemoryReset):
 
 
 # ---------------------------------------------------------------------------
+# Marvi subconscious + presence — desktop toggle activation.
+#
+# The Subconscious settings UI (apps/desktop/src/app/settings/subconscious/)
+# previously only wrote `subconscious.*` / `presence.*` config keys via
+# PUT /api/config, which does nothing on its own: the subconscious tick's
+# cron job is only created by cron.subconscious.enable(), and presence's
+# ActivityWatch probe / media watcher / distiller cron job are only wired up
+# by hermes_cli.presence_cmd's setup/pause/resume functions (the same code
+# `hermes presence <cmd>` runs). These endpoints expose those activation
+# paths over REST so the desktop toggles actually do something.
+#
+# Both underlying layers do blocking I/O (cron job read/write, subprocess
+# spawn for the media watcher) so calls run off the event loop via
+# run_in_threadpool, same as the cron dashboard endpoints above.
+# ---------------------------------------------------------------------------
+
+
+class SubconsciousEnableRequest(BaseModel):
+    interval: Optional[str] = None
+
+
+def _subconscious_enable_sync(interval: Optional[str]) -> Dict[str, Any]:
+    from cron.subconscious import enable
+
+    return enable(interval)
+
+
+def _subconscious_disable_sync() -> Dict[str, Any]:
+    from cron.subconscious import disable
+
+    return disable()
+
+
+def _subconscious_status_sync() -> Dict[str, Any]:
+    from cron.subconscious import status
+
+    return status()
+
+
+@app.post("/api/subconscious/enable")
+async def enable_subconscious(body: SubconsciousEnableRequest):
+    try:
+        result = await run_in_threadpool(_subconscious_enable_sync, body.interval)
+        return {"ok": True, **result}
+    except Exception:
+        _log.exception("POST /api/subconscious/enable failed")
+        raise HTTPException(
+            status_code=500, detail="Failed to enable the subconscious tick"
+        )
+
+
+@app.post("/api/subconscious/disable")
+async def disable_subconscious():
+    try:
+        result = await run_in_threadpool(_subconscious_disable_sync)
+        return {"ok": True, **result}
+    except Exception:
+        _log.exception("POST /api/subconscious/disable failed")
+        raise HTTPException(
+            status_code=500, detail="Failed to disable the subconscious tick"
+        )
+
+
+@app.get("/api/subconscious/status")
+async def get_subconscious_status():
+    try:
+        result = await run_in_threadpool(_subconscious_status_sync)
+        return {"ok": True, **result}
+    except Exception:
+        _log.exception("GET /api/subconscious/status failed")
+        raise HTTPException(
+            status_code=500, detail="Failed to read subconscious status"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Subconscious activity — the missing visibility surface.
+#
+# The subconscious tick fires every ~20 minutes and the wake-gate/agent/
+# suggestion machinery all work, but there was never anywhere in the UI that
+# showed it: a quiet tick (nothing changed) and a dead ticker look identical
+# from the app — nothing renders either way. These endpoints expose:
+#
+#   * GET  /api/subconscious/activity     — recent tick runs, newest first
+#   * GET  /api/subconscious/surfaces     — per-Composio-surface sync health
+#   * GET  /api/subconscious/suggestions  — pending suggestion inbox
+#   * POST /api/subconscious/suggestions/{id}/accept  — schedule it
+#   * POST /api/subconscious/suggestions/{id}/dismiss — latch-dismiss it
+#
+# Activity source design: cron/jobs.py's job store only ever records the
+# MOST RECENT run per job (last_run_at/last_status/last_error) — there is no
+# run history array. cron/scheduler.py now appends one JSON line per
+# background-thinking event to HERMES_HOME/subconscious/activity.jsonl
+# (capped at 500 lines, ONE shared feed) from every tracked surface: the
+# subconscious tick (source "tick" or "idle_trigger"), the presence
+# distiller ("distiller"), and goblin shoulder taps ("goblin", appended
+# directly from tools/presence/goblin.py). Each tick/distiller entry carries
+# not just the outcome but the "thinking" itself — `diff` (the stage-1
+# world-diff/script output that woke the run) and `thought` (the stage-2
+# agent's raw final response, even a bare "[SILENT]"), each capped at 4000
+# chars in the jsonl; the untruncated full doc is at `output_path` (attached
+# once cron/jobs.py::save_job_output picks its filename) for deep-dive. That
+# log is this endpoint's preferred source. For installs where the tick has
+# been running since before that log existed (or a build predates it), there
+# simply is no per-run history to show — the endpoint says so honestly via
+# `note` and falls back to the single last-run fact the cron job store does
+# carry, rather than presenting an empty list indistinguishable from "the
+# ticker is dead".
+# ---------------------------------------------------------------------------
+
+_SUBCONSCIOUS_ACTIVITY_DEFAULT_LIMIT = 30
+_SUBCONSCIOUS_ACTIVITY_MAX_LIMIT = 200
+_SUBCONSCIOUS_ACTIVITY_NO_HISTORY_NOTE = (
+    "No per-run activity history yet — the activity log "
+    "(HERMES_HOME/subconscious/activity.jsonl) starts recording from the "
+    "next tick onward. Showing the cron job store's last-run fact instead."
+)
+
+
+def _subconscious_activity_log_path() -> Path:
+    from hermes_constants import get_hermes_home
+
+    return get_hermes_home() / "subconscious" / "activity.jsonl"
+
+
+def _read_subconscious_activity_sync(limit: int) -> Dict[str, Any]:
+    limit = max(
+        1,
+        min(
+            int(limit or _SUBCONSCIOUS_ACTIVITY_DEFAULT_LIMIT),
+            _SUBCONSCIOUS_ACTIVITY_MAX_LIMIT,
+        ),
+    )
+    path = _subconscious_activity_log_path()
+    runs: List[Dict[str, Any]] = []
+
+    if path.exists():
+        try:
+            raw_lines = path.read_text(encoding="utf-8").splitlines()
+        except OSError:
+            raw_lines = []
+        # File is append-only oldest→newest; walk backwards for newest-first.
+        for line in reversed(raw_lines):
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                record = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(record, dict):
+                continue
+            runs.append({
+                    "at": record.get("at"),
+                    "source": record.get("source") or "tick",
+                    "job_id": record.get("job_id"),
+                    "outcome": record.get("outcome"),
+                    "summary": record.get("summary"),
+                    "diff": record.get("diff"),
+                    "thought": record.get("thought"),
+                    "output_path": record.get("output_path"),
+                    "duration_ms": record.get("duration_ms"),
+                    "narrative_updated": bool(record.get("narrative_updated", False)),
+            })
+            if len(runs) >= limit:
+                break
+
+    if runs:
+        return {"runs": runs}
+
+    # No activity-log history at all — fall back to the one fact the cron
+    # job store itself carries (last_run_at), so the panel still reflects
+    # something real instead of an empty void indistinguishable from "dead".
+    try:
+        from cron.subconscious import status as subconscious_status
+
+        sc_status = subconscious_status()
+    except Exception:
+        sc_status = {}
+
+    last_run_at = sc_status.get("last_run_at") if isinstance(sc_status, dict) else None
+    if last_run_at:
+        runs.append({
+                "at": last_run_at,
+                "source": "tick",
+                "job_id": sc_status.get("job_id"),
+                "outcome": None,
+                "summary": None,
+                "diff": None,
+                "thought": None,
+                "output_path": None,
+                "duration_ms": None,
+        })
+
+    return {"runs": runs, "note": _SUBCONSCIOUS_ACTIVITY_NO_HISTORY_NOTE}
+
+
+@app.get("/api/subconscious/activity")
+async def get_subconscious_activity(limit: int = 30):
+    try:
+        result = await run_in_threadpool(_read_subconscious_activity_sync, limit)
+        return {"ok": True, **result}
+    except Exception:
+        _log.exception("GET /api/subconscious/activity failed")
+        raise HTTPException(
+            status_code=500, detail="Failed to read subconscious activity"
+        )
+
+
+# Composio is an edge capability, exposed through the existing MCP client.
+# Both keys are secret state (.env); config.yaml contains only the endpoint
+# and ${COMPOSIO_CONSUMER_API_KEY} reference installed by composio_config.py.
+class ComposioSetupRequest(BaseModel):
+    api_key: str = ""
+    consumer_api_key: str = ""
+
+
+class ComposioConnectRequest(BaseModel):
+    toolkit: str
+
+
+class ComposioSnapshotsRequest(BaseModel):
+    surfaces: List[str] = []
+
+
+def _composio_setup_sync(api_key: str, consumer_api_key: str) -> Dict[str, Any]:
+    from hermes_cli.composio_config import configure_composio_connect, composio_status
+
+    api_key = str(api_key or "").strip()
+    consumer_api_key = str(consumer_api_key or "").strip()
+    if not api_key and not consumer_api_key:
+        raise ValueError("A Composio API key is required")
+    configure_composio_connect(api_key=api_key, consumer_api_key=consumer_api_key)
+    return composio_status()
+
+
+def _composio_status_sync() -> Dict[str, Any]:
+    from hermes_cli.composio_config import composio_status
+
+    # Opening the dedicated Mind tab is a safe migration point for installs
+    # that still have the old plaintext composio.api_key setting.
+    return composio_status(migrate=True)
+
+
+def _composio_connect_sync(toolkit: str) -> Dict[str, Any]:
+    from cron.scripts.subconscious.composio_client import get_api_key, get_client
+    from hermes_cli.config import load_config
+
+    toolkit = str(toolkit or "").strip().lower()
+    if not re.fullmatch(r"[a-z0-9_-]{1,100}", toolkit):
+        raise ValueError("Invalid Composio toolkit")
+    if not get_api_key(load_config()):
+        raise ValueError("Save the Composio project API key first")
+    return get_client().initiate_connection(toolkit)
+
+
+def _composio_toolkits_sync(search: str, limit: int) -> Dict[str, Any]:
+    """Fetch the live Composio toolkit catalog instead of hardcoding apps."""
+    from hermes_cli.composio_config import COMPOSIO_ENV_KEY
+    from hermes_cli.config import get_env_value_prefer_dotenv
+
+    key = str(get_env_value_prefer_dotenv(COMPOSIO_ENV_KEY) or "").strip()
+    if not key:
+        raise ValueError("Save a Composio API key first")
+
+    params = {"limit": str(max(1, min(int(limit or 100), 500)))}
+    if search.strip():
+        params["search"] = search.strip()
+    url = "https://backend.composio.dev/api/v3.1/toolkits?" + urllib.parse.urlencode(
+        params
+    )
+    request = urllib.request.Request(
+        url,
+        headers={"Accept": "application/json", "x-api-key": key},
+        method="GET",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=12) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        if exc.code in (401, 403):
+            raise ValueError("Composio rejected this API key") from exc
+        raise RuntimeError(
+            f"Composio toolkit catalog returned HTTP {exc.code}"
+        ) from exc
+    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
+        raise RuntimeError(f"Composio toolkit catalog is unavailable: {exc}") from exc
+
+    root = (
+        payload.get("data")
+        if isinstance(payload, dict) and isinstance(payload.get("data"), dict)
+        else payload
+    )
+    raw_items = []
+    if isinstance(root, dict):
+        raw_items = root.get("items") or root.get("toolkits") or []
+    elif isinstance(root, list):
+        raw_items = root
+
+    items: List[Dict[str, Any]] = []
+    for raw in raw_items if isinstance(raw_items, list) else []:
+        if not isinstance(raw, dict):
+            continue
+        slug = raw.get("slug") or raw.get("name") or raw.get("key")
+        if not slug:
+            continue
+        items.append({
+                "slug": str(slug),
+                "name": str(raw.get("name") or raw.get("display_name") or slug),
+                "description": str(raw.get("description") or ""),
+                "categories": list(raw.get("categories") or []),
+        })
+    total = (
+        root.get("total_items") or root.get("total") if isinstance(root, dict) else None
+        )
+    return {"toolkits": items, "total": total, "source": "composio-v3.1"}
+
+
+@app.get("/api/composio/status")
+async def get_composio_status():
+    try:
+        return {"ok": True, **await run_in_threadpool(_composio_status_sync)}
+    except Exception:
+        _log.exception("GET /api/composio/status failed")
+        raise HTTPException(status_code=500, detail="Failed to read Composio status")
+
+
+@app.post("/api/composio/setup")
+async def setup_composio(body: ComposioSetupRequest):
+    try:
+        return {
+            "ok": True,
+            **await run_in_threadpool(
+                _composio_setup_sync, body.api_key, body.consumer_api_key
+            ),
+        }
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception:
+        _log.exception("POST /api/composio/setup failed")
+        raise HTTPException(status_code=500, detail="Failed to configure Composio")
+
+
+@app.post("/api/composio/connect")
+async def connect_composio(body: ComposioConnectRequest):
+    try:
+        return {"ok": True, **await run_in_threadpool(_composio_connect_sync, body.toolkit)}
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception:
+        _log.exception("POST /api/composio/connect failed")
+        raise HTTPException(status_code=502, detail="Failed to start Composio authorization")
+
+
+@app.put("/api/composio/snapshots")
+async def update_composio_snapshots(body: ComposioSnapshotsRequest):
+    from cron.scripts.subconscious.base import known_surfaces
+
+    allowed = set(known_surfaces())
+    surfaces = list(
+        dict.fromkeys(
+            str(item).strip().lower() for item in body.surfaces if str(item).strip()
+        )
+    )
+    invalid = [item for item in surfaces if item not in allowed]
+    if invalid:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported proactive snapshot surface: {', '.join(invalid)}",
+        )
+    try:
+        config = read_raw_config()
+        section = config.get("composio")
+        if not isinstance(section, dict):
+            section = {}
+        section["surfaces"] = surfaces
+        config["composio"] = section
+        save_config(config)
+        return {"ok": True, **await run_in_threadpool(_composio_status_sync)}
+    except Exception:
+        _log.exception("PUT /api/composio/snapshots failed")
+        raise HTTPException(
+            status_code=500, detail="Failed to update proactive snapshots"
+        )
+
+
+@app.get("/api/composio/toolkits")
+async def get_composio_toolkits(search: str = "", limit: int = 100):
+    try:
+        return {
+            "ok": True,
+            **await run_in_threadpool(_composio_toolkits_sync, search, limit),
+        }
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        _log.warning("GET /api/composio/toolkits failed: %s", exc)
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+def _configured_composio_surfaces(config: Optional[Dict[str, Any]] = None) -> List[str]:
+    from hermes_cli.config import load_config
+
+    cfg = config if config is not None else load_config()
+    composio_cfg = cfg.get("composio") or {}
+    if not isinstance(composio_cfg, dict) or not isinstance(
+        composio_cfg.get("surfaces"), list
+    ):
+        return []
+    return [
+        str(s).strip().lower() for s in composio_cfg["surfaces"] if str(s or "").strip()
+    ]
+
+
+def _read_subconscious_surfaces_sync() -> Dict[str, Any]:
+    surfaces = _configured_composio_surfaces()
+    if not surfaces:
+        return {"surfaces": []}
+
+    from cron.scripts.subconscious.snapshot_store import open_store
+
+    out: List[Dict[str, Any]] = []
+    for name in surfaces:
+        try:
+            store = open_store(name)
+            snap = store.status_dict()
+            backing_off = store.is_backoff_active()
+        except (
+            Exception
+        ) as e:  # pragma: no cover - defensive, matches `hermes composio list`
+            out.append({
+                    "surface": name,
+                    "status": "error",
+                    "cursor_age_seconds": None,
+                    "quiet_streak": None,
+                    "effective_interval_seconds": None,
+                    "consecutive_failures": None,
+                    "last_error": str(e)[:200],
+                    "last_success_at": None,
+                    "next_retry_at": None,
+            })
+            continue
+
+        failures = snap.get("consecutive_failures") or 0
+        if failures and backing_off:
+            dot = "backing-off"
+        elif failures:
+            dot = "error"
+        else:
+            dot = "ok"
+
+        last_error = snap.get("last_error")
+        out.append({
+                "surface": name,
+                "status": dot,
+                "cursor_age_seconds": snap.get("seconds_since_last_fetch"),
+                "quiet_streak": snap.get("quiet_streak"),
+                "effective_interval_seconds": snap.get("effective_min_interval_seconds"),
+                "consecutive_failures": failures,
+                "last_error": (str(last_error)[:200] if last_error else None),
+                "last_success_at": snap.get("last_success_at"),
+                "next_retry_at": snap.get("next_retry_at"),
+        })
+    return {"surfaces": out}
+
+
+@app.get("/api/subconscious/surfaces")
+async def get_subconscious_surfaces():
+    try:
+        result = await run_in_threadpool(_read_subconscious_surfaces_sync)
+        return {"ok": True, **result}
+    except Exception:
+        _log.exception("GET /api/subconscious/surfaces failed")
+        raise HTTPException(
+            status_code=500, detail="Failed to read subconscious surfaces"
+        )
+
+
+def _read_subconscious_suggestions_sync() -> Dict[str, Any]:
+    from cron.suggestions import list_pending, resolve_tier
+
+    pending = list_pending()
+    out = []
+    for s in pending:
+        category = s.get("category") or "general"
+        out.append({
+                "id": s.get("id"),
+                "title": s.get("title"),
+                "summary": s.get("description"),
+                "source": s.get("source"),
+                "category": category,
+                # Learned proposals always require an explicit tap even when
+                # the surrounding category has already earned auto status.
+                "tier": "propose" if s.get("loop") else resolve_tier(category),
+                "created": s.get("created_at"),
+                "kind": s.get("kind", "job"),
+                "goal_spec": s.get("goal_spec"),
+                "config_spec": s.get("config_spec"),
+                "loop": s.get("loop"),
+        })
+    return {"suggestions": out}
+
+
+@app.get("/api/subconscious/suggestions")
+async def get_subconscious_suggestions():
+    try:
+        result = await run_in_threadpool(_read_subconscious_suggestions_sync)
+        return {"ok": True, **result}
+    except Exception:
+        _log.exception("GET /api/subconscious/suggestions failed")
+        raise HTTPException(
+            status_code=500, detail="Failed to read subconscious suggestions"
+        )
+
+
+def _accept_subconscious_suggestion_sync(
+    suggestion_id: str,
+) -> Optional[Dict[str, Any]]:
+    from cron.suggestions import accept_suggestion
+
+    return accept_suggestion(suggestion_id)
+
+
+def _dismiss_subconscious_suggestion_sync(suggestion_id: str) -> bool:
+    from cron.suggestions import dismiss_suggestion
+
+    return dismiss_suggestion(suggestion_id)
+
+
+@app.post("/api/subconscious/suggestions/{suggestion_id}/accept")
+async def accept_subconscious_suggestion(suggestion_id: str):
+    try:
+        result = await run_in_threadpool(
+            _accept_subconscious_suggestion_sync, suggestion_id
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except Exception:
+        _log.exception(
+            "POST /api/subconscious/suggestions/%s/accept failed", suggestion_id
+        )
+        raise HTTPException(status_code=500, detail="Failed to accept suggestion")
+    if result is None:
+        raise HTTPException(
+            status_code=404, detail="No pending suggestion with that id"
+        )
+    return {"ok": True, "job": result, "result": result}
+
+
+def _read_learning_summary_sync() -> Dict[str, Any]:
+    from agent.learning.summary import build_summary
+
+    return build_summary()
+
+
+@app.get("/api/learning/summary")
+async def get_learning_summary():
+    try:
+        result = await run_in_threadpool(_read_learning_summary_sync)
+        return {"ok": True, **result}
+    except Exception:
+        _log.exception("GET /api/learning/summary failed")
+        raise HTTPException(status_code=500, detail="Failed to read learning summary")
+
+
+@app.get("/api/learning/outcomes")
+async def get_learning_outcomes(loop: Optional[str] = None, limit: int = 100):
+    from agent.learning.outcomes import VALID_LOOPS, recent
+
+    if loop is not None and loop not in VALID_LOOPS:
+        raise HTTPException(status_code=400, detail="Unknown learning loop")
+    capped = max(1, min(int(limit), 500))
+    rows = await run_in_threadpool(recent, loop=loop, limit=capped)
+    return {"ok": True, "outcomes": rows}
+
+
+@app.post("/api/subconscious/suggestions/{suggestion_id}/dismiss")
+async def dismiss_subconscious_suggestion(suggestion_id: str):
+    try:
+        dismissed = await run_in_threadpool(
+            _dismiss_subconscious_suggestion_sync, suggestion_id
+        )
+    except Exception:
+        _log.exception(
+            "POST /api/subconscious/suggestions/%s/dismiss failed", suggestion_id
+        )
+        raise HTTPException(status_code=500, detail="Failed to dismiss suggestion")
+    if not dismissed:
+        raise HTTPException(
+            status_code=404, detail="No pending suggestion with that id"
+        )
+    return {"ok": True}
+
+
+def _presence_setup_sync() -> Dict[str, Any]:
+    from hermes_cli.presence_cmd import setup_presence
+
+    return setup_presence()
+
+
+def _presence_pause_sync() -> Dict[str, Any]:
+    from hermes_cli.presence_cmd import pause_presence
+
+    return pause_presence()
+
+
+def _presence_resume_sync() -> Dict[str, Any]:
+    from hermes_cli.presence_cmd import resume_presence
+
+    return resume_presence()
+
+
+def _presence_status_sync() -> Dict[str, Any]:
+    from hermes_cli.presence_cmd import get_presence_status
+
+    return get_presence_status()
+
+
+@app.post("/api/presence/setup")
+async def setup_presence_endpoint():
+    try:
+        result = await run_in_threadpool(_presence_setup_sync)
+        # Mirrors `hermes presence setup`'s own exit-code logic (always 0):
+        # ActivityWatch being unreachable or the watcher being skipped
+        # (non-Windows) are expected, non-fatal degradations. The one step
+        # that actually "activates" the toggle is the distiller cron job, so
+        # that's what determines `ok` — the rest of the detail is still
+        # returned for the UI to surface as a secondary warning.
+        return {"ok": bool(result.get("job_ok")), **result}
+    except Exception:
+        _log.exception("POST /api/presence/setup failed")
+        raise HTTPException(status_code=500, detail="Failed to set up presence")
+
+
+@app.post("/api/presence/pause")
+async def pause_presence_endpoint():
+    try:
+        result = await run_in_threadpool(_presence_pause_sync)
+        return {"ok": bool(result.get("ok")), **result}
+    except Exception:
+        _log.exception("POST /api/presence/pause failed")
+        raise HTTPException(status_code=500, detail="Failed to pause presence")
+
+
+@app.post("/api/presence/resume")
+async def resume_presence_endpoint():
+    try:
+        result = await run_in_threadpool(_presence_resume_sync)
+        return {"ok": bool(result.get("ok")), **result}
+    except Exception:
+        _log.exception("POST /api/presence/resume failed")
+        raise HTTPException(status_code=500, detail="Failed to resume presence")
+
+
+@app.get("/api/presence/status")
+async def presence_status_endpoint():
+    try:
+        result = await run_in_threadpool(_presence_status_sync)
+        return {"ok": True, **result}
+    except Exception:
+        _log.exception("GET /api/presence/status failed")
+        raise HTTPException(status_code=500, detail="Failed to read presence status")
+
+
+# ---------------------------------------------------------------------------
+# "What Marvi knows" — read-only distilled-memory viewer.
+#
+# The presence distiller and the subconscious tick both write durable
+# observations through the standard `memory` tool (tools/memory_tool.py),
+# which persists to flat, §-delimited MEMORY.md / USER.md files under
+# HERMES_HOME/memories — see DISTILL_SYSTEM_NOTE in tools/presence/distill.py
+# ("Use the memory tool (target='user')") for the presence side, and the
+# subconscious tick's `memory` toolset (cron/subconscious.py) for the other.
+#
+# That on-disk format has no per-entry timestamp or source tag, so this
+# endpoint approximates provenance from which file an entry lives in (user
+# profile vs. general notes) and uses each file's mtime as a per-file
+# timestamp proxy. This is a heuristic, not a guarantee — regular chat
+# sessions write into the same two files — so the response carries a `note`
+# field documenting the approximation for API consumers/UI.
+# ---------------------------------------------------------------------------
+
+_KNOWLEDGE_ENTRY_LIMIT = 100
+
+_KNOWLEDGE_NOTE = (
+    "The on-disk memory store has no per-entry timestamp or source tag: "
+    "'timestamp' is the owning file's last-modified time and 'source' is "
+    "inferred from which store (user profile vs. general notes) the entry "
+    "lives in, not a guaranteed attribution — regular chat sessions can "
+    "write to the same files."
+)
+
+
+def _read_marvi_knowledge_entries() -> Dict[str, Any]:
+    from tools.memory_tool import ENTRY_DELIMITER, get_memory_dir, split_topic
+
+    mem_dir = get_memory_dir()
+    entries: List[Dict[str, Any]] = []
+
+    # (filename, store target, best-effort source label)
+    for filename, source in (("USER.md", "presence"), ("MEMORY.md", "subconscious")):
+        path = mem_dir / filename
+        if not path.exists():
+            continue
+        try:
+            raw = path.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        if not raw.strip():
+            continue
+        try:
+            mtime = path.stat().st_mtime
+        except OSError:
+            mtime = 0.0
+        timestamp = (
+            datetime.fromtimestamp(mtime, tz=timezone.utc).isoformat()
+            if mtime
+            else None
+        )
+
+        parsed = [e.strip() for e in raw.split(ENTRY_DELIMITER) if e.strip()]
+        for idx, text in enumerate(parsed):
+            topic, body = split_topic(text)
+            entries.append({
+                    "id": f"{filename}:{idx}",
+                    "text": body,
+                    "topic": topic,
+                    "source": source,
+                    "timestamp": timestamp,
+                    "_sort_key": (mtime, idx),
+            })
+
+    # Newest first: by file mtime, then by in-file position (last-appended
+    # entry in a file is the most recently added one).
+    entries.sort(key=lambda e: e["_sort_key"], reverse=True)
+    capped = entries[:_KNOWLEDGE_ENTRY_LIMIT]
+    for entry in capped:
+        entry.pop("_sort_key", None)
+
+    return {"entries": capped, "note": _KNOWLEDGE_NOTE}
+
+
+@app.get("/api/marvi/knowledge")
+async def get_marvi_knowledge():
+    try:
+        result = await run_in_threadpool(_read_marvi_knowledge_entries)
+        return {"ok": True, **result}
+    except Exception:
+        _log.exception("GET /api/marvi/knowledge failed")
+        raise HTTPException(status_code=500, detail="Failed to read Marvi's memory")
+
+
+def _mind_state_sync(history: bool = False) -> Dict[str, Any]:
+    from agent.goal_store import list_goal_templates
+    from cron.subconscious import read_narrative, read_narrative_history, status
+    from cron.subconscious_initiatives import list_initiatives
+    from tools.brain.indexer import brain_config
+    from tools.brain.store import BrainStore
+
+    store = BrainStore()
+    try:
+        brain = {**brain_config(), **store.status()}
+    finally:
+        store.close()
+    result = {
+        "subconscious": status(),
+        "narrative": read_narrative(),
+        "initiatives": list_initiatives(),
+        "goal_templates": list_goal_templates(),
+        "brain": brain,
+    }
+    if history:
+        result["narrative_history"] = read_narrative_history()
+    return result
+
+
+@app.get("/api/mind")
+async def get_mind_state(history: bool = False):
+    try:
+        return {"ok": True, **await run_in_threadpool(_mind_state_sync, history)}
+    except Exception:
+        _log.exception("GET /api/mind failed")
+        raise HTTPException(status_code=500, detail="Failed to read Mind state")
+
+
+@app.post("/api/mind/initiatives/{initiative_id}/cancel")
+async def cancel_mind_initiative(initiative_id: str):
+    from cron.subconscious_initiatives import cancel_initiative
+
+    if not await run_in_threadpool(cancel_initiative, initiative_id):
+        raise HTTPException(status_code=404, detail="Initiative not found")
+    return {"ok": True}
+
+
+def _brain_status_sync() -> Dict[str, Any]:
+    from tools.brain.indexer import brain_status
+
+    return brain_status()
+
+
+@app.get("/api/brain/status")
+async def get_brain_status():
+    try:
+        return {"ok": True, **await run_in_threadpool(_brain_status_sync)}
+    except Exception:
+        _log.exception("GET /api/brain/status failed")
+        raise HTTPException(status_code=500, detail="Failed to read Brain status")
+
+
+@app.get("/api/brain/search")
+async def search_brain(q: str, limit: int = 8):
+    from tools.brain.store import BrainStore
+
+    def _search():
+        store = BrainStore()
+        try:
+            return store.search(q, limit)
+        finally:
+            store.close()
+
+    try:
+        return {"ok": True, "results": await run_in_threadpool(_search)}
+    except Exception:
+        _log.exception("GET /api/brain/search failed")
+        raise HTTPException(status_code=500, detail="Brain search failed")
+
+
+@app.post("/api/brain/index")
+async def index_brain():
+    from tools.brain.indexer import index_configured_folders
+
+    try:
+        return {"ok": True, **await run_in_threadpool(index_configured_folders)}
+    except Exception:
+        _log.exception("POST /api/brain/index failed")
+        raise HTTPException(status_code=500, detail="Brain indexing failed")
+
+
+class _BrainConfigValidationError(ValueError):
+    """Raised when PUT /api/brain/config receives a folder that doesn't exist."""
+
+
+@app.put("/api/brain/config")
+async def update_brain_config(body: Dict[str, Any]):
+    from hermes_cli.config import load_config, save_config
+    from tools.brain.indexer import brain_config, ensure_index_job
+
+    def _update():
+        cfg = load_config()
+        current = dict(cfg.get("brain") or {})
+        if "folders" in body:
+            missing = [
+                str(folder)
+                for folder in body["folders"]
+                if not Path(str(folder)).expanduser().is_dir()
+            ]
+            if missing:
+                raise _BrainConfigValidationError(
+                    f"Folder(s) not found on disk: {', '.join(missing)}"
+                )
+        for key in ("enabled", "folders", "exclude", "schedule"):
+            if key in body:
+                current[key] = body[key]
+        cfg["brain"] = current
+        if current.get("enabled"):
+            ensure_index_job(cfg)
+        elif current.get("job_id"):
+            from cron.jobs import pause_job
+
+            pause_job(current["job_id"], reason="Brain disabled")
+        save_config(cfg)
+        return brain_config(cfg)
+
+    try:
+        return {"ok": True, "brain": await run_in_threadpool(_update)}
+    except _BrainConfigValidationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except HTTPException:
+        raise
+    except Exception:
+        _log.exception("PUT /api/brain/config failed")
+        raise HTTPException(status_code=500, detail="Failed to save Brain settings")
+
+
+# ---------------------------------------------------------------------------
 # Operations endpoints — doctor / security audit / backup / import /
 # checkpoints / hooks.
 #

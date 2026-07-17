@@ -14,6 +14,7 @@ import { Navigate, Route, Routes, useParams } from 'react-router-dom'
 import { ContribBoundary } from '@/contrib/react/boundary'
 import { useContributions } from '@/contrib/react/use-contributions'
 import { cn } from '@/lib/utils'
+import type { WakeWordConfig } from '@/lib/wake-word'
 import { $freshDraftReady, $gatewayState } from '@/store/session'
 import { $voicePlayback } from '@/store/voice-playback'
 import { $wakeStatus } from '@/store/voice-presence'
@@ -67,10 +68,18 @@ export const TerminalSurface = memo(function TerminalSurface() {
 
 function VoicePipelineDots({ sttActive, ttsActive }: { sttActive: boolean; ttsActive: boolean }) {
   const dot = (active: boolean) => (
-    <span aria-hidden="true" className={cn('size-1.5 rounded-full', active ? 'bg-emerald-400' : 'bg-muted-foreground/45')} />
+    <span
+      aria-hidden="true"
+      className={cn('size-1.5 rounded-full', active ? 'bg-emerald-400' : 'bg-muted-foreground/45')}
+    />
   )
 
-  return <span className="inline-flex items-center gap-1">{dot(sttActive)}{dot(ttsActive)}</span>
+  return (
+    <span className="inline-flex items-center gap-1">
+      {dot(sttActive)}
+      {dot(ttsActive)}
+    </span>
+  )
 }
 
 function useMarviVoiceStatusItems({
@@ -107,15 +116,23 @@ function useMarviVoiceStatusItems({
     const counted = engines.filter(status => status !== 'skipped')
     const ready = counted.filter(status => status === 'ready').length
     const failed = engines.filter(status => status === 'failed')
+
     const presence = {
       className: !presenceEnabled ? 'opacity-45' : listening || transcribing ? 'text-(--ui-text-accent)' : undefined,
-      detail: !presenceEnabled ? 'Presence off' : listening ? 'Listening' : transcribing ? 'Finalizing speech' : undefined,
+      detail: !presenceEnabled
+        ? 'Presence off'
+        : listening
+          ? 'Listening'
+          : transcribing
+            ? 'Finalizing speech'
+            : undefined,
       id: 'voice-presence',
       label: 'Presence',
       onSelect: () => setPresenceEnabled(!presenceEnabled),
       title: presenceEnabled ? 'Voice presence is on; click to turn off' : 'Voice presence is off; click to turn on',
       variant: 'action' as const
     }
+
     const pipeline = warming
       ? {
           className: 'justify-center gap-1.5 px-2',
@@ -134,7 +151,21 @@ function useMarviVoiceStatusItems({
         }
 
     return [presence, pipeline]
-  }, [listening, playback.status, presenceEnabled, sttEnabled, streamingSttEnabled, streamingSttProvider, sttProvider, transcribing, ttsProvider, voiceBargeInEnabled, voiceSemanticTurnEnabled, warmup, warming])
+  }, [
+    listening,
+    playback.status,
+    presenceEnabled,
+    sttEnabled,
+    streamingSttEnabled,
+    streamingSttProvider,
+    sttProvider,
+    transcribing,
+    ttsProvider,
+    voiceBargeInEnabled,
+    voiceSemanticTurnEnabled,
+    warmup,
+    warming
+  ])
 }
 
 /** Owns the statusbar's own data hooks (status snapshot poll, contributed
@@ -167,6 +198,7 @@ export const StatusbarSurface = memo(function StatusbarSurface({
 }) {
   const gatewayState = useStore($gatewayState)
   const freshDraftReady = useStore($freshDraftReady)
+
   const marviVoiceStatusItems = useMarviVoiceStatusItems({
     sttEnabled,
     streamingSttEnabled,
@@ -176,6 +208,7 @@ export const StatusbarSurface = memo(function StatusbarSurface({
     voiceBargeInEnabled,
     voiceSemanticTurnEnabled
   })
+
   const { inferenceStatus, statusSnapshot } = useStatusSnapshot(gatewayState, actions.requestGateway)
   const extraLeftItems = useStatusbarContributions('left')
   const extraRightItems = useStatusbarContributions('right')
@@ -206,10 +239,18 @@ export const StatusbarSurface = memo(function StatusbarSurface({
  *  streaming never round-trips through the controller. */
 export const ChatRoutesSurface = memo(function ChatRoutesSurface({
   actions,
-  maxVoiceRecordingSeconds
+  bargeInEnabled,
+  maxVoiceRecordingSeconds,
+  semanticTurnEnabled,
+  streamingSttEnabled,
+  wakeWordConfig
 }: {
   actions: WiringActions
+  bargeInEnabled: boolean
   maxVoiceRecordingSeconds?: number
+  semanticTurnEnabled: boolean
+  streamingSttEnabled: boolean
+  wakeWordConfig: WakeWordConfig
 }) {
   const gatewayState = useStore($gatewayState)
   useContributions(ROUTES_AREA)
@@ -238,6 +279,7 @@ export const ChatRoutesSurface = memo(function ChatRoutesSurface({
 
   const chatView = (
     <ChatView
+      bargeInEnabled={bargeInEnabled}
       gateway={gateway}
       maxVoiceRecordingSeconds={maxVoiceRecordingSeconds}
       modelMenuContent={modelMenuContent}
@@ -263,6 +305,9 @@ export const ChatRoutesSurface = memo(function ChatRoutesSurface({
       onThreadMessagesChange={actions.onThreadMessagesChange}
       onToggleSelectedPin={actions.onToggleSelectedPin}
       onTranscribeAudio={actions.onTranscribeAudio}
+      semanticTurnEnabled={semanticTurnEnabled}
+      streamingSttEnabled={streamingSttEnabled}
+      wakeWordConfig={wakeWordConfig}
     />
   )
 

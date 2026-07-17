@@ -241,7 +241,8 @@ export function ContribWiring({ children }: { children: ReactNode }) {
     ttsProvider,
     voiceBargeInEnabled,
     voiceMaxRecordingSeconds,
-    voiceSemanticTurnEnabled
+    voiceSemanticTurnEnabled,
+    wakeWordConfig
   } = useHermesConfig({
     activeSessionIdRef,
     refreshProjectBranch
@@ -811,9 +812,9 @@ export function ContribWiring({ children }: { children: ReactNode }) {
         agentsOpen={agentsOpen}
         chatOpen={chatOpen}
         commandCenterOpen={commandCenterOpen}
-        sttEnabled={sttEnabled}
         streamingSttEnabled={streamingSttEnabled}
         streamingSttProvider={streamingSttProvider}
+        sttEnabled={sttEnabled}
         sttProvider={sttProvider}
         ttsProvider={ttsProvider}
         voiceBargeInEnabled={voiceBargeInEnabled}
@@ -838,8 +839,24 @@ export function ContribWiring({ children }: { children: ReactNode }) {
   // The voice cap changes only on config load; the gateway instance + all
   // chat reactivity are subscribed inside ChatRoutesSurface / ChatView.
   const chatRoutesNode = useMemo(
-    () => <ChatRoutesSurface actions={actions} maxVoiceRecordingSeconds={voiceMaxRecordingSeconds} />,
-    [actions, voiceMaxRecordingSeconds]
+    () => (
+      <ChatRoutesSurface
+        actions={actions}
+        bargeInEnabled={voiceBargeInEnabled}
+        maxVoiceRecordingSeconds={voiceMaxRecordingSeconds}
+        semanticTurnEnabled={voiceSemanticTurnEnabled}
+        streamingSttEnabled={streamingSttEnabled}
+        wakeWordConfig={wakeWordConfig}
+      />
+    ),
+    [
+      actions,
+      streamingSttEnabled,
+      voiceBargeInEnabled,
+      voiceMaxRecordingSeconds,
+      voiceSemanticTurnEnabled,
+      wakeWordConfig
+    ]
   )
 
   const api = useMemo<WiringApi>(

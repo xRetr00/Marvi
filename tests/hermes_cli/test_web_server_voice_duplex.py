@@ -896,6 +896,38 @@ def test_focus_owner_utterance_passes_through_normally(monkeypatch):
     asyncio.run(run())
 
 
+def test_parakeet_ignores_eou_until_speech_is_detected():
+    async def run():
+        class FakeWs:
+            async def send_json(self, _payload):
+                return None
+
+        session = web_server._DuplexSession(
+            FakeWs(),
+            {"stt": {"streaming": {"provider": "parakeet"}}},
+        )
+        session.stt_session = FakeSttSession()
+        gate = FakeVadGate()
+        session.turn_vad_gate = gate
+        finalized = 0
+
+        async def finalize():
+            nonlocal finalized
+            finalized += 1
+
+        session._finalize_utterance = finalize
+        session.stt_session.queue_response("noise", True)
+        await session._feed_stt(_pcm16_chunk())
+        assert finalized == 0
+
+        gate.speaking = True
+        session.stt_session.queue_response("hello", True)
+        await session._feed_stt(_pcm16_chunk())
+        assert finalized == 1
+
+    asyncio.run(run())
+
+
 def test_speaker_id_does_not_delay_the_instant_turn(monkeypatch):
     entered = threading.Event()
     release = threading.Event()

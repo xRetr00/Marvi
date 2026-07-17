@@ -15,6 +15,8 @@ import sys
 import threading
 import time
 import types
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -643,6 +645,21 @@ class TestStreamInstantReply:
         assert fake_agent_cls.last_instance is agent
         assert len(agent.calls) == 2
         assert "User likes concise voice replies." in agent.ephemeral_system_prompt
+
+    def test_time_question_gets_exact_local_clock_only_for_that_turn(self, fake_agent_cls, monkeypatch):
+        import hermes_time
+
+        local_now = datetime(2026, 7, 17, 18, 42, 9, tzinfo=ZoneInfo("Europe/Istanbul"))
+        monkeypatch.setattr(hermes_time, "now", lambda: local_now)
+        transcript = vil.RollingTranscript()
+
+        list(vil.stream_instant_reply(transcript, "What time is it?", cfg={}))
+        agent = fake_agent_cls.last_instance
+        assert "Friday, July 17, 2026 at 18:42:09" in agent.ephemeral_system_prompt
+        assert "do not estimate the time" in agent.ephemeral_system_prompt
+
+        list(vil.stream_instant_reply(transcript, "Hello", cfg={}))
+        assert "Current local date and time" not in agent.ephemeral_system_prompt
 
     def test_no_conversation_history_when_transcript_empty(self, fake_agent_cls):
         list(vil.stream_instant_reply(vil.RollingTranscript(), "hi", cfg={}))

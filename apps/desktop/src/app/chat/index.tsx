@@ -2,7 +2,7 @@ import { type AppendMessage, AssistantRuntimeProvider, type ThreadMessage } from
 import { useStore } from '@nanostores/react'
 import { useQuery } from '@tanstack/react-query'
 import type * as React from 'react'
-import { Suspense, useCallback, useMemo } from 'react'
+import { Suspense, useCallback, useEffect, useMemo } from 'react'
 import { useLocation } from 'react-router-dom'
 
 import type { SubmitTextOptions } from '@/app/session/hooks/use-prompt-actions/utils'
@@ -20,6 +20,7 @@ import type { ChatMessage } from '@/lib/chat-messages'
 import { quickModelOptions, sessionTitle } from '@/lib/chat-runtime'
 import { useIncrementalExternalStoreRuntime } from '@/lib/incremental-external-store-runtime'
 import { cn } from '@/lib/utils'
+import type { WakeWordConfig } from '@/lib/wake-word'
 import { $pinnedSessionIds } from '@/store/layout'
 import { $petActive } from '@/store/pet'
 import { $petOverlayActive } from '@/store/pet-overlay'
@@ -35,6 +36,8 @@ import {
   sessionMatchesStoredId,
   sessionPinId
 } from '@/store/session'
+import { publishWakeStatus } from '@/store/voice-presence'
+import { $presenceEnabled } from '@/store/voice-presence-settings'
 import { isSecondaryWindow, isWatchWindow } from '@/store/windows'
 import type { ModelOptionsResponse } from '@/types/hermes'
 
@@ -44,7 +47,8 @@ import { titlebarHeaderBaseClass, titlebarHeaderShadowClass, titlebarHeaderTitle
 import { ChatDropOverlay } from './chat-drop-overlay'
 import { ChatSwapOverlay } from './chat-swap-overlay'
 import { ChatBar, ChatBarFallback } from './composer'
-import { requestComposerInsert } from './composer/focus'
+import { requestComposerInsert, requestVoiceStart } from './composer/focus'
+import { useWakeWord } from './composer/hooks/use-wake-word'
 import { droppedFileInlineRefs } from './composer/inline-refs'
 import { useComposerScope } from './composer/scope'
 import type { ChatBarState } from './composer/types'
@@ -85,6 +89,7 @@ interface ChatViewProps extends Omit<React.ComponentProps<'div'>, 'onSubmit'> {
   onTranscribeAudio?: (audio: Blob) => Promise<string>
   semanticTurnEnabled?: boolean
   streamingSttEnabled?: boolean
+  wakeWordConfig?: WakeWordConfig
   onDismissError?: (messageId: string) => void
 }
 
@@ -234,6 +239,7 @@ export function ChatView({
   onTranscribeAudio,
   semanticTurnEnabled,
   streamingSttEnabled,
+  wakeWordConfig,
   onDismissError
 }: ChatViewProps) {
   const location = useLocation()
@@ -264,6 +270,7 @@ export function ChatView({
   const gatewayState = useStore($gatewayState)
   const gatewaySwapTarget = useStore($gatewaySwapTarget)
   const gatewayOpen = gatewayState === 'open'
+  const presenceEnabled = useStore($presenceEnabled)
   const introPersonality = useStore($introPersonality)
   const introSeed = useStore($introSeed)
   // PERF: ChatView must not subscribe to the view's $messages — the atom is
@@ -279,6 +286,29 @@ export function ChatView({
   // A tile IS its session — no route involved, never "mismatched".
   const routedSessionId = isPrimary ? routeSessionId(location.pathname) : selectedSessionId
   const isRoutedSessionView = Boolean(routedSessionId)
+
+  const wake = useWakeWord({
+    busy,
+    config: wakeWordConfig,
+    enabled: isPrimary && presenceEnabled && gatewayOpen,
+    onSubmit: async text => {
+      await onSubmit(text)
+    },
+    onTranscribeAudio,
+    onWakeDetected: requestVoiceStart,
+    semanticTurnEnabled,
+    streamingSttEnabled
+  })
+
+  useEffect(() => {
+    if (!isPrimary) {
+      return
+    }
+
+    publishWakeStatus(wake.status)
+
+    return () => publishWakeStatus('idle')
+  }, [isPrimary, wake.status])
 
   // The URL points at a session the store hasn't loaded yet (sidebar / cmd-K /
   // direct nav). Derived in render so the swap reads instantly: the same frame

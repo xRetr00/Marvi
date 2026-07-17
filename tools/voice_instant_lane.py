@@ -75,6 +75,12 @@ ESCALATE_MARKER = "[ESCALATE]"
 DELEGATE_MARKER = "[DELEGATE]"
 END_VOICE_MARKER = "[END_VOICE]"
 
+_LOCAL_TIME_QUERY_RE = re.compile(
+    r"\b(?:what(?:'s| is)\s+(?:the\s+)?(?:time|date|day)|current\s+(?:time|date)|"
+    r"time\s+is\s+it|what\s+day\s+is\s+it|today(?:'s)?\s+date)\b",
+    re.IGNORECASE,
+)
+
 DEFAULT_ROLLING_TURNS = 20
 DEFAULT_MAX_TOKENS = 200
 
@@ -1012,6 +1018,15 @@ def stream_instant_reply(
             logger.debug("voice_instant_lane: warm_status_callback failed", exc_info=True)
 
     agent.ephemeral_system_prompt = system_message
+    if _LOCAL_TIME_QUERY_RE.search(utterance):
+        from hermes_time import now as hermes_now
+
+        local_now = hermes_now()
+        agent.ephemeral_system_prompt += (
+            "\n\nCurrent local date and time: "
+            f"{local_now.strftime('%A, %B %d, %Y at %H:%M:%S %Z%z')}. "
+            "Use this exact value; do not estimate the time."
+        )
     if transcript._deferred_context:
         agent.ephemeral_system_prompt += "\n\n" + transcript._deferred_context
     def _tool_activity(tool_name: str) -> Tuple[str, str]:

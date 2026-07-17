@@ -18640,7 +18640,7 @@ class _DuplexSession:
         """Feed TEN VAD and report speech in the current audio frame.
 
         This gate is independent from the speaking-state barge-in gate. It
-        is only a timeout safety net after Smart Turn rejects an endpoint.
+        validates Parakeet EOU and provides Moonshine's endpoint safety net.
         """
         if self._turn_vad_unavailable:
             return False
@@ -18685,7 +18685,8 @@ class _DuplexSession:
             provider == "moonshine"
             and voice_cfg.get("semantic_turn", True) is not False
         )
-        speech_now = await self._feed_turn_vad(chunk) if semantic_fallback else False
+        validate_speech = semantic_fallback or provider == "parakeet"
+        speech_now = await self._feed_turn_vad(chunk) if validate_speech else False
         if speech_now:
             self._turn_speech_started = True
             self._last_turn_speech_at = time.monotonic()
@@ -18706,7 +18707,11 @@ class _DuplexSession:
             return
         if partial:
             await self._send({"type": "partial", "text": partial, "eou_prob": eou_prob})
-        complete = eou
+        complete = eou and (
+            provider != "parakeet"
+            or self._turn_speech_started
+            or self._turn_vad_unavailable
+        )
         if eou and provider == "moonshine":
             if semantic_fallback:
                 from tools.semantic_turn import pipecat_smart_turn_complete

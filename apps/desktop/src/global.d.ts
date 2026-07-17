@@ -1,4 +1,5 @@
 import type { IslandCard } from './lib/island-queue'
+import type { IslandWorkState } from './lib/island-work'
 import type {
   PetOverlayBounds,
   PetOverlayControl,
@@ -59,7 +60,9 @@ declare global {
         onState: (callback: (payload: VoiceState) => void) => () => void
         pushCard: (card: IslandCard | null) => void
         pushActivity: (label: string | null) => void
+        pushWork: (work: IslandWorkState | null) => void
         onActivity: (callback: (label: string | null) => void) => () => void
+        onWork: (callback: (work: IslandWorkState | null) => void) => () => void
         setIgnoreMouse: (ignore: boolean) => void
         cardAction: (payload: { type: 'dismiss'; id?: string } | { type: 'submit'; text: string }) => void
         onCard: (callback: (card: IslandCard | null) => void) => () => void

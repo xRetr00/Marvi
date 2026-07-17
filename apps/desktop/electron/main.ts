@@ -7637,6 +7637,11 @@ ipcMain.on('hermes:island:activity', (_event, payload) => {
     islandWindow.webContents.send('hermes:island:activity', payload)
   }
 })
+ipcMain.on('hermes:island:work', (_event, payload) => {
+  if (islandWindow && !islandWindow.isDestroyed()) {
+    islandWindow.webContents.send('hermes:island:work', payload)
+  }
+})
 // Island window → main renderer: a card action (dismiss / submit text).
 ipcMain.on('hermes:island:card-action', (_event, payload) => {
   if (mainWindow && !mainWindow.isDestroyed()) {

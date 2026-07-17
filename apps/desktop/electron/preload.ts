@@ -52,11 +52,17 @@ contextBridge.exposeInMainWorld('hermesDesktop', {
     pushCard: card => ipcRenderer.send('hermes:island:card', card),
     // Main renderer → island window: push the current activity label (or null).
     pushActivity: label => ipcRenderer.send('hermes:island:activity', label),
+    pushWork: work => ipcRenderer.send('hermes:island:work', work),
     // Island window subscribes to activity updates.
     onActivity: callback => {
       const listener = (_event, payload) => callback(payload)
       ipcRenderer.on('hermes:island:activity', listener)
       return () => ipcRenderer.removeListener('hermes:island:activity', listener)
+    },
+    onWork: callback => {
+      const listener = (_event, payload) => callback(payload)
+      ipcRenderer.on('hermes:island:work', listener)
+      return () => ipcRenderer.removeListener('hermes:island:work', listener)
     },
     // Capsule interactivity toggle (island window is otherwise click-through).
     setIgnoreMouse: ignore => ipcRenderer.send('hermes:island:set-ignore-mouse', ignore),

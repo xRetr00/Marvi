@@ -1,10 +1,12 @@
 import { useEffect, useRef, useState } from 'react'
 
 import type { IslandCard } from '@/lib/island-queue'
+import type { IslandWorkState } from '@/lib/island-work'
 import type { VoiceState } from '@/store/voice-presence'
 
 import { DynamicIsland } from './dynamic-island'
 import { shouldHoldWakeHandoff, WAKE_HANDOFF_MS } from './island-motion'
+import { IslandWorkPanel } from './island-work-panel'
 
 type CardAction = { type: 'dismiss'; id?: string } | { type: 'submit'; text: string }
 
@@ -34,6 +36,7 @@ export function VoiceIslandApp() {
   const wakeHandoffRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [card, setCard] = useState<IslandCard | null>(null)
   const [activity, setActivity] = useState<string | null>(null)
+  const [work, setWork] = useState<IslandWorkState | null>(null)
 
   useEffect(() => {
     const unsub = window.hermesDesktop?.islandOverlay?.onState(payload => {
@@ -71,6 +74,12 @@ export function VoiceIslandApp() {
 
   useEffect(() => {
     const unsub = window.hermesDesktop?.islandOverlay?.onActivity(next => setActivity(next))
+
+    return () => unsub?.()
+  }, [])
+
+  useEffect(() => {
+    const unsub = window.hermesDesktop?.islandOverlay?.onWork(next => setWork(next))
 
     return () => unsub?.()
   }, [])
@@ -125,6 +134,8 @@ export function VoiceIslandApp() {
   }
 
   const interactive = summoned || Boolean(card?.actions?.length)
+  const sideCard = state.phase === 'off' && card?.kind !== 'approval' && !card?.actions?.length ? card : null
+  const islandCard = sideCard ? null : card
 
   return (
     <div
@@ -137,10 +148,11 @@ export function VoiceIslandApp() {
         pointerEvents: 'none'
       }}
     >
+      {state.phase === 'off' ? <IslandWorkPanel card={sideCard} work={sideCard ? null : work} /> : null}
       <div style={{ pointerEvents: interactive ? 'auto' : 'none' }}>
         <DynamicIsland
           activity={activity}
-          card={card}
+          card={islandCard}
           onCardAction={handleCardAction}
           onSummonCancel={closeSummon}
           onSummonSubmit={submitSummon}

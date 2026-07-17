@@ -81,9 +81,16 @@ jobs:
             --base-branch main \
             --branch "$BRANCH"
 
-      - name: Run brand guard
+      - name: Show upstream review report
+        if: always() && steps.check.outputs.has_updates == 'true'
+        shell: bash
+        run: cat .git/marvi-upstream-sync-report.md
+
+      - name: Run Marvi guards
         if: steps.check.outputs.has_updates == 'true'
-        run: python scripts/verify_marvi_brand.py
+        run: |
+          python scripts/verify_marvi_upstream_contract.py
+          python scripts/verify_marvi_brand.py
 
       - name: Run focused update-surface tests
         if: steps.check.outputs.has_updates == 'true'
@@ -123,6 +130,7 @@ jobs:
           - Run full CI before merging.
 
           Guardrails already run in this workflow:
+          - protected Marvi feature-contract verification
           - \`python scripts/verify_marvi_brand.py\`
           - focused TypeScript checks for desktop/bootstrap/TUI/web
           - desktop update/bootstrap Node tests"

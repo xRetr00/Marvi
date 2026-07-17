@@ -18,6 +18,23 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_UPSTREAM_URL = "https://github.com/NousResearch/hermes-agent.git"
 DEFAULT_REMOTE = "hermes-upstream"
+DEFAULT_REPORT = ".git/marvi-upstream-sync-report.md"
+
+PROTECTED_PREFIXES = (
+    "AGENTS.md",
+    "skills/autonomous-ai-agents/hermes-agent/",
+    "website/docs/developer-guide/contributing.md",
+    "agent/learning/",
+    "agent/memory/",
+    "apps/bootstrap-installer/",
+    "apps/desktop/",
+    "cron/",
+    "hermes_cli/web_server.py",
+    "plugins/smart_room/",
+    "tools/episodic_tool.py",
+    "tools/tts_tool.py",
+    "tools/voice_",
+)
 
 
 def run(args: list[str], *, check: bool = True) -> subprocess.CompletedProcess[str]:
@@ -58,8 +75,56 @@ def ensure_remote(name: str, url: str) -> None:
     git("remote", "add", name, url)
 
 
-def ref_exists(ref: str) -> bool:
-    return git("rev-parse", "--verify", "--quiet", ref, check=False).returncode == 0
+def local_branch_exists(branch: str) -> bool:
+    return git("show-ref", "--verify", "--quiet", f"refs/heads/{branch}", check=False).returncode == 0
+
+
+def is_protected(path: str) -> bool:
+    return any(path == prefix or path.startswith(prefix) for prefix in PROTECTED_PREFIXES)
+
+
+def write_review_report(base_ref: str, upstream_ref: str, report_path: Path) -> tuple[int, int]:
+    rows = stdout("diff", "--name-status", "--find-renames", f"{base_ref}...{upstream_ref}").splitlines()
+    protected = [row for row in rows if row and is_protected(row.split("\t")[-1])]
+    deleted = [row for row in rows if row.startswith("D\t")]
+    commits = stdout("log", "--oneline", f"{base_ref}..{upstream_ref}").splitlines()
+    lines = [
+        "# Marvi upstream sync review",
+        "",
+        f"- Base: `{base_ref}` (`{stdout('rev-parse', base_ref)}`)",
+        f"- Upstream: `{upstream_ref}` (`{stdout('rev-parse', upstream_ref)}`)",
+        f"- Upstream commits not in base: {len(commits)}",
+        f"- Upstream changed paths: {len(rows)}",
+        f"- Protected-path overlaps: {len(protected)}",
+        f"- Upstream deletions: {len(deleted)}",
+        "",
+        "## Protected-path overlap",
+        "",
+        *(f"- `{row}`" for row in protected),
+        "",
+        "## Upstream deletions",
+        "",
+        *(f"- `{row}`" for row in deleted),
+        "",
+        "## Upstream commits",
+        "",
+        *(f"- `{row}`" for row in commits),
+        "",
+    ]
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+    report_path.write_text("\n".join(lines), encoding="utf-8")
+    return len(protected), len(deleted)
+
+
+def run_guard(script: str, label: str) -> int:
+    result = run([sys.executable, script], check=False)
+    if result.stdout:
+        print(result.stdout.rstrip())
+    if result.stderr:
+        print(result.stderr.rstrip(), file=sys.stderr)
+    if result.returncode:
+        print(f"{label} failed. The merge remains uncommitted for repair.", file=sys.stderr)
+    return result.returncode
 
 
 def main() -> int:
@@ -69,10 +134,11 @@ def main() -> int:
     parser.add_argument("--upstream-branch", default="main")
     parser.add_argument("--base-branch", default="main")
     parser.add_argument("--branch", default="")
+    parser.add_argument("--report", default=DEFAULT_REPORT)
+    parser.add_argument("--review-only", action="store_true", help="Fetch and report without creating a branch")
     parser.add_argument("--push", action="store_true", help="Push the prepared branch to origin")
     args = parser.parse_args()
 
-    ensure_clean_tree()
     ensure_remote(args.upstream_remote, args.upstream_url)
 
     print(f"Fetching origin/{args.base_branch} and {args.upstream_remote}/{args.upstream_branch}...")
@@ -92,45 +158,60 @@ def main() -> int:
     print(f"Hermes upstream: {upstream_sha[:12]} ({upstream_ref})")
     print(f"Range: Marvi has {ahead} commit(s) not in Hermes; Hermes has {behind} commit(s) not in Marvi.")
 
-    if upstream_sha == base_sha:
-        print("No upstream sync needed: Marvi main already matches upstream ref.")
+    report_path = Path(args.report)
+    if not report_path.is_absolute():
+        report_path = REPO_ROOT / report_path
+    protected_count, deletion_count = write_review_report(base_ref, upstream_ref, report_path)
+    print(f"Review report: {report_path}")
+    print(f"Protected overlap: {protected_count} path(s); upstream deletions: {deletion_count} path(s).")
+
+    if behind == "0":
+        print("No upstream sync needed: Marvi main already contains the upstream ref.")
         return 0
 
-    date = dt.datetime.utcnow().strftime("%Y%m%d")
+    if args.review_only:
+        print("Review-only mode complete; no branch or merge was created.")
+        return 0
+
+    ensure_clean_tree()
+
+    date = dt.datetime.now(dt.UTC).strftime("%Y%m%d")
     branch = args.branch or f"sync/hermes-upstream-{date}-{upstream_sha[:8]}"
 
-    if ref_exists(branch):
-        print(f"Checking out existing branch {branch}...")
-        git("checkout", branch)
-        git("reset", "--hard", base_ref)
-    else:
-        print(f"Creating sync branch {branch} from {base_ref}...")
-        git("checkout", "-B", branch, base_ref)
+    if local_branch_exists(branch):
+        print(f"Refusing to overwrite existing branch {branch}. Choose --branch with a new name.", file=sys.stderr)
+        return 2
+
+    print(f"Creating sync branch {branch} from {base_ref}...")
+    git("switch", "--create", branch, base_ref)
+
+    if run_guard("scripts/verify_marvi_upstream_contract.py", "Pre-merge Marvi contract guard"):
+        return 1
 
     print(f"Merging {upstream_ref} into {branch}...")
     merge = git(
         "merge",
         "--no-ff",
-        "--no-edit",
+        "--no-commit",
         upstream_ref,
         check=False,
     )
     if merge.returncode != 0:
         print("Merge stopped with conflicts. Resolve them, keep Marvi branding, then run:")
+        print("  python scripts/verify_marvi_upstream_contract.py")
         print("  python scripts/verify_marvi_brand.py")
+        print(f"  review {report_path}")
         print("  git status")
         print("  git commit")
         return 1
 
-    print("Running Marvi brand guard...")
-    guard = run([sys.executable, "scripts/verify_marvi_brand.py"], check=False)
-    if guard.returncode != 0:
-        print(guard.stdout)
-        print(guard.stderr, file=sys.stderr)
-        print("Brand guard failed. Fix visible branding before merging this sync branch.")
-        return guard.returncode
+    if run_guard("scripts/verify_marvi_upstream_contract.py", "Marvi contract guard"):
+        return 1
+    if run_guard("scripts/verify_marvi_brand.py", "Marvi brand guard"):
+        return 1
 
-    print("Brand guard passed.")
+    print("Guards passed; creating the reviewed merge commit.")
+    git("commit", "--no-edit")
 
     if args.push:
         print(f"Pushing {branch} to origin...")

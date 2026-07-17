@@ -618,6 +618,12 @@ sound thresholds, greetings, and their runtime/dashboard/tools/tests.
 NeuTTS and KittenTTS are intentionally blocked in Marvi. Do not restore their
 providers, installers, setup options, documentation, or UI wiring from upstream.
 
+For every upstream sync, first run
+`python scripts/prepare_marvi_upstream_sync.py --review-only`. Resolve against
+its protected-overlap report, then require both
+`python scripts/verify_marvi_upstream_contract.py` and
+`python scripts/verify_marvi_brand.py` to pass before committing.
+
 ---
 
 ## Spawning Additional Marvi Instances

@@ -77,6 +77,11 @@ NeuTTS and KittenTTS are deliberately blocked in Marvi. Do not reintroduce
 their providers, installers, documentation, setup options, or UI wiring from
 upstream.
 
+Run `python scripts/prepare_marvi_upstream_sync.py --review-only` before an
+upstream merge. Use its protected-overlap report during conflict resolution,
+then require `python scripts/verify_marvi_upstream_contract.py` and
+`python scripts/verify_marvi_brand.py` to pass before committing.
+
 ## Development Setup
 
 ### Prerequisites

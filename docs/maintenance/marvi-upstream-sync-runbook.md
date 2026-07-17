@@ -92,6 +92,7 @@ git status --short
 Fetch and prepare the upstream merge branch:
 
 ```powershell
+python scripts\prepare_marvi_upstream_sync.py --review-only
 python scripts\prepare_marvi_upstream_sync.py
 ```
 
@@ -100,12 +101,25 @@ The script will:
 - ensure the tree is clean
 - add or verify the `hermes-upstream` remote
 - fetch `origin/main` and `hermes-upstream/main`
+- write `.git/marvi-upstream-sync-report.md` with protected-path overlap,
+  upstream deletions, and incoming commits
 - create a `sync/hermes-upstream-YYYYMMDD-<sha>` branch
-- merge upstream Hermes into Marvi
-- run the Marvi brand guard if the merge is clean
+- refuse to overwrite an existing sync branch
+- merge upstream Hermes without committing first
+- run the feature-contract and brand guards before creating the merge commit
+
+`--review-only` stops after fetching and writing the report. Use it before a
+large or rebrand-era sync to inspect collisions without changing branches.
 
 If there are conflicts, resolve them manually. Keep useful upstream code and
 only override where Marvi-visible identity would regress.
+
+After resolving conflicts, run both guards before committing:
+
+```powershell
+python scripts\verify_marvi_upstream_contract.py
+python scripts\verify_marvi_brand.py
+```
 
 ## Conflict Resolution Rules
 
@@ -141,8 +155,16 @@ Examples:
 Run this after every conflict pass:
 
 ```powershell
+python scripts\verify_marvi_upstream_contract.py
 python scripts\verify_marvi_brand.py
 ```
+
+The contract guard covers the downstream behavior documented in `AGENTS.md`:
+Mind and its APIs/sidebar, subconscious/presence/learning routes, voice
+presence and Dynamic Island wiring, the instant voice lane, PocketTTS and
+Qwen3-TTS setup, episodic memory, and smart-room integration. If a protected
+feature is intentionally moved during the full Marvi rebrand, update the guard
+in the same commit as the move; do not delete the check to make a sync pass.
 
 If a new upstream feature adds a visible surface, update
 `scripts/verify_marvi_brand.py` in the same sync. Add either:
@@ -183,6 +205,7 @@ scope. The main sync agent owns final integration.
 Run these before committing:
 
 ```powershell
+python scripts\verify_marvi_upstream_contract.py
 python scripts\verify_marvi_brand.py
 python -m compileall hermes_cli scripts gateway agent tools tui_gateway run_agent.py cli.py
 npm ci

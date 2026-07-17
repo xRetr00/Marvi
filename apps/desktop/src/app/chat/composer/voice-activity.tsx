@@ -217,7 +217,7 @@ export function VoiceConversationActivity() {
     return null
   }
 
-  const label = voice.phase === 'thinking' ? t.composer.thinking : t.composer.listening
+  const label = voice.label ?? (voice.phase === 'thinking' ? t.composer.thinking : t.composer.listening)
 
   return (
     <div

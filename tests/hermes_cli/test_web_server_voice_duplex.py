@@ -651,13 +651,16 @@ def test_utterance_instant_delta_tts_cycle(duplex_client, full_fakes):
 
         utterance = _recv_until(conn, "utterance")
         assert utterance["text"] == "what time is it"
-        assert utterance["speaker"] == "owner"
-        assert utterance["speaker_name"] == "Shereef"
+        assert utterance["speaker"] == "unknown"
         # Renderer audio is PCM16; the streaming STT contract is little-endian
         # Float32. Keep speaker-ID audio in PCM16, but convert the STT copy.
         assert struct.unpack_from("<f", stt.accepted_chunks[0])[0] == pytest.approx(100 / 32768)
 
         frames = _drain_until(conn, {"tts_end"})
+        speaker = next(frame for frame in frames if frame["type"] == "speaker_update")
+        assert speaker["utterance_id"] == utterance["utterance_id"]
+        assert speaker["speaker"] == "owner"
+        assert speaker["speaker_name"] == "Shereef"
         if not any(frame["type"] == "instant_done" for frame in frames):
             frames.append(_recv_until(conn, "instant_done"))
         deltas = [frame["text"] for frame in frames if frame["type"] == "instant_delta"]
@@ -778,7 +781,8 @@ def test_utterance_event_carries_guest_label(duplex_client, full_fakes):
         conn.receive_json()  # ready
         conn.send_json(_audio_msg(_pcm16_chunk()))
         utterance = _recv_until(conn, "utterance")
-        assert utterance["speaker"] == "guest"
+        assert utterance["speaker"] == "unknown"
+        assert _recv_until(conn, "speaker_update")["speaker"] == "guest"
 
 
 def test_partial_events_stream_before_eou(duplex_client, full_fakes):
@@ -834,6 +838,16 @@ def _make_focus_test_session(cfg=None):
     return session, ws
 
 
+async def _await_speaker_id(session):
+    tasks = tuple(session._speaker_tasks)
+    if tasks:
+        await asyncio.gather(*tasks)
+
+
+def _speaker_update(ws):
+    return next(f for f in ws.sent if f["type"] == "speaker_update")
+
+
 def _patch_zoned(monkeypatch, **overrides):
     state = {
         "zone": "OWNER", "label": "owner", "score": 0.9, "audio_ms": 3000,
@@ -866,17 +880,54 @@ def test_focus_owner_utterance_passes_through_normally(monkeypatch):
 
         session._run_turn = fake_run_turn
         await session._finalize_utterance()
+        await _await_speaker_id(session)
         if session._speaking_task is not None:
             await session._speaking_task
 
         utterance = next(f for f in ws.sent if f["type"] == "utterance")
-        assert utterance["speaker"] == "owner"
+        assert utterance["speaker"] == "unknown"
+        assert _speaker_update(ws)["speaker"] == "owner"
         assert "ignored" not in utterance
-        assert utterance["resolved_by"] == "score"
         assert session.transcript.turns == [{"role": "user", "content": "what time is it"}]
-        assert run_calls == [("what time is it", "owner")]
+        assert run_calls == [("what time is it", "unknown")]
         assert session.state == "speaking"
         assert session._last_owner_activity_at is not None
+
+    asyncio.run(run())
+
+
+def test_speaker_id_does_not_delay_the_instant_turn(monkeypatch):
+    entered = threading.Event()
+    release = threading.Event()
+
+    def slow_identify(_pcm):
+        entered.set()
+        release.wait(timeout=5.0)
+        return "owner", 0.9, "Shereef"
+
+    monkeypatch.setattr(web_server, "_duplex_focus_mode_active", lambda cfg: False)
+    monkeypatch.setattr(web_server, "_duplex_identify_speaker", slow_identify)
+
+    async def run():
+        session, ws = _make_focus_test_session()
+        session.stt_session.final_text = "turn on the light"
+        run_calls = []
+
+        async def fake_run_turn(text, speaker_label, cancel_event):
+            run_calls.append((text, speaker_label))
+
+        session._run_turn = fake_run_turn
+        await session._finalize_utterance()
+        await session._speaking_task
+
+        assert run_calls == [("turn on the light", "unknown")]
+        assert next(f for f in ws.sent if f["type"] == "utterance")["speaker"] == "unknown"
+        assert await asyncio.to_thread(entered.wait, 1.0)
+        assert tuple(session._speaker_tasks)
+
+        release.set()
+        await _await_speaker_id(session)
+        assert _speaker_update(ws)["speaker"] == "owner"
 
     asyncio.run(run())
 
@@ -901,13 +952,15 @@ def test_focus_enrolled_guest_passes_through_now(monkeypatch):
 
         session._run_turn = fake_run_turn
         await session._finalize_utterance()
+        await _await_speaker_id(session)
         if session._speaking_task is not None:
             await session._speaking_task
 
         utterance = next(f for f in ws.sent if f["type"] == "utterance")
-        assert utterance["speaker"] == "guest"
+        assert utterance["speaker"] == "unknown"
+        assert _speaker_update(ws)["speaker"] == "guest"
         assert "ignored" not in utterance
-        assert run_calls == [("turn off the lights", "guest")]
+        assert run_calls == [("turn off the lights", "unknown")]
         assert session.transcript.turns == [{"role": "user", "content": "turn off the lights"}]
         # A guest acceptance is not an owner activity -- continuity must not
         # be refreshed by it.
@@ -916,11 +969,8 @@ def test_focus_enrolled_guest_passes_through_now(monkeypatch):
     asyncio.run(run())
 
 
-def test_focus_confident_other_ignored_and_arms_competing_flag(monkeypatch):
-    """A CONFIDENT_OTHER match (confidently NOT the owner, with enough clean
-    audio) is dropped and arms the competing-voice flag -- the direct
-    successor to the old ``test_focus_unknown_utterance_ignored_when_focus_active``,
-    now scoped to CONFIDENT_OTHER specifically rather than every non-owner."""
+def test_focus_confident_other_is_attributed_async_without_blocking(monkeypatch):
+    """Speaker focus attributes a different voice but never blocks its turn."""
     _patch_zoned(monkeypatch, zone="CONFIDENT_OTHER", label="unknown", score=0.1, name=None)
     monkeypatch.setattr(web_server, "_duplex_focus_mode_active", lambda cfg: True)
 
@@ -934,13 +984,16 @@ def test_focus_confident_other_ignored_and_arms_competing_flag(monkeypatch):
 
         session._run_turn = fake_run_turn
         await session._finalize_utterance()
+        await _await_speaker_id(session)
+        if session._speaking_task is not None:
+            await session._speaking_task
 
         utterance = next(f for f in ws.sent if f["type"] == "utterance")
         assert utterance["speaker"] == "unknown"
-        assert utterance["ignored"] is True
-        assert run_calls == []
-        assert session.transcript.turns == []
-        assert session.state == "listening"
+        assert _speaker_update(ws)["speaker"] == "unknown"
+        assert "ignored" not in utterance
+        assert run_calls == [("is anybody there", "unknown")]
+        assert session.transcript.turns == [{"role": "user", "content": "is anybody there"}]
         assert session._other_voice_active() is True
 
     asyncio.run(run())
@@ -964,12 +1017,12 @@ def test_focus_abstain_alone_in_room_never_dropped(monkeypatch):
 
         session._run_turn = fake_run_turn
         await session._finalize_utterance()
+        await _await_speaker_id(session)
         if session._speaking_task is not None:
             await session._speaking_task
 
         utterance = next(f for f in ws.sent if f["type"] == "utterance")
         assert "ignored" not in utterance
-        assert utterance["resolved_by"] == "abstain_open"
         assert run_calls == [("hello there", "unknown")]
 
     asyncio.run(run())
@@ -990,14 +1043,15 @@ def test_focus_abstain_resolves_to_owner_via_continuity(monkeypatch):
 
         session._run_turn = fake_run_turn
         await session._finalize_utterance()
+        await _await_speaker_id(session)
         if session._speaking_task is not None:
             await session._speaking_task
 
         utterance = next(f for f in ws.sent if f["type"] == "utterance")
         assert "ignored" not in utterance
-        assert utterance["speaker"] == "owner"
-        assert utterance["resolved_by"] == "continuity"
-        assert run_calls == [("and also this", "owner")]
+        assert utterance["speaker"] == "unknown"
+        assert _speaker_update(ws)["speaker"] == "owner"
+        assert run_calls == [("and also this", "unknown")]
 
     asyncio.run(run())
 
@@ -1016,6 +1070,7 @@ def test_focus_continuity_expires_after_window(monkeypatch):
 
         session._run_turn = fake_run_turn
         await session._finalize_utterance()
+        await _await_speaker_id(session)
         if session._speaking_task is not None:
             await session._speaking_task
 
@@ -1023,12 +1078,11 @@ def test_focus_continuity_expires_after_window(monkeypatch):
         # Still not dropped (flag unarmed) -- just not relabeled as owner.
         assert "ignored" not in utterance
         assert utterance["speaker"] == "unknown"
-        assert utterance["resolved_by"] == "abstain_open"
 
     asyncio.run(run())
 
 
-def test_focus_abstain_dropped_only_while_competing_flag_armed(monkeypatch):
+def test_focus_abstain_is_not_dropped_while_competing_flag_armed(monkeypatch):
     _patch_zoned(monkeypatch, zone="ABSTAIN", label="unknown", score=0.35, name=None)
     monkeypatch.setattr(web_server, "_duplex_focus_mode_active", lambda cfg: True)
 
@@ -1043,12 +1097,13 @@ def test_focus_abstain_dropped_only_while_competing_flag_armed(monkeypatch):
 
         session._run_turn = fake_run_turn
         await session._finalize_utterance()
+        await _await_speaker_id(session)
+        if session._speaking_task is not None:
+            await session._speaking_task
 
         utterance = next(f for f in ws.sent if f["type"] == "utterance")
-        assert utterance["ignored"] is True
-        assert utterance["resolved_by"] == "competing_drop"
-        assert run_calls == []
-        assert session.state == "listening"
+        assert "ignored" not in utterance
+        assert run_calls == [("hmm", "unknown")]
 
     asyncio.run(run())
 
@@ -1070,6 +1125,7 @@ def test_focus_competing_flag_decays_after_window(monkeypatch):
 
         session._run_turn = fake_run_turn
         await session._finalize_utterance()
+        await _await_speaker_id(session)
         if session._speaking_task is not None:
             await session._speaking_task
 
@@ -1095,6 +1151,7 @@ def test_focus_direct_owner_with_enough_audio_appends_adaptive_embedding(monkeyp
 
         session._run_turn = fake_run_turn
         await session._finalize_utterance()
+        await _await_speaker_id(session)
         if session._speaking_task is not None:
             await session._speaking_task
 
@@ -1118,6 +1175,7 @@ def test_focus_direct_owner_below_adaptive_duration_floor_does_not_append(monkey
 
         session._run_turn = fake_run_turn
         await session._finalize_utterance()
+        await _await_speaker_id(session)
         if session._speaking_task is not None:
             await session._speaking_task
 
@@ -1145,6 +1203,7 @@ def test_focus_continuity_resolved_owner_does_not_append_adaptive(monkeypatch):
 
         session._run_turn = fake_run_turn
         await session._finalize_utterance()
+        await _await_speaker_id(session)
         if session._speaking_task is not None:
             await session._speaking_task
 
@@ -1170,12 +1229,14 @@ def test_focus_no_enrollment_passes_guest_through(monkeypatch):
 
         session._run_turn = fake_run_turn
         await session._finalize_utterance()
+        await _await_speaker_id(session)
         if session._speaking_task is not None:
             await session._speaking_task
 
         utterance = next(f for f in ws.sent if f["type"] == "utterance")
         assert "ignored" not in utterance
-        assert run_calls == [("turn off the lights", "guest")]
+        assert _speaker_update(ws)["speaker"] == "guest"
+        assert run_calls == [("turn off the lights", "unknown")]
         assert session.transcript.turns == [{"role": "user", "content": "turn off the lights"}]
 
     asyncio.run(run())
@@ -1195,7 +1256,8 @@ def test_focus_off_setting_passes_guest_through(duplex_client, full_fakes):
         conn.receive_json()  # ready
         conn.send_json(_audio_msg(_pcm16_chunk()))
         utterance = _recv_until(conn, "utterance")
-        assert utterance["speaker"] == "guest"
+        assert utterance["speaker"] == "unknown"
+        assert _recv_until(conn, "speaker_update")["speaker"] == "guest"
         assert "ignored" not in utterance
 
         # The turn still runs normally (instant lane -> TTS), unlike the
@@ -1203,12 +1265,8 @@ def test_focus_off_setting_passes_guest_through(duplex_client, full_fakes):
         _recv_until(conn, "tts_end")
 
 
-def test_focus_ignored_event_over_the_wire_and_no_tts_follows(duplex_client, full_fakes):
-    """End-to-end: a CONFIDENT_OTHER utterance is announced over the WS with
-    ``ignored: true`` but never triggers an instant/TTS cycle. INVERSION
-    NOTE: previously any non-owner (including guest) was ignored while
-    focus was active; the fail-open redesign only ignores CONFIDENT_OTHER
-    (and an armed-flag ABSTAIN) -- see the zoned fixture below."""
+def test_focus_confident_other_is_attributed_and_still_gets_tts(duplex_client, full_fakes):
+    """A different speaker is attributed asynchronously and remains interactive."""
     full_fakes["focus"]["active"] = True
     full_fakes["zoned"].update(
         {"zone": "CONFIDENT_OTHER", "label": "unknown", "score": 0.1, "name": None}
@@ -1222,18 +1280,8 @@ def test_focus_ignored_event_over_the_wire_and_no_tts_follows(duplex_client, ful
         conn.send_json(_audio_msg(_pcm16_chunk()))
         utterance = _recv_until(conn, "utterance")
         assert utterance["speaker"] == "unknown"
-        assert utterance["ignored"] is True
-
-        # A second, owner utterance proves the session is still alive and
-        # listening normally -- if it never arrives, the prior ignore left
-        # the session wedged.
-        full_fakes["zoned"].update({"zone": "OWNER", "label": "owner", "score": 0.9, "name": "Shereef"})
-        stt.queue_response("", True)
-        stt.final_text = "what time is it"
-        conn.send_json(_audio_msg(_pcm16_chunk()))
-        second = _recv_until(conn, "utterance")
-        assert second["speaker"] == "owner"
-        assert "ignored" not in second
+        assert "ignored" not in utterance
+        assert _recv_until(conn, "speaker_update")["speaker"] == "unknown"
         _recv_until(conn, "tts_end")
 
 
@@ -1315,7 +1363,7 @@ def test_escalation_event_order(duplex_client, full_fakes):
         assert task_id
 
         # Ack TTS cycle.
-        assert conn.receive_json() == {"type": "tts_start", "sample_rate": 24000}
+        assert _recv_until(conn, "tts_start") == {"type": "tts_start", "sample_rate": 24000}
         _finish_playback(conn)
 
         deep_result = _recv_until(conn, "deep_result", timeout=10.0)
@@ -1323,7 +1371,7 @@ def test_escalation_event_order(duplex_client, full_fakes):
         assert deep_result["text"] == "Here's what I found."
 
         # Deep-result TTS cycle.
-        assert conn.receive_json() == {"type": "tts_start", "sample_rate": 24000}
+        assert _recv_until(conn, "tts_start") == {"type": "tts_start", "sample_rate": 24000}
         _finish_playback(conn)
 
 
@@ -1396,7 +1444,7 @@ def test_escalation_deep_task_failure_speaks_apology_and_errors(duplex_client, f
         conn.send_json(_audio_msg(_pcm16_chunk()))
 
         _recv_until(conn, "escalated")
-        assert conn.receive_json() == {"type": "tts_start", "sample_rate": 24000}
+        assert _recv_until(conn, "tts_start") == {"type": "tts_start", "sample_rate": 24000}
         _finish_playback(conn)
 
         error = _recv_until(conn, "error", timeout=10.0)
@@ -1426,7 +1474,8 @@ def test_non_owner_can_now_escalate(duplex_client, full_fakes):
         conn.send_json(_audio_msg(_pcm16_chunk()))
 
         utterance = _recv_until(conn, "utterance")
-        assert utterance["speaker"] == "guest"
+        assert utterance["speaker"] == "unknown"
+        assert _recv_until(conn, "speaker_update")["speaker"] == "guest"
 
         escalated = _recv_until(conn, "escalated", timeout=10.0)
         assert escalated["ack_text"] == "On it."
@@ -1610,6 +1659,22 @@ def test_barge_in_tts_echo_suppressed(monkeypatch):
 
         assert ws.sent == []
         assert session.state == "speaking"  # never interrupted
+
+    asyncio.run(run())
+
+
+def test_barge_in_owner_speech_wins_over_tts_echo(monkeypatch):
+    """Mixed owner speech must not be discarded merely because playback is audible."""
+    monkeypatch.setattr(web_server, "_duplex_focus_mode_active", lambda cfg: True)
+    _patch_barge_negative(monkeypatch, tts_score=0.95, zoned_zone="OWNER")
+
+    async def run():
+        session, _ws, _vad = _make_barge_test_session()
+        session._barge_candidate_audio = [_pcm16_chunk()] * 20
+        session._barge_candidate_bytes_seen = sum(
+            len(chunk) for chunk in session._barge_candidate_audio
+        )
+        assert await session._barge_negative_match_blocks() is False
 
     asyncio.run(run())
 
@@ -1966,6 +2031,50 @@ def test_turn_perf_line_marks_escalated_turns(duplex_client, full_fakes):
 # ---------------------------------------------------------------------------
 # TTS synth-ahead pipeline
 # ---------------------------------------------------------------------------
+
+
+def test_partial_reply_flushes_before_sentence_punctuation():
+    text = "This response is long enough to start speaking before punctuation arrives"
+    ready, rest = web_server._split_ready_sentences(text)
+    assert ready
+    assert len(ready[0]) >= web_server._DUPLEX_TTS_EARLY_SEGMENT_CHARS // 2
+    assert rest
+
+
+def test_first_tts_chunk_is_emitted_before_first_segment_finishes(monkeypatch):
+    release = threading.Event()
+
+    def streaming_tts(_text):
+        yield {"type": "start", "sample_rate": 24000}
+        yield {"type": "chunk", "audio": "FIRST"}
+        release.wait(timeout=5.0)
+        yield {"type": "chunk", "audio": "SECOND"}
+
+    monkeypatch.setattr(web_server, "_duplex_stream_tts_chunks", streaming_tts)
+
+    class Session:
+        def __init__(self):
+            self._playback_pending = threading.Event()
+            self._assistant_audio_started = threading.Event()
+            self.events = []
+
+        def _emit_sync(self, event):
+            self.events.append(event)
+
+    session = Session()
+    pipeline = web_server._DuplexTtsPipeline(session, threading.Event())
+    pipeline.submit("A complete first segment.")
+
+    deadline = time.monotonic() + 1.0
+    while time.monotonic() < deadline and not any(
+        event.get("data") == "FIRST" for event in session.events
+    ):
+        time.sleep(0.01)
+
+    assert any(event.get("data") == "FIRST" for event in session.events)
+    assert not any(event.get("data") == "SECOND" for event in session.events)
+    release.set()
+    assert pipeline.finish()[0] is True
 
 
 @pytest.fixture

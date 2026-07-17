@@ -731,6 +731,15 @@ class TestChatCompletionsKimi:
         )
         assert kw["extra_body"]["thinking"] == {"type": "disabled"}
 
+    def test_opencode_go_deepseek_v4_thinking_is_explicitly_disabled(self, transport):
+        kw = transport.build_kwargs(
+            model="deepseek-v4-flash",
+            messages=[{"role": "user", "content": "Hi"}],
+            provider_name="opencode-go",
+            reasoning_config={"enabled": False, "effort": "none"},
+        )
+        assert kw["extra_body"]["thinking"] == {"type": "disabled"}
+
     def test_moonshot_tool_schemas_are_sanitized_by_model_name(self, transport):
         """Aggregator routes (Nous, OpenRouter) hit Moonshot by model name, not base URL."""
         tools = [

@@ -17,6 +17,14 @@ describe('parseDuplexServerEvent', () => {
       speaker: 'guest',
       speaker_name: 'Alice'
     })
+    expect(
+      parseDuplexServerEvent({
+        type: 'speaker_update',
+        utterance_id: 'speaker-1',
+        speaker: 'owner',
+        speaker_name: 'Shereef'
+      })
+    ).toEqual({ type: 'speaker_update', utterance_id: 'speaker-1', speaker: 'owner', speaker_name: 'Shereef' })
     expect(parseDuplexServerEvent({ type: 'instant_delta', text: 'a' })).toEqual({ type: 'instant_delta', text: 'a' })
     expect(parseDuplexServerEvent({ type: 'instant_done', text: 'a' })).toEqual({ type: 'instant_done', text: 'a' })
     expect(parseDuplexServerEvent({ type: 'tts_start' })).toEqual({ type: 'tts_start' })

@@ -38,6 +38,7 @@ export interface DuplexSessionState {
   partialCaption: string | null
   /** The last utterance the server finalized (cleared by the next `utterance`). */
   utteranceCaption: string | null
+  utteranceId: string | null
   /** Who the server attributed the last `utterance` to. */
   speaker: DuplexSpeaker | null
   speakerName: string | null
@@ -83,6 +84,7 @@ export const INITIAL_DUPLEX_STATE: DuplexSessionState = {
   phase: 'connecting',
   partialCaption: null,
   utteranceCaption: null,
+  utteranceId: null,
   speaker: null,
   speakerName: null,
   utteranceIgnored: false,
@@ -141,6 +143,7 @@ export class DuplexSessionMachine {
         // the background (spec section 2/3).
         this.patch({
           utteranceCaption: event.text,
+          utteranceId: event.utterance_id ?? null,
           utteranceIgnored: event.ignored ?? false,
           speaker: event.speaker,
           speakerName: event.speaker_name ?? null,
@@ -151,6 +154,18 @@ export class DuplexSessionMachine {
           // never reaches the instant lane -- no reply is coming, so the
           // session stays presented as Listening rather than Thinking.
           phase: event.ignored ? 'listening' : 'replying'
+        })
+
+        return []
+
+      case 'speaker_update':
+        if (event.utterance_id !== this._state.utteranceId) {
+          return []
+        }
+
+        this.patch({
+          speaker: event.speaker,
+          speakerName: event.speaker_name ?? null
         })
 
         return []

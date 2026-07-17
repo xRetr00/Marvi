@@ -46,17 +46,22 @@ export interface DuplexPartialEvent {
 export interface DuplexUtteranceEvent {
   type: 'utterance'
   text: string
+  utterance_id?: string
   speaker: DuplexSpeaker
   speaker_name?: string
   /**
-   * Voice focus (speaker ID repurpose, spec §4): set when the server
-   * attributed this utterance to a non-owner speaker while focus mode is
-   * active. The utterance is announced here for the badge/caption but was
-   * never run through the instant lane/TTS and never joined the rolling
-   * transcript -- additive field, absent (not just `false`) means "not
-   * ignored" for clients built before this existed.
+   * Legacy compatibility field from the original voice-focus policy.
+   * Speaker identity is now attribution only, so current servers do not
+   * suppress an utterance based on this value.
    */
   ignored?: boolean
+}
+
+export interface DuplexSpeakerUpdateEvent {
+  type: 'speaker_update'
+  utterance_id: string
+  speaker: DuplexSpeaker
+  speaker_name?: string
 }
 
 export interface DuplexInstantDeltaEvent {
@@ -139,6 +144,7 @@ export type DuplexServerEvent =
   | DuplexReadyEvent
   | DuplexPartialEvent
   | DuplexUtteranceEvent
+  | DuplexSpeakerUpdateEvent
   | DuplexInstantDeltaEvent
   | DuplexInstantDoneEvent
   | DuplexTtsStartEvent
@@ -234,8 +240,19 @@ export function parseDuplexServerEvent(raw: unknown): DuplexServerEvent | null {
             type: 'utterance',
             text: raw.text,
             speaker: asSpeaker(raw.speaker),
+            ...(typeof raw.utterance_id === 'string' ? { utterance_id: raw.utterance_id } : {}),
             ...(typeof raw.speaker_name === 'string' ? { speaker_name: raw.speaker_name } : {}),
             ...(raw.ignored === true ? { ignored: true } : {})
+          }
+        : null
+
+    case 'speaker_update':
+      return typeof raw.utterance_id === 'string'
+        ? {
+            type: 'speaker_update',
+            utterance_id: raw.utterance_id,
+            speaker: asSpeaker(raw.speaker),
+            ...(typeof raw.speaker_name === 'string' ? { speaker_name: raw.speaker_name } : {})
           }
         : null
 

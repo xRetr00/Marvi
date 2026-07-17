@@ -17535,6 +17535,7 @@ def _log_voice_perf_session_open(
 
 
 _SENTENCE_END_CHARS = ".!?\n"
+_DUPLEX_TTS_EARLY_SEGMENT_CHARS = 36
 
 
 def _split_ready_sentences(buffer: str) -> tuple[list[str], str]:
@@ -17550,7 +17551,15 @@ def _split_ready_sentences(buffer: str) -> tuple[list[str], str]:
         if ch in _SENTENCE_END_CHARS:
             idx = i
     if idx < 0:
-        return [], buffer
+        stripped = buffer.strip()
+        if len(stripped) < _DUPLEX_TTS_EARLY_SEGMENT_CHARS:
+            return [], buffer
+        cut = buffer.rfind(" ", 0, _DUPLEX_TTS_EARLY_SEGMENT_CHARS + 1)
+        if cut < (_DUPLEX_TTS_EARLY_SEGMENT_CHARS // 2):
+            cut = _DUPLEX_TTS_EARLY_SEGMENT_CHARS
+        ready = buffer[:cut].strip()
+        rest = buffer[cut:]
+        return ([ready] if ready else []), rest
     ready = buffer[: idx + 1].strip()
     rest = buffer[idx + 1:]
     return ([ready] if ready else []), rest
@@ -18242,9 +18251,8 @@ class _DuplexTtsPipeline:
             max_workers=self._LOOKAHEAD,
             thread_name_prefix="voice-tts-synth",
         )
-        self._pending: "queue.Queue[Optional[concurrent.futures.Future]]" = (
-            queue.Queue()
-        )
+        self._pending: "queue.Queue[Optional[Any]]" = queue.Queue()
+        self._first_submission = True
         self._emit_windows: List[Tuple[float, float]] = []
         self._closed = False
         self._emit_error = False
@@ -18262,8 +18270,28 @@ class _DuplexTtsPipeline:
         sentence = (sentence or "").strip()
         if not sentence or self._closed or self._cancel_event.is_set():
             return
-        future = self._executor.submit(self._synthesize, sentence)
-        self._pending.put(future)
+        if self._first_submission:
+            self._first_submission = False
+            events: "queue.Queue[Optional[dict]]" = queue.Queue()
+            self._executor.submit(self._synthesize_streaming, sentence, events)
+            self._pending.put(events)
+        else:
+            future = self._executor.submit(self._synthesize, sentence)
+            self._pending.put(future)
+
+    @staticmethod
+    def _synthesize_streaming(
+        sentence: str, events: "queue.Queue[Optional[dict]]"
+    ) -> None:
+        """Produce the first segment incrementally so first audio is not
+        held until the whole sentence has finished synthesizing."""
+        try:
+            for event in _duplex_stream_tts_chunks(sentence):
+                events.put(event)
+        except Exception as exc:
+            _log.warning("Voice duplex: TTS unavailable: %s", exc)
+        finally:
+            events.put(None)
 
     @staticmethod
     def _synthesize(sentence: str) -> list:
@@ -18283,13 +18311,24 @@ class _DuplexTtsPipeline:
             if future is None:
                 return  # close() sentinel
             if self._cancel_event.is_set():
-                future.cancel()  # no-op if already running; harmless either way
+                if not isinstance(future, queue.Queue):
+                    future.cancel()  # no-op if already running; harmless either way
                 continue
-            try:
-                events = future.result()
-            except Exception as exc:
-                _log.warning("Voice duplex: TTS synthesis failed: %s", exc)
-                continue
+            if isinstance(future, queue.Queue):
+                def _stream_events():
+                    while True:
+                        event = future.get()
+                        if event is None:
+                            return
+                        yield event
+
+                events = _stream_events()
+            else:
+                try:
+                    events = future.result()
+                except Exception as exc:
+                    _log.warning("Voice duplex: TTS synthesis failed: %s", exc)
+                    continue
             if self._cancel_event.is_set():
                 continue
             window_start = time.monotonic()
@@ -18390,6 +18429,8 @@ class _DuplexSession:
         self._last_owner_activity_at: Optional[float] = None
         self._other_voice_active_until: Optional[float] = None
         self._speaker_model_mismatch_warned = False
+        self._speaker_tasks: set[asyncio.Task] = set()
+        self._speaker_utterance_counter = 0
         self._active_assistant_text = ""
         self._end_after_playback = False
         self._assistant_audio_started = threading.Event()
@@ -18801,114 +18842,20 @@ class _DuplexSession:
         except Exception:
             pass
 
-        focus_active = await asyncio.to_thread(_duplex_focus_mode_active, self.cfg)
-        resolved_by: Optional[str] = None
-
-        if not focus_active:
-            # Never active (never filters) on a bare/un-enrolled install, or
-            # with focus_mode off -- plain single-threshold identify exactly
-            # as before this round, no zones/continuity/competing-flag.
-            speaker_label, score, speaker_name = await asyncio.to_thread(
-                _duplex_identify_speaker, pcm
-            )
-            _log.info(
-                "Voice duplex speaker identified label=%s score=%.4f audio_ms=%d",
-                speaker_label,
-                score,
-                int(len(pcm) / 2 / 16000 * 1000),
-            )
-            focus_ignore = False
-        else:
-            # Fail-open voice-focus redesign (spec §4, 2026-07-15 round):
-            # three zones instead of one threshold. ABSTAIN (short/degraded
-            # audio, or a score between reject_threshold and threshold) is
-            # resolved by SESSION CONTEXT, not dropped outright -- dropping
-            # only ever happens for a CONFIDENT_OTHER match, or an ABSTAIN
-            # while the competing-voice flag is armed. Net effect: alone in
-            # a room, no utterance is ever dropped regardless of score.
-            zoned = await asyncio.to_thread(_duplex_identify_speaker_zoned, pcm, self.cfg)
-            zone = zoned["zone"]
-            speaker_label = zoned["label"]
-            score = zoned["score"]
-            speaker_name = zoned.get("name")
-            audio_ms = zoned["audio_ms"]
-            now = time.monotonic()
-            focus_ignore = False
-            resolved_by = "score"
-
-            if zoned.get("model_mismatch") and not self._speaker_model_mismatch_warned:
-                self._speaker_model_mismatch_warned = True
-                _log.warning(
-                    "Voice duplex: speaker store embeddings were captured under a "
-                    "different voice.speaker_id.model than is currently configured -- "
-                    "re-enrollment needed (run `hermes voice enroll`); every utterance "
-                    "ABSTAINs until then."
-                )
-
-            if zone == "OWNER":
-                if speaker_label == "owner":
-                    self._last_owner_activity_at = now
-            elif zone == "CONFIDENT_OTHER":
-                focus_ignore = True
-                competing_secs = await asyncio.to_thread(
-                    _duplex_competing_window_seconds, self.cfg
-                )
-                self._other_voice_active_until = now + competing_secs
-            else:  # ABSTAIN
-                if self._other_voice_active():
-                    focus_ignore = True
-                    resolved_by = "competing_drop"
-                else:
-                    continuity_secs = await asyncio.to_thread(
-                        _duplex_continuity_seconds, self.cfg
-                    )
-                    if (
-                        self._last_owner_activity_at is not None
-                        and (now - self._last_owner_activity_at) <= continuity_secs
-                    ):
-                        resolved_by = "continuity"
-                        speaker_label = "owner"
-                        self._last_owner_activity_at = now
-                    else:
-                        resolved_by = "abstain_open"
-
-            _log_voice_id(
-                session_id=self._session_id, context="utterance", zone=zone,
-                label=speaker_label, score=score, audio_ms=audio_ms,
-                resolved_by=resolved_by, ignored=focus_ignore,
-            )
-
-            # Self-adaptation (Part 1.4): a DIRECT-score OWNER-zone
-            # acceptance (never a continuity-resolved one) with enough
-            # clean audio feeds the owner's adaptive ring.
-            if (
-                zone == "OWNER"
-                and zoned["label"] == "owner"
-                and audio_ms >= _DUPLEX_ADAPTIVE_MIN_AUDIO_MS
-                and zoned.get("embedding")
-            ):
-                await asyncio.to_thread(_duplex_append_adaptive_embedding, zoned["embedding"])
-
+        self._speaker_utterance_counter += 1
+        speaker_utterance_id = f"speaker-{self._speaker_utterance_counter}"
         utterance_event: Dict[str, Any] = {
             "type": "utterance",
             "text": text,
-            "speaker": speaker_label,
-            "speaker_name": speaker_name,
+            "utterance_id": speaker_utterance_id,
+            "speaker": "unknown",
         }
-        if focus_ignore:
-            utterance_event["ignored"] = True
-        if resolved_by is not None:
-            utterance_event["resolved_by"] = resolved_by
         await self._send(utterance_event)
-
-        if focus_ignore:
-            _log.info(
-                "Voice duplex focus mode ignoring utterance label=%s score=%.4f resolved_by=%s",
-                speaker_label,
-                score,
-                resolved_by,
-            )
-            return
+        speaker_task = asyncio.create_task(
+            self._identify_utterance_speaker(pcm, speaker_utterance_id)
+        )
+        self._speaker_tasks.add(speaker_task)
+        speaker_task.add_done_callback(self._speaker_tasks.discard)
 
         # A quick correction after a completed instant-lane answer is weak but
         # useful evidence that the previous request belonged in the deep lane.
@@ -18951,8 +18898,93 @@ class _DuplexSession:
         self._cancel_speaking = threading.Event()
         cancel_event = self._cancel_speaking
         self._speaking_task = asyncio.create_task(
-            self._run_turn(text, speaker_label, cancel_event)
+            self._run_turn(text, "unknown", cancel_event)
         )
+
+    async def _identify_utterance_speaker(
+        self, pcm: bytes, utterance_id: str
+    ) -> None:
+        """Attribute a finalized utterance without delaying the instant lane."""
+        try:
+            focus_active = await asyncio.to_thread(
+                _duplex_focus_mode_active, self.cfg
+            )
+            resolved_by: Optional[str] = None
+            if not focus_active:
+                speaker_label, score, speaker_name = await asyncio.to_thread(
+                    _duplex_identify_speaker, pcm
+                )
+                zone = "-"
+                audio_ms = int(len(pcm) / 2 / 16000 * 1000)
+            else:
+                zoned = await asyncio.to_thread(
+                    _duplex_identify_speaker_zoned, pcm, self.cfg
+                )
+                zone = zoned["zone"]
+                speaker_label = zoned["label"]
+                score = zoned["score"]
+                speaker_name = zoned.get("name")
+                audio_ms = zoned["audio_ms"]
+                now = time.monotonic()
+                resolved_by = "score"
+
+                if zoned.get("model_mismatch") and not self._speaker_model_mismatch_warned:
+                    self._speaker_model_mismatch_warned = True
+                    _log.warning(
+                        "Voice duplex: speaker model changed; re-enrollment is needed"
+                    )
+
+                if zone == "OWNER" and speaker_label == "owner":
+                    self._last_owner_activity_at = now
+                elif zone == "CONFIDENT_OTHER":
+                    competing_secs = await asyncio.to_thread(
+                        _duplex_competing_window_seconds, self.cfg
+                    )
+                    self._other_voice_active_until = now + competing_secs
+                elif zone == "ABSTAIN":
+                    continuity_secs = await asyncio.to_thread(
+                        _duplex_continuity_seconds, self.cfg
+                    )
+                    if (
+                        self._last_owner_activity_at is not None
+                        and (now - self._last_owner_activity_at) <= continuity_secs
+                    ):
+                        resolved_by = "continuity"
+                        speaker_label = "owner"
+                        self._last_owner_activity_at = now
+                    else:
+                        resolved_by = "abstain_open"
+
+                if (
+                    zone == "OWNER"
+                    and zoned["label"] == "owner"
+                    and audio_ms >= _DUPLEX_ADAPTIVE_MIN_AUDIO_MS
+                    and zoned.get("embedding")
+                ):
+                    await asyncio.to_thread(
+                        _duplex_append_adaptive_embedding, zoned["embedding"]
+                    )
+
+            _log_voice_id(
+                session_id=self._session_id,
+                context="utterance",
+                zone=zone,
+                label=speaker_label,
+                score=score,
+                audio_ms=audio_ms,
+                resolved_by=resolved_by or "score",
+                ignored=False,
+            )
+            await self._send({
+                "type": "speaker_update",
+                "utterance_id": utterance_id,
+                "speaker": speaker_label,
+                "speaker_name": speaker_name,
+            })
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            _log.warning("Voice duplex: asynchronous speaker ID failed", exc_info=True)
 
     async def _feed_barge_in(self, chunk: bytes) -> None:
         # Do not mistake the tail of the user's just-finalized utterance for
@@ -19093,8 +19125,9 @@ class _DuplexSession:
         A VAD+text-confirmed candidate barges IMMEDIATELY unless its
         buffered audio confidently matches a NEGATIVE reference: (a) Marvi's
         own TTS voice (self-echo -- see ``_duplex_ensure_tts_self_enrollment``)
-        at/above the owner threshold, or (b) a CONFIDENT_OTHER speaker while
-        the competing-voice flag is armed (``_other_voice_active``).
+        at/above the owner threshold, unless the enrolled owner is positively
+        identified over that echo, or (b) a CONFIDENT_OTHER speaker while the
+        competing-voice flag is armed (``_other_voice_active``).
         Uncertainty is no longer a reason to withhold barge-in -- contrast
         the old fail-closed ``_barge_owner_gate_blocks`` this replaces, which
         required a POSITIVE owner match before ANY barge could fire and so
@@ -19143,7 +19176,23 @@ class _DuplexSession:
 
         tts_score = await asyncio.to_thread(_duplex_tts_echo_score, candidate_pcm, self.cfg)
         tts_thr = await asyncio.to_thread(_duplex_owner_threshold, self.cfg)
+        zoned = None
         if tts_score >= tts_thr:
+            # A real speaker mixed with playback can still resemble Marvi's
+            # TTS. Give a positive enrolled-speaker match precedence over
+            # the echo score so the owner can actually interrupt.
+            zoned = await asyncio.to_thread(
+                _duplex_identify_speaker_zoned, candidate_pcm, self.cfg
+            )
+            if zoned["zone"] == "OWNER":
+                self._barge_negative_confirmed = False
+                _log_voice_id(
+                    session_id=self._session_id, context="barge",
+                    zone=zoned["zone"], label=zoned["label"],
+                    score=zoned["score"], audio_ms=audio_ms,
+                    resolved_by="speaker_over_echo", ignored=False,
+                )
+                return False
             self._barge_negative_confirmed = True
             _log_voice_id(
                 session_id=self._session_id, context="barge", zone="-", label="tts_echo",
@@ -19152,7 +19201,10 @@ class _DuplexSession:
             return True
 
         if self._other_voice_active():
-            zoned = await asyncio.to_thread(_duplex_identify_speaker_zoned, candidate_pcm, self.cfg)
+            if zoned is None:
+                zoned = await asyncio.to_thread(
+                    _duplex_identify_speaker_zoned, candidate_pcm, self.cfg
+                )
             if zoned["zone"] == "CONFIDENT_OTHER":
                 self._barge_negative_confirmed = True
                 _log_voice_id(
@@ -19246,10 +19298,9 @@ class _DuplexSession:
     async def _run_turn(
         self, utterance_text: str, speaker_label: str, cancel_event: threading.Event
     ) -> None:
-        # Escalation gating is purely the feature toggle now -- speaker ID
-        # is voice FOCUS (see _finalize_utterance), not access control, so
-        # every speaker who reaches this point (focus already filtered out
-        # non-owner speech when focus mode is active) may escalate.
+        # Escalation gating is purely the feature toggle now. Speaker ID is
+        # asynchronous attribution, not access control, so every speaker may
+        # use the instant lane and escalate.
         from tools.voice_instant_lane import escalation_enabled
 
         allow_escalation = escalation_enabled(self.cfg)
@@ -19692,6 +19743,8 @@ class _DuplexSession:
         self._closed = True
         self._cancel_speaking.set()
         self._playback_pending.clear()
+        for speaker_task in tuple(self._speaker_tasks):
+            speaker_task.cancel()
         task = self._speaking_task
         if task is not None:
             try:

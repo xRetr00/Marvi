@@ -51,6 +51,17 @@ describe('DuplexSessionMachine', () => {
     expect(machine.state.speaker).toBe('unknown')
   })
 
+  it('applies an asynchronous speaker update only to its matching utterance', () => {
+    const machine = new DuplexSessionMachine()
+    machine.applyEvent({ type: 'utterance', utterance_id: 'speaker-2', text: 'hello', speaker: 'unknown' })
+    machine.applyEvent({ type: 'speaker_update', utterance_id: 'speaker-1', speaker: 'guest', speaker_name: 'Old' })
+    expect(machine.state.speaker).toBe('unknown')
+
+    machine.applyEvent({ type: 'speaker_update', utterance_id: 'speaker-2', speaker: 'owner', speaker_name: 'Shereef' })
+    expect(machine.state.speaker).toBe('owner')
+    expect(machine.state.speakerName).toBe('Shereef')
+  })
+
   describe('instant reply streaming', () => {
     it('accumulates instant_delta chunks into replyText and enters replying', () => {
       const machine = new DuplexSessionMachine()

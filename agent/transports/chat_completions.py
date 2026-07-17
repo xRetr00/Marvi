@@ -467,6 +467,17 @@ class ChatCompletionsTransport(ProviderTransport):
                 "type": "enabled" if _kimi_thinking_enabled else "disabled",
             }
 
+        # DeepSeek V4 defaults to thinking ON. OpenCode Go exposes it through
+        # an OpenAI-compatible endpoint, where the explicit switch belongs in
+        # the request body (the OpenAI SDK's ``extra_body`` passthrough).
+        if (
+            provider_name == "opencode-go"
+            and model.lower() in {"deepseek-v4-flash", "deepseek-v4-pro"}
+            and isinstance(reasoning_config, dict)
+            and reasoning_config.get("enabled") is False
+        ):
+            extra_body["thinking"] = {"type": "disabled"}
+
         # Reasoning. LM Studio is handled above via top-level reasoning_effort,
         # so skip emitting extra_body.reasoning for it.
         if params.get("supports_reasoning", False) and not params.get("is_lmstudio", False):

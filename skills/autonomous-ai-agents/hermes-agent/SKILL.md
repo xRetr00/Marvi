@@ -597,6 +597,24 @@ keep the `/mind` route/sidebar entry and the Voice Presence plus provider-aware
 voice pipeline/warmup statusbar items; they replaced integrations previously
 owned by `desktop-controller.tsx`, not the Marvi features themselves.
 
+### Marvi Memory, Island, and Proactive Contracts
+
+Preserve the memory-maturity stack: `agent/memory` episodic storage and FTS,
+`recall_episode`, scheduler/distiller ingestion, reflection context, Mind
+Timeline, `/api/memory/episodes`, dreaming, adaptive retrieval, decay,
+contamination suggestions, archive/restore APIs, and the Knowledge viewer.
+Memory-changing merges and contradiction resolution stay consent-first;
+archival must remain reversible.
+
+Keep streaming STT/wake-word WebSockets, voice warmup/residency,
+duplex/instant-lane streaming, speaker enrollment/status APIs, PocketTTS
+playback captions/levels, and speaker-model/wake-word settings. Keep Dynamic
+Island work state end to end (Electron IPC, preload, store, island app/work
+panel), proactive suggestion polling/delivery, and its notification/island
+handoff. For smart room, also retain clap detection, bounded datasets,
+review/clear APIs, notifications/settings, normal/light/sleep modes,
+sound thresholds, greetings, and their runtime/dashboard/tools/tests.
+
 NeuTTS and KittenTTS are intentionally blocked in Marvi. Do not restore their
 providers, installers, setup options, documentation, or UI wiring from upstream.
 

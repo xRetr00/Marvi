@@ -63,6 +63,16 @@ must keep the `/mind` workspace route/sidebar entry and the Voice Presence and
 provider-aware voice pipeline/warmup statusbar items; do not drop them when
 retiring or restructuring `desktop-controller.tsx`.
 
+Also protect memory maturity: episodic SQLite/FTS storage, `recall_episode`,
+scheduler/distiller ingestion, reflection context, Mind Timeline,
+`/api/memory/episodes`, dreaming, adaptive retrieval, reversible decay/archive,
+contamination suggestions, and the Knowledge viewer. Preserve the full voice
+streaming, wake-word, warmup/residency, duplex/instant-lane, speaker API, and
+PocketTTS playback contract. Keep Dynamic Island work IPC, proactive
+suggestion delivery, and smart-room clap learning (bounded datasets, review
+APIs, notifications/settings, normal/light/sleep modes, greetings, runtime,
+dashboard, tools, and tests).
+
 NeuTTS and KittenTTS are deliberately blocked in Marvi. Do not reintroduce
 their providers, installers, documentation, setup options, or UI wiring from
 upstream.

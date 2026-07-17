@@ -182,6 +182,11 @@ class MemoryStore:
         # every turn -- the snapshot is frozen for the whole session, so
         # stamping once per target per instance captures the same signal.
         self._surfaced_stamped: Dict[str, bool] = {"memory": False, "user": False}
+        # One-shot-per-instance guard for Loop 4's injection->outcome
+        # capture (agent/memory/retrieval.py::capture_previous_batch_outcome)
+        # -- runs once per store instance, before the FIRST stamp_surfaced()
+        # call of the session, regardless of which target triggers it first.
+        self._prev_batch_captured = False
 
     def reset_consolidation_failures(self) -> None:
         """Reset the per-turn consolidation-failure counter (call at turn start)."""
@@ -237,11 +242,21 @@ class MemoryStore:
         self.memory_entries = list(dict.fromkeys(self.memory_entries))
         self.user_entries = list(dict.fromkeys(self.user_entries))
 
+        # Loop 4 (adaptive retrieval): usefulness-weighted ordering/selection
+        # for the PROMPT RENDERING ONLY -- self.memory_entries/user_entries
+        # (the live, tool-mutable state) are left completely untouched, and
+        # ranking never removes an entry from the live store (that's
+        # decay's job). When memory.retrieval.adaptive is false, or on any
+        # internal failure, this is an identity pass -- see
+        # agent/memory/retrieval.py::rank_entries and its golden test.
+        ranked_memory = self._rank_for_render(self.memory_entries, "memory")
+        ranked_user = self._rank_for_render(self.user_entries, "user")
+
         # Sanitize entries for the system-prompt snapshot only.  Live state
         # (memory_entries / user_entries) keeps the raw text so the user
         # can see + remove poisoned entries via the memory tool.
-        sanitized_memory = self._sanitize_entries_for_snapshot(self.memory_entries, "MEMORY.md")
-        sanitized_user = self._sanitize_entries_for_snapshot(self.user_entries, "USER.md")
+        sanitized_memory = self._sanitize_entries_for_snapshot(ranked_memory, "MEMORY.md")
+        sanitized_user = self._sanitize_entries_for_snapshot(ranked_user, "USER.md")
 
         # Capture frozen snapshot for system prompt injection
         self._system_prompt_snapshot = {
@@ -249,14 +264,16 @@ class MemoryStore:
             "user": self._render_block("user", sanitized_user),
         }
 
-        # Remember the RAW (pre-sanitize) entries that make up this snapshot
-        # so format_for_system_prompt() can stamp the decay sidecar with the
-        # source-of-truth § entry text (not a "[BLOCKED: ...]" placeholder).
+        # Remember the RAW (pre-sanitize) entries that make up this snapshot,
+        # in the SAME (possibly Loop-4-ranked) order/selection as what was
+        # actually rendered, so format_for_system_prompt() can stamp the
+        # decay sidecar with the source-of-truth § entry text (not a
+        # "[BLOCKED: ...]" placeholder) for exactly what was injected.
         # Reset the per-instance stamp guard: a fresh load_from_disk() means
         # a fresh (possibly changed) snapshot worth stamping again.
         self._snapshot_source_entries = {
-            "memory": list(self.memory_entries),
-            "user": list(self.user_entries),
+            "memory": list(ranked_memory),
+            "user": list(ranked_user),
         }
         self._surfaced_stamped = {"memory": False, "user": False}
 
@@ -295,6 +312,24 @@ class MemoryStore:
             else:
                 sanitized.append(entry)
         return sanitized
+
+    def _rank_for_render(self, entries: List[str], target: str) -> List[str]:
+        """Loop 4 hook: usefulness-weighted ordering/selection of ``entries``
+        for prompt rendering. Delegates to
+        ``agent.memory.retrieval.rank_entries`` (lazy import -- see that
+        module's docstring for why the import is deferred rather than
+        top-level). Best-effort: ANY failure (missing module, corrupt
+        usefulness store, bad config) falls back to ``entries`` completely
+        unchanged, which is exactly pre-Loop-4 behavior. Never mutates
+        ``entries`` or the live store.
+        """
+        try:
+            from agent.memory.retrieval import rank_entries
+
+            return rank_entries(entries, char_limit=self._char_limit(target))
+        except Exception:
+            logger.debug("memory: rank_for_render failed, using original order", exc_info=True)
+            return list(entries)
 
     @staticmethod
     @contextmanager
@@ -688,6 +723,20 @@ class MemoryStore:
         """
         block = self._system_prompt_snapshot.get(target, "")
         if block and not self._surfaced_stamped.get(target):
+            # Loop 4: score the PREVIOUS session's surfaced batch (read from
+            # the sidecar BEFORE this session's stamp overwrites it) against
+            # outcomes recorded since then. Runs at most once per store
+            # instance regardless of which target triggers it first -- see
+            # agent/memory/retrieval.py's module docstring for the linkage
+            # design/approximation. Best-effort; never blocks this call.
+            if not self._prev_batch_captured:
+                self._prev_batch_captured = True
+                try:
+                    from agent.memory.retrieval import capture_previous_batch_outcome
+
+                    capture_previous_batch_outcome()
+                except Exception:
+                    logger.debug("memory: capture_previous_batch_outcome failed", exc_info=True)
             try:
                 stamp_surfaced(self._snapshot_source_entries.get(target, []))
             except Exception:
@@ -963,6 +1012,23 @@ def get_surfaced_meta(text: str) -> Dict[str, Any]:
         return dict(data.get("entries", {}).get(entry_hash(text), {}))
     except Exception:
         logger.debug("memory: get_surfaced_meta failed", exc_info=True)
+        return {}
+
+
+def get_all_surfaced() -> Dict[str, Dict[str, Any]]:
+    """Return the full surfaced-sidecar table:
+    ``{entry_hash: {"first_seen": iso, "last_surfaced": iso}}``. Never
+    raises; empty dict on a missing/corrupt file. Used by
+    ``agent/memory/retrieval.py`` (Loop 4) to find the most recently
+    surfaced batch for its injection->outcome scoring -- kept here (rather
+    than having callers reach into the private ``_read_json_file``/
+    ``_surfaced_path`` helpers directly) so the surfaced-sidecar's on-disk
+    shape stays an implementation detail of this module.
+    """
+    try:
+        return dict(_read_json_file(_surfaced_path()).get("entries", {}))
+    except Exception:
+        logger.debug("memory: get_all_surfaced failed", exc_info=True)
         return {}
 
 

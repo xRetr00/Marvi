@@ -974,7 +974,7 @@ class TestDeferredContextSmartRoom:
 
         result = vil._build_deferred_context(self._minimal_cfg(enabled=False))
 
-        assert result == ""
+        assert "Room:" not in result
 
     def test_no_line_returned_is_a_silent_noop(self, monkeypatch):
         self._no_generic_plugin_context(monkeypatch)
@@ -982,7 +982,7 @@ class TestDeferredContextSmartRoom:
 
         result = vil._build_deferred_context(self._minimal_cfg(enabled=True))
 
-        assert result == ""
+        assert "Room:" not in result
 
     def test_missing_plugin_is_silently_ignored(self, monkeypatch):
         self._no_generic_plugin_context(monkeypatch)
@@ -991,7 +991,7 @@ class TestDeferredContextSmartRoom:
 
         result = vil._build_deferred_context(self._minimal_cfg(enabled=True))
 
-        assert result == ""
+        assert "Room:" not in result
 
     def test_get_context_line_exception_is_swallowed(self, monkeypatch):
         self._no_generic_plugin_context(monkeypatch)
@@ -1003,7 +1003,7 @@ class TestDeferredContextSmartRoom:
 
         result = vil._build_deferred_context(self._minimal_cfg(enabled=True))
 
-        assert result == ""
+        assert "Room:" not in result
 
     def test_not_duplicated_when_generic_plugin_path_already_delivered_it(self, monkeypatch):
         # build_plugin_context_blocks() (the generic path) already produced

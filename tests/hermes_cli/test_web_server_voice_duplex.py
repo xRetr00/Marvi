@@ -2041,6 +2041,14 @@ def test_partial_reply_flushes_before_sentence_punctuation():
     assert rest
 
 
+def test_first_tts_segment_flushes_one_completed_word():
+    ready, rest = web_server._split_ready_sentences(
+        "Hello there, Shereef.", first_word=True
+    )
+    assert ready == ["Hello"]
+    assert rest.strip() == "there, Shereef."
+
+
 def test_first_tts_chunk_is_emitted_before_first_segment_finishes(monkeypatch):
     release = threading.Event()
 
@@ -2122,10 +2130,10 @@ def test_synth_ahead_preserves_sentence_order_on_the_wire(
 
     chunks = [f for f in frames if f["type"] == "tts_chunk"]
     decoded = [base64.b64decode(f["data"]).decode("utf-8") for f in chunks]
-    assert decoded == ["First sentence.", "Second sentence.", "Third sentence."]
+    assert decoded == ["First", "sentence.", "Second sentence.", "Third sentence."]
     # seq is monotonically increasing across the whole turn, not reset
     # per-sentence -- proves all three shared one tts_start/tts_end cycle.
-    assert [f["seq"] for f in chunks] == [1, 2, 3]
+    assert [f["seq"] for f in chunks] == [1, 2, 3, 4]
 
 
 def test_synth_ahead_reports_gap_between_sentences_in_perf_line(

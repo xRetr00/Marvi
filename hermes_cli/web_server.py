@@ -17538,7 +17538,9 @@ _SENTENCE_END_CHARS = ".!?\n"
 _DUPLEX_TTS_EARLY_SEGMENT_CHARS = 36
 
 
-def _split_ready_sentences(buffer: str) -> tuple[list[str], str]:
+def _split_ready_sentences(
+    buffer: str, *, first_word: bool = False
+) -> tuple[list[str], str]:
     """Pop complete sentence-ish segments off ``buffer``; return (segments, remainder).
 
     Flushes everything up to and including the LAST sentence-ending
@@ -17546,6 +17548,13 @@ def _split_ready_sentences(buffer: str) -> tuple[list[str], str]:
     for the next call. Pure and dependency-free so it's trivially unit
     tested without a TTS provider.
     """
+    if first_word:
+        seen_text = False
+        for i, ch in enumerate(buffer):
+            if ch.isspace() and seen_text:
+                return [buffer[:i].strip()], buffer[i:]
+            seen_text = seen_text or not ch.isspace()
+
     idx = -1
     for i, ch in enumerate(buffer):
         if ch in _SENTENCE_END_CHARS:
@@ -19383,6 +19392,7 @@ class _DuplexSession:
             self, cancel_event, on_first_chunk=_on_first_tts_chunk
         )
         tts_buffer = ""
+        tts_started = False
         full_reply = ""
         got_any_delta = False
         pipeline_result: Dict[str, Any] = {}
@@ -19459,11 +19469,16 @@ class _DuplexSession:
                     self._active_assistant_text = full_reply
                     self._emit_sync({"type": "instant_delta", "text": reply_piece})
                     tts_buffer += reply_piece
-                    ready, tts_buffer = _split_ready_sentences(tts_buffer)
-                    for sentence in ready:
+                    while True:
+                        ready, tts_buffer = _split_ready_sentences(
+                            tts_buffer, first_word=not tts_started
+                        )
+                        if not ready:
+                            break
                         if cancel_event.is_set():
                             return None, None
-                        pipeline.submit(sentence)
+                        pipeline.submit(ready[0])
+                        tts_started = True
             except Exception as exc:
                 if got_any_delta:
                     _log.warning("Voice duplex: instant lane failed mid-reply: %s", exc)

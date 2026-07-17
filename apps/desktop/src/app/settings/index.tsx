@@ -14,6 +14,7 @@ import {
   Download,
   Globe,
   Info,
+  Keyboard,
   KeyRound,
   Package,
   RefreshCw,
@@ -35,6 +36,7 @@ import { AppearanceSettings } from './appearance-settings'
 import { ConfigSettings } from './config-settings'
 import { SECTIONS } from './constants'
 import { GatewaySettings } from './gateway-settings'
+import { KeybindSettings } from './keybind-settings'
 import { KEYS_VIEWS, KeysSettings, type KeysView } from './keys-settings'
 import { NotificationsSettings } from './notifications-settings'
 import { PresenceSettings } from './presence'
@@ -48,6 +50,7 @@ const SETTINGS_VIEWS: readonly SettingsViewId[] = [
   ...SECTIONS.map(s => `config:${s.id}` as SettingsViewId),
   'providers',
   'gateway',
+  'keybinds',
   'keys',
   'notifications',
   'presence',
@@ -199,6 +202,13 @@ export function SettingsView({ onClose, onConfigSaved, onMainModelChanged }: Set
       onSelect: () => setActiveView('gateway')
     },
     {
+      active: activeView === 'keybinds',
+      icon: Keyboard,
+      id: 'keybinds',
+      label: t.settings.nav.keybinds,
+      onSelect: () => setActiveView('keybinds')
+    },
+    {
       active: activeView === 'keys',
       children: [
         {
@@ -288,6 +298,8 @@ export function SettingsView({ onClose, onConfigSaved, onMainModelChanged }: Set
             <AboutSettings />
           ) : activeView === 'gateway' ? (
             <GatewaySettings />
+          ) : activeView === 'keybinds' ? (
+            <KeybindSettings />
           ) : activeView.startsWith('config:') ? (
             <ConfigSettings
               activeSectionId={activeView.slice('config:'.length)}

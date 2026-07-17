@@ -241,6 +241,7 @@ export interface Translations {
   keybinds: {
     title: string
     subtitle: (open: string) => string
+    search: string
     rebind: string
     reset: string
     resetAll: string
@@ -275,6 +276,7 @@ export interface Translations {
       providerApiKeys: string
       gateway: string
       apiKeys: string
+      keybinds: string
       keysTools: string
       keysSettings: string
       mcp: string

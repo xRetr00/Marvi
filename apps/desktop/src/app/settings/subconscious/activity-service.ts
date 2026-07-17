@@ -9,6 +9,7 @@
 /** Which background-thinking surface produced an activity row. */
 export type SubconsciousActivitySource =
   | 'distiller'
+  | 'dreaming'
   | 'goblin'
   | 'idle_trigger'
   | 'reflection'

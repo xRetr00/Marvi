@@ -41,8 +41,14 @@ logger = logging.getLogger(__name__)
 
 JOB_NAME = "Subconscious tick"
 REFLECTION_JOB_NAME = "Subconscious reflection"
+DREAMING_JOB_NAME = "Subconscious dreaming"
 DEFAULT_INTERVAL = "20m"
 DEFAULT_REFLECTION_SCHEDULE = "30 3 * * *"
+# Sunday 04:00 — after the 03:30 nightly reflection, so the weekly
+# consolidation reasons over a fully-settled narrative (memory-maturity
+# spec, Loop 2).
+DEFAULT_DREAMING_SCHEDULE = "0 4 * * 0"
+DEFAULT_DREAMING_PROMOTE_MIN_OCCURRENCES = 3
 DEFAULT_IDLE_TRIGGER_MINUTES = 15
 SNAPSHOT_SHIM_NAME = "subconscious_snapshot.py"
 
@@ -63,6 +69,20 @@ _REAL_SNAPSHOT_SCRIPT = Path(__file__).resolve().parent / "scripts" / "subconsci
 # gives the tick the ability to actually look something up while deciding
 # whether a diff item is worth surfacing.
 _TICK_TOOLSETS = ["goals", "subconscious", "memory", "web"]
+
+# Toolsets the weekly dreaming job is restricted to. Unlike the tick this is
+# an inward sweep over accumulated memory, not a reaction to a world diff, so
+# "web" is dropped and "session_search" added:
+#   - "memory": the durable-memory write tool (tools/memory_tool.py, name
+#     "memory") for writing high-confidence repeated facts DIRECTLY, plus
+#     recall_episode (registered under this toolset in tools/episodic_tool.py)
+#     to re-query the episodic log while consolidating.
+#   - "session_search": FTS recall over past sessions (tools/session_search_tool.py).
+#   - "subconscious": suggest_automation / suggest_goal — the consent-first
+#     inbox path for proposing memory/goal/automation CHANGES rather than
+#     applying them silently.
+#   - "goals": read the active goal store while reasoning about what repeated.
+_DREAMING_TOOLSETS = ["memory", "session_search", "subconscious", "goals"]
 
 NARRATIVE_CAP = 8_000
 _NARRATIVE_RE = re.compile(r"<narrative>\s*(.*?)\s*</narrative>", re.DOTALL | re.IGNORECASE)
@@ -109,6 +129,42 @@ _REFLECTION_PROMPT = (
     "array in <initiatives>...</initiatives>. Once per calendar week, also review "
     "active goals for progress, staleness, duplication, or completion and propose any "
     "change rather than applying it silently."
+)
+
+_DREAMING_PROMPT = (
+    "[Weekly subconscious dreaming] Review the week the way sleep consolidates "
+    "a day. The blocks above give you the week's raw material: the last seven "
+    "days of episodes, summaries of recent sessions, the current durable "
+    "narrative, your semantic memory (what you already believe about the user), "
+    "and the outcomes ledger. Read across all of it, not just the newest items.\n\n"
+    "Look for signal that repeats:\n"
+    "- What happened more than once — a recurring task, a recurring failure, a "
+    "preference the user showed you more than one time.\n"
+    "- What you consistently got wrong — corrections, dismissals, or escalations "
+    "in the outcomes ledger that point at a wrong assumption you keep making.\n"
+    "- Contradictions — places where a newer episode or session conflicts with "
+    "an older semantic memory.\n\n"
+    "Then act, respecting the evidence bar stated in the '## Consolidation "
+    "guidance' block above — promote ONLY patterns with real evidence (seen at "
+    "least the stated number of times, or spread across at least that many "
+    "distinct days). A single occurrence is an anecdote, not a pattern; leave it "
+    "for next week. Concretely:\n"
+    "- For a high-confidence repeated FACT about the user (a stable preference, "
+    "a durable detail), write it DIRECTLY to durable memory with the memory tool, "
+    "tagged to the right topic. That is your job here — do not route a "
+    "well-evidenced fact through a suggestion.\n"
+    "- For anything the user would want a say in — a memory change that drops or "
+    "overrides something, a new or changed goal, a new automation — propose it "
+    "through the suggestions inbox (suggest_automation / suggest_goal). Never "
+    "activate a goal or create a job yourself.\n"
+    "- Note any contradiction you found in the narrative so the decay pass can "
+    "reconcile it; do not delete or overwrite the conflicting memory yourself.\n\n"
+    "Invent nothing that the episodes, sessions, memory, or ledger do not "
+    "support. When you are done, end with exactly one compact "
+    "<narrative>...</narrative> block that folds this week's durable conclusions "
+    "into your working model. You may also emit up to five follow-ups as a JSON "
+    "array in <initiatives>...</initiatives>. These blocks are persisted and "
+    "removed before anything is shown to the user."
 )
 
 
@@ -233,6 +289,184 @@ def _recent_activity_summary(hours: int = 24) -> str:
     return "\n".join(rows[-30:]) or "No recent background activity."
 
 
+def dreaming_config(cfg: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """Return the ``memory.dreaming`` config with inline defaults.
+
+    Uses ``cfg_get`` with inline defaults rather than ``DEFAULT_CONFIG`` —
+    the dreaming schedule and evidence threshold are not UI-edited keys.
+    Never raises; falls back to the built-in defaults on any read error.
+    """
+    try:
+        from hermes_cli.config import cfg_get, load_config
+
+        cfg = cfg if cfg is not None else load_config()
+        schedule = str(
+            cfg_get(cfg, "memory", "dreaming", "schedule", default=DEFAULT_DREAMING_SCHEDULE)
+            or DEFAULT_DREAMING_SCHEDULE
+        )
+        promote_min = _coerce_nonnegative_int(
+            cfg_get(cfg, "memory", "dreaming", "promote_min_occurrences",
+                    default=DEFAULT_DREAMING_PROMOTE_MIN_OCCURRENCES),
+            DEFAULT_DREAMING_PROMOTE_MIN_OCCURRENCES,
+        )
+        return {"schedule": schedule, "promote_min_occurrences": promote_min}
+    except Exception:
+        logger.debug("dreaming: config read failed, using defaults", exc_info=True)
+        return {
+            "schedule": DEFAULT_DREAMING_SCHEDULE,
+            "promote_min_occurrences": DEFAULT_DREAMING_PROMOTE_MIN_OCCURRENCES,
+        }
+
+
+def _dreaming_episodes_block(days: int = 7) -> str:
+    """Last ``days`` days of episodes (Loop 1), newest first — the primary
+    raw material for the weekly consolidation. Bounded and best-effort."""
+    try:
+        from agent.memory.episodic import format_episode, query
+
+        since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+        episodes = query(since=since, limit=200)
+        if not episodes:
+            return "No episodes recorded in the last 7 days."
+        return "\n".join(format_episode(ep) for ep in episodes)
+    except Exception:
+        logger.debug("dreaming: episodes block unavailable", exc_info=True)
+        return "Recent episodes unavailable."
+
+
+def _dreaming_sessions_block(limit: int = 12) -> str:
+    """Compact summaries of recent sessions via the read-only session FTS
+    toolset (browse shape). Titles + previews only — the model can call
+    session_search itself to drill in. Best-effort; never raises."""
+    try:
+        from tools.session_search_tool import session_search
+
+        raw = session_search(limit=max(1, min(int(limit), 10)))
+        data = json.loads(raw)
+        results = data.get("results") or []
+        if not results:
+            return "No recent sessions found."
+        lines: List[str] = []
+        for row in results:
+            title = str(row.get("title") or "(untitled)").strip()
+            when = str(row.get("started_at") or row.get("last_active") or "").strip()
+            preview = str(row.get("preview") or "").strip()
+            if len(preview) > 200:
+                preview = preview[:197] + "..."
+            line = f"- {title}"
+            if when:
+                line += f" [{when}]"
+            if preview:
+                line += f" — {preview}"
+            lines.append(line)
+        return "\n".join(lines)
+    except Exception:
+        logger.debug("dreaming: sessions block unavailable", exc_info=True)
+        return "Recent sessions unavailable."
+
+
+def _dreaming_semantic_memory_block() -> str:
+    """Read-only snapshot of the durable semantic memory (USER.md/MEMORY.md).
+
+    Instantiates a throwaway MemoryStore and reads its formatted snapshot —
+    it does NOT mutate the store class or the on-disk memory (writing durable
+    memory is the model's job, through the memory tool, during the turn)."""
+    try:
+        from tools.memory_tool import MemoryStore
+
+        store = MemoryStore()
+        store.load_from_disk()
+        blocks: List[str] = []
+        for target in ("user", "memory"):
+            block = store.format_for_system_prompt(target)
+            if block:
+                blocks.append(block)
+        return "\n\n".join(blocks) if blocks else "No durable semantic memory yet."
+    except Exception:
+        logger.debug("dreaming: semantic memory block unavailable", exc_info=True)
+        return "Semantic memory unavailable."
+
+
+def _dreaming_outcomes_block(days: int = 30) -> str:
+    """Compact view of the learning outcomes ledger — recent events plus a
+    per-event count, so the consolidation can see what it consistently got
+    wrong (corrections/dismissals). Best-effort; never raises."""
+    try:
+        from agent.learning.outcomes import counts, recent
+
+        tally = counts(days=days)
+        rows = recent(days=days, limit=40)
+        head = "Counts (last %dd): %s" % (
+            days,
+            ", ".join(f"{event}={n}" for event, n in tally.items() if n) or "none",
+        )
+        if not rows:
+            return head + "\nNo individual outcomes recorded."
+        lines = [head, "Recent outcomes (newest first):"]
+        for row in rows:
+            at = str(row.get("at") or "").strip()
+            loop = str(row.get("loop") or "").strip()
+            event = str(row.get("event") or "").strip()
+            category = str(row.get("category") or "").strip()
+            entry = f"- [{at}] {loop}/{event}"
+            if category:
+                entry += f" ({category})"
+            lines.append(entry)
+        return "\n".join(lines)
+    except Exception:
+        logger.debug("dreaming: outcomes block unavailable", exc_info=True)
+        return "Outcomes ledger unavailable."
+
+
+def build_dreaming_context(cfg: Optional[Dict[str, Any]] = None) -> List[str]:
+    """Assemble the bounded weekly-consolidation input blocks (memory-maturity
+    spec, Loop 2). Returns a list of prose blocks to append to the shared
+    runtime context. Each block is independently best-effort — a failure in one
+    source degrades to an "unavailable" line, never an empty or broken prompt.
+    """
+    from agent.goal_store import format_active_goals_for_prompt
+
+    dconfig = dreaming_config(cfg)
+    threshold = int(dconfig["promote_min_occurrences"])
+    guidance = (
+        "## Consolidation guidance\n"
+        f"Promote a pattern only with real evidence: seen at least {threshold} "
+        f"times, or spread across at least {threshold} distinct days. Below that "
+        "bar it is an anecdote — leave it for a later week. High-confidence "
+        "repeated facts go straight to durable memory; anything the user would "
+        "want a say in goes through the suggestions inbox."
+    )
+    return [
+        guidance,
+        f"## Episodes (last 7 days)\n{_dreaming_episodes_block(days=7)}",
+        f"## Recent sessions\n{_dreaming_sessions_block()}",
+        f"## Semantic memory\n{_dreaming_semantic_memory_block()}",
+        f"## Outcomes ledger\n{_dreaming_outcomes_block()}",
+        format_active_goals_for_prompt() or "## Active goals\nNone",
+    ]
+
+
+def run_decay_pass_after_dreaming() -> None:
+    """Final step of the weekly dreaming job: hand off to the memory decay
+    pass (Loop 3, ``agent.memory.decay.run_decay_pass``).
+
+    Guarded import: the decay module is built by a parallel workstream and may
+    not exist yet. A missing module is skipped with a single log line — the
+    dreaming job works with or without decay present. Any failure inside the
+    decay pass itself is likewise swallowed; consolidation must never break
+    because the (optional) forgetting step failed.
+    """
+    try:
+        from agent.memory.decay import run_decay_pass
+    except ImportError:
+        logger.info("dreaming: decay pass module not present yet; skipping decay step")
+        return
+    try:
+        run_decay_pass()
+    except Exception:
+        logger.debug("dreaming: decay pass failed", exc_info=True)
+
+
 def build_runtime_context(job_name: str) -> str:
     """Build run-time context without mutating any long-lived chat prefix."""
     from agent.goal_store import format_active_goals_for_prompt
@@ -296,6 +530,12 @@ def build_runtime_context(job_name: str) -> str:
                 "## Pending suggestions\n" + json.dumps(list_pending(), ensure_ascii=False)[:6000],
             ]
         )
+    if job_name == DREAMING_JOB_NAME:
+        try:
+            parts.extend(build_dreaming_context())
+        except Exception:
+            logger.debug("subconscious: dreaming context unavailable", exc_info=True)
+            parts.append("## Consolidation inputs\nUnavailable.")
     return "\n\n".join(parts)
 
 
@@ -318,6 +558,10 @@ def _subconscious_cfg(cfg: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         "job_id": section.get("job_id"),
         "reflection_job_id": section.get("reflection_job_id"),
         "reflection_schedule": str(section.get("reflection_schedule") or DEFAULT_REFLECTION_SCHEDULE),
+        "dreaming_job_id": section.get("dreaming_job_id"),
+        "dreaming_schedule": str(
+            section.get("dreaming_schedule") or dreaming_config(cfg).get("schedule") or DEFAULT_DREAMING_SCHEDULE
+        ),
     }
 
 
@@ -440,11 +684,39 @@ def enable(interval: Optional[str] = None) -> Dict[str, Any]:
         if reflection.get("schedule_display") != reflection_schedule:
             update_job(reflection["id"], {"schedule": reflection_schedule})
 
+    # Weekly dreaming job (memory-maturity spec, Loop 2) — created idempotently
+    # in the SAME enable() as the tick + reflection, mirroring the reflection
+    # bookkeeping exactly: tracked by ``dreaming_job_id`` in config, resumed +
+    # rescheduled if present, never duplicated. The schedule's source of truth
+    # is ``memory.dreaming.schedule`` (via ``dreaming_config``); the resolved
+    # value is mirrored into the subconscious section for status display.
+    dreaming_id = section.get("dreaming_job_id")
+    dreaming = get_job(dreaming_id) if dreaming_id else None
+    dreaming_schedule = str(section.get("dreaming_schedule") or dreaming_config(cfg).get("schedule") or DEFAULT_DREAMING_SCHEDULE)
+    if dreaming is None:
+        dreaming = create_job(
+            prompt=_DREAMING_PROMPT,
+            schedule=dreaming_schedule,
+            name=DREAMING_JOB_NAME,
+            deliver="local",
+            enabled_toolsets=list(_DREAMING_TOOLSETS),
+        )
+        section["dreaming_job_id"] = dreaming["id"]
+    else:
+        if dreaming.get("state") == "paused":
+            dreaming = resume_job(dreaming["id"]) or dreaming
+        if dreaming.get("schedule_display") != dreaming_schedule:
+            try:
+                update_job(dreaming["id"], {"schedule": dreaming_schedule})
+            except Exception:
+                logger.debug("subconscious enable: dreaming schedule update failed", exc_info=True)
+
     section["enabled"] = True
     section["interval"] = resolved_interval
     section.setdefault("idle_trigger_minutes", DEFAULT_IDLE_TRIGGER_MINUTES)
     section.setdefault("tiers", {})
     section.setdefault("reflection_schedule", DEFAULT_REFLECTION_SCHEDULE)
+    section["dreaming_schedule"] = dreaming_schedule
     cfg["subconscious"] = section
     save_config(cfg)
     return status()
@@ -458,7 +730,7 @@ def disable() -> Dict[str, Any]:
 
     cfg = load_config()
     section = dict(cfg.get("subconscious") or {})
-    for job_id in (section.get("job_id"), section.get("reflection_job_id")):
+    for job_id in (section.get("job_id"), section.get("reflection_job_id"), section.get("dreaming_job_id")):
         if not job_id:
             continue
         try:
@@ -478,6 +750,7 @@ def status() -> Dict[str, Any]:
     section = _subconscious_cfg()
     job = get_job(section["job_id"]) if section.get("job_id") else None
     reflection = get_job(section["reflection_job_id"]) if section.get("reflection_job_id") else None
+    dreaming = get_job(section["dreaming_job_id"]) if section.get("dreaming_job_id") else None
     return {
         "enabled": section["enabled"],
         "interval": section["interval"],
@@ -492,6 +765,11 @@ def status() -> Dict[str, Any]:
         "reflection_job_state": reflection.get("state") if reflection else None,
         "reflection_last_run_at": reflection.get("last_run_at") if reflection else None,
         "reflection_next_run_at": reflection.get("next_run_at") if reflection else None,
+        "dreaming_schedule": section["dreaming_schedule"],
+        "dreaming_job_id": section.get("dreaming_job_id"),
+        "dreaming_job_state": dreaming.get("state") if dreaming else None,
+        "dreaming_last_run_at": dreaming.get("last_run_at") if dreaming else None,
+        "dreaming_next_run_at": dreaming.get("next_run_at") if dreaming else None,
     }
 
 

@@ -27,6 +27,7 @@ const SOURCE_META: Record<SubconsciousActivitySource, { label: string; icon: typ
   reflection: { label: 'Reflection', icon: Brain },
   smart_room_alarm: { label: 'Room alarm', icon: Bell },
   goblin: { label: 'Goblin', icon: Bell },
+  dreaming: { label: 'Dreaming', icon: Moon },
   world: { label: 'World', icon: Cloud }
 }
 

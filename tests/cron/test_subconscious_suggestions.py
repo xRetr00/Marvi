@@ -139,7 +139,9 @@ class TestSubconsciousConfig:
             subconscious.enable()
             subconscious.enable()
 
-        assert calls["create"] == 2
+        # First enable creates the tick + reflection + dreaming jobs; the
+        # second is idempotent (all three already tracked → no new create).
+        assert calls["create"] == 3
 
     def test_tick_toolsets_are_all_registered(self, subconscious):
         """Regression guard: every name in _TICK_TOOLSETS must be a real,
@@ -161,7 +163,9 @@ class TestSubconsciousConfig:
         with patch("cron.jobs.pause_job") as mock_pause:
             info = subconscious.disable()
 
-        assert mock_pause.call_count == 2
+        # Disable now pauses all three background-thinking jobs: tick,
+        # reflection, and the weekly dreaming consolidation.
+        assert mock_pause.call_count == 3
         assert info["enabled"] is False
 
     def test_snapshot_shim_written_under_hermes_home(self, subconscious):

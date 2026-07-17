@@ -346,14 +346,21 @@ def _activity_source_for_job(job: dict) -> Optional[str]:
     name = str(job.get("name") or "")
 
     try:
-        from cron.subconscious import JOB_NAME as _tick_job_name, REFLECTION_JOB_NAME as _reflection_job_name
+        from cron.subconscious import (
+            JOB_NAME as _tick_job_name,
+            REFLECTION_JOB_NAME as _reflection_job_name,
+            DREAMING_JOB_NAME as _dreaming_job_name,
+        )
     except Exception:
         _tick_job_name = None
         _reflection_job_name = None
+        _dreaming_job_name = None
     if _tick_job_name and name == _tick_job_name:
         return _consume_pending_trigger_reason() or "tick"
     if _reflection_job_name and name == _reflection_job_name:
         return "reflection"
+    if _dreaming_job_name and name == _dreaming_job_name:
+        return "dreaming"
 
     try:
         from hermes_cli.presence_cmd import DISTILL_JOB_NAME as _distill_job_name
@@ -495,6 +502,7 @@ _EPISODIC_SOURCE_TO_KIND = {
     "world": "room",
     "goblin": "proactive",
     "reflection": "task",
+    "dreaming": "task",
 }
 
 
@@ -2660,9 +2668,9 @@ def _build_job_prompt(job: dict, prerun_script: Optional[tuple] = None) -> str:
     user_prompt = str(job.get("prompt") or "")
     prompt = user_prompt
     try:
-        from cron.subconscious import JOB_NAME, REFLECTION_JOB_NAME, build_runtime_context
+        from cron.subconscious import JOB_NAME, REFLECTION_JOB_NAME, DREAMING_JOB_NAME, build_runtime_context
 
-        if str(job.get("name") or "") in {JOB_NAME, REFLECTION_JOB_NAME}:
+        if str(job.get("name") or "") in {JOB_NAME, REFLECTION_JOB_NAME, DREAMING_JOB_NAME}:
             prompt = f"{build_runtime_context(str(job.get('name') or ''))}\n\n{prompt}"
     except Exception:
         logger.debug("subconscious runtime context unavailable", exc_info=True)
@@ -3836,9 +3844,16 @@ def run_job(
         # Private subconscious blocks update durable state but never leak into
         # local delivery or saved output.
         _narrative_updated = False
+        _is_dreaming_run = False
         try:
-            from cron.subconscious import JOB_NAME as _subconscious_name, REFLECTION_JOB_NAME as _reflection_name
-            _is_subconscious_run = str(job.get("name") or "") in {_subconscious_name, _reflection_name}
+            from cron.subconscious import (
+                JOB_NAME as _subconscious_name,
+                REFLECTION_JOB_NAME as _reflection_name,
+                DREAMING_JOB_NAME as _dreaming_name,
+            )
+            _job_name = str(job.get("name") or "")
+            _is_dreaming_run = _job_name == _dreaming_name
+            _is_subconscious_run = _job_name in {_subconscious_name, _reflection_name, _dreaming_name}
         except Exception:
             _is_subconscious_run = False
         if _is_subconscious_run:
@@ -3848,6 +3863,18 @@ def run_job(
                 final_response, _narrative_updated = process_background_output(final_response)
             except Exception:
                 logger.debug("subconscious output processing failed", exc_info=True)
+        # Loop 2 final step: after the weekly dreaming consolidation turn
+        # completes, hand off to the memory decay pass (Loop 3). Guarded inside
+        # ``run_decay_pass_after_dreaming`` — the decay module is owned by a
+        # parallel workstream and may be absent; a missing module is skipped
+        # with one log line, so dreaming works with or without decay present.
+        if _is_dreaming_run:
+            try:
+                from cron.subconscious import run_decay_pass_after_dreaming
+
+                run_decay_pass_after_dreaming()
+            except Exception:
+                logger.debug("dreaming decay seam failed", exc_info=True)
 
         # Use a separate variable for log display; keep final_response clean
         # for delivery logic (empty response = no delivery).

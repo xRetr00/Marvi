@@ -212,3 +212,85 @@ class TestCommandHandler:
 
         assert "monitor" in DEFAULT_CONFIG["auxiliary"]
         assert DEFAULT_CONFIG["auxiliary"]["monitor"]["provider"] == "auto"
+
+
+class TestMemoryKindSuggestions:
+    """kind='memory' suggestions -- the review surface memory decay (Loop 3,
+    agent/memory/decay.py) uses for merges that would drop information and
+    for contradiction flags. Never a second job engine: acceptance either
+    performs the (non-destructive-to-data) archive move or is a pure
+    acknowledgment (contradictions are never auto-resolved)."""
+
+    def test_memory_spec_required_for_memory_kind(self, store):
+        with pytest.raises(ValueError):
+            store.add_suggestion(
+                title="x", description="d", source="subconscious", kind="memory", dedup_key="k1",
+            )
+
+    def test_memory_spec_op_must_be_known(self, store):
+        with pytest.raises(ValueError):
+            store.add_suggestion(
+                title="x", description="d", source="subconscious", kind="memory",
+                memory_spec={"op": "delete_everything"}, dedup_key="k2",
+            )
+
+    def test_add_merge_suggestion_pending(self, store):
+        rec = store.add_suggestion(
+            title="Merge overlapping memory entries?",
+            description="d",
+            source="subconscious",
+            kind="memory",
+            memory_spec={"op": "merge", "target": "memory", "keep_text": "keep", "drop_text": "drop"},
+            dedup_key="merge:1",
+            category="memory",
+        )
+        assert rec is not None
+        assert rec["kind"] == "memory"
+        assert rec["status"] == "pending"
+        assert store.list_pending()[0]["memory_spec"]["op"] == "merge"
+
+    def test_accept_merge_suggestion_archives_drop_text(self, store):
+        from tools.memory_tool import MemoryStore, list_archived
+
+        mem_store = MemoryStore()
+        mem_store.add("memory", "keep this fact")
+        mem_store.add("memory", "drop this fact")
+        mem_store.load_from_disk()
+
+        store.add_suggestion(
+            title="Merge overlapping memory entries?",
+            description="d",
+            source="subconscious",
+            kind="memory",
+            memory_spec={"op": "merge", "target": "memory", "keep_text": "keep this fact", "drop_text": "drop this fact"},
+            dedup_key="merge:2",
+            category="memory",
+        )
+
+        result = store.accept_suggestion("1")
+
+        assert result is not None
+        assert result["op"] == "merge"
+        assert result["archived"] is not None
+        archived = list_archived(target="memory")
+        assert any(e["text"] == "drop this fact" for e in archived)
+        assert store.list_pending() == []
+
+    def test_accept_contradiction_suggestion_is_acknowledgment_only(self, store):
+        entries = ["[work] User works at Acme Corp", "[work] User works at Globex Inc"]
+        store.add_suggestion(
+            title="Conflicting memory entries -- which holds?",
+            description="d",
+            source="subconscious",
+            kind="memory",
+            memory_spec={"op": "contradiction", "target": "memory", "entries": entries, "reason": "differing values"},
+            dedup_key="contradiction:1",
+            category="memory",
+        )
+
+        result = store.accept_suggestion("1")
+
+        assert result is not None
+        assert result["op"] == "contradiction"
+        assert "archived" not in result  # never auto-resolves -- nothing changed
+        assert store.list_pending() == []

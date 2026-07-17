@@ -13281,6 +13281,59 @@ async def get_memory_episodes(
         raise HTTPException(status_code=500, detail="Failed to read episodic memory")
 
 
+# ---------------------------------------------------------------------------
+# Memory decay archive (Loop 3, memory-maturity spec) — the "What Marvi
+# knows" viewer's Archived collapsible + restore action. Additive-only new
+# section; mirrors the /api/marvi/knowledge and /api/memory/episodes error
+# shape above (run_in_threadpool + a bare {"detail": "..."} 500 on failure).
+# Entries never get here by user action — only the decay pass
+# (agent/memory/decay.py) or a user-approved merge suggestion archives an
+# entry; this surface is read + restore only.
+# ---------------------------------------------------------------------------
+
+
+def _read_memory_archived_sync(target: Optional[str]) -> Dict[str, Any]:
+    from tools.memory_tool import list_archived
+
+    target = (target or "").strip() or None
+    if target is not None and target not in {"memory", "user"}:
+        raise ValueError("Invalid target. Use 'memory' or 'user'.")
+    return {"entries": list_archived(target=target)}
+
+
+@app.get("/api/memory/archived")
+async def get_memory_archived(target: Optional[str] = None):
+    try:
+        result = await run_in_threadpool(_read_memory_archived_sync, target)
+        return {"ok": True, **result}
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception:
+        _log.exception("GET /api/memory/archived failed")
+        raise HTTPException(status_code=500, detail="Failed to read archived memory")
+
+
+def _restore_memory_entry_sync(entry_id: str) -> Dict[str, Any]:
+    from tools.memory_tool import restore_entry
+
+    result = restore_entry(entry_id)
+    if not result.get("success"):
+        raise ValueError(result.get("error") or "Restore failed.")
+    return result
+
+
+@app.post("/api/memory/restore/{entry_id}")
+async def post_memory_restore(entry_id: str):
+    try:
+        result = await run_in_threadpool(_restore_memory_entry_sync, entry_id)
+        return {"ok": True, **result}
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception:
+        _log.exception("POST /api/memory/restore/%s failed", entry_id)
+        raise HTTPException(status_code=500, detail="Failed to restore memory entry")
+
+
 def _mind_state_sync(history: bool = False) -> Dict[str, Any]:
     from agent.goal_store import list_goal_templates
     from cron.subconscious import read_narrative, read_narrative_history, status

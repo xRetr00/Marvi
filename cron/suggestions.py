@@ -192,6 +192,7 @@ def add_suggestion(
     kind: str = "job",
     goal_spec: Optional[Dict[str, Any]] = None,
     config_spec: Optional[Dict[str, Any]] = None,
+    memory_spec: Optional[Dict[str, Any]] = None,
     loop: Optional[str] = None,
     dedup_key: str,
     category: str = DEFAULT_CATEGORY,
@@ -210,6 +211,14 @@ def add_suggestion(
     it reaches disk. Acceptance repeats validation and uses a stale-current
     compare-and-set guard before writing config.yaml.
 
+    ``memory_spec`` (kind="memory") carries a minimal review-only payload for
+    the memory-decay pass (``agent/memory/decay.py``, Loop 3):
+    ``{"op": "merge"|"contradiction", "target": "memory"|"user", ...}``.
+    A "merge" suggestion's acceptance performs the merge (archives
+    ``drop_text``, keeping ``keep_text``); a "contradiction" suggestion is
+    acknowledgment-only on accept — decay never auto-resolves a conflict, so
+    there is no destructive action to take even when the user taps Accept.
+
     ``category`` (default ``"general"``) is the key used to look up the
     user's proactivity tier for this proposal (``resolve_tier``); it is
     stored on the record purely for display/filtering — this call always
@@ -217,12 +226,15 @@ def add_suggestion(
     """
     if source not in VALID_SOURCES:
         raise ValueError(f"unknown suggestion source: {source!r}")
-    if kind not in {"job", "goal", "config"}:
-        raise ValueError("kind must be 'job', 'goal', or 'config'")
+    if kind not in {"job", "goal", "config", "memory"}:
+        raise ValueError("kind must be 'job', 'goal', 'config', or 'memory'")
     if kind == "job" and not isinstance(job_spec, dict):
         raise ValueError("job_spec is required for job suggestions")
     if kind == "goal" and not isinstance(goal_spec, dict):
         raise ValueError("goal_spec is required for goal suggestions")
+    if kind == "memory":
+        if not isinstance(memory_spec, dict) or memory_spec.get("op") not in {"merge", "contradiction"}:
+            raise ValueError("memory_spec (with op='merge' or 'contradiction') is required for memory suggestions")
     if kind == "config":
         from agent.learning.config_registry import validate_config_spec
 
@@ -263,6 +275,7 @@ def add_suggestion(
             "job_spec": job_spec,
             "goal_spec": goal_spec,
             "config_spec": config_spec,
+            "memory_spec": memory_spec,
             "loop": loop,
             "dedup_key": dedup_key.strip(),
             "status": _STATUS_PENDING,
@@ -368,6 +381,26 @@ def accept_suggestion(
         from agent.learning.config_registry import apply_config_spec
 
         result = apply_config_spec(dict(s.get("config_spec") or {}))
+        _set_status(s["id"], _STATUS_ACCEPTED)
+        _record_suggestion_outcome(s, "accepted", accepted_by=accepted_by)
+        return result
+
+    if kind == "memory":
+        spec = dict(s.get("memory_spec") or {})
+        op = spec.get("op")
+        result: Dict[str, Any] = {"op": op}
+        if op == "merge":
+            from tools.memory_tool import archive_entry, load_on_disk_store
+
+            target = spec.get("target", "memory")
+            drop_text = str(spec.get("drop_text") or "")
+            store = load_on_disk_store()
+            record = archive_entry(store, target, drop_text, reason="dedup: user-approved merge")
+            result["archived"] = record
+        # "contradiction" (and any future review-only op): acknowledgment
+        # only. Decay never auto-resolves a conflict -- accepting just marks
+        # the suggestion seen; the user reconciles the entries themselves
+        # (via the memory tool / chat) if/when they choose to.
         _set_status(s["id"], _STATUS_ACCEPTED)
         _record_suggestion_outcome(s, "accepted", accepted_by=accepted_by)
         return result

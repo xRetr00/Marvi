@@ -23,6 +23,7 @@ Design:
 - Frozen snapshot pattern: system prompt is stable, tool responses show live state
 """
 
+import hashlib
 import json
 import logging
 import os
@@ -30,6 +31,7 @@ import tempfile
 import time
 import re
 from contextlib import contextmanager
+from datetime import datetime, timezone
 from pathlib import Path
 from hermes_constants import get_hermes_home
 from typing import Dict, Any, List, Optional
@@ -56,6 +58,17 @@ logger = logging.getLogger(__name__)
 def get_memory_dir() -> Path:
     """Return the profile-scoped memories directory."""
     return get_hermes_home() / "memories"
+
+
+def get_memory_meta_dir() -> Path:
+    """Return the profile-scoped memory metadata directory.
+
+    Sibling of ``memories/`` (which holds the § entry files) and
+    ``memory/episodic.db`` (Loop 1) — this is where Loop 3's decay
+    machinery keeps its sidecar (``surfaced.json``) and archive
+    (``archive/archive.json``). Never touches the § entry files themselves.
+    """
+    return get_hermes_home() / "memory"
 
 ENTRY_DELIMITER = "\n§\n"
 TOPIC_RE = re.compile(r"^\[([a-z0-9][a-z0-9 _/-]{0,79})\]\s+(.+)$", re.DOTALL | re.IGNORECASE)
@@ -158,6 +171,17 @@ class MemoryStore:
         # Per-turn counter of failed at-capacity consolidation attempts; reset
         # at each turn boundary by reset_consolidation_failures() (#42405).
         self._consolidation_failures = 0
+        # Raw (pre-sanitize) entries captured at snapshot time, keyed by
+        # target -- used to stamp the decay sidecar's "last surfaced" time
+        # with the exact entry text that was actually injected (see
+        # format_for_system_prompt / agent/memory/decay.py, Loop 3).
+        self._snapshot_source_entries: Dict[str, List[str]] = {"memory": [], "user": []}
+        # One-shot-per-instance guard so a session that calls
+        # format_for_system_prompt() every turn (the volatile-tier rebuild
+        # in agent/system_prompt.py) doesn't hammer the sidecar file on
+        # every turn -- the snapshot is frozen for the whole session, so
+        # stamping once per target per instance captures the same signal.
+        self._surfaced_stamped: Dict[str, bool] = {"memory": False, "user": False}
 
     def reset_consolidation_failures(self) -> None:
         """Reset the per-turn consolidation-failure counter (call at turn start)."""
@@ -224,6 +248,17 @@ class MemoryStore:
             "memory": self._render_block("memory", sanitized_memory),
             "user": self._render_block("user", sanitized_user),
         }
+
+        # Remember the RAW (pre-sanitize) entries that make up this snapshot
+        # so format_for_system_prompt() can stamp the decay sidecar with the
+        # source-of-truth § entry text (not a "[BLOCKED: ...]" placeholder).
+        # Reset the per-instance stamp guard: a fresh load_from_disk() means
+        # a fresh (possibly changed) snapshot worth stamping again.
+        self._snapshot_source_entries = {
+            "memory": list(self.memory_entries),
+            "user": list(self.user_entries),
+        }
+        self._surfaced_stamped = {"memory": False, "user": False}
 
     @staticmethod
     def _sanitize_entries_for_snapshot(entries: List[str], filename: str) -> List[str]:
@@ -642,8 +677,22 @@ class MemoryStore:
         prompt stable across all turns, preserving the prefix cache.
 
         Returns None if the snapshot is empty (no entries at load time).
+
+        As a side effect (best-effort, never raises), the first call per
+        target on a live instance stamps each entry's "last surfaced" time
+        in the decay sidecar (``HERMES_HOME/memory/surfaced.json`` — see
+        ``stamp_surfaced`` / Loop 3's ``agent/memory/decay.py``). This is
+        the "when an entry is injected into a prompt" hook the decay pass
+        uses for its recency/usage scoring; it never touches the § entry
+        files themselves.
         """
         block = self._system_prompt_snapshot.get(target, "")
+        if block and not self._surfaced_stamped.get(target):
+            try:
+                stamp_surfaced(self._snapshot_source_entries.get(target, []))
+            except Exception:
+                logger.debug("memory: stamp_surfaced failed", exc_info=True)
+            self._surfaced_stamped[target] = True
         return block if block else None
 
     # -- Internal helpers --
@@ -807,6 +856,234 @@ class MemoryStore:
                 raise
         except (OSError, IOError) as e:
             raise RuntimeError(f"Failed to write memory file {path}: {e}")
+
+
+# =============================================================================
+# Decay sidecar + archive (Loop 3, memory-maturity spec) — metadata about §
+# entries, kept OUT of USER.md/MEMORY.md so the on-disk § format never
+# changes (many things parse it). Two files under get_memory_meta_dir():
+#
+#   surfaced.json         -- {"entries": {<entry_hash>: {"first_seen",
+#                             "last_surfaced"}}}. Written by
+#                             MemoryStore.format_for_system_prompt() every
+#                             time an entry is actually injected into a
+#                             prompt; read by agent/memory/decay.py's
+#                             recency/usage scoring.
+#   archive/archive.json  -- {"entries": [{"id", "target", "text", "topic",
+#                             "archived_at", "reason"}]}. Entries land here
+#                             instead of being deleted -- see archive_entry()
+#                             / restore_entry(). NEVER hard-deleted.
+#
+# ``entry_hash`` is computed from the exact § entry text (including its
+# "[topic] " prefix if any), so it stays stable as long as the entry text is
+# unchanged; editing an entry's text is treated as a new entry for tracking
+# purposes -- harmless, the old sidecar row just goes unreferenced.
+# =============================================================================
+
+
+def entry_hash(text: str) -> str:
+    """Stable short identifier for a § entry's exact text."""
+    return hashlib.sha1((text or "").encode("utf-8")).hexdigest()[:16]
+
+
+def _surfaced_path() -> Path:
+    return get_memory_meta_dir() / "surfaced.json"
+
+
+def _read_json_file(path: Path, *, list_key: Optional[str] = None) -> Dict[str, Any]:
+    """Best-effort JSON read. Returns ``{list_key: []}``/``{"entries": {}}``
+    on any missing/corrupt file rather than raising -- decay metadata is a
+    cache, not a source of truth, so a corrupt sidecar must never break the
+    memory tool or the decay pass."""
+    default: Dict[str, Any] = {list_key: []} if list_key else {"entries": {}}
+    if not path.exists():
+        return default
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return default
+    if not isinstance(data, dict):
+        return default
+    key = list_key or "entries"
+    expected_type = list if list_key else dict
+    if not isinstance(data.get(key), expected_type):
+        return default
+    return data
+
+
+def _write_json_file(path: Path, data: Dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_path = tempfile.mkstemp(dir=str(path.parent), suffix=".tmp", prefix=".memmeta_")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)
+            f.flush()
+            os.fsync(f.fileno())
+        atomic_replace(tmp_path, path)
+    except BaseException:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        raise
+
+
+def stamp_surfaced(entries: List[str]) -> None:
+    """Record "seen right now" for each entry (best-effort; never raises).
+
+    Sets ``first_seen`` the first time an entry's hash is observed and
+    always refreshes ``last_surfaced``. Called by
+    ``MemoryStore.format_for_system_prompt()`` whenever a store's snapshot
+    is actually injected into a prompt.
+    """
+    entries = [e for e in (entries or []) if e]
+    if not entries:
+        return
+    try:
+        path = _surfaced_path()
+        with MemoryStore._file_lock(path):
+            data = _read_json_file(path)
+            table = data.setdefault("entries", {})
+            now = datetime.now(timezone.utc).isoformat()
+            for text in entries:
+                h = entry_hash(text)
+                row = table.setdefault(h, {})
+                row.setdefault("first_seen", now)
+                row["last_surfaced"] = now
+            _write_json_file(path, data)
+    except Exception:
+        logger.debug("memory: stamp_surfaced failed", exc_info=True)
+
+
+def get_surfaced_meta(text: str) -> Dict[str, Any]:
+    """Return ``{"first_seen": iso, "last_surfaced": iso}`` for an entry's
+    text, or ``{}`` if it has never been surfaced/tracked. Never raises."""
+    try:
+        data = _read_json_file(_surfaced_path())
+        return dict(data.get("entries", {}).get(entry_hash(text), {}))
+    except Exception:
+        logger.debug("memory: get_surfaced_meta failed", exc_info=True)
+        return {}
+
+
+def _archive_path() -> Path:
+    return get_memory_meta_dir() / "archive" / "archive.json"
+
+
+def archive_entry(store: "MemoryStore", target: str, entry_text: str, reason: str = "") -> Optional[Dict[str, Any]]:
+    """Move one live § entry out of the hot store into the archive.
+
+    NEVER deletes: the entry's exact text is preserved in
+    ``archive/archive.json`` with an ``archived_at`` timestamp, and only
+    THEN removed from the live MEMORY.md/USER.md. Bypasses the write-approval
+    gate deliberately -- this is the "pure internal reorganization" path the
+    spec's ground rules call out as autonomous (dedup, decay scoring); the
+    consent-gated surface is the `memory` tool's add/replace/remove, not this
+    maintenance helper.
+
+    Returns the archive record on success, or ``None`` if the entry wasn't
+    found in the live store or a drift guard blocked the mutation (never
+    raises).
+    """
+    entry_text = (entry_text or "").strip()
+    if not entry_text or target not in {"memory", "user"}:
+        return None
+    try:
+        path = store._path_for(target)
+        with MemoryStore._file_lock(path):
+            bak = store._reload_target(target)
+            if bak:
+                logger.warning(
+                    "memory decay: external drift detected on %s; skipping archive of one entry", target
+                )
+                return None
+            entries = store._entries_for(target)
+            if entry_text not in entries:
+                return None
+            entries = list(entries)
+            entries.remove(entry_text)
+            store._set_entries(target, entries)
+            store.save_to_disk(target)
+
+        topic, _body = split_topic(entry_text)
+        record = {
+            "id": f"{target}:{entry_hash(entry_text)}",
+            "target": target,
+            "text": entry_text,
+            "topic": topic,
+            "archived_at": datetime.now(timezone.utc).isoformat(),
+            "reason": reason or "",
+        }
+        arch_path = _archive_path()
+        with MemoryStore._file_lock(arch_path):
+            data = _read_json_file(arch_path, list_key="entries")
+            data["entries"] = [e for e in data.get("entries", []) if e.get("id") != record["id"]]
+            data["entries"].append(record)
+            _write_json_file(arch_path, data)
+        return record
+    except Exception:
+        logger.debug("memory: archive_entry failed", exc_info=True)
+        return None
+
+
+def list_archived(target: Optional[str] = None) -> List[Dict[str, Any]]:
+    """Return archived entries, newest-first. Never raises."""
+    try:
+        data = _read_json_file(_archive_path(), list_key="entries")
+        entries = data.get("entries", [])
+        if target:
+            entries = [e for e in entries if e.get("target") == target]
+        return sorted(entries, key=lambda e: str(e.get("archived_at") or ""), reverse=True)
+    except Exception:
+        logger.debug("memory: list_archived failed", exc_info=True)
+        return []
+
+
+def restore_entry(entry_id: str, store: Optional["MemoryStore"] = None) -> Dict[str, Any]:
+    """Restore one archived entry back into its hot store (§ file).
+
+    Returns ``{"success": True, "target", "text"}`` on success or
+    ``{"success": False, "error"}`` otherwise. Never raises. Idempotent: if
+    the text is already present in the live store (e.g. re-added by the
+    user in the meantime), the archive record is still cleared without
+    duplicating the entry.
+    """
+    entry_id = (entry_id or "").strip()
+    if not entry_id:
+        return {"success": False, "error": "id is required."}
+    try:
+        arch_path = _archive_path()
+        with MemoryStore._file_lock(arch_path):
+            data = _read_json_file(arch_path, list_key="entries")
+            entries = data.get("entries", [])
+            match = next((e for e in entries if e.get("id") == entry_id), None)
+            if not match:
+                return {"success": False, "error": f"No archived entry with id '{entry_id}'."}
+
+        target = match.get("target") if match.get("target") in {"memory", "user"} else "memory"
+        text = str(match.get("text") or "")
+        if not text:
+            return {"success": False, "error": "Archived record has no text."}
+
+        live_store = store or load_on_disk_store()
+        path = live_store._path_for(target)
+        with MemoryStore._file_lock(path):
+            live_store._reload_target(target, skip_drift=True)
+            entries_list = live_store._entries_for(target)
+            if text not in entries_list:
+                entries_list = list(entries_list) + [text]
+                live_store._set_entries(target, entries_list)
+                live_store.save_to_disk(target)
+
+        with MemoryStore._file_lock(arch_path):
+            data = _read_json_file(arch_path, list_key="entries")
+            data["entries"] = [e for e in data.get("entries", []) if e.get("id") != entry_id]
+            _write_json_file(arch_path, data)
+
+        return {"success": True, "target": target, "text": text}
+    except Exception:
+        logger.debug("memory: restore_entry failed", exc_info=True)
+        return {"success": False, "error": "Restore failed unexpectedly."}
 
 
 def load_on_disk_store() -> "MemoryStore":

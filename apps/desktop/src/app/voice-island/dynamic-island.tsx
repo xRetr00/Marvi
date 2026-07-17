@@ -25,15 +25,15 @@ interface DynamicIslandProps {
   onSummonCancel?: () => void
 }
 
-const SEED_HEIGHT = 34
-const SEED_MIN_WIDTH = 112
+const SEED_HEIGHT = 8
+const SEED_MIN_WIDTH = 76
 
 const IDLE_HEIGHT = 44
 const IDLE_RADIUS = 22
 const IDLE_MIN_WIDTH = 128
 
-const EXPANDED_MAX_WIDTH = 360
-const EXPANDED_RADIUS = 28
+const EXPANDED_MAX_WIDTH = 368
+const EXPANDED_RADIUS = 32
 
 const SUMMON_WIDTH = 340
 const SUMMON_RADIUS = 22
@@ -203,8 +203,7 @@ export function DynamicIsland({
 
   const minHeight = view === 'seed' ? SEED_HEIGHT : view === 'summon' ? SUMMON_HEIGHT : IDLE_HEIGHT
 
-  const radius =
-    view === 'seed' ? 18 : view === 'idle' ? IDLE_RADIUS : view === 'summon' ? SUMMON_RADIUS : EXPANDED_RADIUS
+  const radius = view === 'idle' ? IDLE_RADIUS : view === 'summon' ? SUMMON_RADIUS : EXPANDED_RADIUS
 
   const padY = view === 'seed' ? 0 : PAD_Y
   const padX = view === 'seed' ? 0 : PAD_X
@@ -212,13 +211,11 @@ export function DynamicIsland({
   return (
     <motion.div
       animate={
-        view === 'seed'
-          ? { y: -6, opacity: 0.88, scaleX: 0.72, scaleY: 0.38 }
-          : { y: 8, opacity: 1, scaleX: 1, scaleY: 1 }
+        view === 'seed' ? { y: -3, opacity: 1, scaleX: 1, scaleY: 1 } : { y: 8, opacity: 1, scaleX: 1, scaleY: 1 }
       }
       aria-live="polite"
       data-island-view={view}
-      initial={reducedMotion ? false : { y: -10, opacity: 0, scaleX: 0.58, scaleY: 0.3 }}
+      initial={reducedMotion ? false : { y: -12, opacity: 0, scaleX: 0.82, scaleY: 0.82 }}
       layout
       role="status"
       style={{
@@ -231,9 +228,12 @@ export function DynamicIsland({
         minWidth,
         maxWidth: view === 'expanded' ? EXPANDED_MAX_WIDTH : view === 'summon' ? SUMMON_WIDTH : undefined,
         minHeight,
-        borderRadius: radius,
-        background: '#000',
-        boxShadow: PILL_SHADOW,
+        borderRadius: view === 'seed' ? '0 0 8px 8px' : radius,
+        background: view === 'seed' ? '#020203' : 'linear-gradient(180deg, #070709 0%, #010102 64%, #000 100%)',
+        boxShadow:
+          view === 'seed'
+            ? '0 2px 9px rgba(0,0,0,0.7), 0 2px 10px rgba(110,168,255,0.16)'
+            : `${PILL_SHADOW}, 0 18px 48px rgba(0,0,0,0.48), 0 10px 36px color-mix(in srgb, ${color} 10%, transparent)`,
         padding: `${padY}px ${padX}px`,
         overflow: 'hidden',
         color: '#f2f2f7',
@@ -268,11 +268,11 @@ export function DynamicIsland({
                 reducedMotion ? { opacity: 0.55, scaleX: 1 } : { opacity: [0.32, 0.72, 0.32], scaleX: [0.78, 1, 0.78] }
               }
               style={{
-                width: 48,
-                height: 2,
+                width: 34,
+                height: 1,
                 borderRadius: 999,
                 background:
-                  'linear-gradient(90deg, transparent, rgba(110,168,255,0.28), rgba(181,126,255,0.22), transparent)'
+                  'linear-gradient(90deg, transparent, rgba(110,168,255,0.5), rgba(181,126,255,0.42), transparent)'
               }}
               transition={reducedMotion ? undefined : { duration: 3.2, ease: 'easeInOut', repeat: Infinity }}
             />
@@ -314,17 +314,38 @@ export function DynamicIsland({
                 ) : null}
               </div>
             ) : (
-              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6 }}>
-                <IslandWaveform active={active} height={72} level={displayLevel} width={300} />
-                {showActivityLabel ? (
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <StateDot active={active} color={color} reducedMotion={Boolean(reducedMotion)} />
-                    <span style={{ fontSize: 13, fontWeight: 500, color: 'rgba(255,255,255,0.78)' }}>{label}</span>
-                    {state.speakerBadge ? (
-                      <VoiceSpeakerBadge name={state.speakerName} speaker={state.speakerBadge} variant="dark" />
+              <div style={{ display: 'flex', width: 324, flexDirection: 'column', alignItems: 'stretch', gap: 8 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+                  <VoicePearl
+                    active={active}
+                    color={color}
+                    level={displayLevel}
+                    reducedMotion={Boolean(reducedMotion)}
+                  />
+                  <div style={{ display: 'flex', minWidth: 0, flex: 1, flexDirection: 'column', gap: 5 }}>
+                    {showActivityLabel ? (
+                      <div style={{ display: 'flex', minWidth: 0, alignItems: 'center', gap: 7 }}>
+                        <StateDot active={active} color={color} reducedMotion={Boolean(reducedMotion)} />
+                        <span
+                          style={{
+                            overflow: 'hidden',
+                            color: 'rgba(255,255,255,0.82)',
+                            fontSize: 13,
+                            fontWeight: 650,
+                            textOverflow: 'ellipsis',
+                            whiteSpace: 'nowrap'
+                          }}
+                        >
+                          {label}
+                        </span>
+                        {state.speakerBadge ? (
+                          <VoiceSpeakerBadge name={state.speakerName} speaker={state.speakerBadge} variant="dark" />
+                        ) : null}
+                      </div>
                     ) : null}
+                    <IslandWaveform active={active} height={30} level={displayLevel} width={246} />
                   </div>
-                ) : null}
+                </div>
                 {caption ? (
                   <Caption
                     ignored={caption.who === 'you' && state.captionIgnored}
@@ -344,6 +365,46 @@ export function DynamicIsland({
           </motion.div>
         )}
       </AnimatePresence>
+    </motion.div>
+  )
+}
+
+function VoicePearl({
+  active,
+  color,
+  level,
+  reducedMotion
+}: {
+  active: boolean
+  color: string
+  level: number
+  reducedMotion: boolean
+}) {
+  return (
+    <motion.div
+      animate={active && !reducedMotion ? { rotate: 360 } : { rotate: 0 }}
+      style={{
+        position: 'relative',
+        width: 54,
+        height: 54,
+        flexShrink: 0,
+        borderRadius: '50%',
+        background: `conic-gradient(from 210deg, ${color}, #b57eff 34%, #56d9ff 61%, ${color})`,
+        boxShadow: `0 0 24px color-mix(in srgb, ${color} 38%, transparent), inset 0 0 0 1px rgba(255,255,255,0.3)`
+      }}
+      transition={active && !reducedMotion ? { duration: 6, ease: 'linear', repeat: Infinity } : undefined}
+    >
+      <motion.span
+        animate={{ scale: reducedMotion ? 1 : 0.94 + Math.min(1, level) * 0.06 }}
+        style={{
+          position: 'absolute',
+          inset: 5,
+          borderRadius: '50%',
+          background: `radial-gradient(circle at 34% 28%, rgba(255,255,255,0.72), ${color} 18%, #171322 52%, #030306 78%)`,
+          boxShadow: 'inset -8px -10px 18px rgba(0,0,0,0.62), inset 4px 4px 10px rgba(255,255,255,0.11)'
+        }}
+        transition={{ type: 'spring', stiffness: 240, damping: 24 }}
+      />
     </motion.div>
   )
 }
@@ -399,7 +460,7 @@ function Caption({
         exit={reducedMotion ? undefined : { opacity: 0 }}
         initial={reducedMotion ? false : { opacity: 0 }}
         key={`${who}:${text}`}
-        style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2, maxWidth: 280 }}
+        style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 2, maxWidth: 324 }}
         transition={reducedMotion ? CONTENT_TRANSITION_INSTANT : CONTENT_TRANSITION_MOTION}
       >
         {isUser && (
@@ -422,7 +483,7 @@ function Caption({
             lineHeight: 1.4,
             color: ignored ? 'rgba(185,185,201,0.45)' : isUser ? '#b9b9c9' : '#e6e6f0',
             textDecoration: ignored ? 'line-through' : 'none',
-            textAlign: 'center',
+            textAlign: 'left',
             display: '-webkit-box',
             WebkitLineClamp: 2,
             WebkitBoxOrient: 'vertical',

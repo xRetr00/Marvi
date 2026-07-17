@@ -11,6 +11,7 @@ import { isSecondaryWindow } from './windows'
 
 const POLL_MS = 5_000
 const CURSOR_KEY = 'marvi:proactive-delivery-cursor'
+const SEEN_SUGGESTIONS_KEY = 'marvi:proactive-delivery-suggestions'
 
 interface ProactiveRun {
   at?: null | string
@@ -23,6 +24,16 @@ interface ProactiveRun {
 
 interface ProactiveActivityResponse {
   runs: ProactiveRun[]
+}
+
+interface ProactiveSuggestion {
+  id: string
+  title?: null | string
+  summary?: null | string
+}
+
+interface ProactiveSuggestionsResponse {
+  suggestions: ProactiveSuggestion[]
 }
 
 let timer: number | null = null
@@ -46,6 +57,27 @@ function saveCursor(value: string): void {
     window.localStorage.setItem(CURSOR_KEY, value)
   } catch {
     // Delivery still works for this process when storage is unavailable.
+  }
+}
+
+function seenSuggestionIds(): Set<string> | null {
+  try {
+    const raw = window.localStorage.getItem(SEEN_SUGGESTIONS_KEY)
+    if (raw === null) {
+      return null
+    }
+    const value = JSON.parse(raw)
+    return new Set(Array.isArray(value) ? value.filter(id => typeof id === 'string') : [])
+  } catch {
+    return null
+  }
+}
+
+function saveSeenSuggestionIds(ids: Set<string>): void {
+  try {
+    window.localStorage.setItem(SEEN_SUGGESTIONS_KEY, JSON.stringify([...ids].slice(-100)))
+  } catch {
+    // The durable suggestion still remains readable in Mind.
   }
 }
 
@@ -92,11 +124,19 @@ function surface(run: ProactiveRun): void {
         kind: 'approval',
         title: run.summary || 'Alarm',
         body,
-        actions: [{ id: 'awake', label: "I'm awake", value: "I'm awake. Acknowledge and stop the active Smart Room alarm now." }]
+        actions: [
+          { id: 'awake', label: "I'm awake", value: "I'm awake. Acknowledge and stop the active Smart Room alarm now." }
+        ]
       },
       { allowWhenFocused: true }
     )
-    dispatchNativeNotification({ kind: 'backgroundDone', title: run.summary || 'Alarm', body, global: true, silent: false })
+    dispatchNativeNotification({
+      kind: 'backgroundDone',
+      title: run.summary || 'Alarm',
+      body,
+      global: true,
+      silent: false
+    })
     void playSpeechText(message, { messageId: id, source: 'read-aloud' })
       .catch(() => undefined)
       .finally(() => requestVoiceStart())
@@ -125,6 +165,50 @@ function surface(run: ProactiveRun): void {
   if (run.source === 'smart_room_welcome' || ($presenceEnabled.get() && $voicePlayback.get().status === 'idle')) {
     void playSpeechText(message, { messageId: id, source: 'read-aloud' }).catch(() => undefined)
   }
+}
+
+function surfaceSuggestion(suggestion: ProactiveSuggestion): void {
+  const message = String(suggestion.summary || suggestion.title || '').trim()
+  if (!message) {
+    return
+  }
+
+  const id = `suggestion:${suggestion.id}`
+  const title = suggestion.title || translateNow('mind.proactiveTitle')
+  const body = message.length > 600 ? `${message.slice(0, 597)}…` : message
+
+  showIslandCard({ id, kind: 'approval', title, body })
+  notify({ id, kind: 'info', title, message: body, durationMs: 12_000, placement: 'default' })
+  dispatchNativeNotification({ kind: 'backgroundDone', title, body, global: true, silent: true })
+
+  if ($presenceEnabled.get() && $voicePlayback.get().status === 'idle') {
+    void playSpeechText(message, { messageId: id, source: 'read-aloud' }).catch(() => undefined)
+  }
+}
+
+async function pollSuggestions(): Promise<void> {
+  const response = await window.hermesDesktop.api<ProactiveSuggestionsResponse>({
+    path: '/api/subconscious/suggestions'
+  })
+  const suggestions = Array.isArray(response.suggestions) ? response.suggestions : []
+  const seen = seenSuggestionIds()
+
+  if (seen === null) {
+    const adopted = new Set<string>()
+    for (const suggestion of suggestions) {
+      adopted.add(suggestion.id)
+    }
+    saveSeenSuggestionIds(adopted)
+    return
+  }
+
+  for (const suggestion of suggestions) {
+    if (!seen.has(suggestion.id)) {
+      seen.add(suggestion.id)
+      surfaceSuggestion(suggestion)
+    }
+  }
+  saveSeenSuggestionIds(seen)
 }
 
 async function poll(): Promise<void> {
@@ -165,6 +249,8 @@ async function poll(): Promise<void> {
     if (newest) {
       saveCursor(runKey(newest))
     }
+
+    await pollSuggestions()
   } catch {
     // The backend may be starting/restarting; the next poll catches up.
   } finally {

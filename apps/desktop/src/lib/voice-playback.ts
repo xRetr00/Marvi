@@ -54,6 +54,18 @@ function pcm16Base64ToFloat32(encoded: string): Float32Array {
   return samples
 }
 
+export function voicePlaybackLevel(samples: Float32Array): number {
+  let energy = 0
+  for (let i = 0; i < samples.length; i += 1) {
+    energy += samples[i] * samples[i]
+  }
+  return samples.length ? Math.min(1, Math.sqrt(energy / samples.length) * 4) : 0
+}
+
+function idlePlaybackState(sequence: number): VoicePlaybackState {
+  return { audioElement: null, caption: null, level: 0, messageId: null, sequence, source: null, status: 'idle' }
+}
+
 /**
  * Gapless streaming TTS player. Text segments are enqueued as the LLM streams;
  * the player synthesizes the next segment while the current one plays and
@@ -76,6 +88,7 @@ class GaplessPlayer {
   private closed = true
   private stopped = false
   private playedChunks = 0
+  private caption: string | null = null
   private sequence = 0
   private abort: AbortController | null = null
   private readonly sources = new Set<AudioBufferSourceNode>()
@@ -121,6 +134,7 @@ class GaplessPlayer {
     this.started = false
     this.primed = false
     this.playedChunks = 0
+    this.caption = null
     this.queue = []
     this.nextTime = 0
     // Abandon any stale pump from a previous session (e.g. a fetch that never
@@ -139,6 +153,8 @@ class GaplessPlayer {
 
     setVoicePlaybackState({
       audioElement: null,
+      caption: null,
+      level: 0,
       messageId: options.messageId ?? null,
       sequence: this.sequence,
       source: options.source,
@@ -159,6 +175,8 @@ class GaplessPlayer {
     }
 
     rememberSpokenText(clean)
+    this.caption = clean
+    this.publishOutput(0)
     this.queue.push(clean)
     void this.pump()
   }
@@ -216,7 +234,7 @@ class GaplessPlayer {
     this.ctx = null
 
     if (publishIdle && wasActive) {
-      setVoicePlaybackState({ audioElement: null, messageId: null, sequence: this.sequence, source: null, status: 'idle' })
+      setVoicePlaybackState(idlePlaybackState(this.sequence))
     }
 
     this.resolveDrain()
@@ -288,7 +306,7 @@ class GaplessPlayer {
     // Only clear the shared state if it still belongs to this session (a newer
     // session may already have taken over).
     if ($voicePlayback.get().sequence === this.sequence) {
-      setVoicePlaybackState({ audioElement: null, messageId: null, sequence: this.sequence, source: null, status: 'idle' })
+      setVoicePlaybackState(idlePlaybackState(this.sequence))
     }
 
     this.resolveDrain()
@@ -369,6 +387,7 @@ class GaplessPlayer {
     this.primeOnce()
 
     const samples = pcm16Base64ToFloat32(encoded)
+    const level = voicePlaybackLevel(samples)
     const audioBuffer = this.ctx.createBuffer(1, samples.length, this.sampleRate)
     audioBuffer.getChannelData(0).set(samples)
     const source = this.ctx.createBufferSource()
@@ -381,9 +400,28 @@ class GaplessPlayer {
     this.nextTime += samples.length / this.sampleRate
     this.started = true
     this.playedChunks += 1
+    this.publishOutput(level)
 
     this.sources.add(source)
-    source.onended = () => this.sources.delete(source)
+    source.onended = () => {
+      this.sources.delete(source)
+      if (this.sources.size === 0) {
+        this.publishOutput(0)
+      }
+    }
+  }
+
+  private publishOutput(level: number): void {
+    const current = $voicePlayback.get()
+    if (current.sequence !== this.sequence || this.closed) {
+      return
+    }
+
+    setVoicePlaybackState({
+      ...current,
+      caption: this.caption,
+      level
+    })
   }
 }
 
@@ -428,7 +466,7 @@ export function stopVoicePlayback(): void {
   legacySequence += 1
   gaplessPlayer.stop()
   stopLegacyAudio()
-  setVoicePlaybackState({ audioElement: null, messageId: null, sequence: gaplessPlayer.sequenceId, source: null, status: 'idle' })
+  setVoicePlaybackState(idlePlaybackState(gaplessPlayer.sequenceId))
 }
 
 /**
@@ -461,14 +499,22 @@ export async function playSpeechText(text: string, options: VoicePlaybackOptions
   const ownSequence = ++legacySequence
   const isCurrent = () => ownSequence === legacySequence
 
-  setVoicePlaybackState({ audioElement: null, messageId: options.messageId ?? null, sequence: ownSequence, source: options.source, status: 'preparing' })
+  setVoicePlaybackState({
+    audioElement: null,
+    caption: speakableText,
+    level: 0,
+    messageId: options.messageId ?? null,
+    sequence: ownSequence,
+    source: options.source,
+    status: 'preparing'
+  })
 
   let response: { data_url: string }
   try {
     response = await speakText(speakableText)
   } catch {
     if (isCurrent()) {
-      setVoicePlaybackState({ audioElement: null, messageId: null, sequence: ownSequence, source: null, status: 'idle' })
+      setVoicePlaybackState(idlePlaybackState(ownSequence))
     }
     return false
   }
@@ -479,7 +525,17 @@ export async function playSpeechText(text: string, options: VoicePlaybackOptions
 
   const audio = new Audio(response.data_url)
   currentAudio = audio
-  setVoicePlaybackState({ audioElement: audio, messageId: options.messageId ?? null, sequence: ownSequence, source: options.source, status: 'speaking' })
+  // The legacy clip has no PCM stream to meter; a steady baseline still makes
+  // its island waveform visibly speak instead of looking frozen.
+  setVoicePlaybackState({
+    audioElement: audio,
+    caption: speakableText,
+    level: 0.35,
+    messageId: options.messageId ?? null,
+    sequence: ownSequence,
+    source: options.source,
+    status: 'speaking'
+  })
 
   try {
     await new Promise<void>((resolve, reject) => {
@@ -523,7 +579,7 @@ export async function playSpeechText(text: string, options: VoicePlaybackOptions
   } finally {
     if (isCurrent()) {
       currentAudio = null
-      setVoicePlaybackState({ audioElement: null, messageId: null, sequence: ownSequence, source: null, status: 'idle' })
+      setVoicePlaybackState(idlePlaybackState(ownSequence))
     }
   }
 

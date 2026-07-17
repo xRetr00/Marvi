@@ -34,13 +34,29 @@ vi.mock('./use-mic-recorder', () => ({
 
 describe('useReadAloudBargeIn', () => {
   beforeEach(() => {
-    setVoicePlaybackState({ audioElement: null, messageId: null, sequence: 0, source: null, status: 'idle' })
+    setVoicePlaybackState({
+      audioElement: null,
+      caption: null,
+      level: 0,
+      messageId: null,
+      sequence: 0,
+      source: null,
+      status: 'idle'
+    })
     vi.clearAllMocks()
   })
 
   afterEach(() => {
     cleanup()
-    setVoicePlaybackState({ audioElement: null, messageId: null, sequence: 0, source: null, status: 'idle' })
+    setVoicePlaybackState({
+      audioElement: null,
+      caption: null,
+      level: 0,
+      messageId: null,
+      sequence: 0,
+      source: null,
+      status: 'idle'
+    })
     vi.clearAllMocks()
   })
 
@@ -52,7 +68,15 @@ describe('useReadAloudBargeIn', () => {
 
     renderHook(() => useReadAloudBargeIn({ enabled: true, blocked: false }))
 
-    setVoicePlaybackState({ audioElement: null, messageId: 'm1', sequence: 1, source: 'read-aloud', status: 'speaking' })
+    setVoicePlaybackState({
+      audioElement: null,
+      caption: 'Hello',
+      level: 0.4,
+      messageId: 'm1',
+      sequence: 1,
+      source: 'read-aloud',
+      status: 'speaking'
+    })
     await waitFor(() => expect(startMic).toHaveBeenCalled())
 
     onLevel?.(0.8)
@@ -68,7 +92,15 @@ describe('useReadAloudBargeIn', () => {
   it('does not listen while another voice mode is active', async () => {
     renderHook(() => useReadAloudBargeIn({ enabled: true, blocked: true }))
 
-    setVoicePlaybackState({ audioElement: null, messageId: 'm1', sequence: 1, source: 'read-aloud', status: 'speaking' })
+    setVoicePlaybackState({
+      audioElement: null,
+      caption: 'Hello',
+      level: 0.4,
+      messageId: 'm1',
+      sequence: 1,
+      source: 'read-aloud',
+      status: 'speaking'
+    })
     await new Promise(resolve => window.setTimeout(resolve, 0))
 
     expect(startMic).not.toHaveBeenCalled()

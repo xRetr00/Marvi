@@ -146,15 +146,16 @@ export const $voiceState = computed(
   (conv, wakeStatus, userCaption, playback, bargeInEnabled): VoiceState => {
     const playbackSpeaking = playback.status === 'speaking'
     const phase = deriveVoicePhase({ active: conv.active, voiceStatus: conv.status, wakeStatus, playbackSpeaking })
+    const standalonePlayback = playbackSpeaking && !conv.active
 
     return {
       bargeable: phase === 'speaking' && bargeInEnabled,
-      caption: conv.caption,
+      caption: standalonePlayback ? playback.caption : conv.caption,
       deepWorking: conv.active ? conv.deepWorking : false,
       deepMode: conv.active ? conv.deepMode : null,
       activity: conv.active ? conv.activity : null,
       label: conv.active ? conv.label : null,
-      level: conv.level,
+      level: standalonePlayback ? playback.level : conv.level,
       muted: conv.muted,
       phase,
       speakerBadge: conv.active ? conv.speakerBadge : null,

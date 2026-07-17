@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { createGaplessPlayerForTest, playSpeechText, stopVoicePlayback } from './voice-playback'
+import { createGaplessPlayerForTest, playSpeechText, stopVoicePlayback, voicePlaybackLevel } from './voice-playback'
 
 const speakText = vi.fn()
 
@@ -247,6 +247,14 @@ describe('playSpeechText', () => {
 
     expect(fetch).toHaveBeenCalled()
     expect(speakText).toHaveBeenCalledWith('Hello.')
+  })
+})
+
+describe('voicePlaybackLevel', () => {
+  it('turns PCM output energy into a capped island level', () => {
+    expect(voicePlaybackLevel(new Float32Array())).toBe(0)
+    expect(voicePlaybackLevel(new Float32Array([0.1, -0.1]))).toBeCloseTo(0.4)
+    expect(voicePlaybackLevel(new Float32Array([1, -1]))).toBe(1)
   })
 })
 

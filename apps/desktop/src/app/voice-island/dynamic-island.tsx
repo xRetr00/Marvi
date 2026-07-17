@@ -48,7 +48,8 @@ const PILL_SHADOW = [
   'inset 0 -1px 0 rgba(255,255,255,0.02)'
 ].join(', ')
 
-const SPRING = { type: 'spring', stiffness: 460, damping: 38, mass: 0.8 } as const
+const APPEAR_SPRING = { type: 'spring', stiffness: 420, damping: 32, mass: 0.78 } as const
+const RECESS_SPRING = { type: 'spring', stiffness: 520, damping: 42, mass: 0.72 } as const
 
 const CONTENT_TRANSITION_MOTION = { duration: 0.16, ease: 'easeOut' } as const
 const CONTENT_TRANSITION_INSTANT = { duration: 0 } as const
@@ -187,7 +188,7 @@ export function DynamicIsland({
   const showActivityLabel = duplexDriven ? true : !(state.phase === 'thinking' && caption)
 
   const contentTransition = reducedMotion ? CONTENT_TRANSITION_INSTANT : CONTENT_TRANSITION_MOTION
-  const springTransition = reducedMotion ? CONTENT_TRANSITION_INSTANT : SPRING
+  const springTransition = reducedMotion ? CONTENT_TRANSITION_INSTANT : view === 'seed' ? RECESS_SPRING : APPEAR_SPRING
 
   // Note: the key intentionally excludes caption text — captions update a
   // few times/sec on streaming partials, and re-keying here would replay the
@@ -210,9 +211,16 @@ export function DynamicIsland({
 
   return (
     <motion.div
-      animate={{ y: view === 'seed' ? -15 : 8, opacity: 1 }}
-      initial={reducedMotion ? false : { y: -34, opacity: 0.7, scale: 0.92 }}
+      animate={
+        view === 'seed'
+          ? { y: -6, opacity: 0.88, scaleX: 0.72, scaleY: 0.38 }
+          : { y: 8, opacity: 1, scaleX: 1, scaleY: 1 }
+      }
+      aria-live="polite"
+      data-island-view={view}
+      initial={reducedMotion ? false : { y: -10, opacity: 0, scaleX: 0.58, scaleY: 0.3 }}
       layout
+      role="status"
       style={{
         transformOrigin: 'center top',
         marginTop: 0,
@@ -229,7 +237,8 @@ export function DynamicIsland({
         padding: `${padY}px ${padX}px`,
         overflow: 'hidden',
         color: '#f2f2f7',
-        fontFamily: 'system-ui, -apple-system, sans-serif'
+        fontFamily: 'system-ui, -apple-system, sans-serif',
+        willChange: 'transform, width, height'
       }}
       transition={springTransition}
     >
@@ -254,7 +263,10 @@ export function DynamicIsland({
             style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}
             transition={contentTransition}
           >
-            <span
+            <motion.span
+              animate={
+                reducedMotion ? { opacity: 0.55, scaleX: 1 } : { opacity: [0.32, 0.72, 0.32], scaleX: [0.78, 1, 0.78] }
+              }
               style={{
                 width: 48,
                 height: 2,
@@ -262,6 +274,7 @@ export function DynamicIsland({
                 background:
                   'linear-gradient(90deg, transparent, rgba(110,168,255,0.28), rgba(181,126,255,0.22), transparent)'
               }}
+              transition={reducedMotion ? undefined : { duration: 3.2, ease: 'easeInOut', repeat: Infinity }}
             />
           </motion.div>
         ) : view === 'idle' ? (
@@ -290,6 +303,12 @@ export function DynamicIsland({
             {card ? (
               <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 7 }}>
                 <CardContent card={card} onCardAction={onCardAction} />
+                {state.phase === 'speaking' ? (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+                    <IslandWaveform active height={14} level={displayLevel} width={112} />
+                    <span style={{ color: 'rgba(255,255,255,0.5)', fontSize: 10, fontWeight: 550 }}>Speaking</span>
+                  </div>
+                ) : null}
                 {state.deepWorking ? (
                   <DeepWorkBadge mode={state.deepMode} reducedMotion={Boolean(reducedMotion)} />
                 ) : null}

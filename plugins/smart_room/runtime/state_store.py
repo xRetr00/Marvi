@@ -10,6 +10,8 @@ import json
 import logging
 import shutil
 import threading
+from collections import deque
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict
 
@@ -19,6 +21,8 @@ from plugins.smart_room.runtime.models import RoomState
 
 logger = logging.getLogger(__name__)
 _events_lock = threading.Lock()
+_locations_lock = threading.Lock()
+_last_location_keys: Dict[str, str] = {}
 
 
 def state_path() -> Path:
@@ -77,6 +81,91 @@ def load_config() -> Dict[str, Any]:
 
 def events_path() -> Path:
     return Path(get_hermes_home()) / "smart_room" / "events.jsonl"
+
+
+def locations_path() -> Path:
+    return Path(get_hermes_home()) / "smart_room" / "locations.jsonl"
+
+
+def append_location_report(topic: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+    """Preserve one OwnTracks report as append-only local JSONL."""
+    received_at = datetime.now(timezone.utc).isoformat()
+    try:
+        reported_at = datetime.fromtimestamp(float(payload.get("tst")), timezone.utc).isoformat()
+    except (TypeError, ValueError, OSError):
+        reported_at = received_at
+    regions = payload.get("inregions")
+    zone = str(payload.get("desc") or (regions[0] if isinstance(regions, list) and regions else "")).strip().lower()
+    record = {
+        "received_at": received_at,
+        "reported_at": reported_at,
+        "topic": str(topic),
+        "type": str(payload.get("_type") or "unknown"),
+        "event": str(payload.get("event") or ""),
+        "zone": zone,
+        "latitude": payload.get("lat"),
+        "longitude": payload.get("lon"),
+        "accuracy_m": payload.get("acc"),
+        "altitude_m": payload.get("alt"),
+        "velocity_kmh": payload.get("vel"),
+        "course": payload.get("cog"),
+        "battery_percent": payload.get("batt"),
+        "trigger": payload.get("t"),
+        "connection": payload.get("conn"),
+        "data": payload,
+    }
+    path = locations_path()
+    key = json.dumps([str(topic), reported_at, payload], ensure_ascii=False, sort_keys=True)
+    with _locations_lock:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path_key = str(path)
+        if path_key not in _last_location_keys and path.exists():
+            last_line = ""
+            with path.open("r", encoding="utf-8") as handle:
+                for last_line in handle:
+                    pass
+            try:
+                previous = json.loads(last_line)
+                _last_location_keys[path_key] = json.dumps(
+                    [previous.get("topic", ""), previous.get("reported_at", ""), previous.get("data", {})],
+                    ensure_ascii=False,
+                    sort_keys=True,
+                )
+            except (json.JSONDecodeError, AttributeError):
+                pass
+        if _last_location_keys.get(path_key) == key:
+            return {**record, "duplicate": True}
+        with path.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(record, ensure_ascii=False) + "\n")
+        _last_location_keys[path_key] = key
+    return record
+
+
+def load_location_reports(
+    *, limit: int = 20, since: str = "", until: str = "", zone: str = ""
+) -> list[Dict[str, Any]]:
+    """Read the latest matching OwnTracks reports without loading the whole log."""
+    path = locations_path()
+    if not path.exists():
+        return []
+    # ponytail: JSONL scan is O(n); move to SQLite only when this log becomes measurably slow.
+    matches: deque[Dict[str, Any]] = deque(maxlen=max(1, min(int(limit), 500)))
+    zone = zone.strip().lower()
+    with path.open("r", encoding="utf-8") as handle:
+        for line in handle:
+            try:
+                record = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            stamp = str(record.get("reported_at") or record.get("received_at") or "")
+            if since and stamp < since:
+                continue
+            if until and stamp > until:
+                continue
+            if zone and str(record.get("zone") or "").lower() != zone:
+                continue
+            matches.append(record)
+    return list(matches)
 
 
 def append_transition(event: Dict[str, Any]) -> None:

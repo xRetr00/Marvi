@@ -13,6 +13,7 @@ from typing import Any, Dict
 
 from plugins.smart_room.runtime.models import RoomState
 from plugins.smart_room.runtime.health import check_device_health
+from plugins.smart_room.runtime.state_store import load_location_reports
 
 logger = logging.getLogger(__name__)
 
@@ -59,7 +60,18 @@ class CommandRouter:
         }
 
     def _handle_get_state(self, params: Dict[str, Any]) -> Dict[str, Any]:
-        return {"success": True, "state": self._state_dict()}
+        try:
+            limit = max(1, min(int(params.get("location_limit", 20)), 500))
+        except (TypeError, ValueError):
+            return {"success": False, "error": "location_limit must be an integer"}
+        state = self._state_dict()
+        state["location_history"] = load_location_reports(
+            limit=limit,
+            since=str(params.get("location_since") or ""),
+            until=str(params.get("location_until") or ""),
+            zone=str(params.get("location_zone") or ""),
+        )
+        return {"success": True, "state": state}
 
     def _state_dict(self) -> Dict[str, Any]:
         lock = getattr(self._runtime, "_state_lock", None)

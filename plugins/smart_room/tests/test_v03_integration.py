@@ -23,7 +23,7 @@ from plugins.smart_room.runtime.app import Runtime
 from plugins.smart_room.runtime.models import MmWaveState, PhoneLocation, Presence, RoomState
 from plugins.smart_room.runtime.presence_fusion import fuse
 from plugins.smart_room.runtime.scheduler import Scheduler
-from plugins.smart_room.runtime.state_store import append_transition
+from plugins.smart_room.runtime.state_store import append_location_report, append_transition, load_location_reports
 from plugins.smart_room.runtime.state_store import save_state
 from plugins.smart_room.tools import handle_smart_room_state
 
@@ -205,6 +205,41 @@ def test_guest_welcome_does_not_repeat_an_llm_generated_absence(monkeypatch):
     Runtime({"owner": "Shereef"})._publish_welcome(False, "Shereef", record_arrival=False)
 
     assert published == ["Welcome! Shereef isn't around at the moment, but I'm here to help."]
+
+
+def test_arrival_welcome_uses_fused_owner_identity_when_ble_is_sleeping(monkeypatch):
+    runtime = Runtime({"owner": "Shereef"})
+    runtime._state.mmwave.occupied = True
+    runtime._state.presence.detected = True
+    runtime._state.presence.source = "geofence_mmwave"
+    runtime._ble_detected = False
+    published = MagicMock()
+    monkeypatch.setattr(runtime, "_publish_welcome", published)
+
+    runtime._deliver_welcome()
+
+    published.assert_called_once_with(True, "Shereef", record_arrival=True)
+
+
+def test_owntracks_history_preserves_details_and_filters():
+    location = {
+        "_type": "location", "lat": 41.1, "lon": 29.2, "acc": 12,
+        "batt": 87, "inregions": ["Home"], "tst": 1784358126,
+    }
+    append_location_report("owntracks/smart_room/iphone", location)
+    duplicate = append_location_report("owntracks/smart_room/iphone", location)
+    append_location_report("owntracks/smart_room/iphone", {
+        "_type": "transition", "event": "leave", "desc": "Home", "tst": 1784359000,
+    })
+
+    reports = load_location_reports(limit=10, zone="home")
+
+    assert len(reports) == 2
+    assert duplicate["duplicate"] is True
+    assert reports[0]["latitude"] == 41.1
+    assert reports[0]["accuracy_m"] == 12
+    assert reports[0]["data"]["batt"] == 87
+    assert reports[1]["event"] == "leave"
 
 
 def test_welcome_activity_has_a_dedicated_tts_source(monkeypatch):

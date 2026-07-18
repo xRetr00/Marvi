@@ -156,6 +156,20 @@ def build_context_line() -> Optional[str]:
         parts.append("phone: home")
     elif loc.get("zone") not in {None, "", "unknown"}:
         parts.append(f"phone: {loc['zone']}")
+    try:
+        from plugins.smart_room.runtime.state_store import load_location_reports
+
+        latest = load_location_reports(limit=1)
+        if latest:
+            report = latest[-1]
+            detail = f"OwnTracks {report.get('reported_at')}"
+            if report.get("latitude") is not None and report.get("longitude") is not None:
+                detail += f" ({report['latitude']}, {report['longitude']} ±{report.get('accuracy_m', '?')}m)"
+            if report.get("event"):
+                detail += f" {report['event']} {report.get('zone') or 'unknown'}"
+            parts.append(detail)
+    except Exception:
+        pass
 
     # Light
     light = state.get("light", {})

@@ -41,6 +41,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspa
 
 from plugins.smart_room.runtime.models import ActiveAlarm, Alarm, RoomState, now_iso, DeviceHealth, VALID_MODES
 from plugins.smart_room.runtime.state_store import (
+    append_location_report,
     append_transition,
     load_config,
     load_state,
@@ -149,6 +150,7 @@ class Runtime:
                 on_geofence=self._on_geofence,
                 on_command=self._on_mqtt_command,
                 on_node_status=self._on_esp32_status,
+                on_owntracks=self._on_owntracks,
             )
             self._mqtt.start()
         except Exception as e:
@@ -371,6 +373,17 @@ class Runtime:
             at=now_iso(),
             delivery_id=f"owntracks:{transition}:{zone}:{int(time.time())}",
             source="owntracks",
+        )
+
+    def _on_owntracks(self, topic: str, payload: Dict[str, Any]) -> None:
+        record = append_location_report(topic, payload)
+        if record.get("duplicate"):
+            logger.debug("Ignored duplicate retained OwnTracks report at=%s", record["reported_at"])
+            return
+        logger.info(
+            "OwnTracks report recorded type=%s event=%s zone=%s at=%s lat=%s lon=%s accuracy_m=%s",
+            record["type"], record["event"], record["zone"], record["reported_at"],
+            record["latitude"], record["longitude"], record["accuracy_m"],
         )
 
     @_state_locked
@@ -638,7 +651,7 @@ class Runtime:
         with self._state_lock:
             if not self._state.mmwave.occupied or self._state.modes.active_mode == "sleep":
                 return
-            owner_detected = self._ble_detected
+            owner_detected = self._state.presence.detected
 
         self._publish_welcome(owner_detected, self._owner_name, record_arrival=True)
 

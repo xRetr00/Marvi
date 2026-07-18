@@ -50,10 +50,16 @@ SMART_ROOM_STATE_SCHEMA: Dict[str, Any] = {
         "Get the full smart room state snapshot: presence (BLE+mmWave+geofence "
         "fusion), light state (on/off, brightness, color, scene), active mode, "
         "device health (bulb, HE20 sensor, ESP32), phone location, and flags."
+        " Includes detailed timestamped OwnTracks history; use the location filters for past movements."
     ),
     "parameters": {
         "type": "object",
-        "properties": {},
+        "properties": {
+            "location_limit": {"type": "integer", "minimum": 1, "maximum": 500, "default": 20},
+            "location_since": {"type": "string", "description": "Optional ISO timestamp lower bound."},
+            "location_until": {"type": "string", "description": "Optional ISO timestamp upper bound."},
+            "location_zone": {"type": "string", "description": "Optional exact geofence zone."},
+        },
         "additionalProperties": False,
     },
 }
@@ -167,7 +173,7 @@ def _err(msg: str, **extra) -> str:
 
 def handle_smart_room_state(args: Dict[str, Any], **_kw) -> str:
     try:
-        return _json(call_runtime("get_state", {}))
+        return _json(call_runtime("get_state", args))
     except RuntimeError as e:
         return _err(str(e), code="DEVICE_TIMEOUT")
 

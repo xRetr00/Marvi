@@ -621,8 +621,12 @@ providers, installers, setup options, documentation, or UI wiring from upstream.
 Keep wake-word config routing through the contribution shell, Parakeet EOU
 validation, first-word TTS startup, delayed `speaker_update` attribution,
 instant-lane local-time injection, and retained OwnTracks history in runtime,
-tools, world context, and Desktop Settings. Also retain the OpenCode Go
-DeepSeek V4 explicit thinking-disable passthrough.
+tools, world context, and Desktop Settings. Preserve Smart Room entry tracking:
+BLE-confirmed owner classification, guest/unknown visitor classification,
+bounded persisted unreported-entry history, world-context exposure, and the
+owner-return voice notice/clear flow even when the welcome threshold suppresses
+a greeting. Also retain the OpenCode Go DeepSeek V4 explicit thinking-disable
+passthrough.
 
 For every upstream sync, first run
 `python scripts/prepare_marvi_upstream_sync.py --review-only`. Resolve against

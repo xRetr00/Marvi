@@ -80,8 +80,11 @@ upstream.
 Recent protected behavior also includes contribution-shell wake-word routing,
 Parakeet EOU validation, first-word TTS startup, delayed speaker attribution,
 instant-lane local-time injection, retained OwnTracks location history across
-runtime/tools/world context/Desktop Settings, and the OpenCode Go DeepSeek V4
-thinking-disable passthrough.
+runtime/tools/world context/Desktop Settings, and Smart Room entry tracking.
+Keep BLE-confirmed owner classification, guest/unknown visitor classification,
+bounded persisted unreported-entry history, world-context exposure, and the
+owner-return voice notice/clear flow even when the welcome threshold suppresses
+a greeting. Also keep the OpenCode Go DeepSeek V4 thinking-disable passthrough.
 
 Run `python scripts/prepare_marvi_upstream_sync.py --review-only` before an
 upstream merge. Use its protected-overlap report during conflict resolution,

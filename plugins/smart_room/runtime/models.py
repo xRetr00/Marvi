@@ -131,6 +131,7 @@ class RoomState:
     sleep_restore: Dict[str, Any] = field(default_factory=dict)
     room_empty_since: Optional[str] = None
     last_welcome_at: Optional[str] = None
+    unreported_visitor_entries: List[Dict[str, Any]] = field(default_factory=list)
     alarms: List[Alarm] = field(default_factory=list)
     active_alarm: Optional[ActiveAlarm] = None
     alarm_restore: Dict[str, Any] = field(default_factory=dict)
@@ -193,6 +194,9 @@ class RoomState:
             state.sleep_restore = d["sleep_restore"]
         state.room_empty_since = d.get("room_empty_since")
         state.last_welcome_at = d.get("last_welcome_at")
+        state.unreported_visitor_entries = [
+            item for item in d.get("unreported_visitor_entries", []) if isinstance(item, dict)
+        ][-100:]
         state.alarms = [Alarm(**item) for item in d.get("alarms", []) if isinstance(item, dict)]
         if isinstance(d.get("active_alarm"), dict):
             state.active_alarm = ActiveAlarm(**d["active_alarm"])

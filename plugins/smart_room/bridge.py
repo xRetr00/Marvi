@@ -190,6 +190,13 @@ def build_context_line() -> Optional[str]:
     active_alarm = state.get("active_alarm")
     if isinstance(active_alarm, dict):
         parts.append(f"active alarm: {active_alarm.get('name', 'Alarm')} ({active_alarm.get('phase', 'active')})")
+    visitor_entries = state.get("unreported_visitor_entries") or []
+    if visitor_entries:
+        latest = visitor_entries[-1]
+        parts.append(
+            f"{len(visitor_entries)} unreported visitor entry/entries; "
+            f"latest {latest.get('classification', 'visitor')} at {latest.get('at', 'unknown time')}"
+        )
 
     if not parts:
         return None

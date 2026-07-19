@@ -119,7 +119,7 @@ def test_he20_clear_event_is_delayed_and_edge_triggered(monkeypatch):
     assert emitted == [("presence_cleared", {"source": "mmwave"})]
 
 
-def test_welcome_requires_one_hour_empty(monkeypatch):
+def test_entry_is_tracked_but_welcome_requires_one_hour_empty(monkeypatch):
     runtime = Runtime({
         "owner": "Shereef",
         "welcome": {"enabled": True, "reset_after_seconds": 3600, "identity_grace_seconds": 0},
@@ -128,11 +128,14 @@ def test_welcome_requires_one_hour_empty(monkeypatch):
     timer = MagicMock()
     monkeypatch.setattr(threading, "Timer", lambda *_args, **_kwargs: timer)
     runtime._handle_welcome_transition(False, True)
-    timer.start.assert_not_called()
+    timer.start.assert_called_once()
+    assert runtime._pending_entry_should_welcome is False
 
+    timer.reset_mock()
     runtime._state.room_empty_since = (datetime.now(timezone.utc) - timedelta(hours=1, seconds=1)).isoformat()
     runtime._handle_welcome_transition(False, True)
     timer.start.assert_called_once()
+    assert runtime._pending_entry_should_welcome is True
 
 
 def test_welcome_preview_uses_voice_instant_without_recording_arrival(monkeypatch):
@@ -162,6 +165,26 @@ def test_welcome_preview_uses_voice_instant_without_recording_arrival(monkeypatc
     assert calls[0]["task"] == "voice_instant"
     assert published == ["Welcome home, Shereef."]
     assert runtime._state.last_welcome_at is None
+
+
+def test_owner_welcome_rejects_detection_meta_language(monkeypatch):
+    import agent.auxiliary_client as auxiliary_client
+    import plugins.smart_room.runtime.app as app_module
+
+    monkeypatch.setitem(sys.modules, "agent.prompt_builder", SimpleNamespace(load_soul_md=lambda: ""))
+    monkeypatch.setattr(
+        auxiliary_client,
+        "call_llm",
+        lambda **_kwargs: SimpleNamespace(choices=[SimpleNamespace(
+            message=SimpleNamespace(content="Welcome Shereef, I detected you as the owner.")
+        )]),
+    )
+    published = []
+    monkeypatch.setattr(app_module, "publish_welcome", published.append)
+
+    Runtime({"owner": "Shereef"})._publish_welcome(True, "Shereef", record_arrival=False)
+
+    assert published == ["Welcome back, Shereef."]
 
 
 def test_guest_welcome_always_says_the_configured_owner_is_away(monkeypatch):
@@ -207,18 +230,59 @@ def test_guest_welcome_does_not_repeat_an_llm_generated_absence(monkeypatch):
     assert published == ["Welcome! Shereef isn't around at the moment, but I'm here to help."]
 
 
-def test_arrival_welcome_uses_fused_owner_identity_when_ble_is_sleeping(monkeypatch):
+def test_room_entry_uses_ble_for_owner_not_geofence_fusion(monkeypatch):
     runtime = Runtime({"owner": "Shereef"})
     runtime._state.mmwave.occupied = True
     runtime._state.presence.detected = True
     runtime._state.presence.source = "geofence_mmwave"
+    runtime._state.location.home = True
     runtime._ble_detected = False
+    runtime._pending_entry_at = "2026-07-19T10:00:00+00:00"
+    runtime._pending_entry_should_welcome = False
     published = MagicMock()
+    emitted = MagicMock()
     monkeypatch.setattr(runtime, "_publish_welcome", published)
+    monkeypatch.setattr(runtime, "_emit_event", emitted)
 
     runtime._deliver_welcome()
 
-    published.assert_called_once_with(True, "Shereef", record_arrival=True)
+    published.assert_not_called()
+    assert runtime._state.unreported_visitor_entries == [{
+        "at": "2026-07-19T10:00:00+00:00",
+        "classification": "guest",
+        "owner_phone_home": True,
+    }]
+    assert emitted.call_args.args[1]["classification"] == "guest"
+
+
+def test_next_confirmed_owner_welcome_reports_and_clears_visitor_entries(monkeypatch):
+    runtime = Runtime({"owner": "Shereef"})
+    runtime._state.mmwave.occupied = True
+    runtime._state.location.home = True
+    runtime._state.unreported_visitor_entries = [{
+        "at": "2026-07-19T10:00:00+00:00",
+        "classification": "unknown_visitor",
+        "owner_phone_home": False,
+    }]
+    runtime._ble_detected = True
+    runtime._pending_entry_should_welcome = True
+    published = MagicMock()
+    monkeypatch.setattr(runtime, "_publish_welcome", published)
+    monkeypatch.setattr(runtime, "_emit_event", MagicMock())
+
+    runtime._deliver_welcome()
+
+    published.assert_called_once_with(
+        True,
+        "Shereef",
+        record_arrival=True,
+        visitor_entries=[{
+            "at": "2026-07-19T10:00:00+00:00",
+            "classification": "unknown_visitor",
+            "owner_phone_home": False,
+        }],
+    )
+    assert runtime._state.unreported_visitor_entries == []
 
 
 def test_owntracks_history_preserves_details_and_filters():

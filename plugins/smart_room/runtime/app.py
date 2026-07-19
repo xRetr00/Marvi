@@ -97,6 +97,8 @@ class Runtime:
         self._command_lock = threading.RLock()
         self._pending_mode_timer: Optional[threading.Timer] = None
         self._pending_welcome_timer: Optional[threading.Timer] = None
+        self._pending_entry_at: Optional[str] = None
+        self._pending_entry_should_welcome = False
         self._ble_detected = False
         self._ble_rssi: Optional[int] = None
         self._last_ble_seen_monotonic = 0.0
@@ -313,6 +315,7 @@ class Runtime:
                 "light_changed",
                 "sleep_cancelled",
                 "alarm_acknowledged",
+                "room_entry",
             }:
                 event["summary"] = data.get("summary") or event_type.replace("_", " ")
                 append_transition(event)
@@ -618,8 +621,6 @@ class Runtime:
 
     def _handle_welcome_transition(self, was_occupied: bool, occupied: bool) -> None:
         welcome = self._config.get("welcome") or {}
-        if not welcome.get("enabled", True):
-            return
         if not occupied:
             if was_occupied:
                 self._state.room_empty_since = now_iso()
@@ -631,16 +632,20 @@ class Runtime:
         empty_since = self._state.room_empty_since
         self._state.room_empty_since = None
         save_state(self._state)
+        should_welcome = False
         try:
             empty_at = datetime.fromisoformat(str(empty_since).replace("Z", "+00:00"))
             empty_seconds = (datetime.now(timezone.utc) - empty_at.astimezone(timezone.utc)).total_seconds()
+            should_welcome = bool(welcome.get("enabled", True)) and empty_seconds >= max(
+                60, int(welcome.get("reset_after_seconds", 3600))
+            )
         except (TypeError, ValueError):
-            return
-        if empty_seconds < max(60, int(welcome.get("reset_after_seconds", 3600))):
-            return
+            pass
 
         if self._pending_welcome_timer:
             self._pending_welcome_timer.cancel()
+        self._pending_entry_at = now_iso()
+        self._pending_entry_should_welcome = should_welcome
         delay = max(0, int(welcome.get("identity_grace_seconds", 4)))
         self._pending_welcome_timer = threading.Timer(delay, self._deliver_welcome)
         self._pending_welcome_timer.daemon = True
@@ -651,9 +656,46 @@ class Runtime:
         with self._state_lock:
             if not self._state.mmwave.occupied or self._state.modes.active_mode == "sleep":
                 return
-            owner_detected = self._state.presence.detected
+            entry_at = self._pending_entry_at or now_iso()
+            should_welcome = self._pending_entry_should_welcome
+            self._pending_entry_at = None
+            self._pending_entry_should_welcome = False
+            # mmWave proves occupancy and OwnTracks proves the phone is home;
+            # only the enrolled ESPresense BLE identity proves it is the owner.
+            owner_detected = self._ble_detected
+            phone_home = self._state.location.home
+            classification = "owner" if owner_detected else ("guest" if phone_home else "unknown_visitor")
+            pending_entries = list(self._state.unreported_visitor_entries) if owner_detected else []
+            if not owner_detected:
+                self._state.unreported_visitor_entries.append({
+                    "at": entry_at,
+                    "classification": classification,
+                    "owner_phone_home": phone_home,
+                })
+                self._state.unreported_visitor_entries = self._state.unreported_visitor_entries[-100:]
 
-        self._publish_welcome(owner_detected, self._owner_name, record_arrival=True)
+        self._emit_event("room_entry", {
+            "entry_at": entry_at,
+            "classification": classification,
+            "owner_phone_home": phone_home,
+            "summary": f"{classification.replace('_', ' ').title()} entered the room",
+        })
+        if not should_welcome:
+            return
+        self._publish_welcome(
+            owner_detected,
+            self._owner_name,
+            record_arrival=True,
+            visitor_entries=pending_entries,
+        )
+        if owner_detected and pending_entries:
+            with self._state_lock:
+                reported = {str(item.get("at")) for item in pending_entries}
+                self._state.unreported_visitor_entries = [
+                    item for item in self._state.unreported_visitor_entries
+                    if str(item.get("at")) not in reported
+                ]
+                save_state(self._state)
 
     def test_welcome(self, audience: str) -> None:
         """Generate a real welcome preview without changing arrival state."""
@@ -669,29 +711,36 @@ class Runtime:
         thread.start()
 
     def _publish_welcome(
-        self, owner_detected: bool, owner_name: str, *, record_arrival: bool
+        self,
+        owner_detected: bool,
+        owner_name: str,
+        *,
+        record_arrival: bool,
+        visitor_entries: Optional[list[Dict[str, Any]]] = None,
     ) -> None:
         """Generate through auxiliary.voice_instant and publish to the TTS lane."""
 
+        visitor_notice = self._visitor_notice(visitor_entries or []) if owner_detected else ""
         fallback = (
-            f"Welcome back, {owner_name}."
+            f"Welcome back, {owner_name}." + (f" {visitor_notice}" if visitor_notice else "")
             if owner_detected
-            else f"Welcome. {owner_name}, the owner, isn't here right now."
+            else f"Welcome. {owner_name} isn't here right now."
         )
         try:
             from agent.auxiliary_client import call_llm
             from agent.message_content import flatten_message_text
             from agent.prompt_builder import load_soul_md
 
-            identity = (
-                f"The detected person is the owner, named {owner_name}. Include that exact name."
+            request = (
+                f"Greet {owner_name} by name as they return to the room."
                 if owner_detected
                 else (
-                    "The detected person is a guest whose name is unknown. Do not invent a name. "
-                    f"Warmly tell the guest that {owner_name}, the owner, isn't here right now, "
-                    f"and include the exact name {owner_name}. State this only once."
+                    "Welcome the arriving person without inventing their name. "
+                    f"Naturally tell them that {owner_name} isn't here right now. Say {owner_name} once."
                 )
             )
+            if visitor_notice:
+                request += f" After the welcome, naturally relay this fact: {visitor_notice}"
             soul = (load_soul_md() or "")[:4000]
             response = call_llm(
                 task="voice_instant",
@@ -700,18 +749,21 @@ class Runtime:
                         "role": "system",
                         "content": (
                             "Write exactly one short, natural spoken welcome in Marvi's personality. "
-                            "Vary the wording, use at most two brief sentences, and do not ask a question."
+                            "Vary the wording, use at most three brief sentences, and do not ask a question. "
+                            "Never mention detection, classification, identity, ownership, sensors, evidence, "
+                            "or system mechanics."
                             + (f"\n\nMarvi personality:\n{soul}" if soul else "")
                         ),
                     },
-                    {"role": "user", "content": identity},
+                    {"role": "user", "content": request},
                 ],
                 temperature=0.9,
                 max_tokens=80,
                 timeout=20,
             )
             greeting = " ".join(flatten_message_text(response.choices[0].message.content).split()).strip(' "')
-            if not greeting:
+            meta_markers = ("detect", "identif", "classif", "owner", "sensor", "system says")
+            if not greeting or any(marker in greeting.casefold() for marker in meta_markers):
                 greeting = fallback
             if owner_detected and owner_name.casefold() not in greeting.casefold():
                 greeting = f"{owner_name}, {greeting[:1].lower()}{greeting[1:]}"
@@ -730,8 +782,13 @@ class Runtime:
                     )
                 )
             ):
-                greeting = f"{greeting} {owner_name}, the owner, isn't here right now."
-            greeting = greeting[:300]
+                greeting = f"{greeting} {owner_name} isn't here right now."
+            if visitor_notice and (
+                self._visitor_time_token(visitor_entries or []) not in greeting
+                or not any(word in greeting.casefold() for word in ("entered", "came in", "visited"))
+            ):
+                greeting = f"{greeting} {visitor_notice}"
+            greeting = greeting[:500]
         except Exception:
             logger.warning("Could not generate room welcome; using fallback", exc_info=True)
             greeting = fallback
@@ -741,6 +798,39 @@ class Runtime:
             with self._state_lock:
                 self._state.last_welcome_at = now_iso()
                 save_state(self._state)
+
+    @staticmethod
+    def _visitor_time_token(entries: list[Dict[str, Any]]) -> str:
+        if not entries:
+            return ""
+        try:
+            from hermes_time import get_timezone
+
+            stamp = datetime.fromisoformat(str(entries[-1].get("at", "")).replace("Z", "+00:00"))
+            zone = get_timezone()
+            return stamp.astimezone(zone).strftime("%I:%M").lstrip("0") if zone else stamp.astimezone().strftime("%I:%M").lstrip("0")
+        except (TypeError, ValueError):
+            return ""
+
+    @classmethod
+    def _visitor_notice(cls, entries: list[Dict[str, Any]]) -> str:
+        if not entries:
+            return ""
+        entry = entries[-1]
+        try:
+            from hermes_time import get_timezone
+
+            raw_stamp = datetime.fromisoformat(str(entry.get("at", "")).replace("Z", "+00:00"))
+            zone = get_timezone()
+            stamp = raw_stamp.astimezone(zone) if zone else raw_stamp.astimezone()
+            local_now = datetime.now(zone) if zone else datetime.now().astimezone()
+            day = "today" if stamp.date() == local_now.date() else stamp.strftime("on %B %d")
+            when = f"{stamp.strftime('%I:%M %p').lstrip('0')} {day}"
+        except (TypeError, ValueError):
+            when = "an unknown time"
+        subject = "A guest" if entry.get("classification") == "guest" else "Someone"
+        extra = f" There were {len(entries)} entries in total." if len(entries) > 1 else ""
+        return f"{subject} entered the room at {when} while you were away from the room.{extra}"
 
     def _probe_wifi_presence(self) -> bool:
         config = (self._config.get("presence") or {}).get("wifi_ping") or {}

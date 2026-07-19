@@ -654,10 +654,10 @@ class Runtime:
     def _deliver_welcome(self) -> None:
         self._pending_welcome_timer = None
         with self._state_lock:
-            if not self._state.mmwave.occupied or self._state.modes.active_mode == "sleep":
+            if not self._state.mmwave.occupied:
                 return
             entry_at = self._pending_entry_at or now_iso()
-            should_welcome = self._pending_entry_should_welcome
+            should_welcome = self._pending_entry_should_welcome and self._state.modes.active_mode != "sleep"
             self._pending_entry_at = None
             self._pending_entry_should_welcome = False
             # mmWave proves occupancy and OwnTracks proves the phone is home;

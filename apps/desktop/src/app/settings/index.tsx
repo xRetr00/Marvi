@@ -8,6 +8,7 @@ import { useI18n } from '@/i18n'
 import { triggerHaptic } from '@/lib/haptics'
 import {
   Archive,
+  BarChart3,
   Bell,
   Box,
   Brain,
@@ -33,6 +34,7 @@ import { SKILLS_ROUTE } from '../routes'
 
 import { AboutSettings } from './about-settings'
 import { AppearanceSettings } from './appearance-settings'
+import { BillingSettings } from './billing'
 import { ConfigSettings } from './config-settings'
 import { SECTIONS } from './constants'
 import { GatewaySettings } from './gateway-settings'
@@ -55,6 +57,7 @@ const SETTINGS_VIEWS: readonly SettingsViewId[] = [
   'notifications',
   'presence',
   'smart-room',
+  'billing',
   'plugins',
   'sessions',
   'about'
@@ -169,6 +172,13 @@ export function SettingsView({ onClose, onConfigSaved, onMainModelChanged }: Set
       id: 'smart-room',
       label: 'Smart Room',
       onSelect: () => setActiveView('smart-room')
+    },
+    {
+      active: activeView === 'billing',
+      icon: BarChart3,
+      id: 'billing',
+      label: t.settings.nav.billing,
+      onSelect: () => setActiveView('billing')
     },
     {
       active: activeView === 'providers',
@@ -320,6 +330,8 @@ export function SettingsView({ onClose, onConfigSaved, onMainModelChanged }: Set
             />
           ) : activeView === 'smart-room' ? (
             <SmartRoomSettings />
+          ) : activeView === 'billing' ? (
+            <BillingSettings />
           ) : activeView === 'plugins' ? (
             <PluginsSettings />
           ) : (

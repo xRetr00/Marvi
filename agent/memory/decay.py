@@ -428,10 +428,12 @@ def run_decay_pass() -> Dict[str, Any]:
         cfg = decay_config()
         result["enabled"] = cfg["enabled"]
         if not cfg["enabled"]:
+            logger.debug("memory decay skipped enabled=false")
             return result
 
         from tools.memory_tool import load_on_disk_store
 
+        logger.info("memory decay pass started")
         store = load_on_disk_store()
 
         for step in (_run_recency_pass, _run_dedup_pass, _run_contradiction_pass):
@@ -443,4 +445,13 @@ def run_decay_pass() -> Dict[str, Any]:
     except Exception:
         logger.warning("memory decay: run_decay_pass failed", exc_info=True)
         result["errors"] += 1
+    logger.info(
+        "memory decay pass completed archived=%d merged=%d merge_suggestions=%d "
+        "contradictions_flagged=%d errors=%d",
+        result["archived"],
+        result["merged"],
+        result["merge_suggestions"],
+        result["contradictions_flagged"],
+        result["errors"],
+    )
     return result

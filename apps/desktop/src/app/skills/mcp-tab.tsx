@@ -31,6 +31,7 @@ import {
   getActionStatus,
   getLogs,
   getMcpCatalog,
+  getMcpOAuthFlow,
   type HermesGateway,
   installMcpCatalogEntry,
   type McpCatalogEntry,
@@ -39,6 +40,7 @@ import {
   testMcpServer
 } from '@/hermes'
 import { type Translations, useI18n } from '@/i18n'
+import { completeMcpDesktopOAuth } from '@/lib/mcp-dashboard-oauth'
 import { countEnabledTools, isToolEnabled, toggleToolInServer } from '@/lib/mcp-tool-filter'
 import { cn } from '@/lib/utils'
 import { notify, notifyError } from '@/store/notifications'
@@ -606,7 +608,14 @@ export function McpTab({
     setProbes(current => ({ ...current, [serverName]: 'probing' }))
 
     try {
-      const result = await authMcpServer(serverName)
+      const flow = await completeMcpDesktopOAuth({
+        serverName,
+        start: authMcpServer,
+        status: getMcpOAuthFlow,
+        openExternal: url => window.hermesDesktop.openExternal(url)
+      })
+
+      const result: McpTestResult = { ok: true, tools: flow.tools ?? [] }
 
       // Bail if the user switched profiles mid-flow — this result is profile A's.
       if (profileEpoch.current !== epoch) {

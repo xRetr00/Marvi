@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timezone
 
 from agent.learning import escalation, focus_apps, outcomes, reflection, room_habit, timing, trust, voice_tuning
@@ -14,6 +15,24 @@ def test_outcome_ledger_records_filters_and_counts(tmp_path, monkeypatch):
     assert len(outcomes.recent("trust", None, None, 1)) == 1
     assert outcomes.counts("trust", "calendar", 30)["accepted"] == 1
     assert outcomes.record("not-a-loop", "general", "observed") is None
+
+
+def test_outcome_log_contains_metadata_not_private_detail(tmp_path, monkeypatch, caplog):
+    monkeypatch.setattr(outcomes, "get_hermes_home", lambda: tmp_path)
+
+    with caplog.at_level(logging.INFO, logger=outcomes.__name__):
+        outcomes.record(
+            "escalation",
+            "voice",
+            "corrected",
+            ref="private-reference",
+            detail={"utterance": "private remembered text"},
+        )
+
+    assert "loop=escalation" in caplog.text
+    assert "event=corrected" in caplog.text
+    assert "private-reference" not in caplog.text
+    assert "private remembered text" not in caplog.text
 
 
 def test_registry_rejects_unknown_and_out_of_bounds_paths():
@@ -66,6 +85,30 @@ def test_reflection_reproduces_trust_config_proposal_from_fixture_ledger(monkeyp
     assert captured[0]["kind"] == "config"
     assert captured[0]["config_spec"]["path"] == "subconscious.tiers.calendar"
     assert captured[0]["loop"] == "trust"
+
+
+def test_reflection_logs_start_and_compact_completion(monkeypatch, caplog):
+    monkeypatch.setattr(
+        reflection,
+        "load_config",
+        lambda: {
+            "learning": {
+                "room": {"enabled": False},
+                "focus_apps": {"enabled": False},
+                "trust": {"enabled": False},
+                "voice_tuning": {"enabled": False},
+                "escalation": {"enabled": False},
+                "timing": {"enabled": False},
+            }
+        },
+    )
+
+    with caplog.at_level(logging.INFO, logger=reflection.__name__):
+        result = reflection.run_reflection(datetime(2026, 7, 19, tzinfo=timezone.utc))
+
+    assert result == {"proposals": 0, "samples": {}}
+    assert "learning reflection started" in caplog.text
+    assert "learning reflection completed proposals=0 samples={}" in caplog.text
 
 
 def _room_event(event_id, at, kind, **extra):

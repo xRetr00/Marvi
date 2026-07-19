@@ -66,7 +66,7 @@ def hermes_home(tmp_path, monkeypatch):
 
 
 class TestSetupLogging:
-    """setup_logging() creates agent.log + errors.log with RotatingFileHandler."""
+    """setup_logging() creates the shared and subsystem rotating logs."""
 
     def test_creates_log_directory(self, hermes_home):
         log_dir = hermes_logging.setup_logging(hermes_home=hermes_home)
@@ -96,6 +96,39 @@ class TestSetupLogging:
         ]
         assert len(error_handlers) == 1
         assert error_handlers[0].level == logging.WARNING
+
+    @pytest.mark.parametrize("filename", ["learning.log", "memory.log"])
+    def test_creates_learning_and_memory_log_handlers(self, hermes_home, filename):
+        hermes_logging.setup_logging(hermes_home=hermes_home)
+
+        handlers = [
+            h for h in hermes_logging.rotating_file_handlers()
+            if isinstance(h, RotatingFileHandler)
+            and filename in getattr(h, "baseFilename", "")
+        ]
+        assert len(handlers) == 1
+        assert handlers[0].level == logging.INFO
+
+    def test_learning_and_memory_logs_route_only_their_components(self, hermes_home):
+        hermes_logging.setup_logging(hermes_home=hermes_home)
+
+        logging.getLogger("agent.learning.outcomes").info("learning marker")
+        logging.getLogger("agent.memory.episodic").info("memory marker")
+        logging.getLogger("tools.terminal_tool").info("unrelated marker")
+        hermes_logging.flush_log_queue()
+
+        learning = (hermes_home / "logs" / "learning.log").read_text()
+        memory = (hermes_home / "logs" / "memory.log").read_text()
+        agent = (hermes_home / "logs" / "agent.log").read_text()
+
+        assert "learning marker" in learning
+        assert "memory marker" not in learning
+        assert "unrelated marker" not in learning
+        assert "memory marker" in memory
+        assert "learning marker" not in memory
+        assert "unrelated marker" not in memory
+        assert "learning marker" in agent
+        assert "memory marker" in agent
 
     def test_idempotent_no_duplicate_handlers(self, hermes_home):
         hermes_logging.setup_logging(hermes_home=hermes_home)

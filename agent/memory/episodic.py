@@ -172,7 +172,14 @@ def record_episode(
                         (source, ref_value),
                     ).fetchone()
                     if existing is not None:
-                        return int(existing["id"])
+                        episode_id = int(existing["id"])
+                        logger.info(
+                            "episodic memory reused episode id=%d kind=%s source=%s",
+                            episode_id,
+                            kind,
+                            source,
+                        )
+                        return episode_id
                 with conn:
                     cur = conn.execute(
                         """INSERT INTO episodes
@@ -189,7 +196,16 @@ def record_episode(
                         "INSERT INTO episodes_fts(episode_id, title, summary, entities) VALUES (?, ?, ?, ?)",
                         (episode_id, title, summary, " ".join(entities_list)),
                     )
-                return int(episode_id)
+                episode_id = int(episode_id)
+                logger.info(
+                    "episodic memory recorded id=%d kind=%s actor=%s source=%s importance=%.2f",
+                    episode_id,
+                    kind,
+                    actor,
+                    source,
+                    importance_value,
+                )
+                return episode_id
             finally:
                 conn.close()
     except Exception:
@@ -317,8 +333,20 @@ def query(
             conn = _connect()
             try:
                 if text and str(text).strip():
-                    return _query_fts(conn, str(text).strip(), kind, since, until, entities, limit)
-                return _query_filtered(conn, kind, since, until, entities, limit)
+                    rows = _query_fts(conn, str(text).strip(), kind, since, until, entities, limit)
+                    mode = "text"
+                else:
+                    rows = _query_filtered(conn, kind, since, until, entities, limit)
+                    mode = "filtered"
+                logger.info(
+                    "episodic memory queried mode=%s kind=%s entity_filters=%d limit=%d results=%d",
+                    mode,
+                    kind or "any",
+                    len(entities or []),
+                    limit,
+                    len(rows),
+                )
+                return rows
             finally:
                 conn.close()
     except Exception:
@@ -365,6 +393,7 @@ def purge_before(ts: str) -> int:
                         return 0
                     conn.executemany("DELETE FROM episodes_fts WHERE episode_id = ?", [(i,) for i in ids])
                     conn.execute("DELETE FROM episodes WHERE ts < ?", (str(ts),))
+                logger.info("episodic memory purged count=%d", len(ids))
                 return len(ids)
             finally:
                 conn.close()

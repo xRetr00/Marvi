@@ -8,6 +8,7 @@ here gets a fresh ``episodic.db``.
 from __future__ import annotations
 
 import json
+import logging
 
 import pytest
 
@@ -72,6 +73,25 @@ class TestRecordAndQuery:
         episodic.record_episode(kind="task", title="a", source="s", ref="1")
         episodic.record_episode(kind="task", title="b", source="s", ref="2")
         assert episodic.count() == 2
+
+    def test_logs_metadata_without_episode_content(self, caplog):
+        with caplog.at_level(logging.INFO, logger=episodic.__name__):
+            episodic.record_episode(
+                kind="task",
+                title="private remembered title",
+                summary="private remembered summary",
+                source="test",
+                ref="private-reference",
+                entities=["private-entity"],
+            )
+            episodic.query(text="private remembered title", entities=["private-entity"])
+
+        assert "episodic memory recorded" in caplog.text
+        assert "episodic memory queried mode=text" in caplog.text
+        assert "private remembered title" not in caplog.text
+        assert "private remembered summary" not in caplog.text
+        assert "private-reference" not in caplog.text
+        assert "private-entity" not in caplog.text
 
 
 class TestIdempotency:

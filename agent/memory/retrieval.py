@@ -220,6 +220,12 @@ def nudge(entry_hash: str, delta: float) -> float:
             new_weight = _clamp(current + float(delta))
             weights[entry_hash] = new_weight
             _write_weights(weights)
+        logger.debug(
+            "memory usefulness updated delta=%.3f previous=%.3f current=%.3f",
+            float(delta),
+            current,
+            new_weight,
+        )
         return new_weight
     except Exception:
         logger.debug("retrieval: nudge failed for %s", entry_hash, exc_info=True)
@@ -279,7 +285,15 @@ def rank_entries(
                 selected.append(e)
                 total += addition
 
-        return selected if selected else list(entries)
+        result = selected if selected else list(entries)
+        logger.debug(
+            "memory retrieval ranked entries=%d selected=%d reordered=%s char_limit=%d",
+            len(entries),
+            len(result),
+            result != list(entries),
+            char_limit,
+        )
+        return result
     except Exception:
         logger.debug("retrieval: rank_entries failed, using original order", exc_info=True)
         return list(entries)
@@ -329,6 +343,12 @@ def capture_previous_batch_outcome() -> None:
         delta = -cfg["learning_rate"] if corrected else cfg["learning_rate"]
         for h in prev_hashes:
             nudge(h, delta)
+        logger.info(
+            "memory usefulness batch scored entries=%d corrected=%s delta=%.3f",
+            len(prev_hashes),
+            corrected,
+            delta,
+        )
     except Exception:
         logger.debug("retrieval: capture_previous_batch_outcome failed", exc_info=True)
 

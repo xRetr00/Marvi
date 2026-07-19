@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 // Radix Select calls scrollIntoView on its items when the content opens; jsdom
@@ -22,8 +22,11 @@ const setEnvVar = vi.fn()
 const getHermesConfigRecord = vi.fn()
 const saveHermesConfig = vi.fn()
 const setApiRequestProfile = vi.fn()
-const startManualProviderOAuth = vi.fn()
 const getVoiceInstantStatus = vi.fn()
+const startManualLocalEndpoint = vi.fn()
+const startManualOnboarding = vi.fn()
+const startManualProviderOAuth = vi.fn()
+let profileSwitchHandler: (() => void) | null = null
 
 vi.mock('@/hermes', () => ({
   getGlobalModelInfo: () => getGlobalModelInfo(),
@@ -41,7 +44,15 @@ vi.mock('@/hermes', () => ({
 }))
 
 vi.mock('@/store/onboarding', () => ({
+  startManualLocalEndpoint: () => startManualLocalEndpoint(),
+  startManualOnboarding: () => startManualOnboarding(),
   startManualProviderOAuth: (slug: string) => startManualProviderOAuth(slug)
+}))
+
+vi.mock('../hooks/use-on-profile-switch', () => ({
+  useOnProfileSwitch: (handler: () => void) => {
+    profileSwitchHandler = handler
+  }
 }))
 
 beforeEach(() => {
@@ -101,6 +112,7 @@ beforeEach(() => {
 afterEach(() => {
   cleanup()
   vi.clearAllMocks()
+  profileSwitchHandler = null
 })
 
 async function renderModelSettings() {
@@ -149,6 +161,103 @@ describe('ModelSettings', () => {
     fireEvent.click(activate)
 
     await waitFor(() => expect(setEnvVar).toHaveBeenCalledWith('DEEPSEEK_API_KEY', 'sk-test-123'))
+  })
+
+  it.each(['custom', 'local', 'custom:lab'])(
+    'opens local endpoint setup when %s has no inventory row',
+    async provider => {
+      getGlobalModelInfo.mockResolvedValueOnce({ provider, model: '' })
+      getGlobalModelOptions.mockResolvedValueOnce({ providers: [] })
+
+      await renderModelSettings()
+
+      const providerSelect = (await screen.findAllByRole('combobox'))[0]
+
+      expect(providerSelect.textContent).toContain(provider)
+      expect(screen.queryByText(/undefined/)).toBeNull()
+      expect(screen.queryByText(/signs in through your browser/)).toBeNull()
+
+      fireEvent.click(await screen.findByRole('button', { name: 'Set up provider' }))
+
+      expect(startManualLocalEndpoint).toHaveBeenCalledOnce()
+      expect(startManualOnboarding).not.toHaveBeenCalled()
+      expect(startManualProviderOAuth).not.toHaveBeenCalled()
+    }
+  )
+
+  it('opens the generic provider picker for an unknown provider with no inventory row', async () => {
+    getGlobalModelInfo.mockResolvedValueOnce({ provider: 'retired-provider', model: '' })
+    getGlobalModelOptions.mockResolvedValueOnce({ providers: [] })
+
+    await renderModelSettings()
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Set up provider' }))
+
+    expect(startManualOnboarding).toHaveBeenCalledOnce()
+    expect(startManualLocalEndpoint).not.toHaveBeenCalled()
+    expect(startManualProviderOAuth).not.toHaveBeenCalled()
+  })
+
+  it('deep-links a known OAuth provider row into its setup flow', async () => {
+    getGlobalModelInfo.mockResolvedValueOnce({ provider: 'anthropic', model: '' })
+    getGlobalModelOptions.mockResolvedValueOnce({
+      providers: [
+        {
+          name: 'Anthropic',
+          slug: 'anthropic',
+          models: [],
+          authenticated: false,
+          auth_type: 'oauth'
+        }
+      ]
+    })
+
+    await renderModelSettings()
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Set up Anthropic' }))
+
+    expect(startManualProviderOAuth).toHaveBeenCalledWith('anthropic')
+    expect(startManualLocalEndpoint).not.toHaveBeenCalled()
+    expect(startManualOnboarding).not.toHaveBeenCalled()
+  })
+
+  it('replaces the selected provider and model when the active profile changes', async () => {
+    getGlobalModelInfo
+      .mockResolvedValueOnce({ provider: 'custom', model: 'local-a' })
+      .mockResolvedValueOnce({ provider: 'deepseek', model: 'deepseek-chat' })
+    getGlobalModelOptions
+      .mockResolvedValueOnce({
+        providers: [
+          {
+            name: 'Custom A',
+            slug: 'custom',
+            models: ['local-a'],
+            authenticated: true
+          }
+        ]
+      })
+      .mockResolvedValueOnce({
+        providers: [
+          {
+            name: 'DeepSeek',
+            slug: 'deepseek',
+            models: ['deepseek-chat'],
+            authenticated: true,
+            capabilities: { 'deepseek-chat': { reasoning: true, fast: true } }
+          }
+        ]
+      })
+
+    await renderModelSettings()
+    expect((await screen.findAllByRole('combobox'))[0].textContent).toContain('Custom A')
+
+    await act(async () => {
+      profileSwitchHandler?.()
+    })
+
+    await waitFor(() => expect(getGlobalModelInfo).toHaveBeenCalledTimes(2))
+    await waitFor(() => expect(screen.getAllByRole('combobox')[0].textContent).toContain('DeepSeek'))
+    expect(screen.queryByRole('button', { name: 'Set up provider' })).toBeNull()
   })
 
   it('writes the profile default speed (service_tier) when the fast switch is toggled', async () => {
@@ -412,7 +521,7 @@ describe('ModelSettings MoA preset editor', () => {
     // provider+model. Reference 1's pair is therefore at -6 / -5.
     const all = screen.getAllByRole('combobox')
 
-    return { ref1Provider: all.at(-6)!, ref1Model: all.at(-5)! }
+    return { ref1Provider: all.at(-6)!, ref1Model: all.at(-5)!, ref2Provider: all.at(-4)! }
   }
 
   it('holds the autosave while a slot is half-filled (provider changed, model pending)', async () => {
@@ -473,14 +582,14 @@ describe('ModelSettings MoA preset editor', () => {
     try {
       await openReferenceEditor()
 
-      fireEvent.click(slotSelects().ref1Provider)
-      fireEvent.click(await screen.findByRole('option', { name: 'Nous' }))
+      fireEvent.click(slotSelects().ref2Provider)
+      fireEvent.click(await screen.findByRole('option', { name: 'OpenRouter' }))
       await vi.advanceTimersByTimeAsync(700)
 
       // Radix treats re-picking the current value as a no-op (no
       // onValueChange), so nothing changes: no save, model still shown.
       expect(saveMoaModels).not.toHaveBeenCalled()
-      expect(screen.getByText('nous · hermes-4')).toBeTruthy()
+      expect(screen.getByText('openrouter · deepseek/deepseek-v4-pro')).toBeTruthy()
     } finally {
       vi.useRealTimers()
     }

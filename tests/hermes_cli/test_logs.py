@@ -259,5 +259,7 @@ class TestLogFiles:
     def test_known_log_files(self):
         assert "agent" in LOG_FILES
         assert "errors" in LOG_FILES
+        assert "learning" in LOG_FILES
+        assert "memory" in LOG_FILES
         assert "gateway" in LOG_FILES
         assert "gui" in LOG_FILES

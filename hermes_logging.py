@@ -7,6 +7,8 @@ gateway call early in their startup path.  All log files live under
 Log files produced:
     agent.log   — INFO+, all agent/tool/session activity (the main log)
     errors.log  — WARNING+, errors and warnings only (quick triage)
+    learning.log — INFO+, local learning-loop activity
+    memory.log  — INFO+, memory providers and built-in memory activity
     gateway.log — INFO+, gateway-only events (created when mode="gateway")
     gui.log     — INFO+, dashboard/websocket/TUI-gateway events
                   (created when mode="gui")
@@ -19,6 +21,8 @@ Component separation:
     platform adapters, session management, slash commands, delivery.
     gui.log receives dashboard-side records from ``hermes_cli.web_server``,
     ``hermes_cli.pty_bridge``, ``tui_gateway.*``, and ``uvicorn.*``.
+    learning.log receives ``agent.learning.*`` records.
+    memory.log receives built-in memory, memory-tool, and memory-provider records.
     agent.log remains the catch-all (everything goes there).
 
 Session context:
@@ -243,6 +247,8 @@ COMPONENT_PREFIXES = {
     "tools": ("tools",),
     "cli": ("hermes_cli", "cli"),
     "cron": ("cron",),
+    "learning": ("agent.learning",),
+    "memory": ("agent.memory", "tools.memory_tool", "plugins.memory"),
     "gui": (
         "hermes_cli.web_server",
         "hermes_cli.pty_bridge",
@@ -335,6 +341,28 @@ def setup_logging(
         max_bytes=2 * 1024 * 1024,
         backup_count=2,
         formatter=RedactingFormatter(_LOG_FORMAT),
+    )
+
+    # --- learning.log (INFO+, local learning loops only) -------------------
+    _add_rotating_handler(
+        root,
+        log_dir / "learning.log",
+        level=level,
+        max_bytes=max_bytes,
+        backup_count=backups,
+        formatter=RedactingFormatter(_LOG_FORMAT),
+        log_filter=_ComponentFilter(COMPONENT_PREFIXES["learning"]),
+    )
+
+    # --- memory.log (INFO+, memory systems/providers only) -----------------
+    _add_rotating_handler(
+        root,
+        log_dir / "memory.log",
+        level=level,
+        max_bytes=max_bytes,
+        backup_count=backups,
+        formatter=RedactingFormatter(_LOG_FORMAT),
+        log_filter=_ComponentFilter(COMPONENT_PREFIXES["memory"]),
     )
 
     # --- gateway.log (INFO+, gateway component only) ------------------------

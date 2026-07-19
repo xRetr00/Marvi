@@ -150,6 +150,13 @@ def record(loop: str, *args: str, category: Optional[str] = None, event: Optiona
             rows = _read_unlocked()
             rows.append(row)
             _write_unlocked(rows)
+        logger.info(
+            "learning outcome recorded loop=%s event=%s category=%s ledger_size=%d",
+            loop,
+            event,
+            category or "-",
+            len(rows),
+        )
         return row
     except Exception:  # noqa: BLE001 - learning is strictly best effort
         logger.warning("Could not record learning outcome", exc_info=True)

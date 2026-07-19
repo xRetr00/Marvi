@@ -9,6 +9,8 @@ Usage examples::
     hermes logs                    # last 50 lines of agent.log
     hermes logs -f                 # follow agent.log in real time
     hermes logs errors             # last 50 lines of errors.log
+    hermes logs learning -f        # follow local learning activity
+    hermes logs memory -f          # follow memory activity
     hermes logs gateway -n 100    # last 100 lines of gateway.log
     hermes logs gui -f            # follow gui.log (dashboard/pty/ws)
     hermes logs desktop -f        # follow desktop.log (Electron app boot/backend)
@@ -32,6 +34,8 @@ from hermes_constants import get_hermes_home, display_hermes_home
 LOG_FILES = {
     "agent": "agent.log",
     "errors": "errors.log",
+    "learning": "learning.log",
+    "memory": "memory.log",
     "gateway": "gateway.log",
     "gui": "gui.log",
     "desktop": "desktop.log",
@@ -157,7 +161,8 @@ def tail_log(
     Parameters
     ----------
     log_name
-        Which log to read: ``"agent"``, ``"errors"``, ``"gateway"``, ``"gui"``.
+        Which log to read: ``"agent"``, ``"errors"``, ``"learning"``,
+        ``"memory"``, ``"gateway"``, or ``"gui"``.
     num_lines
         Number of recent lines to show (before follow starts).
     follow

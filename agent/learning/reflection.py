@@ -192,6 +192,7 @@ def run_reflection(now: Optional[datetime] = None) -> Dict[str, Any]:
     """Run enabled loops and return a compact prompt/debug summary. Never raises."""
     now = now or datetime.now(timezone.utc)
     summary: Dict[str, Any] = {"proposals": 0, "samples": {}}
+    logger.info("learning reflection started")
     try:
         cfg = load_config()
         if _enabled(cfg, "room"):
@@ -238,4 +239,10 @@ def run_reflection(now: Optional[datetime] = None) -> Dict[str, Any]:
     except Exception:  # noqa: BLE001 - reflection learning must never block reflection
         logger.warning("Learning reflection failed", exc_info=True)
         summary["error"] = "learning review unavailable"
+    logger.info(
+        "learning reflection completed proposals=%d samples=%s error=%s",
+        summary["proposals"],
+        summary["samples"],
+        "error" in summary,
+    )
     return summary

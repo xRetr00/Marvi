@@ -618,6 +618,12 @@ sound thresholds, greetings, and their runtime/dashboard/tools/tests.
 NeuTTS and KittenTTS are intentionally blocked in Marvi. Do not restore their
 providers, installers, setup options, documentation, or UI wiring from upstream.
 
+Keep wake-word config routing through the contribution shell, Parakeet EOU
+validation, first-word TTS startup, delayed `speaker_update` attribution,
+instant-lane local-time injection, and retained OwnTracks history in runtime,
+tools, world context, and Desktop Settings. Also retain the OpenCode Go
+DeepSeek V4 explicit thinking-disable passthrough.
+
 For every upstream sync, first run
 `python scripts/prepare_marvi_upstream_sync.py --review-only`. Resolve against
 its protected-overlap report, then require both

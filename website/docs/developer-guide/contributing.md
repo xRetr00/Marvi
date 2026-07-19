@@ -77,6 +77,12 @@ NeuTTS and KittenTTS are deliberately blocked in Marvi. Do not reintroduce
 their providers, installers, documentation, setup options, or UI wiring from
 upstream.
 
+Recent protected behavior also includes contribution-shell wake-word routing,
+Parakeet EOU validation, first-word TTS startup, delayed speaker attribution,
+instant-lane local-time injection, retained OwnTracks location history across
+runtime/tools/world context/Desktop Settings, and the OpenCode Go DeepSeek V4
+thinking-disable passthrough.
+
 Run `python scripts/prepare_marvi_upstream_sync.py --review-only` before an
 upstream merge. Use its protected-overlap report during conflict resolution,
 then require `python scripts/verify_marvi_upstream_contract.py` and

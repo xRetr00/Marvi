@@ -149,7 +149,7 @@ REQUIRED_TEXT = {
     "apps/bootstrap-installer/src-tauri/src/install_script.rs": [
         "raw.githubusercontent.com/xRetr00/Marvi"
     ],
-    "apps/desktop/electron/bootstrap-runner.cjs": [
+    "apps/desktop/electron/bootstrap-runner.ts": [
         "raw.githubusercontent.com/xRetr00/Marvi"
     ],
     "hermes_cli/dashboard_auth/login_page.py": [

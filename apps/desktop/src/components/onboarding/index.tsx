@@ -99,7 +99,7 @@ const API_KEY_OPTIONS: ApiKeyOption[] = [
     id: 'local',
     name: 'Local / custom endpoint',
     envKey: 'OPENAI_BASE_URL',
-    docsUrl: 'https://github.com/NousResearch/hermes-agent#bring-your-own-endpoint',
+    docsUrl: 'https://xretr00.github.io/docs/integrations/providers',
     placeholder: 'http://127.0.0.1:8000/v1'
   }
 ]

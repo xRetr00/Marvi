@@ -102,4 +102,65 @@ describe('GoalsPanel', () => {
     expect(await screen.findByText('Goals unavailable')).toBeTruthy()
     expect(readGoals).not.toHaveBeenCalled()
   })
+
+  describe('inferred goals', () => {
+    it('shows an "Inferred" badge on origin=inferred goals but not on user goals', async () => {
+      readGoals.mockResolvedValue([
+        goal({ id: 'g1', title: 'User goal', origin: 'user' }),
+        goal({ id: 'g2', title: 'Auto goal', origin: 'inferred' })
+      ])
+
+      await renderPanel()
+      await screen.findByText('User goal')
+
+      expect(screen.getByText('Auto goal').closest('div')?.parentElement?.textContent).toContain('Inferred')
+      expect(screen.getByText('User goal').closest('div')?.parentElement?.textContent).not.toContain('Inferred')
+    })
+
+    it('does not show a badge for a goal with no origin field (pre-existing goal)', async () => {
+      const legacyGoal = goal({ id: 'g1', title: 'Legacy goal' })
+      delete (legacyGoal as Partial<Goal>).origin
+      readGoals.mockResolvedValue([legacyGoal])
+
+      await renderPanel()
+      await screen.findByText('Legacy goal')
+
+      expect(screen.queryByText('Inferred')).toBeNull()
+    })
+
+    it('"Keep" flips origin to "user" and persists via writeGoals', async () => {
+      readGoals.mockResolvedValue([goal({ id: 'g1', title: 'Auto goal', origin: 'inferred' })])
+
+      await renderPanel()
+      await screen.findByText('Auto goal')
+
+      fireEvent.click(screen.getByRole('button', { name: 'Keep' }))
+
+      await waitFor(() =>
+        expect(writeGoals).toHaveBeenCalledWith([expect.objectContaining({ id: 'g1', origin: 'user' })])
+      )
+    })
+
+    it('does not show "Keep" for a user-origin goal', async () => {
+      readGoals.mockResolvedValue([goal({ id: 'g1', title: 'User goal', origin: 'user' })])
+
+      await renderPanel()
+      await screen.findByText('User goal')
+
+      expect(screen.queryByRole('button', { name: 'Keep' })).toBeNull()
+    })
+
+    it('delete works the same for an inferred goal as any other', async () => {
+      window.confirm = vi.fn(() => true)
+      readGoals.mockResolvedValue([goal({ id: 'g1', title: 'Auto goal', origin: 'inferred' })])
+
+      await renderPanel()
+      await screen.findByText('Auto goal')
+
+      fireEvent.click(screen.getByTitle('Delete'))
+      fireEvent.click(screen.getByRole('button', { name: 'Delete' }))
+
+      await waitFor(() => expect(writeGoals).toHaveBeenCalledWith([]))
+    })
+  })
 })

@@ -467,8 +467,81 @@ def _subconscious_activity_path() -> Path:
     return get_hermes_home() / "subconscious" / "activity.jsonl"
 
 
+_SUBCONSCIOUS_ACTIVITY_MAX_PER_SOURCE_DEFAULT = 200
+
+
+def _subconscious_activity_max_per_source() -> int:
+    """``subconscious.activity.max_per_source`` — the per-source cap applied
+    during rotation (see :func:`_select_rotation_keep_lines`). Not part of
+    ``DEFAULT_CONFIG`` (this repo's convention for plugin/subsystem knobs
+    that aren't in the curated desktop schema — see ``smart_room.*``,
+    ``subconscious.*`` elsewhere); read with an explicit default at the call
+    site instead.
+    """
+    from hermes_cli.config import cfg_get
+
+    value = cfg_get(
+        load_config(), "subconscious", "activity", "max_per_source",
+        default=_SUBCONSCIOUS_ACTIVITY_MAX_PER_SOURCE_DEFAULT,
+    )
+    try:
+        parsed = int(value)
+        return parsed if parsed > 0 else _SUBCONSCIOUS_ACTIVITY_MAX_PER_SOURCE_DEFAULT
+    except (TypeError, ValueError):
+        return _SUBCONSCIOUS_ACTIVITY_MAX_PER_SOURCE_DEFAULT
+
+
+def _select_rotation_keep_lines(lines: List[str], *, total_cap: int, max_per_source: int) -> List[str]:
+    """Pure helper: which lines survive rotation, keeping relative
+    (chronological) order.
+
+    Two passes:
+      1. Per-source fairness — for each ``source``, keep only its newest
+         ``max_per_source`` lines. Without this, one chatty source (e.g.
+         500 lines of world presence/light noise) can evict every other
+         source's entire history from a shared, globally-FIFO cap — which
+         is exactly what happened before this fix (415/500 world,
+         reflection/goblin/distiller wiped out).
+      2. Global total cap — if the per-source-fair set is still over
+         ``total_cap`` (several sources each near their own per-source cap
+         can still sum past it), trim the globally oldest survivors until
+         at/under the cap.
+
+    A line that fails to parse as a JSON object (shouldn't happen — every
+    write goes through ``_append_activity_record``'s ``json.dumps``, but a
+    torn/corrupt line must never crash rotation) is treated as its own
+    singleton "unknown" source rather than dropped outright, so a single
+    corrupt line can't silently evict a real entry via mis-grouping.
+    """
+    sources: List[str] = []
+    for line in lines:
+        source = "unknown"
+        try:
+            record = json.loads(line)
+            if isinstance(record, dict):
+                source = str(record.get("source") or "unknown")
+        except (json.JSONDecodeError, ValueError):
+            pass
+        sources.append(source)
+
+    keep = [False] * len(lines)
+    per_source_kept: Dict[str, int] = {}
+    for i in range(len(lines) - 1, -1, -1):
+        source = sources[i]
+        if max_per_source <= 0 or per_source_kept.get(source, 0) < max_per_source:
+            keep[i] = True
+            per_source_kept[source] = per_source_kept.get(source, 0) + 1
+
+    kept_indices = [i for i, flag in enumerate(keep) if flag]
+    if len(kept_indices) > total_cap:
+        kept_indices = kept_indices[-total_cap:]
+
+    return [lines[i] for i in kept_indices]
+
+
 def _rotate_subconscious_activity(path: Path) -> None:
-    """Cap the activity log at ``_SUBCONSCIOUS_ACTIVITY_MAX_LINES`` lines.
+    """Cap the activity log at ``_SUBCONSCIOUS_ACTIVITY_MAX_LINES`` lines,
+    per-source-fairly (see :func:`_select_rotation_keep_lines`).
 
     Best-effort: any failure here must not affect the caller. Uses the same
     tempfile + atomic_replace pattern as cron/jobs.py so a concurrent reader
@@ -478,7 +551,11 @@ def _rotate_subconscious_activity(path: Path) -> None:
         lines = path.read_text(encoding="utf-8").splitlines()
         if len(lines) <= _SUBCONSCIOUS_ACTIVITY_MAX_LINES:
             return
-        kept = lines[-_SUBCONSCIOUS_ACTIVITY_MAX_LINES:]
+        kept = _select_rotation_keep_lines(
+            lines,
+            total_cap=_SUBCONSCIOUS_ACTIVITY_MAX_LINES,
+            max_per_source=_subconscious_activity_max_per_source(),
+        )
         fd, tmp_path = tempfile.mkstemp(dir=str(path.parent), suffix=".tmp", prefix=".activity_")
         try:
             with os.fdopen(fd, "w", encoding="utf-8") as f:
@@ -587,6 +664,139 @@ def _mirror_activity_to_episodic(record: dict) -> None:
     )
 
 
+# ---------------------------------------------------------------------------
+# World-activity filtering — plugins/smart_room/runtime/state_store.py's
+# append_transition() mirrors EVERY smart-room transition it appends to
+# events.jsonl into THIS feed too, via record_subconscious_activity(
+# source="world", diff=json.dumps(event)) — unfiltered. Presence flapping
+# (mmWave losing/regaining signal for a second), plus routine light/mode
+# automations, flooded the shared 500-line activity.jsonl with world noise
+# (415/500 world "light changed"/"Guest entered the room" spam) and evicted
+# every reflection/goblin/distiller entry.
+#
+# Filtered HERE, at the one append site this module owns (record_
+# subconscious_activity), rather than in the UI, so the raw feed on disk
+# only ever holds what's worth showing — nothing downstream needs to know
+# entries were ever suppressed. events.jsonl / the tick diff (read by
+# cron/scripts/subconscious/smart_room.py) are a completely separate
+# channel and are untouched by this filter: light/mode changes still reach
+# the tick's world-diff, they just never get their own activity-feed line.
+# ---------------------------------------------------------------------------
+
+# Absence gap required before a room_entry ("owner"/"guest"/"unknown_visitor"
+# arriving) counts as meaningful rather than a routine occupancy flicker.
+# Deliberately looser than gateway/world_trigger.py's LONG_VACANCY_SECONDS
+# (2h): that gate decides whether to fire a whole out-of-band subconscious
+# tick (expensive), this one only decides whether to log one activity-feed
+# line (cheap) — see the ISSUE spec's ">=30min absence" for the activity
+# feed vs. is_wake_worthy's 2h tick-trigger bar.
+_ACTIVITY_ARRIVAL_VACANCY_SECONDS = 30 * 60
+
+# Mirrors gateway/world_trigger.py::is_wake_worthy's categories (owner/guest
+# arrival, phone-location transitions, device offline). Every other
+# smart-room transition type — light_changed, mode_changed, the raw
+# presence_detected/presence_cleared bus events, geofence_arrive_home/
+# geofence_leave_home, sleep_cancelled, alarm_acknowledged, ... — is
+# intentionally excluded: it still lands in events.jsonl unchanged, it just
+# never gets its own line in this feed.
+_ACTIVITY_MEANINGFUL_WORLD_TYPES = frozenset({"phone_location_changed", "device_offline", "room_entry"})
+
+# In-memory only (mirrors gateway/world_trigger.py::_WorldWatchState's own
+# documented trade-off) — resets on process restart. Worst case after a
+# restart is one extra activity line (a room_entry judged against an empty
+# vacancy baseline) or one un-debounced repeat, never a functional
+# regression, so it isn't worth a second on-disk cursor file.
+_world_vacant_since: Optional[Any] = None
+_world_last_logged_at: Dict[str, Any] = {}
+
+
+def _world_activity_debounce_seconds() -> float:
+    """``smart_room.activity.debounce_minutes`` (default 10) — a repeat of
+    the SAME event type within this window logs nothing, even if it's
+    independently meaningful (e.g. a phone bouncing in/out of the home
+    geofence, or mmWave re-triggering a fresh room_entry moments after the
+    previous one already passed the vacancy gate)."""
+    from hermes_cli.config import cfg_get
+
+    value = cfg_get(load_config(), "smart_room", "activity", "debounce_minutes", default=10)
+    try:
+        parsed = float(value)
+        return (parsed if parsed >= 0 else 10.0) * 60.0
+    except (TypeError, ValueError):
+        return 10.0 * 60.0
+
+
+def _world_activity_is_meaningful(event: Dict[str, Any]) -> bool:
+    """Should this smart-room transition event get its own line in the
+    shared activity feed?
+
+    NOT a pure function: tracks vacancy (via ``presence_cleared`` at
+    timestamps) and per-type debounce state across calls as a side effect,
+    mirroring gateway/world_trigger.py::_enrich_with_vacancy's contract —
+    call at most once per real event, in event order.
+    """
+    global _world_vacant_since
+
+    if not isinstance(event, dict):
+        return False
+    event_type = str(event.get("type") or "")
+
+    from datetime import datetime as _datetime
+
+    def _parse_at(value: Any) -> Optional[Any]:
+        if not value:
+            return None
+        try:
+            return _datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        except (TypeError, ValueError):
+            return None
+
+    # Track vacancy across calls regardless of whether presence_cleared
+    # itself is meaningful (it never is) so a later room_entry can measure
+    # the gap.
+    if event_type == "presence_cleared":
+        parsed = _parse_at(event.get("at"))
+        if parsed is not None:
+            _world_vacant_since = parsed
+        return False
+
+    if event_type not in _ACTIVITY_MEANINGFUL_WORLD_TYPES:
+        return False
+
+    event_at = _parse_at(event.get("at") or event.get("entry_at"))
+
+    if event_type == "phone_location_changed":
+        transition = str(event.get("transition") or "").strip().lower()
+        zone = str(event.get("zone") or "").strip().lower()
+        meaningful = zone == "home" and transition in {"arrive", "leave"}
+    elif event_type == "device_offline":
+        meaningful = True
+    else:  # room_entry
+        vacant_since = _world_vacant_since
+        _world_vacant_since = None
+        meaningful = False
+        if vacant_since is not None and event_at is not None:
+            gap = (event_at - vacant_since).total_seconds()
+            meaningful = gap >= _ACTIVITY_ARRIVAL_VACANCY_SECONDS
+
+    if not meaningful:
+        return False
+
+    # Debounce is measured against the EVENT's own "at" timestamp, not
+    # wall-clock now — the source of truth for "how far apart were these
+    # two events" is when the room said they happened, not how fast two
+    # record_subconscious_activity() calls happened to execute back to
+    # back (which is what made this untestable/wrong when it compared
+    # _hermes_now() instead). Falls back to wall-clock only when the event
+    # carries no parseable "at" at all.
+    now = event_at if event_at is not None else _hermes_now()
+    last_at = _world_last_logged_at.get(event_type)
+    if last_at is not None and (now - last_at).total_seconds() < _world_activity_debounce_seconds():
+        return False
+    _world_last_logged_at[event_type] = now
+    return True
+
+
 def record_subconscious_activity(
     *,
     source: str,
@@ -606,8 +816,30 @@ def record_subconscious_activity(
     call to record itself in the same feed the desktop Activity panel reads
     (``GET /api/subconscious/activity``, hermes_cli/web_server.py). Never
     raises — a logging failure must never affect the caller's real work.
+
+    ``source == "world"`` with no ``job_id`` gets one extra step first:
+    plugins/smart_room's append_transition() calls this for EVERY room
+    transition unfiltered (see the module-level comment above
+    _ACTIVITY_ARRIVAL_VACANCY_SECONDS), so this is where that noise gets
+    cut down to what's actually meaningful. ``diff`` is the JSON-serialized
+    raw event dict for one of those per-transition entries — the only
+    shape append_transition ever sends. This is scoped to job_id is None
+    specifically to NOT catch the other "world" entry shape: a completed
+    subconscious TICK RUN that was fired by a world-trigger event
+    (``cron.subconscious.trigger_tick(reason="world")`` -> _append_
+    subconscious_activity, always carrying a real job_id) — that's one
+    entry per tick execution, never floods, and must always be logged same
+    as an "idle_trigger"-tagged run.
     """
     try:
+        if source == "world" and job_id is None:
+            try:
+                event = json.loads(diff) if diff else {}
+            except (json.JSONDecodeError, ValueError, TypeError):
+                event = {}
+            if not _world_activity_is_meaningful(event):
+                return
+
         record: Dict[str, Any] = {
             "at": _hermes_now().isoformat(),
             "source": source,

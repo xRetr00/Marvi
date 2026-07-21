@@ -13,7 +13,14 @@ atomic writes (tempfile + ``atomic_replace``), an in-process lock, and 0600
 file permissions.
 
 Fields per goal record: ``id``, ``title``, ``detail``, ``status``
-(active/paused/done), ``horizon`` (short/long), ``created``, ``updated``.
+(active/paused/done), ``horizon`` (short/long), ``origin`` (user/inferred),
+``created``, ``updated``.
+
+``origin`` distinguishes a goal the user wrote themselves from one Marvi
+inferred and added on its own (tools/goal_tools.py::_handle_suggest_goal,
+subject to a concurrent-inferred-goal cap and title-similarity dedup —
+see that module). Backward-compatible: a goal record on disk from before
+this field existed reads back as ``origin="user"`` (see :func:`load_goals`).
 """
 
 from __future__ import annotations
@@ -40,8 +47,10 @@ _goals_lock = threading.Lock()
 
 VALID_STATUSES = frozenset({"active", "paused", "done"})
 VALID_HORIZONS = frozenset({"short", "long"})
+VALID_ORIGINS = frozenset({"user", "inferred"})
 DEFAULT_STATUS = "active"
 DEFAULT_HORIZON = "short"
+DEFAULT_ORIGIN = "user"
 
 # Small, editable starters rather than a second goal schema. The UI copies
 # one of these through the same add_goal path as a hand-written goal.
@@ -127,9 +136,22 @@ def _save_raw(goals: List[Dict[str, Any]]) -> None:
         raise
 
 
+def _normalize_goal(goal: Dict[str, Any]) -> Dict[str, Any]:
+    """Backfill fields that may be absent on a goal record written before
+    they existed. Currently just ``origin`` (added alongside auto-goals) —
+    an old record with no ``origin`` key reads as ``"user"``, never
+    ``"inferred"``, so nothing pre-existing is ever mistaken for something
+    Marvi added on its own. Read-only: does NOT rewrite the record on disk,
+    it only affects what callers see.
+    """
+    if goal.get("origin") not in VALID_ORIGINS:
+        goal = {**goal, "origin": DEFAULT_ORIGIN}
+    return goal
+
+
 def load_goals() -> List[Dict[str, Any]]:
     """Return all goal records (any status)."""
-    return _load_raw().get("goals", [])
+    return [_normalize_goal(g) for g in _load_raw().get("goals", [])]
 
 
 def list_goals(*, status: Optional[str] = None, horizon: Optional[str] = None) -> List[Dict[str, Any]]:
@@ -169,10 +191,16 @@ def add_goal(
     detail: str = "",
     horizon: str = DEFAULT_HORIZON,
     status: str = DEFAULT_STATUS,
+    origin: str = DEFAULT_ORIGIN,
 ) -> Dict[str, Any]:
     """Create and persist a new goal. Returns the created record.
 
-    Raises ``ValueError`` for an empty title or an invalid status/horizon.
+    ``origin`` is ``"user"`` for anything a person wrote (manual add, a
+    template, or the desktop UI's "Add goal") and ``"inferred"`` for a goal
+    Marvi created on its own from the reflection/dreaming inference path
+    (tools/goal_tools.py::_handle_suggest_goal) — never set by hand elsewhere.
+
+    Raises ``ValueError`` for an empty title or an invalid status/horizon/origin.
     """
     title = (title or "").strip()
     if not title:
@@ -181,6 +209,8 @@ def add_goal(
         raise ValueError(f"status must be one of {sorted(VALID_STATUSES)}, got {status!r}")
     if horizon not in VALID_HORIZONS:
         raise ValueError(f"horizon must be one of {sorted(VALID_HORIZONS)}, got {horizon!r}")
+    if origin not in VALID_ORIGINS:
+        raise ValueError(f"origin must be one of {sorted(VALID_ORIGINS)}, got {origin!r}")
 
     now = _hermes_now().isoformat()
     record = {
@@ -189,6 +219,7 @@ def add_goal(
         "detail": (detail or "").strip(),
         "status": status,
         "horizon": horizon,
+        "origin": origin,
         "created": now,
         "updated": now,
     }
@@ -200,15 +231,22 @@ def add_goal(
 
 
 def update_goal(ref: str, **updates: Any) -> Optional[Dict[str, Any]]:
-    """Update a goal's mutable fields (title/detail/status/horizon).
+    """Update a goal's mutable fields (title/detail/status/horizon/origin).
+
+    ``origin`` is normally only set by :func:`add_goal`, but is updatable
+    here for the desktop Goals panel's "Keep" action on an inferred goal —
+    a one-click flip from ``origin="inferred"`` to ``"user"`` that adopts
+    the goal as the user's own, same shape as any other field edit.
 
     Returns the updated record, or ``None`` if ``ref`` doesn't resolve.
-    Raises ``ValueError`` for an invalid status/horizon value.
+    Raises ``ValueError`` for an invalid status/horizon/origin value.
     """
     if "status" in updates and updates["status"] not in VALID_STATUSES:
         raise ValueError(f"status must be one of {sorted(VALID_STATUSES)}, got {updates['status']!r}")
     if "horizon" in updates and updates["horizon"] not in VALID_HORIZONS:
         raise ValueError(f"horizon must be one of {sorted(VALID_HORIZONS)}, got {updates['horizon']!r}")
+    if "origin" in updates and updates["origin"] not in VALID_ORIGINS:
+        raise ValueError(f"origin must be one of {sorted(VALID_ORIGINS)}, got {updates['origin']!r}")
 
     with _goals_lock:
         goals = _load_raw().get("goals", [])
@@ -230,7 +268,7 @@ def update_goal(ref: str, **updates: Any) -> Optional[Dict[str, Any]]:
         if target is None:
             return None
 
-        for field in ("title", "detail", "status", "horizon"):
+        for field in ("title", "detail", "status", "horizon", "origin"):
             if field in updates and updates[field] is not None:
                 value = updates[field]
                 if field in ("title", "detail"):
@@ -288,6 +326,8 @@ def format_active_goals_for_prompt(*, max_goals: int = 10) -> str:
         detail = str(g.get("detail") or "").strip()
         horizon = g.get("horizon") or DEFAULT_HORIZON
         line = f"- [{horizon}] {title}"
+        if g.get("origin") == "inferred":
+            line += " (inferred)"
         if detail:
             line += f" — {detail}"
         lines.append(line)

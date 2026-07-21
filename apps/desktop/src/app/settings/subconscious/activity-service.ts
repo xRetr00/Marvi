@@ -10,6 +10,7 @@
 export type SubconsciousActivitySource =
   | 'distiller'
   | 'dreaming'
+  | 'goal'
   | 'goblin'
   | 'idle_trigger'
   | 'reflection'

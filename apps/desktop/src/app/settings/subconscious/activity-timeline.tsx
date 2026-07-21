@@ -28,7 +28,11 @@ const SOURCE_META: Record<SubconsciousActivitySource, { label: string; icon: typ
   smart_room_alarm: { label: 'Room alarm', icon: Bell },
   goblin: { label: 'Goblin', icon: Bell },
   dreaming: { label: 'Dreaming', icon: Moon },
-  world: { label: 'World', icon: Cloud }
+  world: { label: 'World', icon: Cloud },
+  // tools/goal_tools.py::_handle_suggest_goal logs one of these when it
+  // auto-creates an inferred goal (origin="inferred") -- see goals-panel.tsx
+  // for where the goal itself shows up with its own "Inferred" badge.
+  goal: { label: 'Goal', icon: Zap }
 }
 
 type FilterKey = 'all' | 'distiller' | 'goblin' | 'ticks' | 'world'

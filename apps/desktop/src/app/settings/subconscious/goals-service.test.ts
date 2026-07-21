@@ -58,6 +58,42 @@ describe('goals-service', () => {
       expect(goal.status).toBe('active')
       expect(goal.horizon).toBe('short')
     })
+
+    it('preserves origin="inferred" written by the backend', () => {
+      const [goal] = parseGoals(JSON.stringify([{ id: '1', title: 'x', origin: 'inferred' }]))
+
+      expect(goal.origin).toBe('inferred')
+    })
+
+    it('defaults a missing origin to "user" -- backward-compat with goals written before the field existed', () => {
+      const [goal] = parseGoals(JSON.stringify([{ id: '1', title: 'x' }]))
+
+      expect(goal.origin).toBe('user')
+    })
+
+    it('defaults an invalid origin value to "user" instead of rejecting the goal', () => {
+      const [goal] = parseGoals(JSON.stringify([{ id: '1', title: 'x', origin: 'bogus' }]))
+
+      expect(goal.origin).toBe('user')
+    })
+  })
+
+  it('createGoal always sets origin to "user"', () => {
+    const goal = createGoal({ title: 'x', detail: '', horizon: 'short' })
+
+    expect(goal.origin).toBe('user')
+  })
+
+  it('a full read/write round trip does not strip an inferred origin', () => {
+    // Regression guard for the bug this fixes: writeGoals serializes the
+    // WHOLE array on every edit (e.g. pausing a different goal), so if
+    // coerceGoal ever drops "origin" again, every inferred goal silently
+    // reverts to "user" the next time the user touches anything in the panel.
+    const inferred = { ...createGoal({ title: 'Auto goal', detail: '', horizon: 'short' }), origin: 'inferred' as const }
+
+    const roundTripped = parseGoals(serializeGoals([inferred]))
+
+    expect(roundTripped[0].origin).toBe('inferred')
   })
 
   it('round-trips through serializeGoals + parseGoals', () => {

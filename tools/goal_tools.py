@@ -16,8 +16,10 @@ consent-first suggestion surface. Gated to only appear when
 """
 from __future__ import annotations
 
+import difflib
 import json
 import logging
+import re
 from typing import Any
 
 from agent.goal_store import (
@@ -43,6 +45,87 @@ def _subconscious_toolset_enabled() -> bool:
         return bool(is_enabled())
     except Exception:
         return False
+
+
+# ---------------------------------------------------------------------------
+# Auto-goals — suggest_goal(action="add") creates the goal directly
+# (origin="inferred") instead of only registering a pending suggestion, per
+# the design in agent/goal_store.py's module docstring. Two guardrails keep
+# this from running away: a cap on concurrently-active inferred goals, and
+# title-similarity dedup against every existing goal (any status — a goal
+# the user already paused or finished shouldn't be silently re-created).
+# pause/done proposals for ANY goal are unaffected — those stay
+# consent-required suggestions unconditionally (see _handle_suggest_goal).
+# ---------------------------------------------------------------------------
+
+_DEFAULT_MAX_INFERRED_GOALS = 3
+# Two titles are "the same goal" above this similarity ratio (difflib's
+# SequenceMatcher over normalized text) -- high enough that genuinely
+# different goals ("learn Spanish" / "learn guitar") never collide, low
+# enough that trivial rephrasings ("Learn Spanish!" / "learn spanish")
+# reliably do.
+_TITLE_DEDUP_THRESHOLD = 0.82
+
+
+def _max_inferred_goals() -> int:
+    from hermes_cli.config import cfg_get, load_config
+
+    value = cfg_get(load_config(), "goals", "max_inferred", default=_DEFAULT_MAX_INFERRED_GOALS)
+    try:
+        parsed = int(value)
+        return parsed if parsed >= 0 else _DEFAULT_MAX_INFERRED_GOALS
+    except (TypeError, ValueError):
+        return _DEFAULT_MAX_INFERRED_GOALS
+
+
+def _normalize_title(title: str) -> str:
+    text = str(title or "").strip().lower()
+    text = re.sub(r"[^\w\s]", "", text)
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def _titles_similar(a: str, b: str) -> bool:
+    na, nb = _normalize_title(a), _normalize_title(b)
+    if not na or not nb:
+        return False
+    if na == nb:
+        return True
+    return difflib.SequenceMatcher(None, na, nb).ratio() >= _TITLE_DEDUP_THRESHOLD
+
+
+def _find_similar_existing_goal(title: str) -> "dict | None":
+    """Dedup against ALL existing goals regardless of status — a goal the
+    user already paused or marked done shouldn't be silently re-created
+    just because it's no longer active."""
+    for existing in list_goals():
+        if _titles_similar(title, str(existing.get("title") or "")):
+            return existing
+    return None
+
+
+def _count_active_inferred_goals() -> int:
+    return sum(
+        1
+        for g in list_goals(status="active")
+        if g.get("origin") == "inferred"
+    )
+
+
+def _log_inferred_goal_activity(goal: dict) -> None:
+    """Best-effort activity-feed entry so an auto-created goal is visible
+    without digging through Mind -> Goals. Never allowed to fail the
+    goal-creation call itself."""
+    try:
+        from cron.scheduler import record_subconscious_activity
+
+        record_subconscious_activity(
+            source="goal",
+            outcome="suggestion",
+            summary=f"New goal (inferred): {goal.get('title')}",
+            thought=str(goal.get("detail") or "") or None,
+        )
+    except Exception:
+        logger.debug("Failed to log inferred-goal activity entry", exc_info=True)
 
 
 # ---------------------------------------------------------------------------
@@ -172,21 +255,52 @@ def _handle_suggest_goal(args: dict, **kw) -> str:
         return tool_error("action must be add, pause, or done")
     if not dedup_key or (action == "add" and not title) or (action != "add" and not (goal_id or title)):
         return tool_error("dedup_key plus a title (add) or goal_id/title (pause/done) are required")
+
+    detail = str(args.get("detail") or "")
+    horizon = str(args.get("horizon") or "short")
+    if horizon not in VALID_HORIZONS:
+        horizon = "short"
+
+    # pause/done stay consent-first suggestions unconditionally -- only a
+    # brand-new inferred goal is ever auto-created. The model is only
+    # expected to call this with action="add" when it already has strong
+    # evidence (the calling prompt gates on that); this tool's own job is
+    # just the two mechanical guardrails: don't blow past the concurrent
+    # cap, and don't create a near-duplicate of something that already
+    # exists.
+    if action == "add":
+        similar = _find_similar_existing_goal(title)
+        at_cap = _count_active_inferred_goals() >= _max_inferred_goals()
+        if similar is None and not at_cap:
+            try:
+                goal = add_goal(title=title, detail=detail, horizon=horizon, origin="inferred")
+            except ValueError as exc:
+                return tool_error(str(exc))
+            except Exception as exc:
+                logger.exception("suggest_goal: auto-create failed; falling back to suggestion")
+                goal = None
+            else:
+                _log_inferred_goal_activity(goal)
+                return _ok(auto_created=True, goal=goal)
+        # Fell through: a near-duplicate exists, the inferred-goal cap is
+        # full, or auto-create errored -- degrade to the normal
+        # consent-first suggestion rather than losing the proposal.
+
     display_title = title or f"{action.title()} goal {goal_id}"
     try:
         from cron.suggestions import add_suggestion
 
         record = add_suggestion(
             title=display_title,
-            description=str(args.get("description") or args.get("detail") or ""),
+            description=str(args.get("description") or detail),
             source="subconscious",
             kind="goal",
             goal_spec={
                 "action": action,
                 "goal_id": goal_id or None,
                 "title": title,
-                "detail": str(args.get("detail") or ""),
-                "horizon": str(args.get("horizon") or "short"),
+                "detail": detail,
+                "horizon": horizon,
             },
             dedup_key=dedup_key,
             category="goal",
@@ -194,7 +308,7 @@ def _handle_suggest_goal(args: dict, **kw) -> str:
     except Exception as exc:
         logger.exception("suggest_goal failed")
         return tool_error(f"suggest_goal: {exc}")
-    return _ok(registered=record is not None, suggestion=record)
+    return _ok(registered=record is not None, auto_created=False, suggestion=record)
 
 
 # ---------------------------------------------------------------------------
@@ -332,8 +446,13 @@ SUGGEST_GOAL_SCHEMA = {
     "name": "suggest_goal",
     "description": (
         "Propose a standing goal inferred from repeated behavior or durable memory. "
-        "This is always consent-first: the goal stays pending in Mind until the user accepts it. "
-        "If intent or success criteria are uncertain, ask one short question instead of calling this tool."
+        "Only call action='add' when you have real evidence and are genuinely confident — "
+        "a new goal is created directly (marked as inferred, shown with a badge in Mind, "
+        "one click for the user to either keep it or delete it) rather than staying pending, "
+        "subject to a cap on concurrently-active inferred goals and dedup against existing "
+        "goals. If intent or success criteria are uncertain, ask one short question instead of "
+        "calling this tool. action='pause'/'done' on an EXISTING goal always stays "
+        "consent-first: it stays pending in Mind until the user accepts it."
     ),
     "parameters": {
         "type": "object",

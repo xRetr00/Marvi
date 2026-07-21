@@ -2463,6 +2463,12 @@ DEFAULT_CONFIG = {
         # negatives (goal actually done but judge says continue) and
         # unbounded model spend on fuzzy / unachievable goals.
         "max_turns": 20,
+        # Unrelated to the per-session /goal loop above: the max number of
+        # concurrently-active origin="inferred" standing goals
+        # (agent/goal_store.py) tools/goal_tools.py::suggest_goal will
+        # auto-create before it falls back to a pending suggestion instead.
+        # Keeps the subconscious from quietly filling the goal list.
+        "max_inferred": 3,
     },
 
     # Mixture of Agents — named presets used by /moa. A preset is an execution

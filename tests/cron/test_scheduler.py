@@ -3136,15 +3136,23 @@ class TestRunJobSubconsciousActivityLog:
         assert "model exploded" in lines[0]["summary"]
 
     def test_rotation_caps_at_max_lines(self):
+        # Rotation is now per-source-fair (see TestSubconsciousActivityRotationFairness
+        # / tests/cron/test_scheduler_world_activity.py) -- a flood from a SINGLE
+        # source caps at subconscious.activity.max_per_source, not the full 500.
+        # Spread the pre-existing fixture across several distinct sources (each
+        # under the per-source cap) so this test still exercises the total-cap-500
+        # behavior it was written for.
         import cron.scheduler as scheduler
         from hermes_constants import get_hermes_home
 
         path = get_hermes_home() / "subconscious" / "activity.jsonl"
         path.parent.mkdir(parents=True, exist_ok=True)
+        sources = ["reflection", "goblin", "distiller", "dreaming", "idle_trigger"]
+        total = scheduler._SUBCONSCIOUS_ACTIVITY_MAX_LINES + 10
         path.write_text(
             "\n".join(
-                json.dumps({"at": "x", "job_id": "j", "outcome": "no_change"})
-                for _ in range(scheduler._SUBCONSCIOUS_ACTIVITY_MAX_LINES + 10)
+                json.dumps({"at": "x", "job_id": "j", "outcome": "no_change", "source": sources[i % len(sources)]})
+                for i in range(total)
             )
             + "\n",
             encoding="utf-8",
@@ -3155,6 +3163,31 @@ class TestRunJobSubconsciousActivityLog:
             scheduler.run_job(self._make_subconscious_job())
 
         assert len(self._activity_lines()) == scheduler._SUBCONSCIOUS_ACTIVITY_MAX_LINES
+
+    def test_rotation_caps_a_single_chatty_source_below_the_total_cap(self):
+        """The behavior test_rotation_caps_at_max_lines used to cover before
+        per-source fairness: 510 lines from ONE source no longer fill the
+        entire 500-line budget -- they're capped at max_per_source (default
+        200) so a single chatty source can't crowd out every other one."""
+        import cron.scheduler as scheduler
+        from hermes_constants import get_hermes_home
+
+        path = get_hermes_home() / "subconscious" / "activity.jsonl"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            "\n".join(
+                json.dumps({"at": "x", "job_id": "j", "outcome": "no_change", "source": "world"})
+                for _ in range(scheduler._SUBCONSCIOUS_ACTIVITY_MAX_LINES + 10)
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+        scheduler._rotate_subconscious_activity(path)
+
+        lines = self._activity_lines()
+        assert len(lines) == scheduler._subconscious_activity_max_per_source()
+        assert all(line["source"] == "world" for line in lines)
 
     def test_no_change_entry_carries_the_diff_that_triggered_it(self):
         """The wake-gate 'no_change' entry stores the stage-1 script output

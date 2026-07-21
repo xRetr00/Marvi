@@ -15,7 +15,7 @@ import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
 import { triggerHaptic } from '@/lib/haptics'
-import { Check, Pause, Pencil, Play, Plus, Trash2 } from '@/lib/icons'
+import { Check, Pause, Pencil, Play, Plus, Trash2, Zap } from '@/lib/icons'
 import { cn } from '@/lib/utils'
 import { notify, notifyError } from '@/store/notifications'
 
@@ -93,6 +93,24 @@ export function GoalsPanel({ templates = [] }: { templates?: GoalTemplate[] }) {
     await persist(
       goals.map(g => (g.id === goal.id ? { ...g, status, updated: new Date().toISOString() } : g)),
       status === 'done' ? `Marked "${goal.title}" done` : undefined
+    )
+    setBusyId(null)
+  }
+
+  /** One-click "Keep" on an inferred goal: adopt it as the user's own
+   * (origin "inferred" -> "user"), same shape as any other field edit —
+   * no separate accept/consent flow needed since the goal already exists. */
+  async function handleKeep(goal: Goal) {
+    if (!goals) {
+      return
+    }
+
+    setBusyId(goal.id)
+    triggerHaptic('selection')
+
+    await persist(
+      goals.map(g => (g.id === goal.id ? { ...g, origin: 'user', updated: new Date().toISOString() } : g)),
+      `Kept "${goal.title}"`
     )
     setBusyId(null)
   }
@@ -185,6 +203,7 @@ export function GoalsPanel({ templates = [] }: { templates?: GoalTemplate[] }) {
                     onComplete={() => void handleSetStatus(goal, 'done')}
                     onDelete={() => setPendingDelete(goal)}
                     onEdit={() => setEditor({ goal, mode: 'edit' })}
+                    onKeep={() => void handleKeep(goal)}
                     onTogglePause={() => void handleSetStatus(goal, goal.status === 'paused' ? 'active' : 'paused')}
                   />
                 ))}
@@ -249,7 +268,8 @@ function GoalRow({
   onComplete,
   onTogglePause,
   onEdit,
-  onDelete
+  onDelete,
+  onKeep
 }: {
   goal: Goal
   busy: boolean
@@ -257,9 +277,13 @@ function GoalRow({
   onTogglePause: () => void
   onEdit: () => void
   onDelete: () => void
+  onKeep: () => void
 }) {
   const isPaused = goal.status === 'paused'
   const isDone = goal.status === 'done'
+  // Absent origin (a goal written before this field existed) reads as
+  // "user" -- see agent/goal_store.py's own backward-compat default.
+  const isInferred = goal.origin === 'inferred'
 
   return (
     <div className="flex items-start justify-between gap-3 px-3 py-2.5">
@@ -269,11 +293,24 @@ function GoalRow({
             {goal.title}
           </span>
           <Pill>{HORIZON_LABEL[goal.horizon]}</Pill>
+          {isInferred && (
+            <Pill tone="primary">
+              <span className="inline-flex items-center gap-1">
+                <Zap className="size-3" />
+                Inferred
+              </span>
+            </Pill>
+          )}
         </div>
         {goal.detail && <p className="mt-0.5 line-clamp-2 text-xs text-muted-foreground">{goal.detail}</p>}
       </div>
 
       <div className="flex shrink-0 items-center gap-0.5">
+        {isInferred && !isDone && (
+          <Button disabled={busy} onClick={onKeep} size="xs" title="Keep this goal as your own" type="button" variant="outline">
+            Keep
+          </Button>
+        )}
         {!isDone && (
           <>
             <Button

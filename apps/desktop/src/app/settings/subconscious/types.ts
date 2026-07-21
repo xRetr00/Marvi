@@ -15,7 +15,7 @@ export type TierMap = Record<string, SubconsciousTier>
 /**
  * A goal in ``~/.hermes/goals.json`` (owned by Workstream A's
  * agent/goal_store.py). Field names mirror the spec's Contract exactly:
- * id, title, detail, status, created, updated, horizon.
+ * id, title, detail, status, created, updated, horizon, origin.
  */
 export interface Goal {
   id: string
@@ -23,9 +23,16 @@ export interface Goal {
   detail: string
   status: GoalStatus
   horizon: GoalHorizon
+  /** "user" for anything a person wrote; "inferred" for a goal Marvi
+   *  created on its own (tools/goal_tools.py::suggest_goal). Absent on a
+   *  goal written before this field existed — treat as "user", same as
+   *  agent/goal_store.py's own backward-compat read. */
+  origin?: GoalOrigin
   created: string
   updated: string
 }
+
+export type GoalOrigin = 'user' | 'inferred'
 
 export type GoalStatus = 'active' | 'paused' | 'done'
 export type GoalHorizon = 'short' | 'long'

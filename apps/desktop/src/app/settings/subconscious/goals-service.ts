@@ -14,7 +14,7 @@
 // shape that round-trips cleanly. If Workstream A's store expects the wrapped
 // form, the parser already tolerates it and only the write side would need a
 // one-line change.
-import type { Goal, GoalHorizon, GoalStatus } from './types'
+import type { Goal, GoalHorizon, GoalOrigin, GoalStatus } from './types'
 
 export const GOALS_PATH = '~/.hermes/goals.json'
 
@@ -24,6 +24,10 @@ function isGoalStatus(value: unknown): value is GoalStatus {
 
 function isGoalHorizon(value: unknown): value is GoalHorizon {
   return value === 'short' || value === 'long'
+}
+
+function isGoalOrigin(value: unknown): value is GoalOrigin {
+  return value === 'user' || value === 'inferred'
 }
 
 function coerceGoal(value: unknown): Goal | null {
@@ -45,6 +49,13 @@ function coerceGoal(value: unknown): Goal | null {
     detail: typeof raw.detail === 'string' ? raw.detail : '',
     status: isGoalStatus(raw.status) ? raw.status : 'active',
     horizon: isGoalHorizon(raw.horizon) ? raw.horizon : 'short',
+    // Preserve whatever origin the backend wrote (goal_store.py is the
+    // source of truth) instead of dropping it — this file round-trips the
+    // WHOLE array on every edit, so silently stripping an unrecognized/
+    // missing field here would erase "inferred" back to the default on
+    // the next save. Absent/invalid reads as "user", matching goal_store.
+    // py's own backward-compat default for pre-existing records.
+    origin: isGoalOrigin(raw.origin) ? raw.origin : 'user',
     created: typeof raw.created === 'string' ? raw.created : new Date(0).toISOString(),
     updated: typeof raw.updated === 'string' ? raw.updated : new Date(0).toISOString()
   }
@@ -129,6 +140,11 @@ export function createGoal(input: { title: string; detail: string; horizon: Goal
     detail: input.detail.trim(),
     status: 'active',
     horizon: input.horizon,
+    // Always "user" -- this is the desktop "Add goal" form / a template
+    // pick, both explicit user actions. Marvi's own inferred goals are
+    // created server-side (tools/goal_tools.py::suggest_goal), never
+    // through this function.
+    origin: 'user',
     created: now,
     updated: now
   }

@@ -133,3 +133,195 @@ class TestSuggestAutomationGate:
         })
         parsed = json.loads(out)
         assert parsed.get("ok") is not True
+
+
+def _activity_lines(env):
+    import json as _json
+
+    from hermes_constants import get_hermes_home
+
+    path = get_hermes_home() / "subconscious" / "activity.jsonl"
+    if not path.exists():
+        return []
+    return [_json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+
+
+class TestSuggestGoalAutoCreate:
+    """suggest_goal(action="add") creates the goal directly (origin=
+    "inferred") instead of only registering a pending suggestion, subject
+    to the concurrent-inferred-goal cap and title-similarity dedup.
+    pause/done always stay consent-first suggestions."""
+
+    def test_add_auto_creates_an_inferred_goal(self, env):
+        out = json.loads(env._handle_suggest_goal({
+            "action": "add",
+            "title": "Learn Spanish",
+            "detail": "daily practice",
+            "dedup_key": "subconscious:goal:learn-spanish",
+        }))
+
+        assert out["ok"] is True
+        assert out["auto_created"] is True
+        assert out["goal"]["title"] == "Learn Spanish"
+        assert out["goal"]["origin"] == "inferred"
+
+        import agent.goal_store as gs
+        stored = gs.list_goals()
+        assert len(stored) == 1
+        assert stored[0]["origin"] == "inferred"
+
+        import cron.suggestions as sugg
+        assert sugg.list_pending() == []  # never went through the suggestion path
+
+    def test_add_logs_an_activity_entry(self, env):
+        json.loads(env._handle_suggest_goal({
+            "action": "add",
+            "title": "Learn Spanish",
+            "dedup_key": "subconscious:goal:learn-spanish",
+        }))
+
+        lines = _activity_lines(env)
+        assert len(lines) == 1
+        assert lines[0]["source"] == "goal"
+        assert "Learn Spanish" in lines[0]["summary"]
+
+    def test_add_falls_back_to_suggestion_when_a_similar_goal_already_exists(self, env):
+        import agent.goal_store as gs
+
+        gs.add_goal(title="Learn spanish!", origin="user")
+
+        out = json.loads(env._handle_suggest_goal({
+            "action": "add",
+            "title": "Learn Spanish",
+            "dedup_key": "subconscious:goal:learn-spanish",
+        }))
+
+        assert out["auto_created"] is False
+        assert out["registered"] is True
+        assert len(gs.list_goals()) == 1  # no duplicate created
+
+        import cron.suggestions as sugg
+        assert len(sugg.list_pending()) == 1
+
+    def test_dedup_matches_regardless_of_existing_goal_status(self, env):
+        import agent.goal_store as gs
+
+        done = gs.add_goal(title="Learn Spanish", origin="user")
+        gs.update_goal(done["id"], status="done")
+
+        out = json.loads(env._handle_suggest_goal({
+            "action": "add",
+            "title": "learn spanish",
+            "dedup_key": "subconscious:goal:learn-spanish",
+        }))
+
+        assert out["auto_created"] is False
+        assert len(gs.list_goals()) == 1
+
+    def test_add_falls_back_to_suggestion_when_inferred_cap_reached(self, env):
+        import agent.goal_store as gs
+
+        for i in range(3):  # default goals.max_inferred
+            gs.add_goal(title=f"Inferred goal {i}", origin="inferred")
+
+        out = json.loads(env._handle_suggest_goal({
+            "action": "add",
+            "title": "One more inferred goal",
+            "dedup_key": "subconscious:goal:one-more",
+        }))
+
+        assert out["auto_created"] is False
+        assert len(gs.list_goals()) == 3
+
+        import cron.suggestions as sugg
+        assert len(sugg.list_pending()) == 1
+
+    def test_paused_inferred_goals_do_not_count_toward_the_cap(self, env):
+        import agent.goal_store as gs
+
+        for i in range(3):
+            g = gs.add_goal(title=f"Inferred goal {i}", origin="inferred")
+            gs.update_goal(g["id"], status="paused")
+
+        out = json.loads(env._handle_suggest_goal({
+            "action": "add",
+            "title": "A fresh inferred goal",
+            "dedup_key": "subconscious:goal:fresh",
+        }))
+
+        assert out["auto_created"] is True
+
+    def test_user_created_inferred_looking_goals_do_not_block_cap_check(self, env):
+        # The cap only counts origin="inferred" -- a user manually adding
+        # three goals of their own must never block Marvi's own inference.
+        import agent.goal_store as gs
+
+        for i in range(5):
+            gs.add_goal(title=f"My own goal {i}", origin="user")
+
+        out = json.loads(env._handle_suggest_goal({
+            "action": "add",
+            "title": "Marvi's own inferred goal",
+            "dedup_key": "subconscious:goal:marvi-own",
+        }))
+
+        assert out["auto_created"] is True
+
+    def test_max_inferred_is_configurable(self, env, monkeypatch):
+        monkeypatch.setattr(
+            "hermes_cli.config.cfg_get",
+            lambda cfg, *keys, default=None: 1 if keys == ("goals", "max_inferred") else default,
+        )
+        import agent.goal_store as gs
+
+        gs.add_goal(title="Already inferred", origin="inferred")
+
+        out = json.loads(env._handle_suggest_goal({
+            "action": "add",
+            "title": "Second inferred goal",
+            "dedup_key": "subconscious:goal:second",
+        }))
+
+        assert out["auto_created"] is False
+
+    def test_pause_action_always_stays_a_suggestion(self, env):
+        import agent.goal_store as gs
+
+        goal = gs.add_goal(title="Existing goal", origin="user")
+
+        out = json.loads(env._handle_suggest_goal({
+            "action": "pause",
+            "goal_id": goal["id"],
+            "title": "Existing goal",
+            "dedup_key": "subconscious:goal:pause-existing",
+        }))
+
+        assert out.get("auto_created") is False
+        assert out["registered"] is True
+        # The goal itself was never mutated by suggest_goal directly.
+        assert gs.get_goal(goal["id"])["status"] == "active"
+
+        import cron.suggestions as sugg
+        assert len(sugg.list_pending()) == 1
+
+    def test_done_action_always_stays_a_suggestion(self, env):
+        import agent.goal_store as gs
+
+        goal = gs.add_goal(title="Existing goal", origin="user")
+
+        out = json.loads(env._handle_suggest_goal({
+            "action": "done",
+            "goal_id": goal["id"],
+            "title": "Existing goal",
+            "dedup_key": "subconscious:goal:done-existing",
+        }))
+
+        assert out.get("auto_created") is False
+        assert gs.get_goal(goal["id"])["status"] == "active"
+
+        import cron.suggestions as sugg
+        assert len(sugg.list_pending()) == 1
+
+    def test_suggest_goal_requires_dedup_key(self, env):
+        out = json.loads(env._handle_suggest_goal({"action": "add", "title": "x"}))
+        assert out.get("ok") is not True

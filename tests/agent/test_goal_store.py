@@ -108,6 +108,77 @@ class TestCRUD:
             assert mode == 0o600
 
 
+class TestOrigin:
+    """origin ("user"/"inferred") -- see tools/goal_tools.py's auto-goal
+    inference path for the writer side; this covers the store contract:
+    default value, validation, backward-compat with pre-existing records,
+    and the "Keep" flip via update_goal."""
+
+    def test_default_origin_is_user(self, store):
+        goal = store.add_goal(title="x")
+        assert goal["origin"] == "user"
+
+    def test_add_goal_accepts_inferred_origin(self, store):
+        goal = store.add_goal(title="x", origin="inferred")
+        assert goal["origin"] == "inferred"
+        assert store.list_goals()[0]["origin"] == "inferred"
+
+    def test_add_goal_rejects_invalid_origin(self, store):
+        with pytest.raises(ValueError):
+            store.add_goal(title="x", origin="bogus")
+
+    def test_old_record_without_origin_reads_as_user(self, store):
+        # Simulate a goal written before the origin field existed by writing
+        # the raw file directly, bypassing add_goal.
+        import json
+
+        store.GOALS_FILE.parent.mkdir(parents=True, exist_ok=True)
+        store.GOALS_FILE.write_text(
+            json.dumps({"goals": [{
+                "id": "legacy1",
+                "title": "Pre-existing goal",
+                "detail": "",
+                "status": "active",
+                "horizon": "short",
+                "created": "2026-01-01T00:00:00+00:00",
+                "updated": "2026-01-01T00:00:00+00:00",
+            }]}),
+            encoding="utf-8",
+        )
+
+        goals = store.load_goals()
+        assert len(goals) == 1
+        assert goals[0]["origin"] == "user"
+
+    def test_old_record_origin_backfill_does_not_touch_other_fields(self, store):
+        import json
+
+        store.GOALS_FILE.parent.mkdir(parents=True, exist_ok=True)
+        store.GOALS_FILE.write_text(
+            json.dumps({"goals": [{
+                "id": "legacy1", "title": "Pre-existing goal", "detail": "d",
+                "status": "paused", "horizon": "long",
+                "created": "2026-01-01T00:00:00+00:00", "updated": "2026-01-01T00:00:00+00:00",
+            }]}),
+            encoding="utf-8",
+        )
+        goal = store.load_goals()[0]
+        assert goal["title"] == "Pre-existing goal"
+        assert goal["status"] == "paused"
+        assert goal["horizon"] == "long"
+
+    def test_update_goal_can_flip_origin_to_user(self, store):
+        goal = store.add_goal(title="x", origin="inferred")
+        updated = store.update_goal(goal["id"], origin="user")
+        assert updated["origin"] == "user"
+        assert store.list_goals()[0]["origin"] == "user"
+
+    def test_update_goal_rejects_invalid_origin(self, store):
+        goal = store.add_goal(title="x")
+        with pytest.raises(ValueError):
+            store.update_goal(goal["id"], origin="bogus")
+
+
 class TestPromptRendering:
     def test_empty_when_no_active_goals(self, store):
         assert store.format_active_goals_for_prompt() == ""
@@ -128,3 +199,12 @@ class TestPromptRendering:
         block = store.format_active_goals_for_prompt(max_goals=3)
         # Header line + 3 goal lines.
         assert len(block.splitlines()) == 4
+
+    def test_inferred_goal_marked_in_prompt(self, store):
+        store.add_goal(title="User goal", origin="user")
+        store.add_goal(title="Auto goal", origin="inferred")
+
+        block = store.format_active_goals_for_prompt()
+        lines = {line for line in block.splitlines()}
+        assert any("User goal" in line and "(inferred)" not in line for line in lines)
+        assert any("Auto goal" in line and "(inferred)" in line for line in lines)

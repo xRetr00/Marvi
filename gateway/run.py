@@ -7770,6 +7770,28 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
         except Exception:  # noqa: BLE001 - arming must never block startup
             logger.debug("scale-to-zero: arm check failed at startup", exc_info=True)
 
+        # Reconcile the subconscious jobs on startup. enable() is idempotent
+        # and creates ALL of the tick + reflection + dreaming jobs it knows
+        # about — so a user who turned the subconscious on before reflection/
+        # dreaming existed (their job ids never got created) self-heals on the
+        # next boot after updating, instead of the deep loop staying silently
+        # dormant. No-op when the subconscious is off or already fully wired.
+        try:
+            from hermes_cli.config import load_config as _sc_load_config
+
+            _sc_cfg = (_sc_load_config() or {}).get("subconscious") or {}
+            if _sc_cfg.get("enabled"):
+                _missing = not all(
+                    _sc_cfg.get(k) for k in ("job_id", "reflection_job_id", "dreaming_job_id")
+                )
+                if _missing:
+                    from cron.subconscious import enable as _sc_enable
+
+                    _sc_enable()
+                    logger.info("subconscious: reconciled missing jobs at startup")
+        except Exception:  # noqa: BLE001 - reconciliation must never block startup
+            logger.debug("subconscious: startup reconciliation failed", exc_info=True)
+
         # Start the subconscious idle-trigger watcher — best-effort, always
         # started; it no-ops every iteration unless subconscious.enabled is
         # true (checked inside the watcher itself, config.yaml Contract 3).

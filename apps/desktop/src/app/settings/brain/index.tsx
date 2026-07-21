@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { Brain, Search } from '@/lib/icons'
+import { Brain, Search, X, Zap } from '@/lib/icons'
 import { relativeTime } from '@/lib/time'
 import { notify, notifyError } from '@/store/notifications'
 
@@ -10,7 +10,7 @@ import { Caption, ListRow, LoadingState, Pill, SectionHeading, SettingsContent, 
 import { StringListEditor } from '../subconscious/string-list-editor'
 
 import { indexBrainNow, searchBrain, updateBrainConfig } from './brain-service'
-import type { BrainSearchResult } from './brain-service'
+import type { BrainConfigPatch, BrainSearchResult } from './brain-service'
 import { useBrainStatus } from './use-brain-status'
 
 const DEFAULT_EXCLUDES_HINT = 'Default excludes always apply: .git, node_modules, venv, dist, build, __pycache__.'
@@ -68,7 +68,7 @@ function BrainCoreSettings({ brain }: { brain: ReturnType<typeof useBrainStatus>
   const status = brain.status
   const [folders, setFolders] = useState<string[]>(status?.folders ?? [])
   const [exclude, setExclude] = useState<string[]>(status?.exclude ?? [])
-  const [savingField, setSavingField] = useState<null | 'enabled' | 'exclude' | 'folders'>(null)
+  const [savingField, setSavingField] = useState<null | 'autoBuild' | 'enabled' | 'exclude' | 'folders'>(null)
   const [reindexing, setReindexing] = useState(false)
   const [query, setQuery] = useState('')
   const [results, setResults] = useState<BrainSearchResult[]>([])
@@ -86,8 +86,8 @@ function BrainCoreSettings({ brain }: { brain: ReturnType<typeof useBrainStatus>
   const hasFolders = folders.length > 0
 
   async function persist(
-    field: 'enabled' | 'exclude' | 'folders',
-    patch: { enabled?: boolean; exclude?: string[]; folders?: string[] },
+    field: 'autoBuild' | 'enabled' | 'exclude' | 'folders',
+    patch: BrainConfigPatch,
     rollback: () => void,
     errorLabel: string
   ) {
@@ -121,6 +121,50 @@ function BrainCoreSettings({ brain }: { brain: ReturnType<typeof useBrainStatus>
   function handleToggle(next: boolean) {
     void persist('enabled', { enabled: next }, () => {}, next ? 'Failed to enable Brain' : 'Failed to disable Brain')
   }
+
+  // "Auto-build" is one master switch over three independent config flags
+  // (brain.auto_discover + brain.collect.email/github) -- flipping it off
+  // stops PC folder discovery and both document collectors in one action;
+  // flipping it back on re-enables all three. No rollback state needed
+  // beyond the shared `persist` optimistic-update/rollback plumbing.
+  const autoBuildEnabled = status?.auto_discover ?? true
+
+  function handleAutoBuildToggle(next: boolean) {
+    void persist(
+      'autoBuild',
+      { auto_discover: next, collect: { email: next, github: next } },
+      () => {},
+      next ? 'Failed to enable auto-build' : 'Failed to disable auto-build'
+    )
+  }
+
+  // Discovered folders the last "Brain indexer" pass found (see
+  // tools/brain/discovery.py) -- hide any already excluded so "Remove"
+  // reads as immediate even though the discovered list itself only
+  // reconciles on the next (throttled, once/24h) discovery pass.
+  const discoveredFolders = (status?.discovered_folders ?? []).filter(path => !exclude.includes(path))
+
+  function handleRemoveDiscoveredFolder(path: string) {
+    const previous = exclude
+    const next = [...exclude, path]
+
+    setExclude(next)
+    void persist('exclude', { exclude: next }, () => setExclude(previous), 'Failed to exclude folder')
+  }
+
+  // Per-source collected-document counts (tools/brain/collected.py's
+  // collected_counts()) rolled up into the three buckets the Brain tab
+  // shows: email, github, and "agent" (everything brain_store_document
+  // wrote, regardless of which caller's source string it used -- chat,
+  // subconscious, reflection, dreaming, ...).
+  const collected = status?.collected ?? {}
+  const collectedEmail = collected.email ?? 0
+  const collectedGithub = collected.github ?? 0
+
+  const collectedAgent = Object.entries(collected).reduce(
+    (sum, [source, count]) => (source === 'email' || source === 'github' ? sum : sum + count),
+    0
+  )
 
   async function reindexNow() {
     setReindexing(true)
@@ -234,6 +278,62 @@ function BrainCoreSettings({ brain }: { brain: ReturnType<typeof useBrainStatus>
         }
         description={`Last run: ${lastRunLabel}`}
         title="Index stats"
+      />
+
+      <div className="my-4 h-px bg-border/30" />
+
+      <SectionHeading icon={Zap} title="Auto-build" />
+      <Caption>
+        Let Marvi grow this index on its own: scan your Documents/Desktop/Downloads for likely note folders, and pull
+        README/docs from your GitHub repos and document-shaped email into the index — on top of whatever you list
+        above.
+      </Caption>
+      <ToggleRow
+        checked={autoBuildEnabled}
+        description="Discovers folders, and collects from GitHub and email, on the same background schedule as the index."
+        disabled={savingField === 'autoBuild'}
+        label="Auto-build"
+        onChange={handleAutoBuildToggle}
+      />
+
+      {discoveredFolders.length > 0 && (
+        <ListRow
+          below={
+            <ul className="mt-2 flex flex-wrap gap-1.5">
+              {discoveredFolders.map(path => (
+                <li
+                  className="flex items-center gap-1 rounded-[3px] bg-muted px-1.5 py-0.5 text-[0.7rem] text-foreground"
+                  key={path}
+                >
+                  <span className="max-w-56 truncate">{path}</span>
+                  <button
+                    aria-label={`Remove ${path}`}
+                    className="text-muted-foreground hover:text-destructive"
+                    disabled={savingField === 'exclude'}
+                    onClick={() => handleRemoveDiscoveredFolder(path)}
+                    type="button"
+                  >
+                    <X className="size-3" />
+                  </button>
+                </li>
+              ))}
+            </ul>
+          }
+          description="Found automatically, indexed alongside your watched folders. Removing one excludes it from future discovery."
+          title="Discovered folders"
+        />
+      )}
+
+      <ListRow
+        action={
+          <div className="flex items-center gap-2">
+            <Pill>Email {collectedEmail}</Pill>
+            <Pill>GitHub {collectedGithub}</Pill>
+            <Pill>Agent {collectedAgent}</Pill>
+          </div>
+        }
+        description="Documents Marvi has pulled in from email, GitHub, and its own background thinking."
+        title="Collected"
       />
 
       <div className="my-4 h-px bg-border/30" />

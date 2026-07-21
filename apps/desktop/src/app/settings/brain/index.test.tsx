@@ -35,6 +35,16 @@ function fakeStatus(overrides: Partial<BrainStatus> = {}): BrainStatus {
     chunks: 0,
     indexed_at: null,
     last_run: { at: null, indexed: 0, skipped: 0, removed: 0, errors: 0 },
+    auto_discover: true,
+    max_auto_folders: 5,
+    auto_folders: [],
+    collect_email: true,
+    collect_github: true,
+    github_max_repos: 10,
+    discovered_folders: [],
+    last_discovery: { at: null, folders: [] },
+    collected: {},
+    last_collect: { at: null, email: null, github: null },
     ...overrides
   }
 }
@@ -249,6 +259,88 @@ describe('BrainSettings', () => {
 
       expect(screen.getByRole('button', { name: 'Search' })).toHaveProperty('disabled', true)
       expect(searchBrain).not.toHaveBeenCalled()
+    })
+  })
+
+  describe('auto-build', () => {
+    it('reflects auto_discover in the toggle state', async () => {
+      await mockUseBrainStatus(fakeBrainState({ status: fakeStatus({ auto_discover: false }) }))
+
+      render(<BrainSettings />)
+
+      expect(screen.getByLabelText('Auto-build').getAttribute('aria-checked')).toBe('false')
+    })
+
+    it('disabling auto-build patches auto_discover and both collect flags off', async () => {
+      const { updateBrainConfig } = await import('./brain-service')
+      await mockUseBrainStatus(fakeBrainState({ status: fakeStatus({ auto_discover: true }) }))
+
+      render(<BrainSettings />)
+
+      fireEvent.click(screen.getByLabelText('Auto-build'))
+
+      await waitFor(() =>
+        expect(updateBrainConfig).toHaveBeenCalledWith({
+          auto_discover: false,
+          collect: { email: false, github: false }
+        })
+      )
+    })
+  })
+
+  describe('discovered folders', () => {
+    it('lists discovered folders not already excluded', async () => {
+      await mockUseBrainStatus(
+        fakeBrainState({ status: fakeStatus({ discovered_folders: ['D:\\Users\\me\\Documents\\Notes'] }) })
+      )
+
+      render(<BrainSettings />)
+
+      expect(screen.getByText('D:\\Users\\me\\Documents\\Notes')).toBeTruthy()
+    })
+
+    it('hides the Discovered folders section once every candidate is already excluded', async () => {
+      await mockUseBrainStatus(
+        fakeBrainState({
+          status: fakeStatus({ discovered_folders: ['D:\\Notes'], exclude: ['D:\\Notes'] })
+        })
+      )
+
+      render(<BrainSettings />)
+
+      // 'D:\Notes' still legitimately appears once, as a chip in the
+      // Exclude patterns editor -- what this asserts is that the Discovered
+      // folders section itself doesn't render a second, redundant listing.
+      expect(screen.queryByText('Discovered folders')).toBeNull()
+    })
+
+    it('removing a discovered folder adds it to the exclude list', async () => {
+      const { updateBrainConfig } = await import('./brain-service')
+      await mockUseBrainStatus(
+        fakeBrainState({ status: fakeStatus({ discovered_folders: ['D:\\Notes'], exclude: ['*.min.js'] }) })
+      )
+
+      render(<BrainSettings />)
+
+      fireEvent.click(screen.getByLabelText('Remove D:\\Notes'))
+
+      await waitFor(() => expect(updateBrainConfig).toHaveBeenCalledWith({ exclude: ['*.min.js', 'D:\\Notes'] }))
+    })
+  })
+
+  describe('collected counters', () => {
+    it('shows email/github counts and rolls up every other source into "Agent"', async () => {
+      await mockUseBrainStatus(
+        fakeBrainState({
+          status: fakeStatus({ collected: { email: 3, github: 2, chat: 1, subconscious: 4 } })
+        })
+      )
+
+      render(<BrainSettings />)
+
+      expect(screen.getByText('Email 3')).toBeTruthy()
+      expect(screen.getByText('GitHub 2')).toBeTruthy()
+      expect(screen.getByText('Agent 5')).toBeTruthy()
     })
   })
 })

@@ -13714,9 +13714,16 @@ async def update_brain_config(body: Dict[str, Any]):
                 raise _BrainConfigValidationError(
                     f"Folder(s) not found on disk: {', '.join(missing)}"
                 )
-        for key in ("enabled", "folders", "exclude", "schedule"):
+        for key in ("enabled", "folders", "exclude", "schedule", "auto_discover", "max_auto_folders"):
             if key in body:
                 current[key] = body[key]
+        # "collect" is a nested sub-dict (email/github/github_max_repos) --
+        # merge rather than replace so a UI patch of just one flag (e.g. the
+        # Auto-build toggle flipping both) never clobbers the other.
+        if isinstance(body.get("collect"), dict):
+            collect_current = dict(current.get("collect") or {})
+            collect_current.update(body["collect"])
+            current["collect"] = collect_current
         cfg["brain"] = current
         if current.get("enabled"):
             ensure_index_job(cfg)

@@ -7,7 +7,12 @@ import json
 
 def brain_command(args) -> int:
     from hermes_cli.config import load_config, save_config
-    from tools.brain.indexer import DEFAULT_SCHEDULE, brain_config, ensure_index_job, index_configured_folders
+    from tools.brain.indexer import (
+        DEFAULT_SCHEDULE,
+        brain_status,
+        ensure_index_job,
+        index_configured_folders,
+    )
     from tools.brain.store import BrainStore
 
     command = getattr(args, "brain_command", None) or "status"
@@ -35,12 +40,16 @@ def brain_command(args) -> int:
     if command == "index":
         print(json.dumps(index_configured_folders(), indent=2))
         return 0
-    store = BrainStore()
-    try:
-        if command == "search":
+    if command == "search":
+        store = BrainStore()
+        try:
             print(json.dumps(store.search(args.query, args.limit), indent=2, ensure_ascii=False))
-        else:
-            print(json.dumps({**brain_config(cfg), **store.status()}, indent=2))
-    finally:
-        store.close()
+        finally:
+            store.close()
+        return 0
+    # Default ("status"): the full aggregator -- config + index stats +
+    # last-run/discovery/collect info (auto_folders, discovered_folders,
+    # collected counts per source, last_discovery, last_collect). Additive
+    # over the plain brain_config()+store.status() this used to inline.
+    print(json.dumps(brain_status(cfg), indent=2, ensure_ascii=False))
     return 0

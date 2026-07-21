@@ -19,7 +19,31 @@ export interface BrainLastRun {
   errors: number
 }
 
-/** `GET /api/brain/status` response shape. */
+/** A single ranked candidate from a discovery pass (`tools/brain/discovery.py`). */
+export interface BrainDiscoveredFolder {
+  path: string
+  count: number
+}
+
+/** `read_last_discovery()` shape -- `tools/brain/discovery.py`. */
+export interface BrainLastDiscovery {
+  at: null | string
+  folders: BrainDiscoveredFolder[]
+}
+
+/** `read_last_collect()` shape -- `tools/brain/indexer.py`. Each entry is a
+ * collector's own summary dict (or null if that collector never ran / is
+ * disabled). */
+export interface BrainLastCollect {
+  at: null | string
+  email: Record<string, unknown> | null
+  github: Record<string, unknown> | null
+}
+
+/** `GET /api/brain/status` response shape. Additive over the original
+ * manual-folders-only surface (2026-07-20 self-feeding pass): auto-discovered
+ * folders, per-source collected-document counts, and last discovery/collect
+ * run info. */
 export interface BrainStatus {
   ok: boolean
   enabled: boolean
@@ -30,6 +54,16 @@ export interface BrainStatus {
   chunks: number
   indexed_at: null | string
   last_run: BrainLastRun
+  auto_discover: boolean
+  max_auto_folders: number
+  auto_folders: string[]
+  collect_email: boolean
+  collect_github: boolean
+  github_max_repos: number
+  discovered_folders: string[]
+  last_discovery: BrainLastDiscovery
+  collected: Record<string, number>
+  last_collect: BrainLastCollect
 }
 
 export interface BrainConfigPatch {
@@ -37,6 +71,9 @@ export interface BrainConfigPatch {
   folders?: string[]
   exclude?: string[]
   schedule?: string
+  auto_discover?: boolean
+  max_auto_folders?: number
+  collect?: { email?: boolean; github?: boolean; github_max_repos?: number }
 }
 
 export interface BrainConfigResponse {
@@ -46,6 +83,12 @@ export interface BrainConfigResponse {
     folders: string[]
     exclude: string[]
     schedule: string
+    auto_discover: boolean
+    max_auto_folders: number
+    auto_folders: string[]
+    collect_email: boolean
+    collect_github: boolean
+    github_max_repos: number
   }
 }
 

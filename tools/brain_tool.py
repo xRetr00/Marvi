@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any, Dict
 
-from tools.registry import registry
+from tools.registry import registry, tool_error, tool_result
 from tools.brain.indexer import brain_config
 from tools.brain.store import BrainStore
 
@@ -13,12 +14,20 @@ def _enabled() -> bool:
     return brain_config()["enabled"]
 
 
-def _recall_files(args: Dict[str, Any], **_: Any) -> Dict[str, Any]:
+def _recall_files(args: Dict[str, Any], **_: Any) -> str:
+    # Must return a string: registry.dispatch's _normalize_handler_result only
+    # accepts a str or the multimodal-content envelope — a bare dict falls into
+    # the error branch, which is why recall results never reached the agent.
     store = BrainStore()
     try:
-        return {"success": True, "results": store.search(str(args.get("query") or ""), int(args.get("limit") or 8))}
+        results = store.search(str(args.get("query") or ""), int(args.get("limit") or 8))
+    except Exception as exc:  # noqa: BLE001
+        return tool_error(f"Brain search failed: {exc}")
     finally:
         store.close()
+    if not results:
+        return "No matching documents in the local Brain index."
+    return tool_result(json.dumps({"results": results}, ensure_ascii=False))
 
 
 registry.register(

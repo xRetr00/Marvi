@@ -14,6 +14,8 @@ import { ActivityTimerText } from '@/components/chat/activity-timer-text'
 import { DisclosureRow } from '@/components/chat/disclosure-row'
 import { GeneratedImage } from '@/components/chat/generated-image-result'
 import { useI18n } from '@/i18n'
+import { CheckCircle2, Clock, Cloud, HelpCircle, iconSize, Info } from '@/lib/icons'
+import type { IslandCardKind } from '@/lib/island-queue'
 import { useEnterAnimation } from '@/lib/use-enter-animation'
 import { cn } from '@/lib/utils'
 
@@ -24,6 +26,50 @@ const ImageGenerateTool: FC<ToolCallMessagePartProps> = ({ args, result }) => {
     <div className="mt-1.5">
       <GeneratedImage aspectRatio={aspectRatio} result={result} />
     </div>
+  )
+}
+
+const showCardKind = (value: unknown): IslandCardKind =>
+  value === 'result' || value === 'approval' || value === 'weather' || value === 'time' ? value : 'info'
+
+const ShowCardIcon = ({ kind }: { kind: IslandCardKind }) => {
+  const Icon =
+    kind === 'weather'
+      ? Cloud
+      : kind === 'time'
+        ? Clock
+        : kind === 'result'
+          ? CheckCircle2
+          : kind === 'approval'
+            ? HelpCircle
+            : Info
+
+  return <Icon className={iconSize.md} />
+}
+
+const ShowCardTool: FC<ToolCallMessagePartProps> = props => {
+  const args = props.args && typeof props.args === 'object' ? (props.args as Record<string, unknown>) : null
+  const body = typeof args?.body === 'string' ? args.body : ''
+
+  if (!body) {
+    return <ToolFallback {...props} />
+  }
+
+  const kind = showCardKind(args?.kind)
+  const title = typeof args?.title === 'string' ? args.title : kind === 'info' ? 'Marvi' : kind
+  const value = typeof args?.value === 'string' ? args.value : ''
+
+  return (
+    <section className="my-2 max-w-lg overflow-hidden rounded-xl border border-(--ui-stroke-tertiary) bg-(--ui-chat-bubble-background) px-4 py-3">
+      <div className="flex items-center gap-2 text-(--ui-accent)">
+        <ShowCardIcon kind={kind} />
+        <span className="min-w-0 truncate text-[0.65rem] font-semibold uppercase tracking-[0.12em]">{title}</span>
+      </div>
+      {value ? (
+        <div className="mt-3 text-3xl font-semibold tracking-[-0.04em] text-(--ui-text-primary)">{value}</div>
+      ) : null}
+      <p className={cn('m-0 text-sm leading-relaxed text-(--ui-text-secondary)', value && 'mt-1.5')}>{body}</p>
+    </section>
   )
 }
 
@@ -39,6 +85,10 @@ const ChainToolFallback: FC<ToolCallMessagePartProps> = props => {
 
   if (props.toolName === 'clarify') {
     return <ClarifyTool {...props} />
+  }
+
+  if (props.toolName === 'show_card') {
+    return <ShowCardTool {...props} />
   }
 
   return <ToolFallback {...props} />

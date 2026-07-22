@@ -3,17 +3,20 @@ import { useEffect, useRef, useState } from 'react'
 
 import { VoiceSpeakerBadge } from '@/components/voice-speaker-badge'
 import type { IslandCard, IslandCardKind } from '@/lib/island-queue'
+import type { IslandWorkState } from '@/lib/island-work'
 import type { VoicePhase, VoiceState } from '@/store/voice-presence'
 
 import { IslandWaveform } from './island-waveform'
+import { IslandWorkContent } from './island-work-panel'
 
-type IslandView = 'seed' | 'idle' | 'expanded' | 'summon'
+type IslandView = 'seed' | 'idle' | 'compact' | 'expanded' | 'summon'
 
 type CardAction = { type: 'dismiss'; id?: string } | { type: 'submit'; text: string }
 
 interface DynamicIslandProps {
   state: VoiceState
   card: IslandCard | null
+  work?: IslandWorkState | null
   // Short label for the agent's current tool action (e.g. "Searching the
   // web"), shown in place of the static phase label while thinking.
   activity?: string | null
@@ -31,6 +34,7 @@ const SEED_MIN_WIDTH = 76
 const IDLE_HEIGHT = 44
 const IDLE_RADIUS = 22
 const IDLE_MIN_WIDTH = 128
+const COMPACT_MIN_WIDTH = 196
 
 const EXPANDED_MAX_WIDTH = 368
 const EXPANDED_RADIUS = 32
@@ -119,6 +123,8 @@ function resolveCaption(state: VoiceState): ActiveCaption | null {
 function resolveView(
   state: VoiceState,
   card: IslandCard | null,
+  work: IslandWorkState | null,
+  collapsed: boolean,
   summoned: boolean,
   caption: ActiveCaption | null
 ): IslandView {
@@ -126,8 +132,8 @@ function resolveView(
     return 'summon'
   }
 
-  if (card) {
-    return 'expanded'
+  if (card || work) {
+    return collapsed ? 'compact' : 'expanded'
   }
 
   if (state.phase === 'listening' || state.phase === 'speaking') {
@@ -150,6 +156,7 @@ function resolveView(
 export function DynamicIsland({
   state,
   card,
+  work = null,
   activity,
   onCardAction,
   summoned = false,
@@ -157,6 +164,7 @@ export function DynamicIsland({
   onSummonCancel
 }: DynamicIslandProps) {
   const reducedMotion = useReducedMotion()
+  const [collapsedSurface, setCollapsedSurface] = useState<string | null>(null)
 
   // `state` already carries whichever session is authoritative — a duplex
   // session (composer hands-free or ambient wake-word, see voice-presence.ts's
@@ -166,7 +174,9 @@ export function DynamicIsland({
   // as "duplex is driving this frame" without a separate prop.
   const duplexDriven = state.label !== null
   const caption = resolveCaption(state)
-  const view = resolveView(state, card, summoned, caption)
+  const surfaceKey = card ? `card:${card.id}` : work ? `work:${work.items[0]?.id ?? work.title}` : null
+  const collapsed = surfaceKey !== null && collapsedSurface === surfaceKey
+  const view = resolveView(state, card, work, collapsed, summoned, caption)
 
   const active =
     state.phase === 'wake' ||
@@ -174,7 +184,7 @@ export function DynamicIsland({
     state.phase === 'speaking' ||
     (duplexDriven && state.phase === 'thinking')
 
-  const color = phaseColor(state.phase)
+  const color = card ? CARD_META[card.kind].accent : work ? '#6ea8ff' : phaseColor(state.phase)
   const level = state.level
   const displayLevel = state.phase === 'wake' ? 0.65 : level
   // While thinking, narrate the agent's current tool action instead of the
@@ -196,14 +206,27 @@ export function DynamicIsland({
   // Caption component's own AnimatePresence (keyed on who+text) should react
   // to text changes.
   const contentKey =
-    view === 'summon' ? 'summon' : card ? `card:${card.id}` : `state:${view}:${state.phase}:${narrating ? label : ''}`
+    view === 'summon'
+      ? 'summon'
+      : surfaceKey
+        ? `${surfaceKey}:${collapsed ? 'compact' : 'expanded'}`
+        : `state:${view}:${state.phase}:${narrating ? label : ''}`
 
   const minWidth =
-    view === 'seed' ? SEED_MIN_WIDTH : view === 'idle' ? IDLE_MIN_WIDTH : view === 'summon' ? SUMMON_WIDTH : undefined
+    view === 'seed'
+      ? SEED_MIN_WIDTH
+      : view === 'idle'
+        ? IDLE_MIN_WIDTH
+        : view === 'compact'
+          ? COMPACT_MIN_WIDTH
+          : view === 'summon'
+            ? SUMMON_WIDTH
+            : undefined
 
   const minHeight = view === 'seed' ? SEED_HEIGHT : view === 'summon' ? SUMMON_HEIGHT : IDLE_HEIGHT
 
-  const radius = view === 'idle' ? IDLE_RADIUS : view === 'summon' ? SUMMON_RADIUS : EXPANDED_RADIUS
+  const radius =
+    view === 'idle' || view === 'compact' ? IDLE_RADIUS : view === 'summon' ? SUMMON_RADIUS : EXPANDED_RADIUS
 
   const padY = view === 'seed' ? 0 : PAD_Y
   const padX = view === 'seed' ? 0 : PAD_X
@@ -277,6 +300,46 @@ export function DynamicIsland({
               transition={reducedMotion ? undefined : { duration: 3.2, ease: 'easeInOut', repeat: Infinity }}
             />
           </motion.div>
+        ) : view === 'compact' ? (
+          <motion.button
+            animate={{ scale: 1, opacity: 1, filter: 'blur(0px)' }}
+            aria-label="Expand island card"
+            exit={reducedMotion ? undefined : { scale: 0.9, opacity: 0, filter: 'blur(6px)' }}
+            initial={reducedMotion ? false : { scale: 0.9, opacity: 0, filter: 'blur(6px)' }}
+            key={contentKey}
+            onClick={() => setCollapsedSurface(null)}
+            style={{
+              display: 'flex',
+              minWidth: 0,
+              alignItems: 'center',
+              gap: 9,
+              padding: 0,
+              border: 0,
+              color: 'inherit',
+              background: 'transparent',
+              cursor: 'pointer',
+              font: 'inherit'
+            }}
+            transition={contentTransition}
+            type="button"
+          >
+            <StateDot active={Boolean(work?.active)} color={color} reducedMotion={Boolean(reducedMotion)} />
+            <span
+              style={{
+                minWidth: 0,
+                flex: 1,
+                overflow: 'hidden',
+                fontSize: 12,
+                fontWeight: 600,
+                textAlign: 'left',
+                textOverflow: 'ellipsis',
+                whiteSpace: 'nowrap'
+              }}
+            >
+              {card?.value || card?.title || card?.body || work?.title}
+            </span>
+            <span style={{ color: 'rgba(255,255,255,0.42)', fontSize: 12 }}>⌄</span>
+          </motion.button>
         ) : view === 'idle' ? (
           <motion.div
             animate={{ scale: 1, opacity: 1, filter: 'blur(0px)' }}
@@ -302,7 +365,11 @@ export function DynamicIsland({
           >
             {card ? (
               <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 7 }}>
-                <CardContent card={card} onCardAction={onCardAction} />
+                <CardContent
+                  card={card}
+                  onCardAction={onCardAction}
+                  onCollapse={() => surfaceKey && setCollapsedSurface(surfaceKey)}
+                />
                 {state.phase === 'speaking' ? (
                   <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
                     <IslandWaveform active height={14} level={displayLevel} width={112} />
@@ -313,6 +380,8 @@ export function DynamicIsland({
                   <DeepWorkBadge mode={state.deepMode} reducedMotion={Boolean(reducedMotion)} />
                 ) : null}
               </div>
+            ) : work ? (
+              <IslandWorkContent onCollapse={() => surfaceKey && setCollapsedSurface(surfaceKey)} work={work} />
             ) : (
               <div style={{ display: 'flex', width: 324, flexDirection: 'column', alignItems: 'stretch', gap: 8 }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
@@ -587,7 +656,9 @@ const CARD_LONG_WIDTH = 316
 const CARD_META: Record<IslandCardKind, { accent: string; label: string; mark: string; tint: string }> = {
   info: { accent: '#72a7ff', label: 'Marvi', mark: '✦', tint: 'rgba(114,167,255,0.13)' },
   result: { accent: '#63dfa0', label: 'Result', mark: '✓', tint: 'rgba(99,223,160,0.12)' },
-  approval: { accent: '#f5bd64', label: 'Confirm', mark: '?', tint: 'rgba(245,189,100,0.13)' }
+  approval: { accent: '#f5bd64', label: 'Confirm', mark: '?', tint: 'rgba(245,189,100,0.13)' },
+  weather: { accent: '#76c8ff', label: 'Weather', mark: '☀', tint: 'rgba(118,200,255,0.13)' },
+  time: { accent: '#ba9cff', label: 'Time', mark: '◷', tint: 'rgba(186,156,255,0.13)' }
 }
 
 function bodyFontSize(length: number): number {
@@ -614,7 +685,15 @@ function bodyLineClamp(length: number): number {
   return 4
 }
 
-function CardContent({ card, onCardAction }: { card: IslandCard; onCardAction: (payload: CardAction) => void }) {
+function CardContent({
+  card,
+  onCardAction,
+  onCollapse
+}: {
+  card: IslandCard
+  onCardAction: (payload: CardAction) => void
+  onCollapse: () => void
+}) {
   const dismiss = () => onCardAction({ type: 'dismiss', id: card.id })
   const bodyLength = (card.body ?? '').length
   const long = bodyLength > 120
@@ -623,17 +702,12 @@ function CardContent({ card, onCardAction }: { card: IslandCard; onCardAction: (
   return (
     <div
       style={{
-        position: 'relative',
         display: 'flex',
         flexDirection: 'column',
         gap: 11,
         minWidth: CARD_MIN_WIDTH,
         width: long ? CARD_LONG_WIDTH : undefined,
-        padding: '12px 13px 13px',
-        border: `1px solid color-mix(in srgb, ${meta.accent} 22%, rgba(255,255,255,0.08))`,
-        borderRadius: 17,
-        background: `radial-gradient(circle at 8% 0%, ${meta.tint}, transparent 44%), linear-gradient(145deg, rgba(255,255,255,0.055), rgba(255,255,255,0.018))`,
-        boxShadow: `inset 0 1px 0 rgba(255,255,255,0.07), 0 10px 28px ${meta.tint}`
+        padding: '3px 2px 2px'
       }}
     >
       <div style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
@@ -683,28 +757,28 @@ function CardContent({ card, onCardAction }: { card: IslandCard; onCardAction: (
             </div>
           )}
         </div>
-        <button
-          aria-label="Dismiss card"
-          onClick={dismiss}
+        <div style={{ display: 'flex', gap: 5 }}>
+          <button aria-label="Collapse card" onClick={onCollapse} style={cardHeaderButtonStyle} type="button">
+            ⌃
+          </button>
+          <button aria-label="Dismiss card" onClick={dismiss} style={cardHeaderButtonStyle} type="button">
+            ×
+          </button>
+        </div>
+      </div>
+      {card.value ? (
+        <div
           style={{
-            display: 'grid',
-            placeItems: 'center',
-            width: 24,
-            height: 24,
-            padding: 0,
-            border: '1px solid rgba(255,255,255,0.08)',
-            borderRadius: 9,
-            color: 'rgba(255,255,255,0.45)',
-            background: 'rgba(255,255,255,0.035)',
-            cursor: 'pointer',
-            fontSize: 15,
+            color: '#fff',
+            fontSize: card.kind === 'time' ? 32 : 36,
+            fontWeight: 620,
+            letterSpacing: '-0.045em',
             lineHeight: 1
           }}
-          type="button"
         >
-          ×
-        </button>
-      </div>
+          {card.value}
+        </div>
+      ) : null}
       {card.body && (
         <div
           style={{
@@ -754,6 +828,21 @@ function CardContent({ card, onCardAction }: { card: IslandCard; onCardAction: (
     </div>
   )
 }
+
+const cardHeaderButtonStyle = {
+  display: 'grid',
+  width: 24,
+  height: 24,
+  padding: 0,
+  border: '1px solid rgba(255,255,255,0.08)',
+  borderRadius: 9,
+  placeItems: 'center',
+  color: 'rgba(255,255,255,0.45)',
+  background: 'rgba(255,255,255,0.035)',
+  cursor: 'pointer',
+  fontSize: 14,
+  lineHeight: 1
+} as const
 
 // Command bar: the summon hotkey morphs the pill into a single-line input
 // so the user can type to Marvi from any app. Enter submits via the shared

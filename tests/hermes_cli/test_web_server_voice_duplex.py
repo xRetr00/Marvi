@@ -684,8 +684,9 @@ def test_show_card_is_delivered_over_the_shared_duplex_path(duplex_client, full_
         "tool": "show_card",
         "card": {
             "title": "Weather",
-            "body": "Sunny, 25°C",
-            "kind": "result",
+            "body": "Sunny",
+            "kind": "weather",
+            "value": "25°C",
             "duration_ms": 5000,
         },
     }
@@ -700,9 +701,10 @@ def test_show_card_is_delivered_over_the_shared_duplex_path(duplex_client, full_
 
     assert card["card"] | {"id": "ignored"} == {
         "id": "ignored",
-        "kind": "result",
+        "kind": "weather",
         "title": "Weather",
-        "body": "Sunny, 25°C",
+        "body": "Sunny",
+        "value": "25°C",
         "duration": 5000,
     }
 

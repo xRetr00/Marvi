@@ -6,7 +6,6 @@ import type { VoiceState } from '@/store/voice-presence'
 
 import { DynamicIsland } from './dynamic-island'
 import { shouldHoldWakeHandoff, WAKE_HANDOFF_MS } from './island-motion'
-import { IslandWorkPanel } from './island-work-panel'
 
 type CardAction = { type: 'dismiss'; id?: string } | { type: 'submit'; text: string }
 
@@ -37,6 +36,7 @@ export function VoiceIslandApp() {
   const [card, setCard] = useState<IslandCard | null>(null)
   const [activity, setActivity] = useState<string | null>(null)
   const [work, setWork] = useState<IslandWorkState | null>(null)
+  const visibleWork = state.phase === 'off' ? work : null
 
   useEffect(() => {
     const unsub = window.hermesDesktop?.islandOverlay?.onState(payload => {
@@ -93,17 +93,16 @@ export function VoiceIslandApp() {
   }, [])
 
   useEffect(() => {
-    // The stage window is click-through by default; only opt back in when a
-    // card with actions is on screen, or the command bar is open, so those
-    // controls are clickable/typeable.
-    const interactive = summoned || Boolean(card?.actions?.length)
+    // The stage window is click-through by default; opt back in only while a
+    // collapsible card/work view or the command bar is on screen.
+    const interactive = summoned || Boolean(card) || Boolean(visibleWork)
     window.hermesDesktop?.islandOverlay?.setIgnoreMouse(!interactive)
 
     return () => {
       // Never leave the stage window mouse-capturing if this unmounts.
       window.hermesDesktop?.islandOverlay?.setIgnoreMouse(true)
     }
-  }, [card, summoned])
+  }, [card, summoned, visibleWork])
 
   useEffect(() => {
     // Drop focusability once the command bar closes so the overlay stops
@@ -133,9 +132,7 @@ export function VoiceIslandApp() {
     setSummoned(false)
   }
 
-  const interactive = summoned || Boolean(card?.actions?.length)
-  const sideCard = state.phase === 'off' && card?.kind !== 'approval' && !card?.actions?.length ? card : null
-  const islandCard = sideCard ? null : card
+  const interactive = summoned || Boolean(card) || Boolean(visibleWork)
 
   return (
     <div
@@ -148,16 +145,16 @@ export function VoiceIslandApp() {
         pointerEvents: 'none'
       }}
     >
-      {state.phase === 'off' ? <IslandWorkPanel card={sideCard} work={sideCard ? null : work} /> : null}
       <div style={{ pointerEvents: interactive ? 'auto' : 'none' }}>
         <DynamicIsland
           activity={activity}
-          card={islandCard}
+          card={card}
           onCardAction={handleCardAction}
           onSummonCancel={closeSummon}
           onSummonSubmit={submitSummon}
           state={state}
           summoned={summoned}
+          work={visibleWork}
         />
       </div>
     </div>

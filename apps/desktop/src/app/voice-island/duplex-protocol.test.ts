@@ -53,9 +53,10 @@ describe('parseDuplexServerEvent', () => {
         type: 'card_show',
         card: {
           id: 'c1',
-          kind: 'result',
-          title: 'Weather',
+          kind: 'weather',
+          title: 'Istanbul',
           body: 'Sunny',
+          value: '25°',
           duration: 5000,
           actions: [{ id: 'details', label: 'Details', value: 'Show details' }]
         }
@@ -64,9 +65,10 @@ describe('parseDuplexServerEvent', () => {
       type: 'card_show',
       card: {
         id: 'c1',
-        kind: 'result',
-        title: 'Weather',
+        kind: 'weather',
+        title: 'Istanbul',
         body: 'Sunny',
+        value: '25°',
         duration: 5000,
         actions: [{ id: 'details', label: 'Details', value: 'Show details' }]
       }

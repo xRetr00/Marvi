@@ -22,7 +22,9 @@ SHOW_CARD_SCHEMA = {
         "SHOW a short result, a key fact, a link, a list, or a quick confirm "
         "prompt alongside a concise spoken answer. It is always safe to call (a "
         "no-op when no desktop is watching). Keep body under "
-        "~200 chars. Use actions for yes/no or quick replies — an action's value "
+        "~200 chars. For weather use title=place, value=temperature, body=conditions; "
+        "for time use title=place, value=local time, body=date/timezone. Use actions "
+        "for yes/no or quick replies — an action's value "
         "is sent back as the user's next message when tapped."
     ),
     "parameters": {
@@ -32,8 +34,18 @@ SHOW_CARD_SCHEMA = {
             "title": {"type": "string", "description": "Optional small uppercase label."},
             "kind": {
                 "type": "string",
-                "enum": ["info", "result", "approval"],
-                "description": "Card style. Default info.",
+                "enum": ["info", "result", "approval", "weather", "time"],
+                "description": (
+                    "Card style. Use weather for conditions and time for clocks; "
+                    "otherwise default to info."
+                ),
+            },
+            "value": {
+                "type": "string",
+                "description": (
+                    "Optional large primary value. For weather use the temperature; "
+                    "for time use the local time."
+                ),
             },
             "duration_ms": {
                 "type": "integer",
@@ -77,6 +89,7 @@ def handle_show_card(args: dict, **_kwargs) -> dict:
         "kind": args.get("kind", "info"),
         "title": args.get("title"),
         "body": body,
+        "value": args.get("value"),
         "duration": args.get("duration_ms"),
         "actions": args.get("actions"),
     }

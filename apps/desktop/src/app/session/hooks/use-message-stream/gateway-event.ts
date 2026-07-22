@@ -11,6 +11,7 @@ import { coerceGatewayText, coerceThinkingText, normalizePersonalityValue } from
 import { playCompletionSound } from '@/lib/completion-sound'
 import { resolveGatewayEventSessionId } from '@/lib/gateway-events'
 import { triggerHaptic } from '@/lib/haptics'
+import type { IslandCardKind } from '@/lib/island-queue'
 import { isProviderSetupErrorMessage } from '@/lib/provider-setup-errors'
 import { reconcileApprovalModeForProfile } from '@/store/approval-mode'
 import { clearClarifyRequest, setClarifyRequest } from '@/store/clarify'
@@ -53,7 +54,8 @@ import type { ClientSessionState } from '../../../types'
 
 import { hasSessionInfoStatePatch, sessionInfoStatePatch, SUBAGENT_EVENT_TYPES, toTodoPayload } from './utils'
 
-const islandKind = (kind: unknown) => (kind === 'approval' || kind === 'result' ? kind : 'info')
+const islandKind = (kind: unknown): IslandCardKind =>
+  kind === 'approval' || kind === 'result' || kind === 'weather' || kind === 'time' ? kind : 'info'
 const COMPACTION_RESUME_EVENT_TYPES = new Set([
   'message.delta',
   'message.interim',
@@ -550,8 +552,9 @@ export function useGatewayEventHandler(deps: GatewayEventDeps) {
             actions?: { id: string; label: string; value?: string }[]
             body?: string
             duration_ms?: number
-            kind?: 'error' | 'info' | 'success' | 'warning'
+            kind?: IslandCardKind
             title?: string
+            value?: string
           }
 
           if (cardArgs.body) {
@@ -561,8 +564,9 @@ export function useGatewayEventHandler(deps: GatewayEventDeps) {
               body: cardArgs.body,
               duration: cardArgs.duration_ms,
               id: `card-${payload.tool_id ?? Date.now()}`,
-            kind: islandKind(cardArgs.kind),
-              title: cardArgs.title
+              kind: islandKind(cardArgs.kind),
+              title: cardArgs.title,
+              value: cardArgs.value
             })
           }
         }
@@ -657,8 +661,9 @@ export function useGatewayEventHandler(deps: GatewayEventDeps) {
           body?: string
           duration_ms?: number
           id?: string
-          kind?: 'error' | 'info' | 'success' | 'warning'
+          kind?: IslandCardKind
           title?: string
+          value?: string
         }
 
         if (p.body) {
@@ -669,7 +674,8 @@ export function useGatewayEventHandler(deps: GatewayEventDeps) {
             duration: p.duration_ms,
             id: p.id ?? `card-${Date.now()}`,
             kind: islandKind(p.kind),
-            title: p.title
+            title: p.title,
+            value: p.value
           })
         }
       } else if (event.type === 'approval.request') {

@@ -20887,9 +20887,10 @@ class _DuplexSession:
                     "type": "card_show",
                     "card": {
                         "id": f"voice-{secrets.token_hex(6)}",
-                        "kind": kind if kind in {"info", "result", "approval"} else "info",
+                        "kind": kind if kind in {"info", "result", "approval", "weather", "time"} else "info",
                         "body": str(raw.get("body") or "")[:400],
                         **({"title": str(raw["title"])[:80]} if raw.get("title") else {}),
+                        **({"value": str(raw["value"])[:80]} if raw.get("value") else {}),
                         **({"duration": int(raw["duration_ms"])} if isinstance(raw.get("duration_ms"), int) else {}),
                         **({"actions": actions[:3]} if actions else {}),
                     },

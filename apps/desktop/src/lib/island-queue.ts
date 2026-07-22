@@ -1,4 +1,4 @@
-export type IslandCardKind = 'info' | 'result' | 'approval'
+export type IslandCardKind = 'info' | 'result' | 'approval' | 'weather' | 'time'
 
 export interface IslandCardAction {
   id: string
@@ -12,6 +12,8 @@ export interface IslandCard {
   kind: IslandCardKind
   title?: string
   body?: string
+  /** Large primary value for glanceable cards, e.g. "24°" or "4:42 PM". */
+  value?: string
   duration?: number
   autoDismiss?: boolean
   actions?: IslandCardAction[]

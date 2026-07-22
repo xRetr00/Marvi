@@ -117,9 +117,10 @@ export interface DuplexActivityEvent {
 
 export interface DuplexCard {
   id: string
-  kind: 'info' | 'result' | 'approval'
+  kind: 'info' | 'result' | 'approval' | 'weather' | 'time'
   title?: string
   body: string
+  value?: string
   duration?: number
   actions?: Array<{ id: string; label: string; value?: string }>
 }
@@ -181,7 +182,10 @@ function asCard(value: unknown): DuplexCard | null {
     return null
   }
 
-  const kind = value.kind === 'result' || value.kind === 'approval' ? value.kind : 'info'
+  const kind =
+    value.kind === 'result' || value.kind === 'approval' || value.kind === 'weather' || value.kind === 'time'
+      ? value.kind
+      : 'info'
 
   const actions = Array.isArray(value.actions)
     ? value.actions.flatMap(action => {
@@ -200,6 +204,7 @@ function asCard(value: unknown): DuplexCard | null {
     kind,
     body: value.body,
     ...(typeof value.title === 'string' ? { title: value.title } : {}),
+    ...(typeof value.value === 'string' ? { value: value.value } : {}),
     ...(typeof value.duration === 'number' && value.duration > 0 ? { duration: value.duration } : {}),
     ...(actions?.length ? { actions } : {})
   }

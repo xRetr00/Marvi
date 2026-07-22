@@ -132,6 +132,10 @@ export function isOverlayView(view: AppView): boolean {
   return OVERLAY_VIEWS.has(view)
 }
 
+/** Overlay routes cover the workspace visually but must leave its stateful
+ * chat surface mounted (voice duplex, draft, prompts, and streaming state). */
+export const OVERLAY_ROUTES = APP_ROUTES.filter(route => isOverlayView(route.view))
+
 export function isNewChatRoute(pathname: string): boolean {
   return pathname === NEW_CHAT_ROUTE
 }

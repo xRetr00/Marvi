@@ -1,6 +1,6 @@
 import { useStore } from '@nanostores/react'
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
-import type { PropsWithChildren } from 'react'
+import type { CSSProperties, PropsWithChildren } from 'react'
 
 import { requestVoiceToggle } from '@/app/chat/composer/focus'
 import { VoiceSpeakerBadge } from '@/components/voice-speaker-badge'
@@ -58,6 +58,7 @@ export function VoiceModeStage() {
   const presentation = voiceModePresentation(voice.phase)
   const caption = voiceModeCaption(voice)
   const level = Math.max(0, Math.min(1, voice.level))
+  const transition = reducedMotion ? { duration: 0 } : { duration: 0.22, ease: 'easeOut' as const }
 
   return (
     <motion.section
@@ -69,6 +70,7 @@ export function VoiceModeStage() {
       exit={{ opacity: 0, scale: reducedMotion ? 1 : 0.99 }}
       initial={{ opacity: 0 }}
       role="region"
+      style={{ '--voice-stage-level': level } as CSSProperties}
       transition={{ duration: reducedMotion ? 0 : 0.24 }}
     >
       <div aria-hidden className="marvi-voice-stage__field" />
@@ -89,7 +91,11 @@ export function VoiceModeStage() {
 
       <div className="relative z-10 flex min-h-0 flex-col items-center justify-center">
         <motion.div
-          animate={{ opacity: 1, scale: 1, y: 0 }}
+          animate={{
+            opacity: 1,
+            scale: voice.phase === 'speaking' ? 1.025 : voice.phase === 'thinking' ? 0.975 : 1,
+            y: 0
+          }}
           className="relative size-[clamp(13.5rem,25vw,20rem)] shrink-0"
           initial={{ opacity: reducedMotion ? 1 : 0.15, scale: reducedMotion ? 1 : 0.12, y: reducedMotion ? 0 : 180 }}
           style={{ transformOrigin: '50% 140%' }}
@@ -99,21 +105,35 @@ export function VoiceModeStage() {
         >
           <div aria-hidden className="marvi-voice-stage__tether" />
           <VoiceOrb className="size-full" level={level} phase={voice.phase} size="100%" />
+          <div aria-hidden className="marvi-voice-stage__horizon">
+            {Array.from({ length: 9 }, (_, index) => (
+              <span key={index} style={{ '--voice-wave-index': index } as CSSProperties} />
+            ))}
+          </div>
         </motion.div>
 
         <motion.div
           animate={{ opacity: 1, y: 0 }}
           aria-live="polite"
-          className="relative mt-4 min-h-20 w-full max-w-xl"
+          className="marvi-voice-stage__readout relative mt-4 min-h-20 w-full max-w-xl"
           initial={{ opacity: 0, y: reducedMotion ? 0 : 14 }}
           role="status"
           transition={{ delay: reducedMotion ? 0 : 0.36, duration: reducedMotion ? 0 : 0.35 }}
         >
-          <div className="flex flex-wrap items-center justify-center gap-2">
-            <div className="flex items-center gap-2 text-sm font-medium tracking-wide text-foreground/78">
-              <span className="marvi-voice-stage__status-dot" data-phase={voice.phase} />
-              {voice.label ?? presentation.label}
-            </div>
+          <div className="flex min-h-7 flex-wrap items-center justify-center gap-2">
+            <AnimatePresence initial={false} mode="popLayout">
+              <motion.div
+                animate={{ filter: 'blur(0px)', opacity: 1, y: 0 }}
+                className="flex items-center gap-2 text-sm font-medium tracking-wide text-foreground/78"
+                exit={{ filter: reducedMotion ? 'blur(0px)' : 'blur(4px)', opacity: 0, y: reducedMotion ? 0 : -5 }}
+                initial={{ filter: reducedMotion ? 'blur(0px)' : 'blur(4px)', opacity: 0, y: reducedMotion ? 0 : 5 }}
+                key={`${voice.phase}:${voice.label ?? presentation.label}`}
+                transition={transition}
+              >
+                <span className="marvi-voice-stage__status-dot" data-phase={voice.phase} />
+                {voice.label ?? presentation.label}
+              </motion.div>
+            </AnimatePresence>
             {voice.speakerBadge ? <VoiceSpeakerBadge name={voice.speakerName} speaker={voice.speakerBadge} /> : null}
             {voice.activity ? (
               <span className="rounded-full border border-white/8 bg-white/5 px-2.5 py-1 text-[0.68rem] font-medium text-foreground/55">
@@ -128,22 +148,25 @@ export function VoiceModeStage() {
             ) : null}
           </div>
 
-          {caption ? (
-            <div
+          <AnimatePresence initial={false} mode="wait">
+            <motion.div
+              animate={{ opacity: 1, y: 0 }}
               className={cn(
-                'mx-auto mt-2 line-clamp-2 max-w-lg text-balance text-base leading-relaxed text-foreground/80',
+                'mx-auto mt-2 line-clamp-2 min-h-6 max-w-lg text-balance leading-relaxed',
+                caption ? 'text-base text-foreground/80' : 'text-xs text-muted-foreground/42',
                 voice.phase === 'listening' && voice.captionIgnored && 'text-foreground/40 line-through'
               )}
+              exit={{ opacity: 0, y: reducedMotion ? 0 : -4 }}
+              initial={{ opacity: 0, y: reducedMotion ? 0 : 4 }}
+              key={`${voice.phase}:${caption ? 'caption' : voice.bargeable}`}
+              transition={transition}
             >
-              {caption}
-            </div>
-          ) : (
-            <div className="mt-2 text-xs text-muted-foreground/42">
-              {voice.phase === 'speaking' && voice.bargeable
-                ? 'Speak whenever you want to interrupt'
-                : 'Voice mode is live'}
-            </div>
-          )}
+              {caption ??
+                (voice.phase === 'speaking' && voice.bargeable
+                  ? 'Speak whenever you want to interrupt'
+                  : 'Voice mode is live')}
+            </motion.div>
+          </AnimatePresence>
 
           <button
             className="mt-3 rounded-full border border-white/8 bg-white/4 px-3.5 py-1.5 text-[0.68rem] font-medium text-foreground/45 transition-colors hover:bg-white/8 hover:text-foreground/80 focus-visible:outline-2 focus-visible:outline-offset-3 focus-visible:outline-foreground/60"

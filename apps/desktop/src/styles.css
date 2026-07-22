@@ -1878,6 +1878,35 @@ text-* variant utilities. */ .btn-arc {
   animation: marvi-voice-stage-breathe 7s ease-in-out infinite;
 }
 
+.marvi-voice-stage__field::after {
+  position: absolute;
+  inset: 34% 25% 2%;
+  border: 1px solid color-mix(in srgb, var(--ui-accent) 7%, transparent);
+  border-radius: 50%;
+  background: conic-gradient(
+    from 180deg,
+    transparent 0 44%,
+    color-mix(in srgb, var(--ui-accent) 8%, transparent),
+    transparent 58%
+  );
+  content: '';
+  filter: blur(0.2px);
+  opacity: 0.55;
+  animation: marvi-voice-field-orbit 12s linear infinite;
+  will-change: transform;
+}
+
+[data-slot='voice-mode-stage'][data-phase='speaking'] .marvi-voice-stage__field::after {
+  border-color: color-mix(in srgb, var(--color-cyan-300) 12%, transparent);
+  animation-duration: 6s;
+}
+
+[data-slot='voice-mode-stage'][data-phase='thinking'] .marvi-voice-stage__field::after {
+  border-color: color-mix(in srgb, var(--color-violet-300) 12%, transparent);
+  animation-direction: reverse;
+  animation-duration: 8s;
+}
+
 .marvi-voice-stage__tether {
   position: absolute;
   z-index: -1;
@@ -1905,6 +1934,44 @@ text-* variant utilities. */ .btn-arc {
 .marvi-voice-stage__status-dot[data-phase='speaking'] {
   background: var(--color-cyan-300);
   box-shadow: 0 0 0.8rem color-mix(in srgb, var(--color-cyan-300) 70%, transparent);
+}
+
+.marvi-voice-stage__readout {
+  padding: 0.8rem 1.15rem 0.7rem;
+  border: 1px solid color-mix(in srgb, var(--ui-border) 62%, transparent);
+  border-radius: 1.25rem;
+  background: color-mix(in srgb, var(--ui-chat-surface-background) 54%, transparent);
+  box-shadow:
+    0 1rem 4rem rgba(0, 0, 0, 0.15),
+    inset 0 1px rgba(255, 255, 255, 0.025);
+  backdrop-filter: blur(20px) saturate(1.15);
+}
+
+.marvi-voice-stage__horizon {
+  position: absolute;
+  z-index: -1;
+  bottom: -9%;
+  left: 50%;
+  display: flex;
+  width: 58%;
+  height: 17%;
+  align-items: center;
+  justify-content: center;
+  gap: 4.5%;
+  transform: translateX(-50%);
+  opacity: 0.52;
+}
+
+.marvi-voice-stage__horizon span {
+  width: 2px;
+  height: 46%;
+  border-radius: 9999px;
+  background: linear-gradient(180deg, var(--color-violet-300), var(--color-cyan-300));
+  box-shadow: 0 0 0.75rem color-mix(in srgb, var(--color-cyan-300) 48%, transparent);
+  transform: scaleY(calc(0.25 + var(--voice-stage-level) * 1.2));
+  animation: marvi-voice-horizon 1.35s ease-in-out infinite alternate;
+  animation-delay: calc(var(--voice-wave-index) * -90ms);
+  transition: transform 90ms linear;
 }
 
 .marvi-voice-orb {
@@ -2138,6 +2205,23 @@ text-* variant utilities. */ .btn-arc {
   }
 }
 
+@keyframes marvi-voice-field-orbit {
+  to {
+    transform: rotate(1turn) scale(1.03);
+  }
+}
+
+@keyframes marvi-voice-horizon {
+  from {
+    opacity: 0.35;
+    scale: 1 0.62;
+  }
+  to {
+    opacity: 0.9;
+    scale: 1 1.15;
+  }
+}
+
 @keyframes marvi-voice-tether {
   0% {
     opacity: 0;
@@ -2220,6 +2304,8 @@ text-* variant utilities. */ .btn-arc {
 
 @media (prefers-reduced-motion: reduce) {
   .marvi-voice-stage__field::before,
+  .marvi-voice-stage__field::after,
+  .marvi-voice-stage__horizon span,
   .marvi-voice-stage__tether,
   .marvi-voice-stage__status-dot,
   .marvi-voice-orb__aura,

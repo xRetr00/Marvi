@@ -213,7 +213,7 @@ npm run typecheck --workspace apps/bootstrap-installer
 npm run typecheck --workspace apps/desktop
 npm run typecheck --workspace ui-tui
 npm run typecheck --workspace web
-node --test apps/desktop/electron/update-remote.test.cjs apps/desktop/electron/bootstrap-runner.test.cjs
+npx --prefix apps/desktop vitest run --project electron update-remote.test.ts bootstrap-runner.test.ts
 ```
 
 Also run focused Python tests for files that had conflicts. For the previous

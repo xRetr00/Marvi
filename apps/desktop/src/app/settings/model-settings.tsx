@@ -37,6 +37,7 @@ import { useOnProfileSwitch } from '../hooks/use-on-profile-switch'
 import { CONTROL_TEXT } from './constants'
 import { getNested, setNested } from './helpers'
 import { ListRow, Pill, SectionHeading } from './primitives'
+import { useDeepLinkHighlight } from './use-deep-link-highlight'
 
 // Skeleton mirror of the Model settings DOM so the page keeps its shape while
 // the provider/model catalog loads, instead of collapsing to a centered
@@ -230,6 +231,14 @@ export function ModelSettings({ onMainModelChanged }: ModelSettingsProps) {
   // alongside everything else in refresh() so "currently using" can never
   // silently drift from what Apply actually persisted.
   const [instantStatus, setInstantStatus] = useState<VoiceInstantStatusResponse | null>(null)
+
+  // Deep link from the vision Capabilities detail (?tab=config:model&aux=vision):
+  // scroll the auxiliary task row into view and flash it once the list loads.
+  useDeepLinkHighlight({
+    elementId: task => `aux-task-${task}`,
+    param: 'aux',
+    ready: task => AUX_TASKS.some(meta => meta.key === task)
+  })
 
   // Every profile-scoped async here captures this and bails before writing back,
   // so a request in flight when the user switches profiles can't paint profile
@@ -950,152 +959,153 @@ export function ModelSettings({ onMainModelChanged }: ModelSettingsProps) {
             const isEditing = editingAuxTask === meta.key
 
             return (
-              <ListRow
-                action={
-                  !isEditing && (
-                    <div className="flex shrink-0 items-center gap-1.5">
-                      {meta.key === 'voice_instant' && config ? (
-                        <label className="mr-1 flex items-center gap-2 text-xs text-muted-foreground">
-                          {m.reasoning}
-                          <Select
-                            onValueChange={value =>
-                              void writeAgentDefault('auxiliary.voice_instant.reasoning_effort', value)
-                            }
-                            value={instantEffortValue}
-                          >
-                            <SelectTrigger aria-label="Instant voice reasoning" className={cn('min-w-24', CONTROL_TEXT)}>
-                              <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent>
-                              {EFFORT_VALUES.map(value => (
-                                <SelectItem key={value} value={value}>
-                                  {value === 'none' ? m.reasoningOff : t.shell.modelOptions[effortLabelKey(value)]}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                        </label>
-                      ) : null}
-                      <Button
-                        disabled={!mainModel || applying}
-                        onClick={() => void setAuxiliaryToMain(meta.key)}
-                        size="sm"
-                        variant="text"
-                      >
-                        {m.setToMain}
-                      </Button>
-                      <Button
-                        disabled={!providers.length || applying}
-                        onClick={() => beginAuxiliaryEdit(meta.key)}
-                        size="sm"
-                        variant="textStrong"
-                      >
-                        {m.change}
-                      </Button>
-                    </div>
-                  )
-                }
-                below={
-                  isEditing && (
-                    <div className="mt-2 flex flex-wrap items-center gap-2 pt-1">
-                      <Select
-                        onValueChange={value => setAuxDraft(prev => ({ ...prev, provider: value, model: '' }))}
-                        value={auxDraft.provider}
-                      >
-                        <SelectTrigger className={cn('min-w-32', CONTROL_TEXT)}>
-                          <SelectValue placeholder={m.provider} />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {providerOptions.map(provider => (
-                            <SelectItem key={provider.slug || 'none'} value={provider.slug || 'none'}>
-                              {provider.name}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                      <Select
-                        onValueChange={value => setAuxDraft(prev => ({ ...prev, model: value }))}
-                        value={auxDraft.model}
-                      >
-                        <SelectTrigger className={cn('min-w-48', CONTROL_TEXT)}>
-                          <SelectValue placeholder={m.model} />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {withActive(auxDraftProviderModels, auxDraft.model).map(model => (
-                            <SelectItem key={model} value={model}>
-                              {model}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                      <Button
-                        disabled={!auxDraft.provider || !auxDraft.model || applying}
-                        onClick={() => void applyAuxiliaryDraft(meta.key)}
-                        size="sm"
-                      >
-                        {applying ? m.applying : t.common.apply}
-                      </Button>
-                      <Button
-                        onClick={() => {
-                          setAuxConfirm(null)
-                          setEditingAuxTask(null)
-                        }}
-                        size="sm"
-                        variant="ghost"
-                      >
-                        {t.common.cancel}
-                      </Button>
-                      {auxConfirm && auxConfirm.task === meta.key && (
-                        <div className="flex w-full flex-wrap items-center gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
-                          <AlertTriangle className="size-3.5 shrink-0" />
-                          <span className="grow">{auxConfirm.message}</span>
-                          <Button
-                            disabled={applying}
-                            onClick={() => void applyAuxiliaryDraft(meta.key, true)}
-                            size="sm"
-                            variant="textStrong"
-                          >
-                            Apply anyway
-                          </Button>
-                          <Button onClick={() => setAuxConfirm(null)} size="sm" variant="ghost">
-                            {t.common.cancel}
-                          </Button>
-                        </div>
-                      )}
-                    </div>
-                  )
-                }
-                description={
-                  <span className="flex flex-col gap-0.5">
-                    <span className="font-mono text-[0.68rem]">
-                      {isAuto ? m.autoUseMain : `${current.provider} · ${current.model || m.providerDefault}`}
-                    </span>
-                    {meta.key === 'voice_instant' && instantStatus && (
-                      <span
-                        className={cn(
-                          'font-mono text-[0.65rem]',
-                          instantStatus.resolved && instantStatus.is_fallback
-                            ? 'text-amber-400'
-                            : 'text-muted-foreground'
+              <div className="scroll-mt-6 rounded-lg" id={`aux-task-${meta.key}`} key={meta.key}>
+                <ListRow
+                  action={
+                    !isEditing && (
+                      <div className="flex shrink-0 items-center gap-1.5">
+                        {meta.key === 'voice_instant' && config ? (
+                          <label className="mr-1 flex items-center gap-2 text-xs text-muted-foreground">
+                            {m.reasoning}
+                            <Select
+                              onValueChange={value =>
+                                void writeAgentDefault('auxiliary.voice_instant.reasoning_effort', value)
+                              }
+                              value={instantEffortValue}
+                            >
+                              <SelectTrigger aria-label="Instant voice reasoning" className={cn('min-w-24', CONTROL_TEXT)}>
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {EFFORT_VALUES.map(value => (
+                                  <SelectItem key={value} value={value}>
+                                    {value === 'none' ? m.reasoningOff : t.shell.modelOptions[effortLabelKey(value)]}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          </label>
+                        ) : null}
+                        <Button
+                          disabled={!mainModel || applying}
+                          onClick={() => void setAuxiliaryToMain(meta.key)}
+                          size="sm"
+                          variant="text"
+                        >
+                          {m.setToMain}
+                        </Button>
+                        <Button
+                          disabled={!providers.length || applying}
+                          onClick={() => beginAuxiliaryEdit(meta.key)}
+                          size="sm"
+                          variant="textStrong"
+                        >
+                          {m.change}
+                        </Button>
+                      </div>
+                    )
+                  }
+                  below={
+                    isEditing && (
+                      <div className="mt-2 flex flex-wrap items-center gap-2 pt-1">
+                        <Select
+                          onValueChange={value => setAuxDraft(prev => ({ ...prev, provider: value, model: '' }))}
+                          value={auxDraft.provider}
+                        >
+                          <SelectTrigger className={cn('min-w-32', CONTROL_TEXT)}>
+                            <SelectValue placeholder={m.provider} />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {providerOptions.map(provider => (
+                              <SelectItem key={provider.slug || 'none'} value={provider.slug || 'none'}>
+                                {provider.name}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        <Select
+                          onValueChange={value => setAuxDraft(prev => ({ ...prev, model: value }))}
+                          value={auxDraft.model}
+                        >
+                          <SelectTrigger className={cn('min-w-48', CONTROL_TEXT)}>
+                            <SelectValue placeholder={m.model} />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {withActive(auxDraftProviderModels, auxDraft.model).map(model => (
+                              <SelectItem key={model} value={model}>
+                                {model}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        <Button
+                          disabled={!auxDraft.provider || !auxDraft.model || applying}
+                          onClick={() => void applyAuxiliaryDraft(meta.key)}
+                          size="sm"
+                        >
+                          {applying ? m.applying : t.common.apply}
+                        </Button>
+                        <Button
+                          onClick={() => {
+                            setAuxConfirm(null)
+                            setEditingAuxTask(null)
+                          }}
+                          size="sm"
+                          variant="ghost"
+                        >
+                          {t.common.cancel}
+                        </Button>
+                        {auxConfirm && auxConfirm.task === meta.key && (
+                          <div className="flex w-full flex-wrap items-center gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
+                            <AlertTriangle className="size-3.5 shrink-0" />
+                            <span className="grow">{auxConfirm.message}</span>
+                            <Button
+                              disabled={applying}
+                              onClick={() => void applyAuxiliaryDraft(meta.key, true)}
+                              size="sm"
+                              variant="textStrong"
+                            >
+                              Apply anyway
+                            </Button>
+                            <Button onClick={() => setAuxConfirm(null)} size="sm" variant="ghost">
+                              {t.common.cancel}
+                            </Button>
+                          </div>
                         )}
-                      >
-                        {instantStatus.resolved
-                          ? `currently using: ${instantStatus.provider} · ${instantStatus.model}${
-                              instantStatus.is_fallback ? ' (fallback — not what’s configured)' : ''
-                            }`
-                          : `currently using: none (${instantStatus.error ?? 'unresolved'})`}
+                      </div>
+                    )
+                  }
+                  description={
+                    <span className="flex flex-col gap-0.5">
+                      <span className="font-mono text-[0.68rem]">
+                        {isAuto ? m.autoUseMain : `${current.provider} · ${current.model || m.providerDefault}`}
                       </span>
-                    )}
-                  </span>
-                }
-                key={meta.key}
-                title={
-                  <span className="flex items-baseline gap-2">
-                    {copy.label}
-                    <Pill>{copy.hint}</Pill>
-                  </span>
-                }
-              />
+                      {meta.key === 'voice_instant' && instantStatus && (
+                        <span
+                          className={cn(
+                            'font-mono text-[0.65rem]',
+                            instantStatus.resolved && instantStatus.is_fallback
+                              ? 'text-amber-400'
+                              : 'text-muted-foreground'
+                          )}
+                        >
+                          {instantStatus.resolved
+                            ? `currently using: ${instantStatus.provider} · ${instantStatus.model}${
+                                instantStatus.is_fallback ? ' (fallback — not what’s configured)' : ''
+                              }`
+                            : `currently using: none (${instantStatus.error ?? 'unresolved'})`}
+                        </span>
+                      )}
+                    </span>
+                  }
+                  title={
+                    <span className="flex items-baseline gap-2">
+                      {copy.label}
+                      <Pill>{copy.hint}</Pill>
+                    </span>
+                  }
+                />
+              </div>
             )
           })}
         </div>

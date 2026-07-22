@@ -52,6 +52,8 @@ def run(args: list[str], *, check: bool = True) -> subprocess.CompletedProcess[s
         args,
         cwd=REPO_ROOT,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         capture_output=True,
         check=check,
     )

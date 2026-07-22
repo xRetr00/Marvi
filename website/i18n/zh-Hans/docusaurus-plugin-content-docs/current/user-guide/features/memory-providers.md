@@ -935,10 +935,9 @@ hermes config set memory.provider byterover
 |---|---|
 
 | **适合场景** | 带用户 profile 和会话级图谱构建的语义召回 |
-| **依赖** | `pip install supermemory` + [API key](http://app.supermemory.ai/integrations?connect=hermes) |
-| **数据存储** | Supermemory Cloud |
-
-| **费用** | Supermemory 定价 |
+| **依赖** | `pip install supermemory` + [云端 API key](http://app.supermemory.ai/integrations?connect=hermes)，或[自托管服务器](https://supermemory.ai/docs/self-hosting/overview) |
+| **数据存储** | Supermemory 云端或自托管 |
+| **费用** | 云端按 Supermemory 定价 / 自托管免费 |
 
 
 
@@ -960,7 +959,22 @@ echo 'SUPERMEMORY_API_KEY=***' >> ~/.hermes/.env
 
 ```
 
+自托管安装：
 
+```bash
+npx supermemory local
+```
+
+在运行 `hermes memory setup` **之前**，先在
+`$HERMES_HOME/supermemory.json` 中设置 `base_url`：
+
+```json
+{
+  "base_url": "http://localhost:6767"
+}
+```
+
+然后运行 `hermes memory setup` 并输入本地服务器打印的 API key。先配置端点可确保安装连接探测也只访问本地服务器。
 
 **配置：** `$HERMES_HOME/supermemory.json`
 
@@ -969,7 +983,7 @@ echo 'SUPERMEMORY_API_KEY=***' >> ~/.hermes/.env
 | 键 | 默认值 | 描述 |
 
 |-----|---------|-------------|
-
+| `base_url` | `https://api.supermemory.ai` | 托管或自托管 Supermemory 的 API 端点。优先级高于 `SUPERMEMORY_BASE_URL`。 |
 | `container_tag` | `hermes` | 用于搜索和写入的容器标签。支持 `{identity}` 模板用于 profile 范围隔离。 |
 
 | `auto_recall` | `true` | 在每轮对话前注入相关记忆上下文 |
@@ -986,9 +1000,9 @@ echo 'SUPERMEMORY_API_KEY=***' >> ~/.hermes/.env
 
 | `api_timeout` | `5.0` | SDK 和导入请求的超时时间 |
 
+**环境变量：** `SUPERMEMORY_API_KEY`（必填）、`SUPERMEMORY_BASE_URL`（未配置 `base_url` 时的兼容回退）、`SUPERMEMORY_CONTAINER_TAG`（覆盖配置）。
 
-
-**环境变量：** `SUPERMEMORY_API_KEY`（必填）、`SUPERMEMORY_CONTAINER_TAG`（覆盖配置）。
+Base URL 优先级为 `supermemory.json` → `SUPERMEMORY_BASE_URL` → `https://api.supermemory.ai`。SDK 操作、安装/状态探测和会话导入都会使用解析后的同一端点。
 
 
 
@@ -999,7 +1013,7 @@ echo 'SUPERMEMORY_API_KEY=***' >> ~/.hermes/.env
 - 在会话边界时将整个会话**一次性导入**
 
 - 会话结束时同时导入到对话端点（`/v4/conversations`），用于 Supermemory 的 profile 和图谱构建
-
+- 端到端自托管路由——SDK、探测和会话导入请求使用同一配置端点
 - 在第一轮及可配置间隔注入 profile 事实
 
 - **Profile 范围容器**——在 `container_tag` 中使用 `{identity}`（例如 `hermes-{identity}` → `hermes-coder`），按 Hermes profile 隔离记忆
@@ -1065,8 +1079,7 @@ echo 'SUPERMEMORY_API_KEY=***' >> ~/.hermes/.env
 | **RetainDB** | 云端 | $20/月 | 5 | `requests` | 增量压缩 |
 
 | **ByteRover** | 本地/云端 | 免费/付费 | 3 | `brv` CLI | 预压缩提取 |
-
-| **Supermemory** | 云端 | 付费 | 4 | `supermemory` | 上下文隔离 + 会话图谱导入 + 多容器 |
+| **Supermemory** | 云端/自托管 | 免费/付费 | 4 | `supermemory` | 上下文隔离 + 会话图谱导入 + 多容器 |
 
 
 
@@ -1089,7 +1102,5 @@ echo 'SUPERMEMORY_API_KEY=***' >> ~/.hermes/.env
 
 
 ## 构建记忆提供者
-
-
 
 参见[开发者指南：Memory Provider 插件](/developer-guide/memory-provider-plugin)了解如何创建自己的提供者。

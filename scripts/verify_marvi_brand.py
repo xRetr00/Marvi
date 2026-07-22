@@ -131,6 +131,13 @@ ALLOWED_SNIPPETS = [
     "git remote add hermes-upstream https://github.com/NousResearch/hermes-agent.git",
     "Automated upstream sync from NousResearch/hermes-agent.",
     ".hermes-bootstrap-complete",
+    # Nous Portal (portal.nousresearch.com) is Nous-operated infrastructure
+    # Marvi does not control or rebrand. The OAuth client Marvi authenticates
+    # as is still registered there under the original name, so the portal's
+    # own billing page is genuinely titled "Hermes Agent" for every user,
+    # Marvi included. Renaming this string to "Marvi Agent" would describe a
+    # page that does not exist on the real portal.
+    "portal's Hermes Agent page",
 ]
 
 REQUIRED_TEXT = {

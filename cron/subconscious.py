@@ -460,11 +460,54 @@ def run_decay_pass_after_dreaming() -> None:
         from agent.memory.decay import run_decay_pass
     except ImportError:
         logger.info("dreaming: decay pass module not present yet; skipping decay step")
-        return
+    else:
+        try:
+            run_decay_pass()
+        except Exception:
+            logger.debug("dreaming: decay pass failed", exc_info=True)
+
+    # === Graph-mind maintenance hook (graph-mind spec §2.3 last bullet) ===
+    # BEGIN -- small, additive, delimited block placed AFTER the decay seam
+    # above (matches the spec's ordering). Merges duplicate nodes then
+    # prunes low-salience nodes beyond memory.graph.max_nodes (archiving,
+    # never hard-deleting -- see agent.memory.graph.prune_low_salience).
+    # Co-occurring edges are already strengthened continuously by
+    # agent.memory.graph.add_edge()'s dedup-bump on every repeat write, so
+    # there's no separate "strengthen" step here. Guarded + never raises.
     try:
-        run_decay_pass()
+        _run_graph_dreaming_maintenance()
     except Exception:
-        logger.debug("dreaming: decay pass failed", exc_info=True)
+        logger.debug("dreaming: graph-mind maintenance hook failed", exc_info=True)
+    # === Graph-mind maintenance hook -- END =================================
+
+
+def _run_graph_dreaming_maintenance() -> None:
+    """Body of the dreaming graph-maintenance hook (graph-mind spec §2.3
+    last bullet): merge near-duplicate nodes, then prune low-salience nodes
+    beyond ``memory.graph.max_nodes``. Guarded import mirrors
+    ``run_decay_pass_after_dreaming``'s defensive shape; a missing/broken
+    graph module is skipped with one log line. Never raises."""
+    try:
+        from agent.memory.graph import graph_config, prune_low_salience
+    except ImportError:
+        logger.info("dreaming: graph module not present yet; skipping graph maintenance")
+        return
+    cfg = graph_config()
+    if not cfg.get("enabled", True):
+        return
+    merged = 0
+    try:
+        from agent.memory.graph_builder import merge_duplicate_graph_nodes
+
+        merged = merge_duplicate_graph_nodes()
+    except Exception:
+        logger.debug("dreaming: graph duplicate-merge failed", exc_info=True)
+    pruned = 0
+    try:
+        pruned = prune_low_salience(cfg.get("max_nodes"))
+    except Exception:
+        logger.debug("dreaming: graph prune failed", exc_info=True)
+    logger.info("dreaming: graph maintenance merged=%d pruned=%d", merged, pruned)
 
 
 def build_runtime_context(job_name: str) -> str:
@@ -493,6 +536,25 @@ def build_runtime_context(job_name: str) -> str:
     if due:
         parts.append("## Due initiatives\n" + json.dumps(due, ensure_ascii=False))
     if job_name == REFLECTION_JOB_NAME:
+        # === Graph-mind build hook (graph-mind spec §2.3) -- BEGIN =========
+        # Small, additive, delimited block: gives the reflection job a
+        # chance to deepen Marvi's knowledge graph (agent/memory/graph.py)
+        # from recent semantic + episodic entries before it reasons over the
+        # rest of this context. Guarded + config-gated
+        # (memory.graph.build_in_reflection, default true); a missing/broken
+        # graph module can never block reflection. NOTE for other agents
+        # editing this file: this block is intentionally separate from the
+        # REFLECTION_PROMPT text and the rest of this branch below -- keep it
+        # that way so edits merge cleanly.
+        try:
+            from agent.memory.graph import graph_config as _graph_config
+            from agent.memory.graph_builder import build_graph_from_memory as _build_graph_from_memory
+
+            if _graph_config().get("build_in_reflection", True):
+                _build_graph_from_memory()
+        except Exception:
+            logger.debug("subconscious: graph-mind build hook failed", exc_info=True)
+        # === Graph-mind build hook -- END ===================================
         try:
             from agent.learning.reflection import run_reflection
 

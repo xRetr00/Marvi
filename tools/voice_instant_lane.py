@@ -797,6 +797,22 @@ def _build_deferred_context(cfg: Optional[Dict[str, Any]]) -> str:
     except Exception:
         logger.debug("voice_instant_lane: episodic hint failed", exc_info=True)
 
+    # Graph memory hint (graph-mind spec §2.4): same shape as the episodic
+    # hint above -- recall_graph is registered under the "memory" toolset
+    # (tools/graph_tool.py), so no whitelist entry is needed here either.
+    # Additive only, capped to a single short line.
+    try:
+        from agent.memory.graph import graph_config
+
+        if graph_config(cfg)["enabled"]:
+            blocks.append(
+                "Graph memory is available: call recall_graph(query=...) to see what's "
+                "connected to a person, project, or topic before answering 'what's related "
+                "to X' or 'why' questions from a flat guess."
+            )
+    except Exception:
+        logger.debug("voice_instant_lane: graph hint failed", exc_info=True)
+
     return "\n\n".join(blocks)[:4500]
 
 

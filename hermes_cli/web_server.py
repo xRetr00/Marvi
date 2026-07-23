@@ -14569,6 +14569,73 @@ async def post_memory_restore(entry_id: str):
         raise HTTPException(status_code=500, detail="Failed to restore memory entry")
 
 
+# ---------------------------------------------------------------------------
+# Graph memory (graph-mind spec §2.2/§2.5) — the Mind page's "Graph" tab.
+# Additive-only new section; mirrors /api/memory/episodes' error shape above
+# (run_in_threadpool + a bare {"detail": "..."} 500 on failure).
+# ---------------------------------------------------------------------------
+
+_GRAPH_NO_FOCUS_NODE_ERROR = "No graph node found for that focus label yet."
+
+
+def _read_memory_graph_sync(focus: Optional[str], depth: int, type: Optional[str]) -> Dict[str, Any]:
+    from agent.memory.graph import VALID_NODE_TYPES, find_node, subgraph, top_salience_subgraph
+
+    type_filter = (type or "").strip() or None
+    if type_filter is not None and type_filter not in VALID_NODE_TYPES:
+        raise ValueError(f"Invalid type '{type_filter}'. Use one of: {', '.join(sorted(VALID_NODE_TYPES))}.")
+
+    depth = max(1, min(int(depth or 2), 4))
+    focus = (focus or "").strip() or None
+
+    if focus:
+        node = find_node(focus, type=type_filter)
+        if node is None:
+            return {"nodes": [], "edges": [], "note": _GRAPH_NO_FOCUS_NODE_ERROR}
+        result = subgraph(node["id"], depth=depth)
+    else:
+        result = top_salience_subgraph(limit=80)
+        if type_filter:
+            keep_ids = {n["id"] for n in result["nodes"] if n["type"] == type_filter}
+            result = {
+                "nodes": [n for n in result["nodes"] if n["id"] in keep_ids],
+                "edges": [e for e in result["edges"] if e["src"] in keep_ids and e["dst"] in keep_ids],
+            }
+
+    nodes = [
+        {
+            "id": n["id"],
+            "type": n["type"],
+            "label": n["label"],
+            "summary": n["summary"],
+            "salience": n["salience"],
+            "source_kind": n.get("source_kind"),
+            "source_ref": n.get("source_ref"),
+        }
+        for n in result["nodes"]
+    ]
+    edges = [
+        {"src": e["src"], "dst": e["dst"], "relation": e["relation"], "weight": e["weight"]}
+        for e in result["edges"]
+    ]
+    out: Dict[str, Any] = {"nodes": nodes, "edges": edges}
+    if not nodes:
+        out["note"] = out.get("note") or "Marvi's mind map fills in as it connects what it learns."
+    return out
+
+
+@app.get("/api/memory/graph")
+async def get_memory_graph(focus: Optional[str] = None, depth: int = 2, type: Optional[str] = None):
+    try:
+        result = await run_in_threadpool(_read_memory_graph_sync, focus, depth, type)
+        return {"ok": True, **result}
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception:
+        _log.exception("GET /api/memory/graph failed")
+        raise HTTPException(status_code=500, detail="Failed to read graph memory")
+
+
 def _mind_state_sync(history: bool = False) -> Dict[str, Any]:
     from agent.goal_store import list_goal_templates
     from cron.subconscious import read_narrative, read_narrative_history, status

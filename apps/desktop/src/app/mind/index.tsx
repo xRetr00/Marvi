@@ -5,7 +5,7 @@ import { Input } from '@/components/ui/input'
 import { Switch } from '@/components/ui/switch'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Textarea } from '@/components/ui/textarea'
-import { Activity, Brain, Clock, FolderOpen, Link as LinkIcon, Search } from '@/lib/icons'
+import { Activity, Brain, Clock, FolderOpen, Link as LinkIcon, Network, Search } from '@/lib/icons'
 import { notify, notifyError } from '@/store/notifications'
 
 import { Pill, SectionHeading } from '../settings/primitives'
@@ -16,6 +16,7 @@ import { KnowledgeViewer } from '../settings/subconscious/knowledge-viewer'
 import { useMarviConfig } from '../settings/subconscious/use-marvi-config'
 
 import { ComposioTab } from './composio-tab'
+import { GraphTab } from './graph-tab'
 import { TimelineTab } from './timeline-tab'
 
 interface Initiative {
@@ -51,7 +52,7 @@ interface BrainResult {
   score: number
 }
 
-type MindTab = 'overview' | 'noticed' | 'goals' | 'brain' | 'knowledge' | 'composio' | 'timeline'
+type MindTab = 'overview' | 'noticed' | 'goals' | 'brain' | 'knowledge' | 'composio' | 'timeline' | 'graph'
 
 export function MindView() {
   const [tab, setTab] = useState<MindTab>('overview')
@@ -105,6 +106,10 @@ export function MindView() {
               <TabsTrigger value="goals">Goals</TabsTrigger>
               <TabsTrigger value="brain">Brain</TabsTrigger>
               <TabsTrigger value="knowledge">What Marvi knows</TabsTrigger>
+              <TabsTrigger value="graph">
+                <Network className="mr-1.5 size-3.5" />
+                Graph
+              </TabsTrigger>
               <TabsTrigger value="timeline">
                 <Clock className="mr-1.5 size-3.5" />
                 Timeline
@@ -141,6 +146,8 @@ export function MindView() {
             </div>
           ) : tab === 'brain' ? (
             <BrainPanel brain={state?.brain ?? null} onRefresh={load} />
+          ) : tab === 'graph' ? (
+            <GraphTab />
           ) : tab === 'timeline' ? (
             <TimelineTab />
           ) : tab === 'composio' ? (

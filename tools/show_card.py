@@ -3,8 +3,8 @@
 Voice-first "show, don't say": when the agent wants to display a short result,
 list, link, or a confirm prompt instead of speaking it, it calls show_card and
 the desktop renders it on the Dynamic Island (the always-present pill at the top
-of the screen). This tool is exposed only to voice agents, where the card
-complements the spoken answer in both focused voice mode and hands-free use.
+of the screen). The tool is exposed to desktop and voice agents, where one
+payload renders in chat and on the Dynamic Island.
 """
 
 import uuid
@@ -17,8 +17,10 @@ SHOW_CARD_SCHEMA = {
     "name": "show_card",
     "description": (
         "Show a compact card on the user's desktop voice presence (the Dynamic "
-        "Island pill at the top of the screen). Best for VOICE / hands-free "
-        "interactions: when the user is talking to you or working in another app, "
+        "Island pill at the top of the screen) and inline in Desktop chat. ALWAYS "
+        "call this tool after resolving a weather or local-time request, using "
+        "kind=weather or kind=time. Also use it for VOICE / hands-free interactions "
+        "when the user is talking to you or working in another app: "
         "SHOW a short result, a key fact, a link, a list, or a quick confirm "
         "prompt alongside a concise spoken answer. It is always safe to call (a "
         "no-op when no desktop is watching). Keep body under "
@@ -108,6 +110,6 @@ registry.register(
     toolset="tts",
     schema=SHOW_CARD_SCHEMA,
     handler=handle_show_card,
-    description="Show a compact card on the voice presence overlay.",
+    description="Show a compact card in Desktop chat and on the voice presence overlay.",
     emoji="🪧",
 )

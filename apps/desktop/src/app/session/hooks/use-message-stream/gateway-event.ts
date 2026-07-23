@@ -558,16 +558,19 @@ export function useGatewayEventHandler(deps: GatewayEventDeps) {
           }
 
           if (cardArgs.body) {
-            showIslandCard({
-              actions: cardArgs.actions,
-              autoDismiss: typeof cardArgs.duration_ms === 'number' && cardArgs.duration_ms > 0,
-              body: cardArgs.body,
-              duration: cardArgs.duration_ms,
-              id: `card-${payload.tool_id ?? Date.now()}`,
-              kind: islandKind(cardArgs.kind),
-              title: cardArgs.title,
-              value: cardArgs.value
-            })
+            showIslandCard(
+              {
+                actions: cardArgs.actions,
+                autoDismiss: typeof cardArgs.duration_ms === 'number' && cardArgs.duration_ms > 0,
+                body: cardArgs.body,
+                duration: cardArgs.duration_ms,
+                id: `card-${payload.tool_id ?? Date.now()}`,
+                kind: islandKind(cardArgs.kind),
+                title: cardArgs.title,
+                value: cardArgs.value
+              },
+              { allowWhenFocused: true }
+            )
           }
         }
 

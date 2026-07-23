@@ -355,7 +355,21 @@ class ComposioClient:
             current = self.get_connection_status(app, user_id=user_id)
             if current["connected"]:
                 return current
-            result = client.toolkits.authorize(user_id=user_id, toolkit=app)
+            configs = client.auth_configs.list(toolkit_slug=app)
+            enabled = [
+                item
+                for item in configs.items
+                if str(getattr(item, "status", "")).upper() == "ENABLED"
+            ]
+            auth_config = next(
+                (item for item in enabled if getattr(item, "is_composio_managed", False)),
+                enabled[0] if enabled else None,
+            )
+            if auth_config is None:
+                raise ComposioTransientError(
+                    f"No enabled Composio auth config exists for {app!r}."
+                )
+            result = client.connected_accounts.link(user_id, auth_config.id)
         except (ComposioRateLimited, ComposioAuthError, ComposioTransientError):
             raise
         except Exception as e:

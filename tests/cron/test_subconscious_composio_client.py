@@ -185,7 +185,7 @@ def test_verify_auth_uses_current_list_signature():
     assert calls == [{"limit": 1}]
 
 
-def test_connection_uses_toolkit_authorize_and_filtered_account_list():
+def test_connection_links_an_enabled_managed_auth_config():
     calls = []
 
     class ConnectedAccounts:
@@ -193,15 +193,32 @@ def test_connection_uses_toolkit_authorize_and_filtered_account_list():
             calls.append(("list", kwargs))
             return SimpleNamespace(items=[])
 
-    class Toolkits:
-        def authorize(self, **kwargs):
-            calls.append(("authorize", kwargs))
+        def link(self, *args):
+            calls.append(("link", args))
             return SimpleNamespace(id="ca_123", status="INITIATED", redirect_url="https://auth.example")
+
+    class AuthConfigs:
+        def list(self, **kwargs):
+            calls.append(("auth_configs", kwargs))
+            return SimpleNamespace(
+                items=[
+                    SimpleNamespace(
+                        id="ac_custom",
+                        status="ENABLED",
+                        is_composio_managed=False,
+                    ),
+                    SimpleNamespace(
+                        id="ac_managed",
+                        status="ENABLED",
+                        is_composio_managed=True,
+                    ),
+                ]
+            )
 
     client = composio_client_mod.ComposioClient("valid-key")
     client._sdk_client = SimpleNamespace(
         connected_accounts=ConnectedAccounts(),
-        toolkits=Toolkits(),
+        auth_configs=AuthConfigs(),
     )
 
     assert client.initiate_connection("gmail") == {
@@ -211,7 +228,8 @@ def test_connection_uses_toolkit_authorize_and_filtered_account_list():
     }
     assert calls == [
         ("list", {"user_ids": ["default"], "toolkit_slugs": ["gmail"]}),
-        ("authorize", {"user_id": "default", "toolkit": "gmail"}),
+        ("auth_configs", {"toolkit_slug": "gmail"}),
+        ("link", ("default", "ac_managed")),
     ]
 
 

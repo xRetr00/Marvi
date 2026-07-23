@@ -44,7 +44,12 @@ import { SettingsContent } from './primitives'
 interface SmartRoomConfig {
   enabled: boolean
   owner: string
-  welcome: { enabled: boolean; identity_grace_seconds: number; reset_after_seconds: number }
+  welcome: {
+    enabled: boolean
+    identity_grace_seconds: number
+    reset_after_seconds: number
+    owner_evidence_window_seconds: number
+  }
   sound_events: {
     enabled: boolean
     sleep_enabled: boolean
@@ -108,7 +113,12 @@ interface SmartRoomConfig {
 const DEFAULT_CONFIG: SmartRoomConfig = {
   enabled: false,
   owner: 'Shereef',
-  welcome: { enabled: true, identity_grace_seconds: 4, reset_after_seconds: 3600 },
+  welcome: {
+    enabled: true,
+    identity_grace_seconds: 4,
+    reset_after_seconds: 3600,
+    owner_evidence_window_seconds: 3600
+  },
   sound_events: { enabled: false, sleep_enabled: false, confidence: 0.15, min_peak: 0.04, input_device: null },
   mqtt: { broker: '127.0.0.1', port: 1883 },
   context: { enabled: true },
@@ -636,7 +646,7 @@ export function SmartRoomSettings() {
             label="Welcome on arrival"
             onChange={v => updatePath('welcome.enabled', v)}
           />
-          <div className="grid grid-cols-1 gap-x-4 sm:grid-cols-3">
+          <div className="grid grid-cols-1 gap-x-4 sm:grid-cols-4">
             <TextField label="Owner name" onChange={v => updatePath('owner', v)} value={config.owner} />
             <TextField
               hint="Wait for ESPresense identity."
@@ -651,6 +661,13 @@ export function SmartRoomSettings() {
               onChange={v => updatePath('welcome.reset_after_seconds', (parseInt(v) || 60) * 60)}
               type="number"
               value={Math.round(config.welcome.reset_after_seconds / 60)}
+            />
+            <TextField
+              hint="Keeps BLE/OwnTracks identity through iPhone sleep."
+              label="Owner evidence (minutes)"
+              onChange={v => updatePath('welcome.owner_evidence_window_seconds', (parseInt(v) || 60) * 60)}
+              type="number"
+              value={Math.round(config.welcome.owner_evidence_window_seconds / 60)}
             />
           </div>
           <div className="flex gap-2">

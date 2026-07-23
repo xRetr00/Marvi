@@ -82,7 +82,8 @@ def test_wifi_is_positive_only_identity_evidence():
         geofence_zone=None, exit_timeout_elapsed=False, wifi_detected=False,
     )
     assert presence.detected is True
-    assert presence.source == "ble_sticky_mmwave"
+    assert presence.source == "wifi_mmwave"
+    assert presence.identity_sticky is False
 
 
 def test_exit_timeout_uses_last_mmwave_occupancy_not_phone_sighting():
@@ -117,6 +118,29 @@ def test_he20_clear_event_is_delayed_and_edge_triggered(monkeypatch):
     runtime._poll_devices()
     runtime._poll_devices()
     assert emitted == [("presence_cleared", {"source": "mmwave"})]
+
+
+def test_he20_brief_clear_does_not_create_another_room_entry(monkeypatch):
+    runtime = Runtime({"esp32": {"exit_timeout": 60}})
+    runtime._state.mmwave.occupied = True
+    runtime._state.mmwave.last_seen = datetime.now(timezone.utc).isoformat()
+    runtime._room_clear_emitted = False
+    runtime._tuya = MagicMock()
+    runtime._tuya.get_light_status.return_value = {"success": True, "on": True, "brightness": 70}
+    runtime._tuya.get_mmwave_status.side_effect = [
+        {"success": True, "occupied": False},
+        {"success": True, "occupied": True},
+    ]
+    runtime._tuya.health.return_value = {}
+    runtime._mqtt = None
+    transition = MagicMock()
+    monkeypatch.setattr(runtime, "_probe_wifi_presence", lambda: False)
+    monkeypatch.setattr(runtime, "_handle_welcome_transition", transition)
+
+    runtime._poll_devices()
+    runtime._poll_devices()
+
+    transition.assert_not_called()
 
 
 def test_entry_is_tracked_but_welcome_requires_one_hour_empty(monkeypatch):
@@ -230,12 +254,13 @@ def test_guest_welcome_does_not_repeat_an_llm_generated_absence(monkeypatch):
     assert published == ["Welcome! Shereef isn't around at the moment, but I'm here to help."]
 
 
-def test_room_entry_uses_ble_for_owner_not_geofence_fusion(monkeypatch):
-    runtime = Runtime({"owner": "Shereef"})
+def test_recent_owntracks_home_arrival_identifies_owner_when_ble_sleeps(monkeypatch):
+    runtime = Runtime({"owner": "Shereef", "welcome": {"owner_evidence_window_seconds": 3600}})
     runtime._state.mmwave.occupied = True
     runtime._state.presence.detected = True
     runtime._state.presence.source = "geofence_mmwave"
     runtime._state.location.home = True
+    runtime._state.location.last_geofence_at = "2026-07-19T09:57:00+00:00"
     runtime._ble_detected = False
     runtime._pending_entry_at = "2026-07-19T10:00:00+00:00"
     runtime._pending_entry_should_welcome = False
@@ -247,12 +272,25 @@ def test_room_entry_uses_ble_for_owner_not_geofence_fusion(monkeypatch):
     runtime._deliver_welcome()
 
     published.assert_not_called()
-    assert runtime._state.unreported_visitor_entries == [{
-        "at": "2026-07-19T10:00:00+00:00",
-        "classification": "guest",
-        "owner_phone_home": True,
-    }]
-    assert emitted.call_args.args[1]["classification"] == "guest"
+    assert runtime._state.unreported_visitor_entries == []
+    assert emitted.call_args.args[1]["classification"] == "owner"
+    assert emitted.call_args.args[1]["identity_reason"] == "owntracks_recent"
+
+
+def test_stale_home_phone_without_owner_evidence_is_still_a_guest(monkeypatch):
+    runtime = Runtime({"owner": "Shereef", "welcome": {"owner_evidence_window_seconds": 3600}})
+    runtime._state.mmwave.occupied = True
+    runtime._state.location.home = True
+    runtime._state.location.last_geofence_at = "2026-07-19T08:00:00+00:00"
+    runtime._pending_entry_at = "2026-07-19T10:00:00+00:00"
+    runtime._pending_entry_should_welcome = False
+    emitted = MagicMock()
+    monkeypatch.setattr(runtime, "_emit_event", emitted)
+
+    runtime._deliver_welcome()
+
+    assert runtime._state.unreported_visitor_entries[-1]["classification"] == "guest"
+    assert emitted.call_args.args[1]["identity_reason"] == "phone_home_without_recent_owner_evidence"
 
 
 def test_next_confirmed_owner_welcome_reports_and_clears_visitor_entries(monkeypatch):
@@ -304,6 +342,22 @@ def test_owntracks_history_preserves_details_and_filters():
     assert reports[0]["accuracy_m"] == 12
     assert reports[0]["data"]["batt"] == 87
     assert reports[1]["event"] == "leave"
+
+
+def test_owntracks_heartbeat_uses_phone_report_time_not_mqtt_delivery_time():
+    runtime = Runtime({"owner": "Shereef"})
+    runtime._state.location.home = True
+    runtime._state.location.zone = "home"
+    runtime._state.location.source = "owntracks"
+    reported = int(time.time()) - 120
+
+    runtime._on_owntracks("owntracks/smart_room/iphone", {
+        "_type": "location", "inregions": ["Home"], "tst": reported,
+    })
+    runtime._on_geofence("sync", "home")
+
+    stamp = datetime.fromisoformat(runtime._state.location.last_geofence_at)
+    assert int(stamp.timestamp()) == reported
 
 
 def test_welcome_activity_has_a_dedicated_tts_source(monkeypatch):

@@ -78,6 +78,8 @@ class Runtime:
     def __init__(self, config: Dict[str, Any]):
         self._config = config
         self._state = load_state()
+        if not self._state.last_owner_seen_at and self._state.presence.source == "ble":
+            self._state.last_owner_seen_at = self._state.presence.last_seen
         if self._state.modes.active_mode == "sleep":
             restored = self._state.sleep_restore.get("mode")
             self._state.modes.active_mode = (
@@ -342,6 +344,7 @@ class Runtime:
                 self._ble_rssi = rssi
                 if detected:
                     self._last_ble_seen_monotonic = time.monotonic()
+                    self._state.last_owner_seen_at = now_iso()
             was_present = self._state.presence.detected
             self._update_presence(other_identity_detected=detected and not is_owner)
             present = self._state.presence.detected
@@ -383,6 +386,10 @@ class Runtime:
         if record.get("duplicate"):
             logger.debug("Ignored duplicate retained OwnTracks report at=%s", record["reported_at"])
             return
+        if record["type"] == "location" and record["zone"]:
+            with self._state_lock:
+                self._state.location.last_geofence_at = record["reported_at"]
+                save_state(self._state)
         logger.info(
             "OwnTracks report recorded type=%s event=%s zone=%s at=%s lat=%s lon=%s accuracy_m=%s",
             record["type"], record["event"], record["zone"], record["reported_at"],
@@ -554,7 +561,6 @@ class Runtime:
         offline_events = []
         with self._state_lock:
             was_present = self._state.presence.detected
-            was_occupied = self._state.mmwave.occupied
             if bulb_status is not None:
                 bulb = self._state.devices.setdefault("tuya_bulb", DeviceHealth())
                 if bulb_status.get("success"):
@@ -592,16 +598,15 @@ class Runtime:
                 device = self._state.devices.setdefault(state_name, DeviceHealth())
                 device.queue_depth = int(metrics.get("queue_depth", 0))
                 device.circuit_open = bool(metrics.get("circuit_open", False))
-            occupied = self._state.mmwave.occupied
             save_state(self._state)
 
         for device in offline_events:
             self._emit_event("device_offline", {"device": device})
-        self._handle_welcome_transition(was_occupied, occupied)
 
         wifi_detected = self._probe_wifi_presence()
         _, light_should_off = self._update_presence(wifi_detected=wifi_detected)
         with self._state_lock:
+            stable_entry = self._state.mmwave.occupied and self._room_clear_emitted
             if self._state.mmwave.occupied:
                 self._room_clear_emitted = False
             present = self._state.presence.detected
@@ -610,6 +615,10 @@ class Runtime:
             if should_clear:
                 self._room_clear_emitted = True
             snapshot = self._state.to_dict()
+        if stable_entry:
+            self._handle_welcome_transition(False, True)
+        elif should_clear:
+            self._handle_welcome_transition(True, False)
         if not was_present and present:
             self._emit_event("presence_detected", {"source": source})
         elif should_clear:
@@ -660,23 +669,23 @@ class Runtime:
             should_welcome = self._pending_entry_should_welcome and self._state.modes.active_mode != "sleep"
             self._pending_entry_at = None
             self._pending_entry_should_welcome = False
-            # mmWave proves occupancy and OwnTracks proves the phone is home;
-            # only the enrolled ESPresense BLE identity proves it is the owner.
-            owner_detected = self._ble_detected
             phone_home = self._state.location.home
-            classification = "owner" if owner_detected else ("guest" if phone_home else "unknown_visitor")
+            classification, identity_reason = self._classify_entry(entry_at)
+            owner_detected = classification == "owner"
             pending_entries = list(self._state.unreported_visitor_entries) if owner_detected else []
             if not owner_detected:
                 self._state.unreported_visitor_entries.append({
                     "at": entry_at,
                     "classification": classification,
                     "owner_phone_home": phone_home,
+                    "identity_reason": identity_reason,
                 })
                 self._state.unreported_visitor_entries = self._state.unreported_visitor_entries[-100:]
 
         self._emit_event("room_entry", {
             "entry_at": entry_at,
             "classification": classification,
+            "identity_reason": identity_reason,
             "owner_phone_home": phone_home,
             "summary": f"{classification.replace('_', ' ').title()} entered the room",
         })
@@ -696,6 +705,31 @@ class Runtime:
                     if str(item.get("at")) not in reported
                 ]
                 save_state(self._state)
+
+    @staticmethod
+    def _within_seconds(value: Optional[str], reference: str, seconds: int) -> bool:
+        try:
+            then = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+            now = datetime.fromisoformat(reference.replace("Z", "+00:00"))
+            return -30 <= (now - then).total_seconds() <= seconds
+        except (TypeError, ValueError):
+            return False
+
+    def _classify_entry(self, entry_at: str) -> tuple[str, str]:
+        if self._ble_detected:
+            self._state.last_owner_seen_at = entry_at
+            return "owner", "ble"
+        if not self._state.location.home:
+            return "unknown_visitor", "owner_phone_away"
+
+        window = max(60, int((self._config.get("welcome") or {}).get("owner_evidence_window_seconds", 3600)))
+        if self._within_seconds(self._state.location.last_geofence_at, entry_at, window):
+            self._state.last_owner_seen_at = entry_at
+            return "owner", "owntracks_recent"
+        if self._within_seconds(self._state.last_owner_seen_at, entry_at, window):
+            self._state.last_owner_seen_at = entry_at
+            return "owner", "recent_owner"
+        return "guest", "phone_home_without_recent_owner_evidence"
 
     def test_welcome(self, audience: str) -> None:
         """Generate a real welcome preview without changing arrival state."""

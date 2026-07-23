@@ -120,16 +120,15 @@ def test_he20_clear_event_is_delayed_and_edge_triggered(monkeypatch):
     assert emitted == [("presence_cleared", {"source": "mmwave"})]
 
 
-def test_he20_brief_clear_does_not_create_another_room_entry(monkeypatch):
+def test_he20_single_occupied_pulse_does_not_create_room_entry(monkeypatch):
     runtime = Runtime({"esp32": {"exit_timeout": 60}})
-    runtime._state.mmwave.occupied = True
-    runtime._state.mmwave.last_seen = datetime.now(timezone.utc).isoformat()
-    runtime._room_clear_emitted = False
+    runtime._state.mmwave.occupied = False
+    runtime._room_clear_emitted = True
     runtime._tuya = MagicMock()
     runtime._tuya.get_light_status.return_value = {"success": True, "on": True, "brightness": 70}
     runtime._tuya.get_mmwave_status.side_effect = [
-        {"success": True, "occupied": False},
         {"success": True, "occupied": True},
+        {"success": True, "occupied": False},
     ]
     runtime._tuya.health.return_value = {}
     runtime._mqtt = None
@@ -141,6 +140,12 @@ def test_he20_brief_clear_does_not_create_another_room_entry(monkeypatch):
     runtime._poll_devices()
 
     transition.assert_not_called()
+    runtime._tuya.get_mmwave_status.side_effect = None
+    runtime._tuya.get_mmwave_status.return_value = {"success": True, "occupied": True}
+    runtime._poll_devices()
+    runtime._mmwave_occupied_since -= 4
+    runtime._poll_devices()
+    transition.assert_called_once_with(False, True)
 
 
 def test_entry_is_tracked_but_welcome_requires_one_hour_empty(monkeypatch):

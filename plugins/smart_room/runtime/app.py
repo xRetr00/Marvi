@@ -108,6 +108,7 @@ class Runtime:
         # for the configured timeout.  HE20 can briefly report "none" between
         # occupied samples, so a single clear poll must never turn lights off.
         self._room_clear_emitted = not self._state.mmwave.occupied
+        self._mmwave_occupied_since = time.monotonic() if self._state.mmwave.occupied else 0.0
         self._owner_name = str(config.get("owner", "Shereef")).strip() or "Shereef"
         self._owner = self._owner_name.lower()
         self._owner_device_id = str(
@@ -580,7 +581,12 @@ class Runtime:
             if he20_status is not None:
                 he20 = self._state.devices.setdefault("tuya_he20", DeviceHealth())
                 if he20_status.get("success"):
-                    self._state.mmwave.occupied = he20_status.get("occupied", False)
+                    occupied = bool(he20_status.get("occupied", False))
+                    if occupied and not self._state.mmwave.occupied:
+                        self._mmwave_occupied_since = time.monotonic()
+                    elif not occupied:
+                        self._mmwave_occupied_since = 0.0
+                    self._state.mmwave.occupied = occupied
                     if self._state.mmwave.occupied:
                         self._state.mmwave.last_seen = now_iso()
                     he20.online = True
@@ -606,8 +612,14 @@ class Runtime:
         wifi_detected = self._probe_wifi_presence()
         _, light_should_off = self._update_presence(wifi_detected=wifi_detected)
         with self._state_lock:
-            stable_entry = self._state.mmwave.occupied and self._room_clear_emitted
-            if self._state.mmwave.occupied:
+            debounce = max(0, float(((self._config.get("automations") or {}).get("adaptive_light") or {}).get("debounce", 3)))
+            stable_entry = bool(
+                self._state.mmwave.occupied
+                and self._room_clear_emitted
+                and self._mmwave_occupied_since
+                and time.monotonic() - self._mmwave_occupied_since >= debounce
+            )
+            if stable_entry:
                 self._room_clear_emitted = False
             present = self._state.presence.detected
             source = self._state.presence.source

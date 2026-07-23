@@ -91,5 +91,10 @@ def known_surfaces() -> List[str]:
     return sorted(FETCHERS.keys())
 
 
+def composio_surfaces() -> List[str]:
+    """Composio-backed fetchers available for proactive account sync."""
+    return sorted(set(FETCHERS) - set(BUILTIN_SURFACES))
+
+
 def get_fetcher(surface: str) -> Optional[FetchDeltaFn]:
     return FETCHERS.get(surface)

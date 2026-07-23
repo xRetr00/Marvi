@@ -1,19 +1,34 @@
+import { useQueryClient } from '@tanstack/react-query'
 import { useCallback, useEffect, useState } from 'react'
 
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { Loader } from '@/components/ui/loader'
+import { SearchField } from '@/components/ui/search-field'
 import { useI18n } from '@/i18n'
 import { Link as LinkIcon, Search } from '@/lib/icons'
 import { $gateway } from '@/store/gateway'
 import { notify, notifyError } from '@/store/notifications'
 
 import { Pill, SectionHeading } from '../settings/primitives'
+import { SurfacesHealth } from '../settings/subconscious/surfaces-health'
+import { SUBCONSCIOUS_SURFACES_KEY, useSubconsciousSurfaces } from '../settings/subconscious/use-subconscious-surfaces'
 
 interface ComposioStatus {
   sdk_configured: boolean
   mcp_configured: boolean
   mcp_enabled: boolean
   snapshot_surfaces: string[]
+  snapshot_capable_surfaces?: string[]
+}
+
+interface ConnectionStatus {
+  connected: boolean
+  status: string
+}
+
+interface ConnectionsResponse {
+  connections: Record<string, ConnectionStatus>
 }
 
 interface Toolkit {
@@ -29,32 +44,54 @@ interface ToolkitResponse {
 }
 
 interface ConnectResponse {
+  auto_sync_enabled?: boolean
   connected?: boolean
   redirect_url?: null | string
 }
 
-const SNAPSHOT_SURFACES = ['gmail', 'github', 'calendar', 'slack'] as const
+// Compatibility fallback for Desktop paired with a pre-registry backend.
+const LEGACY_SNAPSHOT_SURFACES = ['gmail', 'github', 'calendar', 'slack']
 
 export function ComposioTab() {
   const { t } = useI18n()
   const copy = t.mind.composio
+  const queryClient = useQueryClient()
+  const surfacesHealth = useSubconsciousSurfaces()
   const [status, setStatus] = useState<ComposioStatus | null>(null)
   const [apiKey, setApiKey] = useState('')
   const [consumerApiKey, setConsumerApiKey] = useState('')
   const [query, setQuery] = useState('')
   const [toolkits, setToolkits] = useState<Toolkit[]>([])
+  const [connections, setConnections] = useState<null | Record<string, ConnectionStatus>>(null)
   const [total, setTotal] = useState<null | number>(null)
   const [saving, setSaving] = useState(false)
   const [loading, setLoading] = useState(false)
   const [connecting, setConnecting] = useState<null | string>(null)
+  const snapshotCapableSurfaces = status?.snapshot_capable_surfaces ?? LEGACY_SNAPSHOT_SURFACES
+
+  const loadConnections = useCallback(async () => {
+    try {
+      const result = await window.hermesDesktop.api<ConnectionsResponse>({ path: '/api/composio/connections' })
+      setConnections(result.connections ?? {})
+    } catch {
+      setConnections(null)
+    }
+  }, [])
 
   const loadStatus = useCallback(async () => {
     try {
-      setStatus(await window.hermesDesktop.api<ComposioStatus>({ path: '/api/composio/status' }))
+      const next = await window.hermesDesktop.api<ComposioStatus>({ path: '/api/composio/status' })
+      setStatus(next)
+
+      if (next.sdk_configured) {
+        void loadConnections()
+      } else {
+        setConnections({})
+      }
     } catch (error) {
       notifyError(error, copy.loadFailed)
     }
-  }, [copy.loadFailed])
+  }, [copy.loadFailed, loadConnections])
 
   const loadToolkits = useCallback(
     async (search = '') => {
@@ -79,6 +116,13 @@ export function ComposioTab() {
 
   useEffect(() => {
     void loadStatus()
+  }, [loadStatus])
+
+  useEffect(() => {
+    const refresh = () => void loadStatus()
+    window.addEventListener('focus', refresh)
+
+    return () => window.removeEventListener('focus', refresh)
   }, [loadStatus])
 
   useEffect(() => {
@@ -130,6 +174,7 @@ export function ComposioTab() {
 
       if (next.sdk_configured) {
         await loadToolkits()
+        void loadConnections()
       }
     } catch (error) {
       notifyError(error, copy.saveFailed)
@@ -150,6 +195,7 @@ export function ComposioTab() {
           body: { surfaces }
         })
       )
+      void queryClient.invalidateQueries({ queryKey: SUBCONSCIOUS_SURFACES_KEY })
       notify({ kind: 'success', message: copy.snapshotsSaved })
     } catch (error) {
       notifyError(error, copy.snapshotsFailed)
@@ -165,6 +211,12 @@ export function ComposioTab() {
         method: 'POST',
         body: { toolkit: toolkit.slug }
       })
+
+      if (result.auto_sync_enabled) {
+        void queryClient.invalidateQueries({ queryKey: SUBCONSCIOUS_SURFACES_KEY })
+      }
+
+      void loadStatus()
 
       if (result.redirect_url) {
         await window.hermesDesktop.openExternal(result.redirect_url)
@@ -190,7 +242,7 @@ export function ComposioTab() {
           title={copy.title}
         />
         <p className="mb-3 text-xs text-muted-foreground">{copy.description}</p>
-        <div className="rounded-xl border border-(--ui-stroke-secondary) p-4">
+        <div className="border-y border-(--ui-stroke-tertiary) py-4">
           <div className="grid gap-3 sm:grid-cols-2">
             <label className="text-xs font-medium">
               {copy.keyTitle}
@@ -232,7 +284,7 @@ export function ComposioTab() {
             <div className="text-xs font-medium">{copy.snapshotTitle}</div>
             <p className="mt-1 text-xs text-muted-foreground">{copy.snapshotDescription}</p>
             <div className="mt-2 flex flex-wrap gap-1.5">
-              {SNAPSHOT_SURFACES.map(surface => (
+              {snapshotCapableSurfaces.map(surface => (
                 <Button
                   disabled={!status?.sdk_configured}
                   key={surface}
@@ -243,6 +295,9 @@ export function ComposioTab() {
                   {surface}
                 </Button>
               ))}
+            </div>
+            <div className="mt-3">
+              <SurfacesHealth {...surfacesHealth} />
             </div>
           </div>
         </div>
@@ -255,58 +310,89 @@ export function ComposioTab() {
           title={copy.catalogTitle}
         />
         <p className="mb-3 text-xs text-muted-foreground">{copy.catalogDescription}</p>
-        <Input
-          disabled={!status?.sdk_configured}
-          onChange={event => setQuery(event.target.value)}
+        <SearchField
+          aria-label={copy.searchPlaceholder}
+          containerClassName="w-full"
+          loading={loading}
+          onChange={setQuery}
           placeholder={copy.searchPlaceholder}
           value={query}
         />
-        <div className="mt-3 max-h-[28rem] overflow-y-auto rounded-lg border border-(--ui-stroke-secondary)">
-          {loading ? (
-            <div className="p-6 text-center text-xs text-muted-foreground">{copy.loading}</div>
+        <div className="mt-3 max-h-[28rem] overflow-y-auto border-y border-(--ui-stroke-tertiary)">
+          {loading && toolkits.length === 0 ? (
+            <div className="grid place-items-center p-6">
+              <Loader aria-label={copy.loading} type="lemniscate-bloom" />
+            </div>
           ) : toolkits.length === 0 ? (
             <div className="p-6 text-center text-xs text-muted-foreground">{copy.empty}</div>
           ) : (
             <div className="divide-y divide-(--ui-stroke-secondary)">
-              {toolkits.map(toolkit => (
-                <div className="p-3" key={toolkit.slug}>
-                  <div className="flex items-center justify-between gap-3">
-                    <div className="text-sm font-medium">{toolkit.name}</div>
-                    <div className="flex items-center gap-2">
-                      <code className="text-[0.65rem] text-muted-foreground">{toolkit.slug}</code>
-                      <Button
-                        disabled={!status?.sdk_configured || connecting !== null}
-                        onClick={() => void connect(toolkit)}
-                        size="sm"
-                        variant="outline"
-                      >
-                        {connecting === toolkit.slug ? copy.connecting : copy.connect}
-                      </Button>
+              {toolkits.map(toolkit => {
+                const connection = connections?.[toolkit.slug]
+                const syncCapable = snapshotCapableSurfaces.includes(toolkit.slug)
+                const syncEnabled = status?.snapshot_surfaces.includes(toolkit.slug) ?? false
+
+                return (
+                  <div className="p-3" key={toolkit.slug}>
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="flex min-w-0 flex-wrap items-center gap-2">
+                        <div className="text-sm font-medium">{toolkit.name}</div>
+                        <Pill tone={connection?.connected ? 'primary' : 'muted'}>
+                          {connections === null
+                            ? copy.connectionStatusUnavailable
+                            : connection?.connected
+                              ? copy.connected
+                              : copy.notConnected}
+                        </Pill>
+                        <Pill tone={syncEnabled ? 'primary' : 'muted'}>
+                          {syncCapable ? (syncEnabled ? copy.autoSyncOn : copy.autoSyncAvailable) : copy.agentOnly}
+                        </Pill>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <code className="text-[0.65rem] text-muted-foreground">{toolkit.slug}</code>
+                        <Button
+                          disabled={!status?.sdk_configured || connecting !== null || connection?.connected}
+                          onClick={() => void connect(toolkit)}
+                          size="sm"
+                          variant="outline"
+                        >
+                          {connection?.connected
+                            ? copy.connected
+                            : connecting === toolkit.slug
+                              ? copy.connecting
+                              : copy.connect}
+                        </Button>
+                      </div>
                     </div>
+                    {toolkit.description && (
+                      <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">{toolkit.description}</p>
+                    )}
                   </div>
-                  {toolkit.description && (
-                    <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">{toolkit.description}</p>
-                  )}
-                </div>
-              ))}
+                )
+              })}
             </div>
           )}
         </div>
       </section>
 
-      <section className="rounded-xl border border-primary/20 bg-primary/5 p-4">
+      <section className="border-t border-(--ui-stroke-tertiary) pt-4">
         <div className="text-sm font-medium">{copy.askTitle}</div>
         <p className="mt-1 text-xs leading-5 text-muted-foreground">{copy.askDescription}</p>
         <div className="mt-3 flex flex-wrap gap-2">
-          {SNAPSHOT_SURFACES.map(surface => (
+          {snapshotCapableSurfaces.map(surface => (
             <Button
-              disabled={!status?.sdk_configured || connecting !== null}
+              disabled={!status?.sdk_configured || connecting !== null || connections?.[surface]?.connected}
               key={surface}
               onClick={() => void connect({ name: surface, slug: surface })}
               size="sm"
               variant="outline"
             >
-              {connecting === surface ? copy.connecting : copy.connect} {surface}
+              {connections?.[surface]?.connected
+                ? copy.connected
+                : connecting === surface
+                  ? copy.connecting
+                  : copy.connect}{' '}
+              {surface}
             </Button>
           ))}
         </div>

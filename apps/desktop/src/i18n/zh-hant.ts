@@ -2007,11 +2007,11 @@ export const zhHant = defineLocale({
       mcpMissing: '代理工具未啟用',
       snapshotTitle: '主動快照',
       snapshotDescription:
-        '可選的低成本差量輪詢，目前 Marvi 可主動監控這四個介面。目錄中的所有應用程式仍可透過 MCP 使用。',
+        '對目前版本已註冊的所有介面進行低成本增量同步。新增擷取器會自動顯示，其他應用程式仍可由代理透過 MCP 使用。',
       snapshotsSaved: '主動快照已更新',
       snapshotsFailed: '無法更新主動快照',
       catalogTitle: '支援的整合',
-      catalogDescription: '即時讀取 Composio 工具包目錄，不只限於主動快照輪詢使用的四個應用程式。',
+      catalogDescription: '即時讀取 Composio 工具包目錄，並顯示每個應用程式的連線狀態和潛意識同步支援情況。',
       searchPlaceholder: '搜尋 Composio 整合',
       loading: '正在載入整合…',
       empty: '請先儲存金鑰或嘗試其他搜尋字詞。',
@@ -2028,6 +2028,11 @@ export const zhHant = defineLocale({
       connecting: '正在連線…',
       connectOpened: '已在瀏覽器中開啟授權',
       connected: '已連線',
+      notConnected: '未連線',
+      connectionStatusUnavailable: '狀態無法使用',
+      autoSyncOn: '潛意識同步已開啟',
+      autoSyncAvailable: '支援潛意識同步',
+      agentOnly: '僅供代理透過 MCP 使用',
       connectFailed: '無法啟動 Composio 授權'
     }
   },

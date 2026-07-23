@@ -1965,10 +1965,10 @@ export const ja = defineLocale({
     otherProviders: 'その他のプロバイダー',
     haveApiKey: 'API キーをお持ちです',
     chooseLater: '後でプロバイダーを選択します',
-      recommended: '推奨',
-      connected: '接続済み',
-      featuredPitch: '1 つのサブスクリプションで 300 以上の最先端モデル — Marvi を実行するための推奨方法',
-      fireworksPitch: '直接モデル API — Fireworks がホストする最先端モデル',
+    recommended: '推奨',
+    connected: '接続済み',
+    featuredPitch: '1 つのサブスクリプションで 300 以上の最先端モデル — Marvi を実行するための推奨方法',
+    fireworksPitch: '直接モデル API — Fireworks がホストする最先端モデル',
     openRouterPitch: '1 つのキーで数百のモデル — 堅実なデフォルト',
     apiKeyOptions: {
       fireworks: {
@@ -2075,12 +2075,12 @@ export const ja = defineLocale({
       mcpMissing: 'エージェントツール未設定',
       snapshotTitle: 'プロアクティブ・スナップショット',
       snapshotDescription:
-        '現在 Marvi が低コストで差分監視できる4つのアダプターです。カタログ内の全アプリは MCP 経由で引き続き利用できます。',
+        'このビルドに登録されたすべてのアダプターを低コストで差分同期します。新しいフェッチャーは自動表示され、その他のアプリは MCP 経由でエージェントが利用できます。',
       snapshotsSaved: 'プロアクティブ監視を更新しました',
       snapshotsFailed: 'プロアクティブ監視を更新できませんでした',
       catalogTitle: '対応インテグレーション',
       catalogDescription:
-        'Composio のツールキット一覧をリアルタイム表示します。プロアクティブ同期の4アプリだけに限定されません。',
+        'Composio のツールキット一覧と、各アプリの接続状態・潜在意識同期の対応状況をリアルタイム表示します。',
       searchPlaceholder: 'Composio インテグレーションを検索',
       loading: 'インテグレーションを読み込み中…',
       empty: 'キーを保存するか、別の検索語をお試しください。',
@@ -2097,6 +2097,11 @@ export const ja = defineLocale({
       connecting: '接続中…',
       connectOpened: 'ブラウザーで認証を開きました',
       connected: '接続済み',
+      notConnected: '未接続',
+      connectionStatusUnavailable: '状態を取得できません',
+      autoSyncOn: '潜在意識同期オン',
+      autoSyncAvailable: '潜在意識同期対応',
+      agentOnly: 'MCP エージェント用',
       connectFailed: 'Composio 認証を開始できませんでした'
     }
   },

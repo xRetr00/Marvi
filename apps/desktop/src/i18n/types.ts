@@ -1800,6 +1800,11 @@ export interface Translations {
       connecting: string
       connectOpened: string
       connected: string
+      notConnected: string
+      connectionStatusUnavailable: string
+      autoSyncOn: string
+      autoSyncAvailable: string
+      agentOnly: string
       connectFailed: string
     }
   }

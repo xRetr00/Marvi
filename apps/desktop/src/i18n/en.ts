@@ -2047,10 +2047,10 @@ export const en: Translations = {
     otherProviders: 'Other providers',
     haveApiKey: 'I have an API key',
     chooseLater: "I'll choose a provider later",
-      recommended: 'Recommended',
-      connected: 'Connected',
-      featuredPitch: 'One subscription, 300+ frontier models — the recommended way to run Marvi',
-      fireworksPitch: 'Direct model API — Fireworks-hosted frontier models',
+    recommended: 'Recommended',
+    connected: 'Connected',
+    featuredPitch: 'One subscription, 300+ frontier models — the recommended way to run Marvi',
+    fireworksPitch: 'Direct model API — Fireworks-hosted frontier models',
     openRouterPitch: 'One key, hundreds of models — a solid default',
     apiKeyOptions: {
       fireworks: {
@@ -2157,12 +2157,12 @@ export const en: Translations = {
       mcpMissing: 'Agent tools not enabled',
       snapshotTitle: 'Proactive snapshots',
       snapshotDescription:
-        'Optional low-cost delta polling for the four adapters Marvi can watch proactively today. All catalog apps remain available to the agent through MCP.',
+        'Low-cost delta sync for every adapter registered in this build. New fetchers appear here automatically; other apps remain available to the agent through MCP.',
       snapshotsSaved: 'Proactive snapshots updated',
       snapshotsFailed: 'Failed to update proactive snapshots',
       catalogTitle: 'Supported integrations',
       catalogDescription:
-        'Live from Composio’s toolkit catalog. This is not limited to the four apps used by proactive snapshot polling.',
+        'Live from Composio’s toolkit catalog, with connection state and subconscious-sync availability shown for every app.',
       searchPlaceholder: 'Search Composio integrations',
       loading: 'Loading integrations…',
       empty: 'Save a key or try another search.',
@@ -2178,7 +2178,12 @@ export const en: Translations = {
       connect: 'Connect',
       connecting: 'Connecting…',
       connectOpened: 'Authorization opened in your browser',
-      connected: 'Already connected',
+      connected: 'Connected',
+      notConnected: 'Not connected',
+      connectionStatusUnavailable: 'Status unavailable',
+      autoSyncOn: 'Subconscious sync on',
+      autoSyncAvailable: 'Subconscious sync available',
+      agentOnly: 'Agent via MCP',
       connectFailed: 'Failed to start Composio authorization'
     }
   },

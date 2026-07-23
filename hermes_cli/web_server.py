@@ -13891,22 +13891,45 @@ class ComposioSnapshotsRequest(BaseModel):
 
 
 def _composio_setup_sync(api_key: str, consumer_api_key: str) -> Dict[str, Any]:
-    from hermes_cli.composio_config import configure_composio_connect, composio_status
+    from hermes_cli.composio_config import configure_composio_connect
 
     api_key = str(api_key or "").strip()
     consumer_api_key = str(consumer_api_key or "").strip()
     if not api_key and not consumer_api_key:
         raise ValueError("A Composio API key is required")
     configure_composio_connect(api_key=api_key, consumer_api_key=consumer_api_key)
-    return composio_status()
+    return _composio_status_sync()
 
 
 def _composio_status_sync() -> Dict[str, Any]:
     from hermes_cli.composio_config import composio_status
+    from cron.scripts.subconscious.base import composio_surfaces
 
     # Opening the dedicated Mind tab is a safe migration point for installs
     # that still have the old plaintext composio.api_key setting.
-    return composio_status(migrate=True)
+    return {
+        **composio_status(migrate=True),
+        "snapshot_capable_surfaces": composio_surfaces(),
+    }
+
+
+def _enable_composio_snapshot_surface(toolkit: str) -> bool:
+    from cron.scripts.subconscious.base import composio_surfaces
+
+    if toolkit not in composio_surfaces():
+        return False
+    config = read_raw_config()
+    section = config.get("composio")
+    if not isinstance(section, dict):
+        section = {}
+    configured = section.get("surfaces")
+    surfaces = list(configured) if isinstance(configured, list) else []
+    if toolkit not in surfaces:
+        surfaces.append(toolkit)
+        section["surfaces"] = surfaces
+        config["composio"] = section
+        save_config(config)
+    return True
 
 
 def _composio_connect_sync(toolkit: str) -> Dict[str, Any]:
@@ -13918,7 +13941,18 @@ def _composio_connect_sync(toolkit: str) -> Dict[str, Any]:
         raise ValueError("Invalid Composio toolkit")
     if not get_api_key(load_config()):
         raise ValueError("Save the Composio project API key first")
-    return get_client().initiate_connection(toolkit)
+    result = get_client().initiate_connection(toolkit)
+    result["auto_sync_enabled"] = _enable_composio_snapshot_surface(toolkit)
+    return result
+
+
+def _composio_connections_sync() -> Dict[str, Any]:
+    from cron.scripts.subconscious.composio_client import get_api_key, get_client
+    from hermes_cli.config import load_config
+
+    if not get_api_key(load_config()):
+        raise ValueError("Save the Composio project API key first")
+    return {"connections": get_client().list_connections()}
 
 
 def _composio_toolkits_sync(search: str, limit: int) -> Dict[str, Any]:
@@ -14019,11 +14053,22 @@ async def connect_composio(body: ComposioConnectRequest):
         raise HTTPException(status_code=502, detail="Failed to start Composio authorization")
 
 
+@app.get("/api/composio/connections")
+async def get_composio_connections():
+    try:
+        return {"ok": True, **await run_in_threadpool(_composio_connections_sync)}
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception:
+        _log.exception("GET /api/composio/connections failed")
+        raise HTTPException(status_code=502, detail="Failed to read Composio connections")
+
+
 @app.put("/api/composio/snapshots")
 async def update_composio_snapshots(body: ComposioSnapshotsRequest):
-    from cron.scripts.subconscious.base import known_surfaces
+    from cron.scripts.subconscious.base import composio_surfaces
 
-    allowed = set(known_surfaces())
+    allowed = set(composio_surfaces())
     surfaces = list(
         dict.fromkeys(
             str(item).strip().lower() for item in body.surfaces if str(item).strip()

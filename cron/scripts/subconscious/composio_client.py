@@ -13,8 +13,8 @@ Registered in ``tools/lazy_deps.py``'s ``LAZY_DEPS`` allowlist as
 ``winsdk``/``presence.media_watcher`` pattern): the SDK auto-installs on
 first real use (:meth:`ComposioClient._client`, via
 :func:`_import_composio_sdk`) instead of just telling the user to run pip
-themselves. :func:`is_sdk_installed` stays a cheap, install-free presence
-check (used by passive status output like ``hermes composio list``) --
+themselves. :func:`is_sdk_installed` stays a cheap, install-free pin check
+(used by passive status output like ``hermes composio list``) --
 :func:`ensure_sdk_installed` is the function that actually triggers an
 install attempt, and only ``hermes composio connect`` and the internal
 SDK-usage seam call it.
@@ -100,17 +100,18 @@ def _install_hint() -> str:
 
 
 def is_sdk_installed() -> bool:
-    """Cheap presence check that never raises and never triggers an install
+    """Cheap pinned-version check that never raises and never triggers an install
     -- used by passive CLI status output (``hermes composio list``). Callers
     that actually need the SDK available should go through
     :func:`ensure_sdk_installed` (auto-installs on demand) instead."""
-    if "composio" in sys.modules:
-        return True
-    try:
-        import composio  # type: ignore  # noqa: F401
-    except ImportError:
-        return False
-    return True
+    if "composio" not in sys.modules:
+        try:
+            import composio  # type: ignore  # noqa: F401
+        except ImportError:
+            return False
+    from tools.lazy_deps import is_available
+
+    return is_available("integration.composio")
 
 
 def ensure_sdk_installed(*, prompt: bool = False) -> bool:
@@ -160,12 +161,6 @@ def _import_composio_sdk():
     unattended contexts, not an interactive CLI command). Raises
     :class:`ComposioUnavailable` with a clear remediation hint on failure --
     never a bare ``ImportError``."""
-    try:
-        import composio  # type: ignore
-        return composio
-    except ImportError:
-        pass
-
     ensure_sdk_installed(prompt=False)  # raises ComposioUnavailable on failure
 
     if "composio" in sys.modules:
@@ -366,8 +361,9 @@ class ComposioClient:
                 enabled[0] if enabled else None,
             )
             if auth_config is None:
-                raise ComposioTransientError(
-                    f"No enabled Composio auth config exists for {app!r}."
+                auth_config = client.auth_configs.create(
+                    toolkit=app,
+                    options={"type": "use_composio_managed_auth", "name": app},
                 )
             result = client.connected_accounts.link(user_id, auth_config.id)
         except (ComposioRateLimited, ComposioAuthError, ComposioTransientError):
@@ -408,6 +404,32 @@ class ComposioClient:
         status = getattr(account, "status", "not connected")
         connected = str(status).lower() in {"active", "connected", "success"}
         return {"connected": connected, "status": str(status)}
+
+    def list_connections(self, *, user_id: str = "default") -> Dict[str, Dict[str, Any]]:
+        """Return the latest connection status for each toolkit."""
+        client = self._client()
+        try:
+            result = client.connected_accounts.list(user_ids=[user_id], limit=100)
+        except (ComposioRateLimited, ComposioAuthError, ComposioTransientError):
+            raise
+        except Exception as e:
+            self._classify_and_raise(e)
+            raise ComposioTransientError(
+                f"Could not list Composio connections: {e}"
+            ) from e
+
+        connections: Dict[str, Dict[str, Any]] = {}
+        for item in list(getattr(result, "items", None) or []):
+            toolkit = getattr(item, "toolkit", None)
+            slug = getattr(toolkit, "slug", None)
+            if not slug:
+                continue
+            status = str(getattr(item, "status", "unknown"))
+            current = connections.get(slug)
+            connected = status.lower() in {"active", "connected", "success"}
+            if current is None or connected:
+                connections[slug] = {"connected": connected, "status": status}
+        return connections
 
     def verify_auth(self) -> bool:
         """Cheap sanity check that the configured API key actually works.

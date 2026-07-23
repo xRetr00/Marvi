@@ -2320,11 +2320,11 @@ export const zh: Translations = {
       mcpMissing: '代理工具未启用',
       snapshotTitle: '主动快照',
       snapshotDescription:
-        '可选的低成本差量轮询，目前 Marvi 可主动监控这四个适配器。目录中的所有应用仍可通过 MCP 使用。',
+        '对当前版本已注册的所有适配器进行低成本增量同步。新增抓取器会自动显示，其他应用仍可由代理通过 MCP 使用。',
       snapshotsSaved: '主动快照已更新',
       snapshotsFailed: '无法更新主动快照',
       catalogTitle: '支持的集成',
-      catalogDescription: '实时读取 Composio 工具包目录，不仅限于主动快照轮询使用的四个应用。',
+      catalogDescription: '实时读取 Composio 工具包目录，并显示每个应用的连接状态和潜意识同步支持情况。',
       searchPlaceholder: '搜索 Composio 集成',
       loading: '正在加载集成…',
       empty: '请先保存密钥或尝试其他搜索词。',
@@ -2340,6 +2340,11 @@ export const zh: Translations = {
       connecting: '正在连接…',
       connectOpened: '已在浏览器中打开授权',
       connected: '已连接',
+      notConnected: '未连接',
+      connectionStatusUnavailable: '状态不可用',
+      autoSyncOn: '潜意识同步已开启',
+      autoSyncAvailable: '支持潜意识同步',
+      agentOnly: '仅供代理通过 MCP 使用',
       connectFailed: '无法启动 Composio 授权'
     }
   },

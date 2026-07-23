@@ -151,7 +151,7 @@ class TestConnect:
         config = load_config()
         assert "gmail" not in (config.get("composio", {}) or {}).get("surfaces", [])
 
-    def test_connect_warns_on_unimplemented_surface_but_still_connects(
+    def test_connect_warns_on_unimplemented_surface_without_auto_sync(
         self, fake_sdk, capsys
     ):
         args = SimpleNamespace(app="notion", api_key="k123")
@@ -160,7 +160,7 @@ class TestConnect:
         out = capsys.readouterr().out
         assert "no delta-fetcher implemented" in out
         config = load_config()
-        assert "notion" in config["composio"]["surfaces"]
+        assert "notion" not in config["composio"]["surfaces"]
 
     def test_connect_prints_redirect_url_when_present(
         self, fake_sdk, capsys, monkeypatch

@@ -81,14 +81,14 @@ def cmd_composio_connect(args: Any) -> None:
         print_error("Usage: hermes composio connect <app>  (e.g. gmail, github)")
         sys.exit(1)
 
-    from cron.scripts.subconscious.base import known_surfaces
+    from cron.scripts.subconscious.base import composio_surfaces
 
-    known = known_surfaces()
+    known = composio_surfaces()
     if app not in known:
         print_warning(
             f"'{app}' has no delta-fetcher implemented yet in this build "
             f"(implemented surfaces: {', '.join(known)}). Marvi will still store "
-            f"the connection, but subconscious sync won't watch it until a fetcher "
+            f"the connection, but subconscious sync will not watch it until a fetcher "
             f"ships for it."
         )
 
@@ -184,13 +184,19 @@ def cmd_composio_connect(args: Any) -> None:
     surfaces = composio_cfg.get("surfaces")
     if not isinstance(surfaces, list):
         surfaces = []
-    if app not in surfaces:
+    if app in known and app not in surfaces:
         surfaces.append(app)
     composio_cfg["surfaces"] = surfaces
 
     save_config(config)
 
-    print_success(f"Marvi is now set up to watch '{app}' via Composio.")
+    if app in known:
+        print_success(f"Marvi is now set up to watch '{app}' via Composio.")
+    else:
+        print_success(
+            f"Composio connection saved for '{app}'; subconscious auto-sync "
+            "will become available when a delta fetcher is added."
+        )
     if redirect_url:
         print_info(
             "Finish the authorization link above, then check `hermes composio list`."

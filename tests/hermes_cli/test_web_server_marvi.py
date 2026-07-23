@@ -156,6 +156,39 @@ class TestComposioEndpoints:
         assert response.status_code == 200
         assert response.json()["redirect_url"] == "https://auth.example"
 
+    def test_connect_auto_enables_registered_snapshot_surface(self, client):
+        from hermes_cli.config import load_config
+
+        class FakeClient:
+            def initiate_connection(self, toolkit):
+                return {"connected": False, "redirect_url": "https://auth.example"}
+
+        client.post("/api/composio/setup", json={"api_key": "sdk-key", "consumer_api_key": ""})
+        with patch(
+            "cron.scripts.subconscious.composio_client.get_client",
+            return_value=FakeClient(),
+        ):
+            response = client.post("/api/composio/connect", json={"toolkit": "gmail"})
+
+        assert response.status_code == 200
+        assert response.json()["auto_sync_enabled"] is True
+        assert load_config()["composio"]["surfaces"] == ["gmail"]
+
+    def test_connection_inventory_is_forwarded(self, client):
+        class FakeClient:
+            def list_connections(self):
+                return {"reddit": {"connected": True, "status": "ACTIVE"}}
+
+        client.post("/api/composio/setup", json={"api_key": "sdk-key", "consumer_api_key": ""})
+        with patch(
+            "cron.scripts.subconscious.composio_client.get_client",
+            return_value=FakeClient(),
+        ):
+            response = client.get("/api/composio/connections")
+
+        assert response.status_code == 200
+        assert response.json()["connections"]["reddit"]["connected"] is True
+
     def test_toolkit_catalog_response_is_forwarded(self, client):
         fake = {
             "toolkits": [

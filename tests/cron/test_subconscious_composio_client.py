@@ -1,5 +1,5 @@
 """Tests for cron/scripts/subconscious/composio_client.py's lazy-install
-wiring -- ``is_sdk_installed`` stays a cheap, install-free presence check,
+wiring -- ``is_sdk_installed`` stays a cheap, install-free pin check,
 while ``ensure_sdk_installed``/``_import_composio_sdk`` route through
 ``tools.lazy_deps`` (feature ``integration.composio``) to auto-install the
 SDK on first use instead of just telling the user to run pip themselves.
@@ -30,6 +30,7 @@ def _block_composio_import(monkeypatch):
         return real_import(name, *args, **kwargs)
 
     monkeypatch.setattr(builtins, "__import__", fake_import)
+    monkeypatch.setattr(lazy_deps, "is_available", lambda feature: False)
 
 
 def _allow_composio_import(monkeypatch):
@@ -39,6 +40,7 @@ def _allow_composio_import(monkeypatch):
 
     stub = types.ModuleType("composio")
     monkeypatch.setitem(sys.modules, "composio", stub)
+    monkeypatch.setattr(lazy_deps, "is_available", lambda feature: True)
     return stub
 
 
@@ -50,6 +52,11 @@ class TestIsSdkInstalled:
     def test_returns_true_when_import_succeeds(self, monkeypatch):
         _allow_composio_import(monkeypatch)
         assert composio_client_mod.is_sdk_installed() is True
+
+    def test_returns_false_when_installed_version_is_stale(self, monkeypatch):
+        _allow_composio_import(monkeypatch)
+        monkeypatch.setattr(lazy_deps, "is_available", lambda feature: False)
+        assert composio_client_mod.is_sdk_installed() is False
 
     def test_never_triggers_an_install(self, monkeypatch):
         """is_sdk_installed() is used by passive status output (`hermes
@@ -185,7 +192,7 @@ def test_verify_auth_uses_current_list_signature():
     assert calls == [{"limit": 1}]
 
 
-def test_connection_links_an_enabled_managed_auth_config():
+def test_connection_creates_managed_auth_config_then_links_it():
     calls = []
 
     class ConnectedAccounts:
@@ -200,20 +207,11 @@ def test_connection_links_an_enabled_managed_auth_config():
     class AuthConfigs:
         def list(self, **kwargs):
             calls.append(("auth_configs", kwargs))
-            return SimpleNamespace(
-                items=[
-                    SimpleNamespace(
-                        id="ac_custom",
-                        status="ENABLED",
-                        is_composio_managed=False,
-                    ),
-                    SimpleNamespace(
-                        id="ac_managed",
-                        status="ENABLED",
-                        is_composio_managed=True,
-                    ),
-                ]
-            )
+            return SimpleNamespace(items=[])
+
+        def create(self, **kwargs):
+            calls.append(("create_auth_config", kwargs))
+            return SimpleNamespace(id="ac_managed")
 
     client = composio_client_mod.ComposioClient("valid-key")
     client._sdk_client = SimpleNamespace(
@@ -229,8 +227,45 @@ def test_connection_links_an_enabled_managed_auth_config():
     assert calls == [
         ("list", {"user_ids": ["default"], "toolkit_slugs": ["gmail"]}),
         ("auth_configs", {"toolkit_slug": "gmail"}),
+        (
+            "create_auth_config",
+            {
+                "toolkit": "gmail",
+                "options": {"type": "use_composio_managed_auth", "name": "gmail"},
+            },
+        ),
         ("link", ("default", "ac_managed")),
     ]
+
+
+def test_list_connections_prefers_active_account_per_toolkit():
+    class ConnectedAccounts:
+        def list(self, **kwargs):
+            assert kwargs == {"user_ids": ["default"], "limit": 100}
+            return SimpleNamespace(
+                items=[
+                    SimpleNamespace(
+                        toolkit=SimpleNamespace(slug="reddit"),
+                        status="INITIATED",
+                    ),
+                    SimpleNamespace(
+                        toolkit=SimpleNamespace(slug="reddit"),
+                        status="ACTIVE",
+                    ),
+                    SimpleNamespace(
+                        toolkit=SimpleNamespace(slug="gmail"),
+                        status="EXPIRED",
+                    ),
+                ]
+            )
+
+    client = composio_client_mod.ComposioClient("valid-key")
+    client._sdk_client = SimpleNamespace(connected_accounts=ConnectedAccounts())
+
+    assert client.list_connections() == {
+        "gmail": {"connected": False, "status": "EXPIRED"},
+        "reddit": {"connected": True, "status": "ACTIVE"},
+    }
 
 
 def test_lazy_deps_allowlist_registers_composio():

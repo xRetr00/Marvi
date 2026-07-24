@@ -807,6 +807,7 @@ def record_subconscious_activity(
     thought: Optional[str] = None,
     output_path: Optional[Any] = None,
     narrative_updated: bool = False,
+    urgency: Optional[str] = None,
 ) -> None:
     """Append one line to the shared subconscious activity feed.
 
@@ -850,6 +851,8 @@ def record_subconscious_activity(
             "thought": _cap_activity_text(thought, _ACTIVITY_TEXT_CAP),
             "narrative_updated": bool(narrative_updated),
         }
+        if urgency in {"normal", "urgent"}:
+            record["urgency"] = urgency
         if output_path:
             record["output_path"] = str(output_path)
         _append_activity_record(record)
@@ -865,6 +868,7 @@ def _append_subconscious_activity(
     diff: Optional[str] = None,
     thought: Optional[str] = None,
     narrative_updated: bool = False,
+    urgency: Optional[str] = None,
 ) -> None:
     """Append one activity record for a completed run of a tracked
     background-thinking cron job (subconscious tick or presence distiller).
@@ -882,7 +886,161 @@ def _append_subconscious_activity(
         diff=diff,
         thought=thought,
         narrative_updated=narrative_updated,
+        urgency=urgency,
     )
+
+
+# ---------------------------------------------------------------------------
+# Autonomy hook (spec §1.2/§1.4) — parses <research>/<ask> blocks emitted by
+# a reflection/dreaming run (contract text lives in cron/subconscious.py's
+# _REFLECTION_PROMPT / _DREAMING_PROMPT) and, budget permitting, actually
+# spends the budget: spawns a bounded research subagent
+# (agent.autonomy.research) for each research request, or delivers a
+# proactive question (agent.autonomy.ask) for each ask request. Capped at
+# _MAX_RESEARCH_SPAWNS_PER_RUN research spawns per run REGARDLESS of
+# remaining budget (spec §1.2: "Cap per run"), so one chatty reflection turn
+# can't burn the whole day's research budget in one shot. Best-effort and
+# fully separate from narrative/initiative persistence — a failure anywhere
+# in here must never affect the rest of run_job.
+# ---------------------------------------------------------------------------
+
+_MAX_RESEARCH_SPAWNS_PER_RUN = 2
+_MAX_ASK_SPAWNS_PER_RUN = 2
+
+
+def _append_research_answer_to_narrative(question: str, answer: str) -> None:
+    """Append a research answer to the durable narrative (spec §1.2: "the
+    answer is written to the narrative"). Best-effort; write_narrative
+    already caps total length and rotates history, so a long-running day of
+    research answers can't grow the narrative unboundedly.
+    """
+    try:
+        from cron.subconscious import read_narrative, write_narrative
+
+        current = read_narrative() or ""
+        addition = f"\n\n[Autonomy research] Q: {question}\nA: {answer}"
+        write_narrative((current + addition).strip())
+    except Exception:
+        logger.debug("autonomy: failed to append research answer to narrative", exc_info=True)
+
+
+def _maybe_record_research_to_graph(question: str, answer: str) -> None:
+    """If durable, record the research answer as a fact node in the graph
+    (spec §1.2: "if durable, to the graph (Part 2) / brain"). Uses only
+    agent.memory.graph_builder's public, cheap (no-LLM) recording helper —
+    that module is read-only for this workstream. Best-effort.
+    """
+    try:
+        from agent.memory.graph_builder import record_from_memory_entry
+
+        text = f"[Autonomy research] {question} -> {answer}"[:1000]
+        record_from_memory_entry(text, topic="autonomy-research")
+    except Exception:
+        logger.debug("autonomy: failed to record research answer to graph", exc_info=True)
+
+
+def _run_subconscious_autonomy_requests(job: dict, agent: Any, raw_text: str) -> None:
+    """Body of the autonomy hook — see the module comment above. Called from
+    run_job for reflection/dreaming runs only, on the raw (pre-narrative-
+    stripped) agent output.
+    """
+    try:
+        from cron.subconscious import extract_autonomy_requests
+    except Exception:
+        logger.debug("autonomy: cron.subconscious.extract_autonomy_requests unavailable", exc_info=True)
+        return
+
+    try:
+        research_requests, ask_requests = extract_autonomy_requests(raw_text)
+    except Exception:
+        logger.debug("autonomy: extract_autonomy_requests failed", exc_info=True)
+        return
+
+    if research_requests:
+        try:
+            from agent.autonomy import budget as autonomy_budget
+            from agent.autonomy.research import run_research_question
+        except Exception:
+            logger.debug("autonomy: research modules unavailable", exc_info=True)
+        else:
+            spawned = 0
+            for item in research_requests:
+                if spawned >= _MAX_RESEARCH_SPAWNS_PER_RUN:
+                    break
+                question = str((item or {}).get("question") or "").strip()
+                if not question:
+                    continue
+                why = str((item or {}).get("why") or "").strip()
+                if not autonomy_budget.try_spend("research"):
+                    logger.debug("autonomy: research budget exhausted, skipping %r", question[:80])
+                    continue
+                spawned += 1
+                try:
+                    result = run_research_question(question, why, parent_agent=agent, task_index=spawned)
+                except Exception:
+                    logger.debug("autonomy: research spawn failed for %r", question[:80], exc_info=True)
+                    continue
+                if not result or not result.get("answer"):
+                    continue
+                answer = str(result["answer"])
+                _append_research_answer_to_narrative(question, answer)
+                _maybe_record_research_to_graph(question, answer)
+                try:
+                    record_subconscious_activity(
+                        source="autonomy",
+                        outcome="message",
+                        job_id=job.get("id"),
+                        summary=f"autonomy research: {question[:120]}",
+                        thought=answer[:400],
+                    )
+                except Exception:
+                    logger.debug("autonomy: research activity log failed", exc_info=True)
+
+    if ask_requests:
+        try:
+            from agent.autonomy.ask import ask_user
+        except Exception:
+            logger.debug("autonomy: ask module unavailable", exc_info=True)
+        else:
+            asked = 0
+            for item in ask_requests:
+                if asked >= _MAX_ASK_SPAWNS_PER_RUN:
+                    break
+                question = str((item or {}).get("question") or "").strip()
+                if not question:
+                    continue
+                why = str((item or {}).get("why") or "").strip()
+                # Count the ATTEMPT toward the per-run cap (not just a
+                # successful delivery) — mirrors the research loop above.
+                # Otherwise a model that emits many <ask> blocks while
+                # ask_user keeps declining (budget/dedup/rate-limit) would
+                # never hit the cap and this loop would walk every item.
+                asked += 1
+                try:
+                    ask_user(question, why, category="reflection")
+                except Exception:
+                    logger.debug("autonomy: ask_user failed for %r", question[:80], exc_info=True)
+
+    # Reflection-time reconciliation + maintenance for the ask-user channel
+    # (spec §1.4) — cheap, guarded, run on every reflection/dreaming tick
+    # regardless of whether this run itself emitted any <ask> blocks.
+    try:
+        from agent.autonomy.ask import expire_stale_questions, reconcile_pending_questions
+
+        reconcile_pending_questions()
+        expire_stale_questions()
+    except Exception:
+        logger.debug("autonomy: pending-question maintenance failed", exc_info=True)
+
+    # Graph contradicts-edges routed through the ask-user channel (spec
+    # §1.4). Bounded to a small number per run — this is a "surface it
+    # eventually" pass, not urgent.
+    try:
+        from agent.autonomy.ask import surface_graph_contradictions
+
+        surface_graph_contradictions(limit=1)
+    except Exception:
+        logger.debug("autonomy: graph contradiction surfacing failed", exc_info=True)
 
 
 def _attach_subconscious_output_path(job: dict, output_file: Any) -> None:
@@ -1925,6 +2083,24 @@ def _resolve_delivery_target(job: dict) -> Optional[dict]:
     """Resolve the concrete auto-delivery target for a cron job, if any."""
     targets = _resolve_delivery_targets(job)
     return targets[0] if targets else None
+
+
+def _subconscious_delivery_job(job: dict) -> dict:
+    """Route an away-owner tick to Telegram without changing the stored job."""
+    try:
+        from cron.subconscious import JOB_NAME, proactive_delivery_context
+
+        if (
+            str(job.get("name") or "") != JOB_NAME
+            or _normalize_deliver_value(job.get("deliver", "local")) != "local"
+            or proactive_delivery_context().get("mode") != "telegram"
+        ):
+            return job
+        routed = {**job, "deliver": "telegram"}
+        return routed if _resolve_delivery_targets(routed) else job
+    except Exception:
+        logger.debug("subconscious away-delivery routing unavailable", exc_info=True)
+        return job
 
 
 # Media extension sets — audio routing is centralized in gateway.platforms.base
@@ -4245,7 +4421,9 @@ def run_job(
         # Private subconscious blocks update durable state but never leak into
         # local delivery or saved output.
         _narrative_updated = False
+        _notice_urgency = None
         _is_dreaming_run = False
+        _is_reflection_or_dreaming_run = False
         try:
             from cron.subconscious import (
                 JOB_NAME as _subconscious_name,
@@ -4254,13 +4432,28 @@ def run_job(
             )
             _job_name = str(job.get("name") or "")
             _is_dreaming_run = _job_name == _dreaming_name
+            _is_reflection_or_dreaming_run = _job_name in {_reflection_name, _dreaming_name}
             _is_subconscious_run = _job_name in {_subconscious_name, _reflection_name, _dreaming_name}
         except Exception:
             _is_subconscious_run = False
         if _is_subconscious_run:
+            # Autonomy: self-directed research + ask-user requests (spec
+            # §1.2/§1.4) are parsed from the RAW output, before
+            # process_background_output strips the <research>/<ask> tags
+            # below. Only reflection/dreaming carry the autonomy contract in
+            # their prompt (see cron/subconscious.py's _REFLECTION_PROMPT /
+            # _DREAMING_PROMPT) — the plain tick does not, so this is skipped
+            # for it. Best-effort and fully separate from narrative
+            # persistence: a failure here must never affect it.
+            if _is_reflection_or_dreaming_run:
+                try:
+                    _run_subconscious_autonomy_requests(job, agent, final_response)
+                except Exception:
+                    logger.debug("subconscious autonomy hook failed", exc_info=True)
             try:
-                from cron.subconscious import process_background_output
+                from cron.subconscious import extract_notice_urgency, process_background_output
 
+                _notice_urgency = extract_notice_urgency(final_response)
                 final_response, _narrative_updated = process_background_output(final_response)
             except Exception:
                 logger.debug("subconscious output processing failed", exc_info=True)
@@ -4305,6 +4498,7 @@ def run_job(
             diff=(prerun_script[1] if prerun_script else None),
             thought=final_response,
             narrative_updated=_narrative_updated,
+            urgency=_notice_urgency,
         )
         return True, output, final_response, None
 
@@ -4566,7 +4760,12 @@ def run_one_job(job: dict, *, adapters=None, loop=None, verbose: bool = False) -
 
             if should_deliver:
                 try:
-                    delivery_error = _deliver_result(job, deliver_content, adapters=adapters, loop=loop)
+                    delivery_error = _deliver_result(
+                        _subconscious_delivery_job(job),
+                        deliver_content,
+                        adapters=adapters,
+                        loop=loop,
+                    )
                 except Exception as de:
                     delivery_error = str(de)
                     logger.error("Delivery failed for job %s: %s", job["id"], de)

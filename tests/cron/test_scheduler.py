@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, patch, MagicMock
 
 import pytest
 
-from cron.scheduler import _resolve_origin, _resolve_delivery_target, _deliver_result, _send_media_via_adapter, run_job, SILENT_MARKER, _build_job_prompt, _resolve_cron_enabled_toolsets, _merge_mcp_into_per_job_toolsets
+from cron.scheduler import _resolve_origin, _resolve_delivery_target, _deliver_result, _send_media_via_adapter, _subconscious_delivery_job, run_job, SILENT_MARKER, _build_job_prompt, _resolve_cron_enabled_toolsets, _merge_mcp_into_per_job_toolsets
 from tools.env_passthrough import clear_env_passthrough
 from tools.credential_files import clear_credential_files
 
@@ -137,6 +137,28 @@ class TestResolveOrigin:
 
 
 class TestResolveDeliveryTarget:
+    def test_away_subconscious_tick_routes_to_telegram_home(self, monkeypatch):
+        monkeypatch.setenv("TELEGRAM_HOME_CHANNEL", "12345")
+        monkeypatch.setattr(
+            "cron.subconscious.proactive_delivery_context",
+            lambda: {"mode": "telegram"},
+        )
+
+        routed = _subconscious_delivery_job(
+            {"id": "tick", "name": "Subconscious tick", "deliver": "local"}
+        )
+
+        assert routed["deliver"] == "telegram"
+
+    def test_home_subconscious_tick_stays_local(self, monkeypatch):
+        monkeypatch.setattr(
+            "cron.subconscious.proactive_delivery_context",
+            lambda: {"mode": "speak"},
+        )
+        job = {"id": "tick", "name": "Subconscious tick", "deliver": "local"}
+
+        assert _subconscious_delivery_job(job) is job
+
     def test_origin_delivery_preserves_thread_id(self):
         job = {
             "deliver": "origin",

@@ -143,6 +143,52 @@ class TestSubconsciousConfig:
         # second is idempotent (all three already tracked → no new create).
         assert calls["create"] == 3
 
+    def test_enable_refreshes_existing_tick_contract(self, subconscious):
+        from hermes_cli.config import load_config, save_config
+
+        cfg = load_config()
+        cfg["subconscious"] = {
+            "job_id": "tick",
+            "reflection_job_id": "reflection",
+            "dreaming_job_id": "dreaming",
+        }
+        save_config(cfg)
+        jobs = {
+            "tick": {
+                "id": "tick",
+                "state": "scheduled",
+                "schedule_display": "every 20m",
+                "prompt": "old prompt",
+                "script": "old.py",
+                "enabled_toolsets": ["search"],
+            },
+            "reflection": {
+                "id": "reflection",
+                "state": "scheduled",
+                "schedule_display": subconscious.DEFAULT_REFLECTION_SCHEDULE,
+                "prompt": "old reflection",
+                "enabled_toolsets": ["search"],
+            },
+            "dreaming": {
+                "id": "dreaming",
+                "state": "scheduled",
+                "schedule_display": subconscious.DEFAULT_DREAMING_SCHEDULE,
+                "prompt": "old dreaming",
+                "enabled_toolsets": ["search"],
+            },
+        }
+        updates = {}
+
+        with patch("cron.jobs.get_job", lambda job_id: jobs[job_id]), patch(
+            "cron.jobs.update_job",
+            lambda job_id, values: updates.setdefault(job_id, values),
+        ):
+            subconscious.enable()
+
+        assert updates["tick"]["prompt"] == subconscious._TICK_PROMPT
+        assert updates["tick"]["script"] == subconscious.SNAPSHOT_SHIM_NAME
+        assert updates["tick"]["enabled_toolsets"] == subconscious._TICK_TOOLSETS
+
     def test_tick_toolsets_are_all_registered(self, subconscious):
         """Regression guard: every name in _TICK_TOOLSETS must be a real,
         registered toolset (tools.registry) — a typo here (e.g. "search"

@@ -332,6 +332,66 @@ class TestContradictionPassIntegration:
 
 
 # ---------------------------------------------------------------------------
+# Ask-user routing addition (Marvi freedom spec §1.4) — additive alongside
+# the existing suggestions-inbox path above, never instead of it.
+# ---------------------------------------------------------------------------
+
+
+class TestContradictionAskUserRouting:
+    def test_flagged_contradiction_also_calls_ask_user(self, monkeypatch):
+        from tools.memory_tool import MemoryStore
+
+        calls = []
+        monkeypatch.setattr(
+            "agent.autonomy.ask.ask_user",
+            lambda question, context="", category="general", **kw: calls.append(
+                (question, context, category)
+            )
+            or {"id": "q1"},
+        )
+
+        store = MemoryStore()
+        store.add("memory", "[work] User works at Acme Corp")
+        store.add("memory", "[work] User works at Globex Inc")
+        store.load_from_disk()
+
+        cfg = decay.decay_config()
+        result = _empty_result()
+        decay._run_contradiction_pass(store, cfg, result)
+
+        assert result["contradictions_flagged"] == 1
+        assert len(calls) == 1
+        question, context, category = calls[0]
+        assert "Acme Corp" in question
+        assert "Globex Inc" in question
+        assert category == "contradiction"
+
+    def test_ask_user_failure_never_breaks_the_suggestion_path(self, monkeypatch):
+        """A broken/missing agent.autonomy.ask must never take down the
+        existing, already-working suggestions-inbox contradiction flow."""
+        from tools.memory_tool import MemoryStore
+        from cron.suggestions import list_pending
+
+        def _boom(*args, **kwargs):
+            raise RuntimeError("autonomy module unavailable")
+
+        monkeypatch.setattr("agent.autonomy.ask.ask_user", _boom)
+
+        store = MemoryStore()
+        store.add("memory", "[work] User works at Acme Corp")
+        store.add("memory", "[work] User works at Globex Inc")
+        store.load_from_disk()
+
+        cfg = decay.decay_config()
+        result = _empty_result()
+        decay._run_contradiction_pass(store, cfg, result)
+
+        assert result["contradictions_flagged"] == 1
+        memory_suggestions = [s for s in list_pending() if s["kind"] == "memory"]
+        assert len(memory_suggestions) == 1
+
+
+# ---------------------------------------------------------------------------
 # Restore round-trip + never-hard-delete invariant.
 # ---------------------------------------------------------------------------
 

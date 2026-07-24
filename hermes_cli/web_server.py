@@ -13828,6 +13828,7 @@ def _read_subconscious_activity_sync(limit: int) -> Dict[str, Any]:
                     "output_path": record.get("output_path"),
                     "duration_ms": record.get("duration_ms"),
                     "narrative_updated": bool(record.get("narrative_updated", False)),
+                    "urgency": record.get("urgency") or "normal",
             })
             if len(runs) >= limit:
                 break
@@ -13866,12 +13867,106 @@ def _read_subconscious_activity_sync(limit: int) -> Dict[str, Any]:
 async def get_subconscious_activity(limit: int = 30):
     try:
         result = await run_in_threadpool(_read_subconscious_activity_sync, limit)
+        try:
+            from cron.subconscious import proactive_delivery_context
+
+            result["delivery"] = await run_in_threadpool(proactive_delivery_context)
+        except Exception:
+            _log.debug("subconscious delivery context unavailable", exc_info=True)
         return {"ok": True, **result}
     except Exception:
         _log.exception("GET /api/subconscious/activity failed")
         raise HTTPException(
             status_code=500, detail="Failed to read subconscious activity"
         )
+
+
+# ---------------------------------------------------------------------------
+# Autonomy — spec §1.5 ("Marvi freedom and graph mind" spec, Part 1). Today's
+# budget usage per category, recent autonomous actions (pulled from the same
+# shared activity feed above, filtered to source=="autonomy"), pending
+# ask-user questions, and the master + per-category config toggles.
+# ---------------------------------------------------------------------------
+
+
+def _autonomy_status_sync() -> Dict[str, Any]:
+    from agent.autonomy.ask import list_pending_questions
+    from agent.autonomy.budget import remaining as autonomy_remaining
+
+    snapshot = autonomy_remaining()
+
+    recent_actions: List[Dict[str, Any]] = []
+    try:
+        log = _read_subconscious_activity_sync(200)
+        recent_actions = [
+            row for row in (log.get("runs") or []) if row.get("source") == "autonomy"
+        ][:30]
+    except Exception:
+        _log.debug("autonomy status: recent-activity read failed", exc_info=True)
+
+    return {
+        "enabled": bool(snapshot.get("enabled", False)),
+        "budget": snapshot,
+        "recent_actions": recent_actions,
+        "pending_questions": list_pending_questions()[:30],
+    }
+
+
+@app.get("/api/autonomy/status")
+async def get_autonomy_status():
+    try:
+        result = await run_in_threadpool(_autonomy_status_sync)
+        return {"ok": True, **result}
+    except Exception:
+        _log.exception("GET /api/autonomy/status failed")
+        raise HTTPException(status_code=500, detail="Failed to read autonomy status")
+
+
+class AutonomyConfigUpdate(BaseModel):
+    enabled: Optional[bool] = None
+    daily_action_budget: Optional[int] = None
+    per_category: Optional[Dict[str, int]] = None
+    ask_max_per_day: Optional[int] = None
+    ask_quiet_in_deep_work: Optional[bool] = None
+
+
+def _autonomy_config_update_sync(body: "AutonomyConfigUpdate") -> Dict[str, Any]:
+    from agent.autonomy.budget import autonomy_config as read_autonomy_config
+
+    existing = read_raw_config()
+    section = dict(existing.get("autonomy") or {})
+    if body.enabled is not None:
+        section["enabled"] = bool(body.enabled)
+    if body.daily_action_budget is not None:
+        section["daily_action_budget"] = max(0, int(body.daily_action_budget))
+    if body.per_category is not None:
+        per_category = dict(section.get("per_category") or {})
+        for key, value in body.per_category.items():
+            try:
+                per_category[str(key)] = max(0, int(value))
+            except (TypeError, ValueError):
+                continue
+        section["per_category"] = per_category
+    ask_section = dict(section.get("ask") or {})
+    if body.ask_max_per_day is not None:
+        ask_section["max_per_day"] = max(0, int(body.ask_max_per_day))
+    if body.ask_quiet_in_deep_work is not None:
+        ask_section["quiet_in_deep_work"] = bool(body.ask_quiet_in_deep_work)
+    if ask_section:
+        section["ask"] = ask_section
+    existing["autonomy"] = section
+    save_config(existing)
+    return read_autonomy_config(existing)
+
+
+@app.post("/api/autonomy/config")
+async def update_autonomy_config(body: AutonomyConfigUpdate):
+    try:
+        result = await run_in_threadpool(_autonomy_config_update_sync, body)
+        return {"ok": True, "config": result}
+    except Exception:
+        _log.exception("POST /api/autonomy/config failed")
+        raise HTTPException(status_code=500, detail="Failed to update autonomy config")
 
 
 # Composio is an edge capability, exposed through the existing MCP client.

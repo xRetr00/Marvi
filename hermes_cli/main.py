@@ -443,6 +443,7 @@ from hermes_cli.subcommands.plugins import build_plugins_parser
 from hermes_cli.subcommands.mcp import build_mcp_parser
 from hermes_cli.subcommands.claw import build_claw_parser
 from hermes_cli.subcommands.composio import build_composio_parser
+from hermes_cli.subcommands.uni import build_uni_parser
 
 
 def _require_tty(command_name: str) -> None:
@@ -4445,6 +4446,106 @@ def cmd_auth(args):
     from hermes_cli.auth_commands import auth_command
 
     auth_command(args)
+
+
+def cmd_uni(args):
+    """Enroll/manage the Duzce University student-portal check (uni_portal plugin).
+
+    Kept self-contained here (not delegated to a separate command module)
+    since the whole flow is a handful of small, plugin-scoped operations —
+    see plugins/uni_portal/{credentials,check}.py for the actual logic and
+    plugins/uni_portal/SKILL.md for the security boundary.
+    """
+    import getpass
+
+    action = getattr(args, "uni_action", None) or "status"
+
+    if action == "login":
+        if getattr(args, "logout", False):
+            from plugins.uni_portal.check import disable_uni_portal_job
+            from plugins.uni_portal.credentials import delete_credentials
+            from hermes_cli.config import load_config, save_config
+
+            deleted = delete_credentials()
+            disable_uni_portal_job()
+            cfg = load_config()
+            section = dict(cfg.get("uni_portal") or {})
+            section["enabled"] = False
+            cfg["uni_portal"] = section
+            save_config(cfg)
+            print("Removed stored credentials and disabled the daily check." if deleted else
+                  "Nothing was stored; the daily check is now disabled.")
+            return
+
+        username = getattr(args, "username", None) or input("Duzce student-system username: ").strip()
+        if not username:
+            print("Username is required.")
+            return
+        password = getpass.getpass("Password (never shown, never stored by Marvi): ")
+        if not password:
+            print("Password is required.")
+            return
+
+        from plugins.uni_portal.credentials import store_credentials
+
+        if not store_credentials(username, password):
+            print(
+                "Could not store credentials in the Windows Credential Manager. "
+                "This feature requires Windows; see plugins/uni_portal/SKILL.md."
+            )
+            return
+        # Drop the local reference as soon as it's been handed off.
+        password = None  # noqa: F841
+
+        from hermes_cli.config import load_config, save_config
+
+        cfg = load_config()
+        section = dict(cfg.get("uni_portal") or {})
+        section["enabled"] = True
+        cfg["uni_portal"] = section
+        save_config(cfg)
+
+        from plugins.uni_portal.check import ensure_uni_portal_job
+
+        job = ensure_uni_portal_job()
+        print(f"Stored credentials for '{username}' and enabled the daily check.")
+        if job.get("schedule_display"):
+            print(f"Daily check scheduled: {job['schedule_display']}")
+        print(
+            "Fill in uni_portal.portal_url / grades_path / announcements_path / "
+            "schedule_path in config.yaml for your Duzce portal (see "
+            "plugins/uni_portal/SKILL.md), then run `hermes uni check` to verify."
+        )
+        return
+
+    if action == "check":
+        from plugins.uni_portal.check import run_daily_check
+
+        result = run_daily_check()
+        if result.get("error") == "disabled":
+            print("uni_portal is disabled. Run `hermes uni login` to enroll first.")
+        elif result.get("error"):
+            print(f"Check did not complete: {result['error']}")
+        elif result.get("changed"):
+            print("Check complete — something changed; a proactive message was sent.")
+        else:
+            print("Check complete — nothing new today.")
+        return
+
+    # status (default)
+    from plugins.uni_portal.credentials import has_credentials
+    from plugins.uni_portal.portal import _uni_portal_config
+    from plugins.uni_portal.snapshot import load_snapshot
+
+    cfg = _uni_portal_config()
+    enrolled = has_credentials()
+    print(f"Enrolled: {'yes' if enrolled else 'no'}")
+    print(f"Enabled:  {'yes' if cfg['enabled'] else 'no'}")
+    print(f"Schedule: {cfg['check_schedule']}")
+    snapshot = load_snapshot()
+    print(f"Last captured: {snapshot.get('captured_at') or 'never'}")
+    if not enrolled:
+        print("\nRun `hermes uni login` to enroll.")
 
 
 def cmd_status(args):
@@ -13669,6 +13770,11 @@ def main():
     # auth command  (parser built in hermes_cli/subcommands/auth.py)
     # =========================================================================
     build_auth_parser(subparsers, cmd_auth=cmd_auth)
+
+    # =========================================================================
+    # uni command  (parser built in hermes_cli/subcommands/uni.py)
+    # =========================================================================
+    build_uni_parser(subparsers, cmd_uni=cmd_uni)
 
     # =========================================================================
     # status command  (parser built in hermes_cli/subcommands/status.py)

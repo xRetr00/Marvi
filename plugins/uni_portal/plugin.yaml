@@ -1,0 +1,7 @@
+name: uni_portal
+version: 1.0.0
+description: "Checks the user's Duzce University student system (grades, announcements, schedule) via browser automation and tells them when something changes. Off by default -- enroll with `hermes uni login`. Credentials never touch config.yaml or code; they live only in the OS credential store."
+author: NousResearch
+kind: backend
+provides_tools:
+  - uni_portal_check

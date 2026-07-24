@@ -48,6 +48,48 @@ def test_narrative_markers_are_stripped_from_delivered_output(tmp_path, monkeypa
     assert clean == "Heads up about your calendar."
 
 
+def test_notice_is_plain_delivery_text_and_tolerates_spaced_narrative_tag(tmp_path, monkeypatch):
+    from cron import subconscious
+
+    monkeypatch.setattr(subconscious, "get_hermes_home", lambda: tmp_path)
+    raw = (
+        '<notice urgency="urgent">Your account needs attention today.</notice>'
+        "\n< narrative>Owner left the bakery and is travelling home.</narrative>"
+    )
+
+    clean, updated = subconscious.process_background_output(raw)
+
+    assert clean == "Your account needs attention today."
+    assert updated is True
+    assert subconscious.extract_notice_urgency(raw) == "urgent"
+    assert subconscious.read_narrative() == "Owner left the bakery and is travelling home."
+
+
+def test_proactive_delivery_protects_sleep_games_and_routes_away():
+    from cron.subconscious import choose_proactive_delivery
+
+    common = {"room_present": True, "desktop_afk": "not-afk"}
+    assert (
+        choose_proactive_delivery(
+            phone_home=False,
+            room_present=False,
+            room_mode="",
+            desktop_afk="afk",
+            busy=False,
+        )
+        == "telegram"
+    )
+    assert choose_proactive_delivery(phone_home=True, room_mode="sleep", busy=False, **common) == "defer"
+    assert choose_proactive_delivery(phone_home=True, room_mode="", busy=True, **common) == "defer"
+    assert (
+        choose_proactive_delivery(
+            phone_home=True, room_mode="sleep", busy=False, urgency="urgent", **common
+        )
+        == "quiet"
+    )
+    assert choose_proactive_delivery(phone_home=True, room_mode="", busy=False, **common) == "speak"
+
+
 def test_oversize_narrative_is_truncated_at_cap(tmp_path, monkeypatch):
     from cron import subconscious
 

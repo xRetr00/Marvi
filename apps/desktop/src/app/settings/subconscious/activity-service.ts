@@ -8,6 +8,7 @@
 
 /** Which background-thinking surface produced an activity row. */
 export type SubconsciousActivitySource =
+  | 'autonomy'
   | 'distiller'
   | 'dreaming'
   | 'goal'

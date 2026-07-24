@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
 
 import { Button } from '@/components/ui/button'
-import { AlertTriangle, Bell, Brain, CheckCircle2, Clock, Cloud, MessageCircle, Moon, RefreshCw, Zap } from '@/lib/icons'
+import { AlertTriangle, Bell, Brain, CheckCircle2, Clock, Cloud, MessageCircle, Moon, RefreshCw, Search, Zap } from '@/lib/icons'
 import { relativeTime } from '@/lib/time'
 import { cn } from '@/lib/utils'
 
@@ -32,7 +32,12 @@ const SOURCE_META: Record<SubconsciousActivitySource, { label: string; icon: typ
   // tools/goal_tools.py::_handle_suggest_goal logs one of these when it
   // auto-creates an inferred goal (origin="inferred") -- see goals-panel.tsx
   // for where the goal itself shows up with its own "Inferred" badge.
-  goal: { label: 'Goal', icon: Zap }
+  goal: { label: 'Goal', icon: Zap },
+  // agent/autonomy/{budget,research,ask}.py -- self-directed research,
+  // proactive questions, and other budgeted autonomy actions (Marvi freedom
+  // spec Part 1). See mind/autonomy-panel.tsx for the dedicated Autonomy
+  // section this same activity feed also backs.
+  autonomy: { label: 'Autonomy', icon: Search }
 }
 
 type FilterKey = 'all' | 'distiller' | 'goblin' | 'ticks' | 'world'

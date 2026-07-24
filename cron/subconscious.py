@@ -85,11 +85,25 @@ _TICK_TOOLSETS = ["goals", "subconscious", "memory", "web"]
 _DREAMING_TOOLSETS = ["memory", "session_search", "subconscious", "goals"]
 
 NARRATIVE_CAP = 8_000
-_NARRATIVE_RE = re.compile(r"<narrative>\s*(.*?)\s*</narrative>", re.DOTALL | re.IGNORECASE)
+_NARRATIVE_RE = re.compile(
+    r"<\s*narrative\s*>\s*(.*?)\s*<\s*/\s*narrative\s*>",
+    re.DOTALL | re.IGNORECASE,
+)
 _INITIATIVES_RE = re.compile(r"<initiatives>\s*(.*?)\s*</initiatives>", re.DOTALL | re.IGNORECASE)
 _INITIATIVE_RESULTS_RE = re.compile(
     r"<initiative-results>\s*(.*?)\s*</initiative-results>", re.DOTALL | re.IGNORECASE
 )
+_NOTICE_RE = re.compile(
+    r"<notice(?:\s+urgency=[\"'](normal|urgent)[\"'])?\s*>(.*?)</notice>",
+    re.DOTALL | re.IGNORECASE,
+)
+# Autonomy contract (autonomy spec §1.2/§1.4) — see the <research>/<ask>
+# sentences appended to _REFLECTION_PROMPT / _DREAMING_PROMPT below. Parsed
+# by extract_autonomy_requests(); cron/scheduler.py's autonomy hook (NOT this
+# module — see that file's ownership note) is what actually spends budget and
+# spawns a research subagent / calls ask_user for each extracted item.
+_RESEARCH_RE = re.compile(r"<research>\s*(.*?)\s*</research>", re.DOTALL | re.IGNORECASE)
+_ASK_RE = re.compile(r"<ask>\s*(.*?)\s*</ask>", re.DOTALL | re.IGNORECASE)
 
 _TICK_PROMPT = (
     "[Subconscious tick] You woke up on your own schedule, not because the "
@@ -103,16 +117,24 @@ _TICK_PROMPT = (
     "- If the diff is noise, or nothing in it advances an active goal or "
     "matters to the user, respond with exactly \"[SILENT]\" and nothing "
     "else.\n"
-    "- If something is genuinely worth a short proactive nudge, write it as "
-    "a normal reply — brief, and skip anything you already told the user.\n"
+    "- If something is genuinely worth a short proactive nudge, emit exactly "
+    "one <notice urgency=\"normal\">...</notice> block. Use urgency=\"urgent\" "
+    "only for a time-sensitive safety, security, or account risk. The notice "
+    "must be natural spoken English, one to three short sentences, with no "
+    "Markdown, bullets, XML inside it, or raw internal identifiers. Skip "
+    "anything you already told the user.\n"
     "- If the right move is a new recurring automation rather than a "
     "one-off interruption, call suggest_automation to propose it — never "
     "attempt to create the job yourself. The tool is consent-first: it "
     "registers a pending suggestion the user accepts with one tap, and "
     "only auto-creates when the user pre-approved the category as an "
     "'auto' tier in subconscious.tiers.\n"
-    "Never invent activity that isn't supported by the diff, your goals, or "
-    "your memory. End with one compact <narrative>...</narrative> block that "
+    "Interpret movement chronologically across the current context and durable "
+    "narrative: for example, leaving a non-home zone followed by arriving home "
+    "and then room presence is one journey home, not unrelated events. Never "
+    "invent activity that isn't supported by the diff, your goals, or your "
+    "memory. Always write in English. End with one compact "
+    "<narrative>...</narrative> block that "
     "updates your durable working model. You may also emit JSON arrays inside "
     "<initiatives>...</initiatives> and <initiative-results>...</initiative-results>. "
     "These blocks are persisted and removed before anything is shown to the user."
@@ -128,7 +150,16 @@ _REFLECTION_PROMPT = (
     "<narrative>...</narrative> block. Optionally return up to five follow-ups as a JSON "
     "array in <initiatives>...</initiatives>. Once per calendar week, also review "
     "active goals for progress, staleness, duplication, or completion and propose any "
-    "change rather than applying it silently."
+    "change rather than applying it silently.\n\n"
+    "Autonomy (spend sparingly — every one of these is budgeted and may be skipped if "
+    "today's autonomy budget is already spent): when the narrative holds a genuinely "
+    "open question that web research could plausibly resolve, emit "
+    "<research>{\"question\": \"...\", \"why\": \"...\"}</research> — this is Marvi "
+    "answering its own curiosity between ticks, not a task for the user. When something "
+    "is worth proactively asking the user directly (not busywork, not something you "
+    "could just infer), emit <ask>{\"question\": \"...\", \"why\": \"...\"}</ask> instead "
+    "of only noting it in the narrative. Emit at most one or two of each per run; both "
+    "are optional and best-effort — most runs should emit neither."
 )
 
 _DREAMING_PROMPT = (
@@ -164,7 +195,13 @@ _DREAMING_PROMPT = (
     "<narrative>...</narrative> block that folds this week's durable conclusions "
     "into your working model. You may also emit up to five follow-ups as a JSON "
     "array in <initiatives>...</initiatives>. These blocks are persisted and "
-    "removed before anything is shown to the user."
+    "removed before anything is shown to the user.\n\n"
+    "Autonomy (spend sparingly, same budgeted contract as reflection): a genuinely "
+    "open question the week's material raises that web research could resolve may be "
+    "emitted as <research>{\"question\": \"...\", \"why\": \"...\"}</research>. Something "
+    "worth proactively asking the user (not busywork) may be emitted as "
+    "<ask>{\"question\": \"...\", \"why\": \"...\"}</ask>. At most one or two of each; "
+    "most runs should emit neither."
 )
 
 
@@ -263,7 +300,68 @@ def process_background_output(text: str) -> Tuple[str, bool]:
     clean = _NARRATIVE_RE.sub("", raw)
     clean = _INITIATIVES_RE.sub("", clean)
     clean = _INITIATIVE_RESULTS_RE.sub("", clean)
+    # <research>/<ask> blocks (autonomy spec §1.2/§1.4) are private too —
+    # never leaked to delivery. Extraction/spending/spawning happens
+    # separately in cron/scheduler.py's autonomy hook (see
+    # extract_autonomy_requests), called on the same raw text before this
+    # function strips it.
+    clean = _RESEARCH_RE.sub("", clean)
+    clean = _ASK_RE.sub("", clean)
+    clean = _NOTICE_RE.sub(lambda match: match.group(2), clean)
     return clean.strip(), updated
+
+
+def extract_notice_urgency(text: str) -> str:
+    """Return the tick's requested urgency, defaulting safely to normal."""
+    matches = _NOTICE_RE.findall(text or "")
+    if not matches:
+        return "normal"
+    return "urgent" if str(matches[-1][0]).lower() == "urgent" else "normal"
+
+
+def _object_blocks(pattern: "re.Pattern[str]", text: str) -> List[Dict[str, Any]]:
+    """Parse each non-overlapping ``<tag>{...}</tag>`` match in ``text`` as a
+    JSON object (unlike ``_json_blocks``, which expects a single JSON ARRAY
+    match — the autonomy tags can appear multiple times per run, one per
+    request). A malformed individual block is skipped rather than failing
+    the whole extraction."""
+    items: List[Dict[str, Any]] = []
+    for raw in pattern.findall(text or ""):
+        try:
+            obj = json.loads(raw)
+        except (TypeError, json.JSONDecodeError):
+            continue
+        if isinstance(obj, dict):
+            items.append(obj)
+    return items
+
+
+def extract_autonomy_requests(text: str) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    """Extract ``<research>``/``<ask>`` JSON objects from raw reflection or
+    dreaming output (autonomy spec §1.2/§1.4).
+
+    Call this on the SAME raw text passed to :func:`process_background_output`
+    (either before or after — the two operate independently) — see
+    ``cron/scheduler.py``'s autonomy hook, which is the actual caller and
+    owns spending budget / spawning research / calling ``ask_user`` for each
+    returned item. This function only parses; it has no side effects and
+    never raises. Returns ``(research_requests, ask_requests)``, each a list
+    of ``{"question": ..., "why": ...}``-shaped dicts (unvalidated beyond
+    "is a JSON object" — the caller is responsible for checking for a
+    non-empty ``question``).
+    """
+    raw = text or ""
+    try:
+        research = _object_blocks(_RESEARCH_RE, raw)
+    except Exception:
+        logger.debug("subconscious: research block extraction failed", exc_info=True)
+        research = []
+    try:
+        ask = _object_blocks(_ASK_RE, raw)
+    except Exception:
+        logger.debug("subconscious: ask block extraction failed", exc_info=True)
+        ask = []
+    return research, ask
 
 
 def _recent_activity_summary(hours: int = 24) -> str:
@@ -510,6 +608,122 @@ def _run_graph_dreaming_maintenance() -> None:
     logger.info("dreaming: graph maintenance merged=%d pruned=%d", merged, pruned)
 
 
+def choose_proactive_delivery(
+    *,
+    phone_home: Optional[bool],
+    room_present: bool,
+    room_mode: str,
+    desktop_afk: str,
+    busy: bool,
+    urgency: str = "normal",
+) -> str:
+    """Choose the least disruptive useful channel from current world state."""
+    urgent = urgency == "urgent"
+    if phone_home is False and desktop_afk != "not-afk":
+        return "telegram"
+    if room_mode == "sleep" and phone_home is not False:
+        return "quiet" if urgent else "defer"
+    if busy:
+        return "quiet" if urgent else "defer"
+    if desktop_afk == "afk":
+        return "quiet"
+    if room_present or desktop_afk == "not-afk":
+        return "speak"
+    return "quiet"
+
+
+def proactive_delivery_context() -> Dict[str, Any]:
+    """Return current delivery policy for Desktop and cron transport."""
+    phone_home: Optional[bool] = None
+    room_present = False
+    room_mode = ""
+    try:
+        from plugins.smart_room.bridge import read_state_snapshot
+
+        room = read_state_snapshot() or {}
+        presence = room.get("presence") if isinstance(room.get("presence"), dict) else {}
+        location = room.get("location") if isinstance(room.get("location"), dict) else {}
+        modes = room.get("modes") if isinstance(room.get("modes"), dict) else {}
+        room_present = bool(presence.get("detected"))
+        room_mode = str(modes.get("active_mode") or "").strip().lower()
+        zone = str(location.get("zone") or "").strip().lower()
+        if location.get("home"):
+            phone_home = True
+        elif zone and zone != "unknown":
+            phone_home = False
+    except Exception:
+        logger.debug("subconscious: delivery room-state probe failed", exc_info=True)
+
+    desktop_afk = ""
+    foreground_app = ""
+    busy = False
+    try:
+        import sys
+
+        from hermes_cli.config import cfg_get, load_config
+        from tools.presence.common import is_focus_app
+        from tools.presence.resource_policy import (
+            _is_fullscreen_foreground,
+            _win32_foreground_process_name,
+        )
+
+        if sys.platform.startswith("win"):
+            import ctypes
+            from ctypes import wintypes
+
+            class _LastInputInfo(ctypes.Structure):
+                _fields_ = [("cbSize", wintypes.UINT), ("dwTime", wintypes.DWORD)]
+
+            last_input = _LastInputInfo()
+            last_input.cbSize = ctypes.sizeof(_LastInputInfo)
+            if ctypes.windll.user32.GetLastInputInfo(ctypes.byref(last_input)):  # type: ignore[attr-defined]
+                ctypes.windll.kernel32.GetTickCount64.restype = ctypes.c_ulonglong  # type: ignore[attr-defined]
+                idle_ms = ctypes.windll.kernel32.GetTickCount64() - last_input.dwTime  # type: ignore[attr-defined]
+                desktop_afk = "afk" if idle_ms >= 120_000 else "not-afk"
+            foreground_app = str(_win32_foreground_process_name() or "")
+        quiet_apps = cfg_get(
+            load_config(),
+            "subconscious",
+            "delivery",
+            "quiet_apps",
+            default=[],
+        )
+        quiet_match = isinstance(quiet_apps, list) and any(
+            str(name).strip().lower() in foreground_app.lower()
+            for name in quiet_apps
+            if str(name).strip()
+        )
+        busy = is_focus_app(foreground_app) or quiet_match or _is_fullscreen_foreground()
+    except Exception:
+        logger.debug("subconscious: delivery desktop-state probe failed", exc_info=True)
+
+    normal = choose_proactive_delivery(
+        phone_home=phone_home,
+        room_present=room_present,
+        room_mode=room_mode,
+        desktop_afk=desktop_afk,
+        busy=busy,
+    )
+    urgent = choose_proactive_delivery(
+        phone_home=phone_home,
+        room_present=room_present,
+        room_mode=room_mode,
+        desktop_afk=desktop_afk,
+        busy=busy,
+        urgency="urgent",
+    )
+    return {
+        "mode": normal,
+        "urgent_mode": urgent,
+        "phone_home": phone_home,
+        "room_present": room_present,
+        "room_mode": room_mode or None,
+        "desktop_afk": desktop_afk or None,
+        "foreground_app": foreground_app or None,
+        "busy": busy,
+    }
+
+
 def build_runtime_context(job_name: str) -> str:
     """Build run-time context without mutating any long-lived chat prefix."""
     from agent.goal_store import format_active_goals_for_prompt
@@ -519,6 +733,38 @@ def build_runtime_context(job_name: str) -> str:
     narrative = read_narrative() or "No durable narrative yet."
     due = due_initiatives()
     parts = [f"## Durable narrative\n{narrative}"]
+    try:
+        from plugins.smart_room.bridge import read_state_snapshot
+        from plugins.smart_room.runtime.state_store import load_location_reports
+
+        room = read_state_snapshot() or {}
+        presence = room.get("presence") if isinstance(room.get("presence"), dict) else {}
+        location = room.get("location") if isinstance(room.get("location"), dict) else {}
+        modes = room.get("modes") if isinstance(room.get("modes"), dict) else {}
+        movement = [
+            (
+                f"- {report.get('reported_at') or report.get('received_at')}: "
+                f"{report.get('event') or 'location'} "
+                f"{report.get('zone') or 'outside known regions'}"
+            )
+            for report in load_location_reports(limit=8)
+        ]
+        parts.append(
+            "## Smart Room semantics and recent owner movement\n"
+            "Device glossary: tuya_bulb is the room light; tuya_he20 is the "
+            "HE20 mmWave human-presence sensor, never a heater or HVAC device. "
+            "OwnTracks describes the owner's phone location; ESPresense/BLE and "
+            "HE20 describe room occupancy. Read the following reports in time "
+            "order and connect a leave -> arrive home -> room-entry sequence as "
+            "one journey when the evidence supports it.\n"
+            f"Current: phone_home={bool(location.get('home'))}, "
+            f"phone_zone={location.get('zone') or 'unknown'}, "
+            f"room_present={bool(presence.get('detected'))}, "
+            f"room_mode={modes.get('active_mode') or 'none'}.\n"
+            + ("\n".join(movement) if movement else "- No recent OwnTracks reports.")
+        )
+    except Exception:
+        logger.debug("subconscious: smart-room context unavailable", exc_info=True)
     try:
         from tools.presence.common import get_presence_config
 
@@ -722,11 +968,21 @@ def enable(interval: Optional[str] = None) -> Dict[str, Any]:
     else:
         if job.get("state") == "paused":
             job = resume_job(job["id"]) or job
+        updates = {}
         if job.get("schedule_display") != schedule:
+            updates["schedule"] = schedule
+        for key, value in {
+            "prompt": _TICK_PROMPT,
+            "script": shim_path.name,
+            "enabled_toolsets": list(_TICK_TOOLSETS),
+        }.items():
+            if key in job and job.get(key) != value:
+                updates[key] = value
+        if updates:
             try:
-                update_job(job["id"], {"schedule": schedule})
+                update_job(job["id"], updates)
             except Exception:
-                logger.debug("subconscious enable: schedule update failed", exc_info=True)
+                logger.debug("subconscious enable: tick refresh failed", exc_info=True)
 
     reflection_id = section.get("reflection_job_id")
     reflection = get_job(reflection_id) if reflection_id else None
@@ -743,8 +999,17 @@ def enable(interval: Optional[str] = None) -> Dict[str, Any]:
     else:
         if reflection.get("state") == "paused":
             reflection = resume_job(reflection["id"]) or reflection
+        updates = {}
         if reflection.get("schedule_display") != reflection_schedule:
-            update_job(reflection["id"], {"schedule": reflection_schedule})
+            updates["schedule"] = reflection_schedule
+        for key, value in {
+            "prompt": _REFLECTION_PROMPT,
+            "enabled_toolsets": list(_TICK_TOOLSETS),
+        }.items():
+            if key in reflection and reflection.get(key) != value:
+                updates[key] = value
+        if updates:
+            update_job(reflection["id"], updates)
 
     # Weekly dreaming job (memory-maturity spec, Loop 2) — created idempotently
     # in the SAME enable() as the tick + reflection, mirroring the reflection
@@ -767,11 +1032,20 @@ def enable(interval: Optional[str] = None) -> Dict[str, Any]:
     else:
         if dreaming.get("state") == "paused":
             dreaming = resume_job(dreaming["id"]) or dreaming
+        updates = {}
         if dreaming.get("schedule_display") != dreaming_schedule:
+            updates["schedule"] = dreaming_schedule
+        for key, value in {
+            "prompt": _DREAMING_PROMPT,
+            "enabled_toolsets": list(_DREAMING_TOOLSETS),
+        }.items():
+            if key in dreaming and dreaming.get(key) != value:
+                updates[key] = value
+        if updates:
             try:
-                update_job(dreaming["id"], {"schedule": dreaming_schedule})
+                update_job(dreaming["id"], updates)
             except Exception:
-                logger.debug("subconscious enable: dreaming schedule update failed", exc_info=True)
+                logger.debug("subconscious enable: dreaming refresh failed", exc_info=True)
 
     section["enabled"] = True
     section["interval"] = resolved_interval

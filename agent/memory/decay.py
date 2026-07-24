@@ -379,6 +379,29 @@ def _propose_contradiction_suggestion(target: str, entry_a: str, entry_b: str, r
         return False
 
 
+def _route_contradiction_to_ask_user(target: str, entry_a: str, entry_b: str, reason: str) -> None:
+    """Additive seam (Marvi freedom spec §1.4): also surface a newly-flagged
+    contradiction through the autonomy ask-user channel, ALONGSIDE (never
+    instead of) the suggestions-inbox proposal this is called after. Fully
+    guarded -- ``agent.autonomy`` is a separate workstream and may not be
+    importable in every environment; a failure here must never affect the
+    suggestion that already succeeded by the time this runs, nor any other
+    step of the decay pass. ``ask_user`` does its own budgeting, dedup (by
+    question text) and rate-limiting, so this call is safe to make on every
+    newly-flagged contradiction without a separate cooldown here.
+    """
+    try:
+        from agent.autonomy.ask import ask_user
+
+        question = (
+            "I noticed two things I know about you might conflict "
+            f"({reason}). Which one still holds?\n\n1) {entry_a}\n\n2) {entry_b}"
+        )
+        ask_user(question, context=f"memory contradiction ({target})", category="contradiction")
+    except Exception:
+        logger.debug("memory decay: ask-user contradiction routing failed", exc_info=True)
+
+
 def _run_contradiction_pass(store: Any, cfg: Dict[str, Any], result: Dict[str, Any]) -> None:
     from tools.memory_tool import split_topic
 
@@ -397,6 +420,7 @@ def _run_contradiction_pass(store: Any, cfg: Dict[str, Any], result: Dict[str, A
                     reason = detect_contradiction(group[i], group[j])
                     if reason and _propose_contradiction_suggestion(target, group[i], group[j], reason):
                         result["contradictions_flagged"] += 1
+                        _route_contradiction_to_ask_user(target, group[i], group[j], reason)
 
 
 # ---------------------------------------------------------------------------

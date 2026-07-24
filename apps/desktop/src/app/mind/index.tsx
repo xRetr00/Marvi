@@ -15,6 +15,7 @@ import { GoalsPanel, type GoalTemplate } from '../settings/subconscious/goals-pa
 import { KnowledgeViewer } from '../settings/subconscious/knowledge-viewer'
 import { useMarviConfig } from '../settings/subconscious/use-marvi-config'
 
+import { AutonomyPanel } from './autonomy-panel'
 import { ComposioTab } from './composio-tab'
 import { GraphTab } from './graph-tab'
 import { TimelineTab } from './timeline-tab'
@@ -222,6 +223,8 @@ function Overview({
           </div>
         )}
       </section>
+
+      <AutonomyPanel />
 
       <LearningPanel learning={learning} onRefresh={onRefresh} />
     </div>

@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest'
 
-import { proactiveMessage, unseenProactiveRuns } from './proactive-delivery'
+import {
+  isEnglishTtsText,
+  proactiveDeliveryAction,
+  proactiveMessage,
+  unseenProactiveRuns
+} from './proactive-delivery'
 
 describe('proactive delivery cursor', () => {
   const runs = [
@@ -19,5 +24,16 @@ describe('proactive delivery cursor', () => {
 
   it('prefers the full thought over the capped activity summary', () => {
     expect(proactiveMessage({ thought: 'Full proactive answer', summary: 'Preview' })).toBe('Full proactive answer')
+  })
+
+  it('holds normal notices during protected activity but still surfaces urgent ones quietly', () => {
+    const delivery = { mode: 'defer' as const, urgent_mode: 'quiet' as const }
+    expect(proactiveDeliveryAction(delivery, 'normal')).toBe('defer')
+    expect(proactiveDeliveryAction(delivery, 'urgent')).toBe('quiet')
+  })
+
+  it('never sends unsupported-language text to the English-only TTS lane', () => {
+    expect(isEnglishTtsText('The room sensor briefly went offline.')).toBe(true)
+    expect(isEnglishTtsText('Isıtma cihazı çevrimdışı oldu.')).toBe(false)
   })
 })

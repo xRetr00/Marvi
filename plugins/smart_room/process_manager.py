@@ -5,6 +5,7 @@ from __future__ import annotations
 import atexit
 from contextlib import contextmanager
 import json
+import logging
 import os
 import secrets
 import signal
@@ -24,6 +25,7 @@ _supervisor_config: Dict[str, Any] = {}
 _supervisor_home: Optional[Path] = None
 _process: Optional[subprocess.Popen] = None
 _atexit_registered = False
+logger = logging.getLogger(__name__)
 
 
 @contextmanager
@@ -209,6 +211,7 @@ def _start(config: Optional[Dict[str, Any]] = None, *, restart_count: int = 0) -
         env["SMART_ROOM_RPC_TOKEN"] = token
         # Preserve the exact profile selected by the gateway in the child.
         env["MARVI_HOME"] = str(_root().parent)
+        env["HERMES_HOME"] = str(_root().parent)
         log_path = _root() / "runtime.log"
         _process = subprocess.Popen(
             [sys.executable, "-m", "plugins.smart_room.runtime.app"],
@@ -281,21 +284,29 @@ def restart() -> Dict[str, Any]:
 
 
 def _supervise_loop() -> None:
-    failures = 0
+    misses = 0
+    restarts = 0
     while not _supervisor_stop.is_set():
         current = status()
         if current.get("alive"):
+            misses = 0
             if time.time() - float(current.get("started_at", 0)) > 60:
-                failures = 0
+                restarts = 0
             _supervisor_stop.wait(2)
             continue
-        failures += 1
-        if _supervisor_stop.wait(min(30, 2 ** min(failures - 1, 5))):
+        misses += 1
+        if misses < 3:
+            _supervisor_stop.wait(2)
+            continue
+        misses = 0
+        restarts += 1
+        if _supervisor_stop.wait(min(30, 2 ** min(restarts - 1, 5))):
             break
         try:
-            start(_supervisor_config, restart_count=failures)
+            logger.warning("Smart Room runtime unavailable; restarting (attempt %d)", restarts)
+            start(_supervisor_config, restart_count=restarts)
         except Exception:
-            continue
+            logger.exception("Smart Room runtime restart failed")
 
 
 def _supervise() -> None:

@@ -131,7 +131,12 @@ _TICK_PROMPT = (
     "'auto' tier in subconscious.tiers.\n"
     "Interpret movement chronologically across the current context and durable "
     "narrative: for example, leaving a non-home zone followed by arriving home "
-    "and then room presence is one journey home, not unrelated events. Never "
+    "and then room presence is one journey home, not unrelated events. Before "
+    "reporting a visitor or device outage, verify the Smart Room evidence: "
+    "check the supplied current mode, OwnTracks history, HE20 edge log, and "
+    "device health. If that evidence is ambiguous, stay silent. "
+    "HE20 movement during active Sleep mode is normal bed movement, not a room "
+    "entry. A single failed device poll is transient, not an outage. Never "
     "invent activity that isn't supported by the diff, your goals, or your "
     "memory. Always write in English. End with one compact "
     "<narrative>...</narrative> block that "
@@ -735,7 +740,10 @@ def build_runtime_context(job_name: str) -> str:
     parts = [f"## Durable narrative\n{narrative}"]
     try:
         from plugins.smart_room.bridge import read_state_snapshot
-        from plugins.smart_room.runtime.state_store import load_location_reports
+        from plugins.smart_room.runtime.state_store import (
+            load_location_reports,
+            load_transition_events,
+        )
 
         room = read_state_snapshot() or {}
         presence = room.get("presence") if isinstance(room.get("presence"), dict) else {}
@@ -748,6 +756,25 @@ def build_runtime_context(job_name: str) -> str:
                 f"{report.get('zone') or 'outside known regions'}"
             )
             for report in load_location_reports(limit=8)
+        ]
+        evidence = [
+            (
+                f"- {event.get('at')}: {event.get('type')} "
+                f"mode={event.get('mode') or 'unknown'} "
+                f"phone_home={event.get('phone_home')} "
+                f"classification={event.get('classification') or 'n/a'} "
+                f"device={event.get('device') or 'n/a'}"
+            )
+            for event in load_transition_events()[-12:]
+            if event.get("type") in {
+                "he20_occupied",
+                "he20_cleared",
+                "room_entry",
+                "room_presence_unverified",
+                "device_offline",
+                "device_online",
+                "mode_changed",
+            }
         ]
         parts.append(
             "## Smart Room semantics and recent owner movement\n"
@@ -762,6 +789,8 @@ def build_runtime_context(job_name: str) -> str:
             f"room_present={bool(presence.get('detected'))}, "
             f"room_mode={modes.get('active_mode') or 'none'}.\n"
             + ("\n".join(movement) if movement else "- No recent OwnTracks reports.")
+            + "\nRecent HE20/mode/device evidence:\n"
+            + ("\n".join(evidence) if evidence else "- No recent sensor transitions.")
         )
     except Exception:
         logger.debug("subconscious: smart-room context unavailable", exc_info=True)

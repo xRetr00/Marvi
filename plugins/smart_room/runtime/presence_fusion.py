@@ -151,7 +151,6 @@ def fuse(
         presence.sticky_since = None
         presence.source = "geofence_absent"
         presence.confidence = 0.0
-        logger.info("Geofence says left home (%s) — identity released", location.zone)
 
     if other_identity_detected and not ble_detected:
         presence.detected = False

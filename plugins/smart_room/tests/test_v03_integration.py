@@ -20,7 +20,7 @@ from plugins.smart_room import process_manager
 from plugins.smart_room.bridge import call_runtime
 from plugins.smart_room.bridge import build_context_line
 from plugins.smart_room.runtime.app import Runtime
-from plugins.smart_room.runtime.models import MmWaveState, PhoneLocation, Presence, RoomState
+from plugins.smart_room.runtime.models import DeviceHealth, MmWaveState, PhoneLocation, Presence, RoomState
 from plugins.smart_room.runtime.presence_fusion import fuse
 from plugins.smart_room.runtime.scheduler import Scheduler
 from plugins.smart_room.runtime.state_store import append_location_report, append_transition, load_location_reports
@@ -117,7 +117,7 @@ def test_he20_clear_event_is_delayed_and_edge_triggered(monkeypatch):
     runtime._state.mmwave.last_seen = (datetime.now(timezone.utc) - timedelta(seconds=61)).isoformat()
     runtime._poll_devices()
     runtime._poll_devices()
-    assert emitted == [("presence_cleared", {"source": "mmwave"})]
+    assert [event for event, _ in emitted] == ["he20_cleared", "presence_cleared"]
 
 
 def test_he20_single_occupied_pulse_does_not_create_room_entry(monkeypatch):
@@ -146,6 +146,49 @@ def test_he20_single_occupied_pulse_does_not_create_room_entry(monkeypatch):
     runtime._mmwave_occupied_since -= 4
     runtime._poll_devices()
     transition.assert_called_once_with(False, True)
+
+
+def test_he20_bed_movement_does_not_create_entry_in_sleep_mode(monkeypatch):
+    runtime = Runtime({"automations": {"adaptive_light": {"debounce": 0}}})
+    runtime._state.modes.active_mode = "sleep"
+    runtime._state.mmwave.occupied = False
+    runtime._room_clear_emitted = True
+    runtime._tuya = MagicMock()
+    runtime._tuya.get_light_status.return_value = {"success": True, "on": False, "brightness": 0}
+    runtime._tuya.get_mmwave_status.return_value = {"success": True, "occupied": True}
+    runtime._tuya.health.return_value = {}
+    runtime._mqtt = None
+    transition = MagicMock()
+    monkeypatch.setattr(runtime, "_probe_wifi_presence", lambda: False)
+    monkeypatch.setattr(runtime, "_handle_welcome_transition", transition)
+
+    runtime._poll_devices()
+
+    transition.assert_not_called()
+    assert runtime._state.unreported_visitor_entries == []
+
+
+def test_device_offline_requires_three_failed_polls(monkeypatch):
+    runtime = Runtime({})
+    runtime._state.devices["tuya_bulb"] = DeviceHealth(online=True)
+    runtime._state.devices["tuya_he20"] = DeviceHealth(online=True)
+    runtime._tuya = MagicMock()
+    runtime._tuya.get_light_status.return_value = {"success": False, "error": "wifi"}
+    runtime._tuya.get_mmwave_status.return_value = {"success": False, "error": "wifi"}
+    runtime._tuya.health.return_value = {}
+    runtime._mqtt = None
+    emitted = []
+    monkeypatch.setattr(runtime, "_probe_wifi_presence", lambda: False)
+    monkeypatch.setattr(runtime, "_emit_event", lambda event, data: emitted.append((event, data)))
+
+    runtime._poll_devices()
+    runtime._poll_devices()
+    assert emitted == []
+    assert runtime._state.devices["tuya_bulb"].online is True
+    assert runtime._state.devices["tuya_he20"].online is True
+
+    runtime._poll_devices()
+    assert [event for event, _ in emitted] == ["device_offline", "device_offline"]
 
 
 def test_entry_is_tracked_but_welcome_requires_one_hour_empty(monkeypatch):
@@ -296,6 +339,26 @@ def test_stale_home_phone_without_owner_evidence_is_still_a_guest(monkeypatch):
 
     assert runtime._state.unreported_visitor_entries[-1]["classification"] == "guest"
     assert emitted.call_args.args[1]["identity_reason"] == "phone_home_without_recent_owner_evidence"
+
+
+def test_stale_away_location_does_not_create_a_visitor_alert(monkeypatch):
+    runtime = Runtime({"owner": "Shereef", "owntracks": {"stale_after_seconds": 7200}})
+    runtime._state.mmwave.occupied = True
+    runtime._state.location.home = False
+    runtime._state.location.last_geofence_at = "2026-07-19T06:00:00+00:00"
+    runtime._pending_entry_at = "2026-07-19T10:00:00+00:00"
+    runtime._pending_entry_should_welcome = True
+    published = MagicMock()
+    emitted = MagicMock()
+    monkeypatch.setattr(runtime, "_publish_welcome", published)
+    monkeypatch.setattr(runtime, "_emit_event", emitted)
+
+    runtime._deliver_welcome()
+
+    published.assert_not_called()
+    assert runtime._state.unreported_visitor_entries == []
+    assert emitted.call_args.args[0] == "room_presence_unverified"
+    assert emitted.call_args.args[1]["identity_reason"] == "stale_owntracks"
 
 
 def test_next_confirmed_owner_welcome_reports_and_clears_visitor_entries(monkeypatch):
@@ -597,12 +660,32 @@ def test_subconscious_fetcher_baselines_then_returns_only_new_events():
     assert "focus mode" not in delta
 
 
+def test_subconscious_fetcher_does_not_wake_for_sleep_sensor_motion():
+    from cron.scripts.subconscious.smart_room import fetch_delta
+    from cron.scripts.subconscious.snapshot_store import SurfaceStore
+
+    append_transition({"id": 1, "at": "2026-07-15T10:00:00Z", "type": "mode_changed"})
+    store = SurfaceStore("smart_room", min_interval_seconds=0)
+    assert fetch_delta(store) is None
+    store.save()
+
+    append_transition({
+        "id": 2,
+        "at": "2026-07-15T10:05:00Z",
+        "type": "he20_occupied",
+        "mode": "sleep",
+    })
+    store = SurfaceStore("smart_room", min_interval_seconds=0)
+    assert fetch_delta(store) is None
+
+
 @pytest.mark.skipif(sys.platform != "win32", reason="Smart Room runtime is Windows-only")
-def test_runtime_crash_is_restarted_and_shutdown_is_clean():
+def test_runtime_crash_is_restarted_and_shutdown_is_clean(tmp_path):
     import yaml
 
     port = _free_port()
     home = process_manager._root().parent
+    assert home.is_relative_to(tmp_path)
     home.mkdir(parents=True, exist_ok=True)
     (home / "config.yaml").write_text(
         yaml.safe_dump({"smart_room": {

@@ -19,6 +19,15 @@ def fetch_delta(store: SurfaceStore) -> Optional[str]:
     if not events:
         return None
     store.set_cursor({"event_id": max(int(e.get("id", 0)) for e in events)})
+    if not any(
+        event.get("type") not in {
+            "he20_occupied",
+            "he20_cleared",
+            "room_presence_unverified",
+        }
+        for event in events
+    ):
+        return None
     lines = []
     for event in events[-20:]:
         detail = ", ".join(

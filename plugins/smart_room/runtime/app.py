@@ -315,10 +315,14 @@ class Runtime:
                 "presence_cleared",
                 "phone_location_changed",
                 "device_offline",
+                "device_online",
+                "he20_occupied",
+                "he20_cleared",
                 "light_changed",
                 "sleep_cancelled",
                 "alarm_acknowledged",
                 "room_entry",
+                "room_presence_unverified",
             }:
                 event["summary"] = data.get("summary") or event_type.replace("_", " ")
                 append_transition(event)
@@ -410,13 +414,22 @@ class Runtime:
             esp32.last_seen = now_iso()
         save_state(self._state)
 
-    def _location_signal_stale(self) -> bool:
+    def _location_signal_stale(self, reference: Optional[str] = None) -> bool:
         value = self._state.location.last_geofence_at
         if not value:
             return True
         try:
             stamp = datetime.fromisoformat(value.replace("Z", "+00:00"))
-            return (datetime.now(timezone.utc) - stamp.astimezone(timezone.utc)).total_seconds() > 86400
+            current = (
+                datetime.fromisoformat(reference.replace("Z", "+00:00"))
+                if reference
+                else datetime.now(timezone.utc)
+            )
+            stale_after = max(
+                300,
+                int((self._config.get("owntracks") or {}).get("stale_after_seconds", 7200)),
+            )
+            return (current.astimezone(timezone.utc) - stamp.astimezone(timezone.utc)).total_seconds() > stale_after
         except (TypeError, ValueError):
             return True
 
@@ -560,11 +573,18 @@ class Runtime:
         he20_status = self._tuya.get_mmwave_status() if self._tuya else None
         worker_health = self._tuya.health() if self._tuya else {}
         offline_events = []
+        online_events = []
+        offline_threshold = max(
+            1,
+            int((self._config.get("runtime") or {}).get("device_offline_failures", 3)),
+        )
         with self._state_lock:
             was_present = self._state.presence.detected
             if bulb_status is not None:
                 bulb = self._state.devices.setdefault("tuya_bulb", DeviceHealth())
                 if bulb_status.get("success"):
+                    if not bulb.online and bulb.last_poll:
+                        online_events.append({"device": "tuya_bulb"})
                     self._state.light.on = bulb_status.get("on", False)
                     self._state.light.brightness = bulb_status.get("brightness", 0)
                     self._state.light.confirmed = True
@@ -574,13 +594,21 @@ class Runtime:
                     bulb.consecutive_failures = 0
                     bulb.last_command = "get_status"
                 else:
-                    if bulb.online:
-                        offline_events.append("tuya_bulb")
-                    bulb.online = False
+                    bulb.last_poll = now_iso()
+                    bulb.last_command = "get_status"
                     bulb.consecutive_failures += 1
+                    if bulb.online and bulb.consecutive_failures >= offline_threshold:
+                        bulb.online = False
+                        offline_events.append({
+                            "device": "tuya_bulb",
+                            "consecutive_failures": bulb.consecutive_failures,
+                            "error": str(bulb_status.get("error") or "poll failed"),
+                        })
             if he20_status is not None:
                 he20 = self._state.devices.setdefault("tuya_he20", DeviceHealth())
                 if he20_status.get("success"):
+                    if not he20.online and he20.last_poll:
+                        online_events.append({"device": "tuya_he20"})
                     occupied = bool(he20_status.get("occupied", False))
                     if occupied and not self._state.mmwave.occupied:
                         self._mmwave_occupied_since = time.monotonic()
@@ -595,10 +623,16 @@ class Runtime:
                     he20.consecutive_failures = 0
                     he20.last_command = "get_status"
                 else:
-                    if he20.online:
-                        offline_events.append("tuya_he20")
-                    he20.online = False
+                    he20.last_poll = now_iso()
+                    he20.last_command = "get_status"
                     he20.consecutive_failures += 1
+                    if he20.online and he20.consecutive_failures >= offline_threshold:
+                        he20.online = False
+                        offline_events.append({
+                            "device": "tuya_he20",
+                            "consecutive_failures": he20.consecutive_failures,
+                            "error": str(he20_status.get("error") or "poll failed"),
+                        })
             for name, state_name in (("bulb", "tuya_bulb"), ("he20", "tuya_he20")):
                 metrics = worker_health.get(name, {})
                 device = self._state.devices.setdefault(state_name, DeviceHealth())
@@ -606,8 +640,10 @@ class Runtime:
                 device.circuit_open = bool(metrics.get("circuit_open", False))
             save_state(self._state)
 
-        for device in offline_events:
-            self._emit_event("device_offline", {"device": device})
+        for event in offline_events:
+            self._emit_event("device_offline", event)
+        for event in online_events:
+            self._emit_event("device_online", event)
 
         wifi_detected = self._probe_wifi_presence()
         _, light_should_off = self._update_presence(wifi_detected=wifi_detected)
@@ -626,10 +662,30 @@ class Runtime:
             should_clear = light_should_off and not self._room_clear_emitted
             if should_clear:
                 self._room_clear_emitted = True
+            transition_context = {
+                "sensor": "tuya_he20",
+                "mode": self._state.modes.active_mode,
+                "phone_home": self._state.location.home,
+            }
             snapshot = self._state.to_dict()
         if stable_entry:
-            self._handle_welcome_transition(False, True)
+            self._emit_event(
+                "he20_occupied",
+                {
+                    **transition_context,
+                    "summary": "HE20 confirmed room occupancy",
+                },
+            )
+            if transition_context["mode"] != "sleep":
+                self._handle_welcome_transition(False, True)
         elif should_clear:
+            self._emit_event(
+                "he20_cleared",
+                {
+                    **transition_context,
+                    "summary": "HE20 confirmed room clear",
+                },
+            )
             self._handle_welcome_transition(True, False)
         if not was_present and present:
             self._emit_event("presence_detected", {"source": source})
@@ -684,8 +740,9 @@ class Runtime:
             phone_home = self._state.location.home
             classification, identity_reason = self._classify_entry(entry_at)
             owner_detected = classification == "owner"
+            unverified = classification == "unverified_presence"
             pending_entries = list(self._state.unreported_visitor_entries) if owner_detected else []
-            if not owner_detected:
+            if not owner_detected and not unverified:
                 self._state.unreported_visitor_entries.append({
                     "at": entry_at,
                     "classification": classification,
@@ -694,14 +751,18 @@ class Runtime:
                 })
                 self._state.unreported_visitor_entries = self._state.unreported_visitor_entries[-100:]
 
-        self._emit_event("room_entry", {
+        self._emit_event("room_presence_unverified" if unverified else "room_entry", {
             "entry_at": entry_at,
             "classification": classification,
             "identity_reason": identity_reason,
             "owner_phone_home": phone_home,
-            "summary": f"{classification.replace('_', ' ').title()} entered the room",
+            "summary": (
+                "Room presence detected with stale owner location"
+                if unverified
+                else f"{classification.replace('_', ' ').title()} entered the room"
+            ),
         })
-        if not should_welcome:
+        if unverified or not should_welcome:
             return
         self._publish_welcome(
             owner_detected,
@@ -732,6 +793,8 @@ class Runtime:
             self._state.last_owner_seen_at = entry_at
             return "owner", "ble"
         if not self._state.location.home:
+            if self._location_signal_stale(entry_at):
+                return "unverified_presence", "stale_owntracks"
             return "unknown_visitor", "owner_phone_away"
 
         window = max(60, int((self._config.get("welcome") or {}).get("owner_evidence_window_seconds", 3600)))

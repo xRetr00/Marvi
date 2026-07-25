@@ -650,6 +650,15 @@ export interface CronJob {
   state?: null | string
 }
 
+export interface CronDeliveryTarget {
+  home_env_var: null | string
+  home_target_set: boolean
+  id: string
+  kind?: string
+  name: string
+  platform?: string
+}
+
 export interface CronJobCreatePayload {
   deliver?: string
   model?: string

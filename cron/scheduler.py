@@ -1912,6 +1912,32 @@ def cron_delivery_targets() -> list[dict]:
                 "home_env_var": env_var or None,
             }
         )
+
+    # The channel directory is rebuilt by the running gateway and includes
+    # Telegram forum topics learned from incoming messages.  Surface those
+    # concrete destinations beside each platform's optional home target.
+    try:
+        from gateway.channel_directory import load_directory
+
+        for platform_name, channels in load_directory().get("platforms", {}).items():
+            if platform_name not in connected or not _is_known_delivery_platform(platform_name):
+                continue
+            for channel in channels if isinstance(channels, list) else []:
+                channel_id = str(channel.get("id") or "").strip()
+                if not channel_id:
+                    continue
+                targets.append(
+                    {
+                        "id": f"{platform_name}:{channel_id}",
+                        "name": f"{platform_name.replace('_', ' ').title()} — {channel.get('name') or channel_id}",
+                        "home_target_set": True,
+                        "home_env_var": None,
+                        "platform": platform_name,
+                        "kind": channel.get("type") or "chat",
+                    }
+                )
+    except Exception:
+        logger.debug("cron_delivery_targets: channel directory unavailable", exc_info=True)
     return targets
 
 
@@ -2278,14 +2304,13 @@ def _deliver_result(job: dict, content: str, adapters=None, loop=None) -> Option
     from tools.send_message_tool import _send_to_platform
     from gateway.config import load_gateway_config, Platform
 
-    # Optionally wrap the content with a header/footer so the user knows this
-    # is a cron delivery.  Wrapping is on by default; set cron.wrap_response: false
-    # in config.yaml for clean output.
-    wrap_response = True
+    # Cron output is already delivered in the bot's chat, so keep it natural by
+    # default.  The legacy diagnostic wrapper remains available as an opt-in.
+    wrap_response = False
     user_cfg = None
     try:
         user_cfg = load_config()
-        wrap_response = user_cfg.get("cron", {}).get("wrap_response", True)
+        wrap_response = user_cfg.get("cron", {}).get("wrap_response", False)
     except Exception:
         pass
     if job.get("name") == "Subconscious tick":

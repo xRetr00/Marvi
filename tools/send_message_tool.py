@@ -1959,16 +1959,83 @@ async def _send_yuanbao(chat_id, message, media_files=None):
 
 
 # --- Registry ---
-from tools.registry import tool_error
+from tools.registry import registry, tool_error
 
-# NOTE: ``send_message`` is intentionally NOT registered as an agent-callable
-# model tool. The agent should not decide on its own to fire off cross-platform
-# messages or reactions. The send engine in this module (``_send_to_platform``,
-# ``_send_via_adapter``, ``_parse_target_ref``, the per-platform ``_send_*``
-# helpers) remains the shared transport used by:
-#   - cron delivery (cron/scheduler.py)
-#   - the ``hermes send`` CLI command (hermes_cli/send_cmd.py)
-#   - the gateway kanban notifier (dashboard-toggled, outside agent control)
-#   - the standalone MCP server (mcp_serve.py), which is an opt-in surface
-# Those callers import the helpers directly; none of them need the registry
-# entry.
+
+def _agent_send_enabled() -> bool:
+    """Expose outbound messaging only after the user explicitly opts in."""
+    try:
+        from hermes_cli.config import cfg_get, load_config
+
+        enabled = cfg_get(load_config(), "messaging", "agent_send", "enabled", default=False)
+        if isinstance(enabled, str):
+            enabled = enabled.strip().lower() in {"1", "true", "yes", "on"}
+        return bool(enabled) and _check_send_message()
+    except Exception:
+        return False
+
+
+def _agent_send_target_allowed(target: str) -> bool:
+    """Limit autonomous sends to configured homes, the current chat, or discovered chats."""
+    platform_name, separator, target_ref = (target or "").partition(":")
+    platform_name = platform_name.strip().lower()
+    target_ref = target_ref.strip()
+    if not platform_name:
+        return False
+
+    if not separator:
+        try:
+            from gateway.config import Platform, load_gateway_config
+
+            return bool(load_gateway_config().get_home_channel(Platform(platform_name)))
+        except Exception:
+            return False
+
+    resolved = None
+    try:
+        from gateway.channel_directory import load_directory, resolve_channel_name
+
+        resolved = resolve_channel_name(platform_name, target_ref)
+        known_ids = {
+            str(channel.get("id"))
+            for channel in load_directory().get("platforms", {}).get(platform_name, [])
+            if channel.get("id")
+        }
+    except Exception:
+        known_ids = set()
+
+    chat_id, thread_id, _ = _parse_target_ref(platform_name, resolved or target_ref)
+    candidate = f"{chat_id}:{thread_id}" if chat_id and thread_id else str(chat_id or resolved or target_ref)
+    if candidate in known_ids:
+        return True
+
+    try:
+        from gateway.session_context import get_session_env
+
+        current_platform = get_session_env("HERMES_SESSION_PLATFORM", "").lower()
+        current_chat = get_session_env("HERMES_SESSION_CHAT_ID", "")
+        current_thread = get_session_env("HERMES_SESSION_THREAD_ID", "")
+        current_target = f"{current_chat}:{current_thread}" if current_thread else current_chat
+        return platform_name == current_platform and candidate == current_target
+    except Exception:
+        return False
+
+
+def _agent_send_message(args, **kw):
+    action = args.get("action", "send")
+    if action != "list" and not _agent_send_target_allowed(args.get("target", "")):
+        return tool_error(
+            "That destination is not approved. Ask the user to message the bot "
+            "in the chat/topic once, then call send_message(action='list')."
+        )
+    return send_message_tool(args, **kw)
+
+
+registry.register(
+    name="send_message",
+    toolset="messaging",
+    schema=SEND_MESSAGE_SCHEMA,
+    handler=_agent_send_message,
+    check_fn=_agent_send_enabled,
+    emoji="✉️",
+)

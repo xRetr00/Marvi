@@ -12138,8 +12138,8 @@ async def get_cron_delivery_targets():
     derived dynamically from the configured gateway platforms via
     ``cron.scheduler.cron_delivery_targets()`` — no hardcoded platform list. A
     configured platform that hasn't set its cron home channel is still returned
-    with ``home_target_set: false`` so the UI can surface it as "configure a
-    home channel first" rather than hiding it.
+    with ``home_target_set: false``. Discovered chats and Telegram topics are
+    returned as concrete ready-to-use targets.
     """
     targets = [
         {

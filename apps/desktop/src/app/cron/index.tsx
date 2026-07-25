@@ -27,8 +27,10 @@ import {
 import { Textarea } from '@/components/ui/textarea'
 import {
   createCronJob,
+  type CronDeliveryTarget,
   type CronJob,
   deleteCronJob,
+  getCronDeliveryTargets,
   getCronJobRuns,
   getCronJobs,
   pauseCronJob,
@@ -73,8 +75,6 @@ const DEFAULT_DELIVER = 'local'
 // Radix <SelectItem> rejects empty-string values, so the "no override" row in
 // the model picker carries this sentinel and is mapped back to '' on save.
 const MODEL_DEFAULT_VALUE = '__default__'
-
-const DELIVERY_VALUES: readonly string[] = ['local', 'telegram', 'discord', 'slack', 'email']
 
 const SCHEDULE_OPTIONS: ReadonlyArray<ScheduleOption> = [
   { expr: '0 9 * * *', value: 'daily' },
@@ -763,6 +763,13 @@ function CronEditorDialog({
     enabled: open && !scriptOnlyJob
   })
 
+  const deliveryTargets = useQuery({
+    queryKey: ['cron-delivery-targets'],
+    queryFn: getCronDeliveryTargets,
+    enabled: open,
+    refetchInterval: 30_000
+  })
+
   useEffect(() => {
     if (!open) {
       return
@@ -808,6 +815,16 @@ function CronEditorDialog({
   const modelChoiceKnown =
     modelChoice === MODEL_DEFAULT_VALUE ||
     modelProviders.some(provider => (provider.models ?? []).some(model => `${provider.slug}:${model}` === modelChoice))
+
+  const deliveryOptions = useMemo<CronDeliveryTarget[]>(() => {
+    const targets = deliveryTargets.data ?? [
+      { id: DEFAULT_DELIVER, name: c.deliveryLabels[DEFAULT_DELIVER], home_target_set: true, home_env_var: null }
+    ]
+
+    return targets.some(target => target.id === deliver)
+      ? targets
+      : [...targets, { id: deliver, name: deliver, home_target_set: true, home_env_var: null }]
+  }, [c.deliveryLabels, deliver, deliveryTargets.data])
 
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault()
@@ -912,9 +929,9 @@ function CronEditorDialog({
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {DELIVERY_VALUES.map(value => (
-                    <SelectItem key={value} value={value}>
-                      {c.deliveryLabels[value]}
+                  {deliveryOptions.map(target => (
+                    <SelectItem disabled={!target.home_target_set} key={target.id} value={target.id}>
+                      {c.deliveryLabels[target.id] ?? target.name}
                     </SelectItem>
                   ))}
                 </SelectContent>

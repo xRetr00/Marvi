@@ -68,6 +68,9 @@ _HERMES_CORE_TOOLS = [
     "execute_code", "delegate_task",
     # Cronjob management
     "cronjob",
+    # Opt-in cross-channel delivery, restricted by its handler to configured
+    # home channels and chats/topics discovered by the gateway.
+    "send_message",
     # Home Assistant smart home control (gated on HASS_TOKEN via check_fn)
     "ha_list_entities", "ha_get_state", "ha_list_services", "ha_call_service",
     # Kanban multi-agent coordination — only in schema when the agent is
@@ -107,6 +110,12 @@ TOOLSETS = {
     "search": {
         "description": "Web search only (no content extraction/scraping)",
         "tools": ["web_search"],
+        "includes": []
+    },
+
+    "messaging": {
+        "description": "Opt-in outbound messaging to approved chats and topics",
+        "tools": ["send_message"],
         "includes": []
     },
 

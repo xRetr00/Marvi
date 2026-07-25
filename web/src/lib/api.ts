@@ -2169,6 +2169,8 @@ export interface CronDeliveryTarget {
   name: string;
   home_target_set: boolean;
   home_env_var: string | null;
+  platform?: string;
+  kind?: string;
 }
 
 export interface AutomationBlueprintField {

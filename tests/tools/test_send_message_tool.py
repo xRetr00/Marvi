@@ -3291,6 +3291,33 @@ class TestCheckSendMessage:
             assert _check_send_message() is False
 
 
+class TestAgentSendMessage:
+    def test_opt_in_gate_requires_config_and_transport(self):
+        from tools.send_message_tool import _agent_send_enabled
+
+        with patch("hermes_cli.config.load_config", return_value={"messaging": {"agent_send": {"enabled": True}}}), \
+             patch("tools.send_message_tool._check_send_message", return_value=True):
+            assert _agent_send_enabled() is True
+
+        with patch("hermes_cli.config.load_config", return_value={}), \
+             patch("tools.send_message_tool._check_send_message", return_value=True):
+            assert _agent_send_enabled() is False
+
+    def test_only_discovered_topic_is_allowed(self):
+        from tools.send_message_tool import _agent_send_target_allowed
+
+        directory = {
+            "platforms": {
+                "telegram": [{"id": "-100123:42", "name": "Alerts", "type": "group"}]
+            }
+        }
+        with patch("gateway.channel_directory.load_directory", return_value=directory), \
+             patch("gateway.channel_directory.resolve_channel_name", return_value=None), \
+             patch("gateway.session_context.get_session_env", return_value=""):
+            assert _agent_send_target_allowed("telegram:-100123:42") is True
+            assert _agent_send_target_allowed("telegram:-100999:7") is False
+
+
 class TestSendTelegramThreadNotFoundRetry:
     """Tests for thread-not-found retry behaviour in _send_telegram (#27012)."""
 

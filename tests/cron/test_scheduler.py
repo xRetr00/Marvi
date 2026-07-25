@@ -576,7 +576,7 @@ class TestRoutingIntents:
 
 
 class TestDeliverResultWrapping:
-    """Verify that cron deliveries are wrapped with header/footer and no longer mirrored."""
+    """Verify that cron deliveries are plain by default with a legacy opt-in wrapper."""
 
     def _safe_media_path(self, tmp_path, monkeypatch, name, data=b"media"):
         root = tmp_path / "media-cache"
@@ -589,8 +589,7 @@ class TestDeliverResultWrapping:
         )
         return media_file.resolve()
 
-    def test_delivery_wraps_content_with_header_and_footer(self):
-        """Delivered content should include task name header and agent-invisible note."""
+    def test_delivery_is_plain_by_default(self):
         from gateway.config import Platform
 
         pconfig = MagicMock()
@@ -599,7 +598,8 @@ class TestDeliverResultWrapping:
         mock_cfg.platforms = {Platform.TELEGRAM: pconfig}
 
         with patch("gateway.config.load_gateway_config", return_value=mock_cfg), \
-             patch("tools.send_message_tool._send_to_platform", new=AsyncMock(return_value={"success": True})) as send_mock:
+             patch("tools.send_message_tool._send_to_platform", new=AsyncMock(return_value={"success": True})) as send_mock, \
+             patch("cron.scheduler.load_config", return_value={}):
             job = {
                 "id": "test-job",
                 "name": "daily-report",
@@ -610,14 +610,9 @@ class TestDeliverResultWrapping:
 
         send_mock.assert_called_once()
         sent_content = send_mock.call_args.kwargs.get("content") or send_mock.call_args[0][-1]
-        assert "Cronjob Response: daily-report" in sent_content
-        assert "(job_id: test-job)" in sent_content
-        assert "-------------" in sent_content
-        assert "Here is today's summary." in sent_content
-        assert "To stop or manage this job" in sent_content
+        assert sent_content == "Here is today's summary."
 
-    def test_delivery_uses_job_id_when_no_name(self):
-        """When a job has no name, the wrapper should fall back to job id."""
+    def test_delivery_can_opt_in_to_legacy_wrapper(self):
         from gateway.config import Platform
 
         pconfig = MagicMock()
@@ -626,7 +621,8 @@ class TestDeliverResultWrapping:
         mock_cfg.platforms = {Platform.TELEGRAM: pconfig}
 
         with patch("gateway.config.load_gateway_config", return_value=mock_cfg), \
-             patch("tools.send_message_tool._send_to_platform", new=AsyncMock(return_value={"success": True})) as send_mock:
+             patch("tools.send_message_tool._send_to_platform", new=AsyncMock(return_value={"success": True})) as send_mock, \
+             patch("cron.scheduler.load_config", return_value={"cron": {"wrap_response": True}}):
             job = {
                 "id": "abc-123",
                 "deliver": "origin",
@@ -636,6 +632,7 @@ class TestDeliverResultWrapping:
 
         sent_content = send_mock.call_args.kwargs.get("content") or send_mock.call_args[0][-1]
         assert "Cronjob Response: abc-123" in sent_content
+        assert "To stop or manage this job" in sent_content
 
     def test_delivery_skips_wrapping_when_config_disabled(self):
         """When cron.wrap_response is false, deliver raw content without header/footer."""
@@ -4676,6 +4673,26 @@ class TestCronDeliveryTargets:
         targets = {t["id"]: t for t in cron_delivery_targets()}
 
         assert targets["matrix"]["home_target_set"] is True
+
+    def test_lists_discovered_telegram_topics(self, monkeypatch):
+        from cron.scheduler import cron_delivery_targets
+
+        self._patch_connected(monkeypatch, ["telegram"])
+        monkeypatch.setattr(
+            "gateway.channel_directory.load_directory",
+            lambda: {
+                "platforms": {
+                    "telegram": [
+                        {"id": "-100123:42", "name": "Marvi / Alerts", "type": "group"}
+                    ]
+                }
+            },
+        )
+
+        targets = {t["id"]: t for t in cron_delivery_targets()}
+
+        assert targets["telegram:-100123:42"]["name"] == "Telegram — Marvi / Alerts"
+        assert targets["telegram:-100123:42"]["home_target_set"] is True
 
     def test_unconfigured_platforms_excluded(self, monkeypatch):
         from cron.scheduler import cron_delivery_targets

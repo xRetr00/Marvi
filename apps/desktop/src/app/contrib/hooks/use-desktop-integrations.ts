@@ -5,7 +5,15 @@ import { getSmartRoomClapDataset, reviewSmartRoomClap } from '@/hermes'
 import { storedSessionIdForNotification } from '@/lib/session-ids'
 import { respondToApprovalAction } from '@/store/native-notifications'
 import { notify, notifyError } from '@/store/notifications'
-import { getRememberedRoute, getRememberedSessionId, setRememberedRoute, setRememberedSessionId } from '@/store/session'
+import { $activeGatewayProfile } from '@/store/profile'
+import {
+  $sessions,
+  getRememberedRoute,
+  getRememberedSessionId,
+  rememberedSessionProfile,
+  setRememberedRoute,
+  setRememberedSessionId
+} from '@/store/session'
 import { onSessionsChanged } from '@/store/session-sync'
 import { openUpdatesWindow, startUpdatePoller, stopUpdatePoller } from '@/store/updates'
 import { startProactiveDeliveryPolling, stopProactiveDeliveryPolling } from '@/store/proactive-delivery'
@@ -130,7 +138,10 @@ export function useDesktopIntegrations({
   // you don't want to boot into a modal.
   useEffect(() => {
     if (routedSessionId) {
-      setRememberedSessionId(routedSessionId)
+      setRememberedSessionId(
+        routedSessionId,
+        rememberedSessionProfile($sessions.get(), routedSessionId, $activeGatewayProfile.get())
+      )
     }
 
     if (!isOverlayView(appViewForPath(locationPathname))) {
@@ -143,6 +154,7 @@ export function useDesktopIntegrations({
   // Restore once on cold start — only when the renderer booted at the default
   // route (a hidden-then-shown window keeps its own route). Prefer the full
   // remembered route (covers pages); fall back to the last session id.
+  // eslint-disable-next-line no-restricted-syntax -- legitimate non-atom ref write (see eslint rule comment)
   useEffect(() => {
     if (restoredRef.current || locationPathname !== NEW_CHAT_ROUTE) {
       restoredRef.current = true
@@ -159,7 +171,7 @@ export function useDesktopIntegrations({
       return
     }
 
-    const last = getRememberedSessionId()
+    const last = getRememberedSessionId($activeGatewayProfile.get())
 
     if (last) {
       navigate(sessionRoute(last), { replace: true })
@@ -167,8 +179,14 @@ export function useDesktopIntegrations({
   }, [locationPathname, navigate])
 
   useEffect(() => {
-    if (resumeExhaustedSessionId && getRememberedSessionId() === resumeExhaustedSessionId) {
-      setRememberedSessionId(null)
+    if (!resumeExhaustedSessionId) {
+      return
+    }
+
+    const owner = rememberedSessionProfile($sessions.get(), resumeExhaustedSessionId, $activeGatewayProfile.get())
+
+    if (getRememberedSessionId(owner) === resumeExhaustedSessionId) {
+      setRememberedSessionId(null, owner)
     }
   }, [resumeExhaustedSessionId])
 
@@ -222,10 +240,12 @@ export function useDesktopIntegrations({
   // OS-standard window close, esp. secondary windows). The Win/Linux keyboard
   // path is the `view.closeTab` keybind (use-keybinds), sharing closeActiveTab.
   useEffect(() => {
-    const unsubscribe = window.hermesDesktop?.onClosePreviewRequested?.(() => void closeActiveTab())
+    const unsubscribe = window.hermesDesktop?.onClosePreviewRequested?.(
+      () => void closeActiveTab(id => navigate(sessionRoute(id)))
+    )
 
     return () => unsubscribe?.()
-  }, [])
+  }, [navigate])
 
   // Another window mutated the shared session list -> re-pull the sidebar.
   useEffect(() => {

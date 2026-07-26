@@ -1,8 +1,8 @@
 ---
 name: openclaw-migration
-description: Migrate a user's OpenClaw customization footprint into Marvi Agent. Imports Marvi-compatible memories, SOUL.md, command allowlists, user skills, and selected workspace assets from ~/.openclaw, then reports exactly what could not be migrated and why.
+description: Import an OpenClaw setup (memories, skills) into Hermes.
 version: 1.0.0
-author: Marvi Agent (NeuRetro Labs Research)
+author: Hermes Agent (Nous Research)
 license: MIT
 platforms: [linux, macos, windows]
 metadata:
@@ -11,7 +11,7 @@ metadata:
     related_skills: [hermes-agent]
 ---
 
-# OpenClaw -> Marvi Migration
+# OpenClaw -> Hermes Migration
 
 Use this skill when a user wants to move their OpenClaw setup into Hermes Agent with minimal manual cleanup.
 

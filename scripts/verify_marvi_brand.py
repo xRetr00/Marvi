@@ -129,6 +129,9 @@ ALLOWED_SNIPPETS = [
     "hermes update",
     "hermes desktop",
     "git remote add hermes-upstream https://github.com/NousResearch/hermes-agent.git",
+    "OFFICIAL_REPO_URL",
+    "Added upstream: https://github.com/NousResearch/hermes-agent.git",
+    "Skipped. Run 'git remote add upstream https://github.com/NousResearch/hermes-agent.git'",
     "Automated upstream sync from NousResearch/hermes-agent.",
     ".hermes-bootstrap-complete",
     # Nous Portal (portal.nousresearch.com) is Nous-operated infrastructure

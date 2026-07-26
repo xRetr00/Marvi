@@ -1,8 +1,8 @@
 ---
 name: claude-code
 description: "Delegate coding to Claude Code CLI (features, PRs)."
-version: 2.2.0
-author: Marvi Agent + Teknium
+version: 2.2.1
+author: Hermes Agent + Teknium
 license: MIT
 platforms: [linux, macos, windows]
 metadata:
@@ -11,7 +11,7 @@ metadata:
     related_skills: [codex, hermes-agent, opencode]
 ---
 
-# Claude Code — Marvi Orchestration Guide
+# Claude Code — Hermes Orchestration Guide
 
 Delegate coding tasks to [Claude Code](https://code.claude.com/docs/en/cli-reference) (Anthropic's autonomous coding agent CLI) via the Hermes terminal. Claude Code v2.x can read files, write code, run shell commands, spawn subagents, and manage git workflows autonomously.
 
@@ -265,7 +265,7 @@ Automatically falls back to the specified model when the default is overloaded (
 | Flag | Effect |
 |------|--------|
 | `--model <alias>` | Model selection: `sonnet`, `opus`, `haiku`, or full name like `claude-sonnet-4-6` |
-| `--effort <level>` | Reasoning depth: `low`, `medium`, `high`, `max`, `auto` | Both |
+| `--effort <level>` | Reasoning depth: `low`, `medium`, `high`, `xhigh`, `max` |
 | `--max-turns <n>` | Limit agentic loops (print mode only; prevents runaway) |
 | `--max-budget-usd <n>` | Cap API spend in dollars (print mode only) |
 | `--fallback-model <model>` | Auto-fallback when default model is overloaded (print mode only) |
@@ -389,7 +389,7 @@ Use the `#` prefix in interactive mode to quickly add to memory: `# Always use 2
 | Command | Purpose |
 |---------|---------|
 | `/model [model]` | Switch models mid-session (use arrow keys to adjust effort) |
-| `/effort [level]` | Set reasoning effort: `low`, `medium`, `high`, `max`, or `auto` |
+| `/effort [level]` | Set reasoning effort: `low`, `medium`, `high`, `xhigh`, or `max` |
 | `/init` | Create a CLAUDE.md file for project memory |
 | `/memory` | Open CLAUDE.md for editing |
 | `/config` | Open interactive settings configuration |
@@ -731,7 +731,7 @@ Use `/context` in interactive mode to see a colored grid of context usage. Key t
 11. **`--bare` skips OAuth** — requires `ANTHROPIC_API_KEY` env var or an `apiKeyHelper` in settings.
 12. **Context degradation is real** — AI output quality measurably degrades above 70% context window usage. Monitor with `/context` and proactively `/compact`.
 
-## Rules for Marvi Agents
+## Rules for Hermes Agents
 
 1. **Prefer print mode (`-p`) for single tasks** — cleaner, no dialog handling, structured output
 2. **Use tmux for multi-turn interactive work** — the only reliable way to orchestrate the TUI

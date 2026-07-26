@@ -1,4 +1,4 @@
-"""Shared constants for Hermes Agent.
+"""Shared constants for Marvi Agent.
 
 Import-safe module with no dependencies — can be imported from anywhere
 without risk of circular imports.
@@ -8,7 +8,6 @@ import os
 import shutil
 import stat
 import sys
-import sysconfig
 from contextvars import ContextVar, Token
 from pathlib import Path
 
@@ -18,6 +17,10 @@ from pathlib import Path
 # these but a later cleanup dropped them, breaking every module downstream.)
 PRODUCT_NAME = "Marvi Agent"
 PRODUCT_SHORT_NAME = "Marvi"
+LEGACY_PRODUCT_NAME = "Hermes Agent"
+LEGACY_PRODUCT_SHORT_NAME = "Hermes"
+MARVI_HOME_ENV = "MARVI_HOME"
+LEGACY_HERMES_HOME_ENV = "HERMES_HOME"
 
 _profile_fallback_warned: bool = False
 _UNSET = object()
@@ -49,8 +52,17 @@ def get_hermes_home_override() -> str | None:
     return str(override)
 
 
-def _get_platform_default_hermes_home() -> Path:
-    """Return the platform-native default Hermes home path."""
+def _get_platform_default_marvi_home() -> Path:
+    """Return the platform-native default Marvi home path for new installs."""
+    if sys.platform == "win32":
+        local_appdata = os.environ.get("LOCALAPPDATA", "").strip()
+        base = Path(local_appdata) if local_appdata else Path.home() / "AppData" / "Local"
+        return base / "marvi"
+    return Path.home() / ".marvi"
+
+
+def _get_platform_legacy_hermes_home() -> Path:
+    """Return the platform-native legacy Hermes home path."""
     if sys.platform == "win32":
         local_appdata = os.environ.get("LOCALAPPDATA", "").strip()
         base = Path(local_appdata) if local_appdata else Path.home() / "AppData" / "Local"
@@ -58,8 +70,23 @@ def _get_platform_default_hermes_home() -> Path:
     return Path.home() / ".hermes"
 
 
+def _get_platform_default_hermes_home() -> Path:
+    """Prefer Marvi's home while reusing an existing legacy install."""
+    marvi_home = _get_platform_default_marvi_home()
+    legacy_home = _get_platform_legacy_hermes_home()
+    try:
+        legacy_exists = legacy_home.exists()
+    except OSError:
+        legacy_exists = False
+    try:
+        marvi_exists = marvi_home.exists()
+    except OSError:
+        marvi_exists = False
+    return legacy_home if legacy_exists and not marvi_exists else marvi_home
+
+
 def _hermes_home_from_env() -> Path:
-    """Resolve HERMES_HOME from the process environment only.
+    """Resolve Marvi's home from the process environment only.
 
     Reads the ``HERMES_HOME`` env var, falling back to the platform-native
     default.  Deliberately ignores the context-local override installed by
@@ -67,7 +94,10 @@ def _hermes_home_from_env() -> Path:
     scope rather than a per-task profile.  Shared by :func:`get_hermes_home`
     and :func:`get_process_hermes_home` so the two never drift.
     """
-    val = os.environ.get("HERMES_HOME", "").strip()
+    val = os.environ.get(MARVI_HOME_ENV, "").strip()
+    if val:
+        return Path(val)
+    val = os.environ.get(LEGACY_HERMES_HOME_ENV, "").strip()
     if val:
         return Path(val)
     return _get_platform_default_hermes_home()
@@ -85,7 +115,7 @@ def _warn_profile_fallback_once() -> None:
     try:
         fallback_home = _get_platform_default_hermes_home()
         active_path = fallback_home / "active_profile"
-        active = active_path.read_text().strip() if active_path.exists() else ""
+        active = active_path.read_text(encoding="utf-8").strip() if active_path.exists() else ""
     except (UnicodeDecodeError, OSError):
         active = ""
     if active and active != "default":
@@ -96,11 +126,11 @@ def _warn_profile_fallback_once() -> None:
         # configured, and (b) root-logger propagation would double-emit
         # on consoles where a StreamHandler is already attached.
         msg = (
-            f"[HERMES_HOME fallback] HERMES_HOME is unset but active "
+            f"[MARVI_HOME fallback] MARVI_HOME/HERMES_HOME are unset but active "
             f"profile is {active!r}. Falling back to {fallback_home}, which "
             f"is the DEFAULT profile — not {active!r}. Any data this "
             f"process writes will land in the wrong profile. The "
-            f"subprocess spawner should pass HERMES_HOME explicitly "
+            f"subprocess spawner should pass MARVI_HOME explicitly "
             f"(see issue #18594)."
         )
         try:
@@ -132,7 +162,10 @@ def get_hermes_home() -> Path:
     if override:
         return Path(override)
 
-    if not os.environ.get("HERMES_HOME", "").strip():
+    if not (
+        os.environ.get(MARVI_HOME_ENV, "").strip()
+        or os.environ.get(LEGACY_HERMES_HOME_ENV, "").strip()
+    ):
         _warn_profile_fallback_once()
 
     return _hermes_home_from_env()
@@ -175,7 +208,10 @@ def get_default_hermes_root() -> Path:
     Import-safe — no dependencies beyond stdlib.
     """
     native_home = _get_platform_default_hermes_home()
-    env_home = os.environ.get("HERMES_HOME", "")
+    env_home = (
+        os.environ.get(MARVI_HOME_ENV, "").strip()
+        or os.environ.get(LEGACY_HERMES_HOME_ENV, "").strip()
+    )
     if not env_home:
         return native_home
     env_path = Path(env_home)
@@ -197,23 +233,6 @@ def get_default_hermes_root() -> Path:
     return env_path
 
 
-def _get_packaged_data_dir(name: str) -> Path | None:
-    """Return an installed data-files directory if one exists.
-
-    Used to discover bundled skills/optional-skills when Hermes is installed
-    from a wheel that emitted them via setuptools data_files.
-    """
-    candidates = []
-    for scheme in ("data", "purelib", "platlib"):
-        raw = sysconfig.get_path(scheme)
-        if raw:
-            candidates.append(Path(raw) / name)
-    for candidate in candidates:
-        if candidate.exists():
-            return candidate
-    return None
-
-
 def get_optional_skills_dir(default: Path | None = None) -> Path:
     """Return the optional-skills directory, honoring package-manager wrappers.
 
@@ -223,9 +242,6 @@ def get_optional_skills_dir(default: Path | None = None) -> Path:
     override = os.getenv("HERMES_OPTIONAL_SKILLS", "").strip()
     if override:
         return Path(override)
-    packaged = _get_packaged_data_dir("optional-skills")
-    if packaged is not None:
-        return packaged
     if default is not None:
         return default
     return get_hermes_home() / "optional-skills"
@@ -242,9 +258,6 @@ def get_optional_mcps_dir(default: Path | None = None) -> Path:
     override = os.getenv("HERMES_OPTIONAL_MCPS", "").strip()
     if override:
         return Path(override)
-    packaged = _get_packaged_data_dir("optional-mcps")
-    if packaged is not None:
-        return packaged
     if default is not None:
         return default
     return get_hermes_home() / "optional-mcps"
@@ -255,16 +268,12 @@ def get_bundled_skills_dir(default: Path | None = None) -> Path:
 
     Resolution order:
         1. ``HERMES_BUNDLED_SKILLS`` env var (Nix wrapper / explicit override)
-        2. Wheel-installed ``<sysconfig data>/skills`` (pip install path)
-        3. Caller-supplied ``default`` (typically the source-checkout path)
-        4. ``<HERMES_HOME>/skills`` last-resort
+        2. Caller-supplied ``default`` (typically the source-checkout path)
+        3. ``<HERMES_HOME>/skills`` last-resort
     """
     override = os.getenv("HERMES_BUNDLED_SKILLS", "").strip()
     if override:
         return Path(override)
-    packaged = _get_packaged_data_dir("skills")
-    if packaged is not None:
-        return packaged
     if default is not None:
         return default
     return get_hermes_home() / "skills"

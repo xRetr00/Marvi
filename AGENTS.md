@@ -509,6 +509,8 @@ Preserve the smart-room plugin and world/proactive integration: its plugin manif
 
 Also preserve the latest voice and room behavior: wake-word configuration routed through the contribution shell, Parakeet EOU validation, first-word TTS startup, delayed `speaker_update` attribution by utterance ID, instant-lane local time injection, and retained OwnTracks location history exposed through runtime state, tools, world context, and Desktop Settings. Smart Room entry tracking must retain BLE-confirmed owner classification, guest/unknown visitor classification, bounded persisted unreported-entry history, world-context exposure, and the owner-return voice notice/clear flow even when the normal welcome threshold suppresses a greeting. Keep the OpenCode Go DeepSeek V4 explicit thinking-disable passthrough in `agent/transports/chat_completions.py`.
 
+Protect the newest downstream surfaces too: Graph Mind, autonomy, and Composio APIs/UI; budgeted self-research, ask-user delivery, and the opt-in university portal; discovered cron chat/topic targets and gated agent messaging; proactive `defer`/`quiet`/`speak`/`telegram` modes with TTS language limits; overlay-persistent voice mode; Dynamic Island weather/time cards; and Smart Room mmWave debounce, sleeping-phone sticky identity, and false-alert suppression. Keep their implementation, config, navigation, API/IPC contracts, and tests together.
+
 **Slash commands in the desktop app are curated client-side, then dispatched to the backend.** The pipeline:
 
 - **Backend already provides everything.** `tui_gateway/server.py` `commands.catalog` (empty-query list) and `complete.slash` (typed-query completions) both include built-in commands, user `quick_commands`, AND skill-derived commands (`scan_skill_commands()` / `get_skill_commands()`). The desktop app does not need a new RPC to see skills.
@@ -1014,7 +1016,8 @@ Two shapes:
 Roles:
 
 - `role="leaf"` (default) — focused worker. Cannot call `delegate_task`,
-  `clarify`, `memory`, `send_message`, `execute_code`.
+  `clarify`, `memory`, `send_message`, `cronjob`. Retains `execute_code`
+  (programmatic tool calling).
 - `role="orchestrator"` — retains `delegate_task` so it can spawn its
   own workers. Gated by `delegation.orchestrator_enabled` (default true)
   and bounded by `delegation.max_spawn_depth` (default 2).

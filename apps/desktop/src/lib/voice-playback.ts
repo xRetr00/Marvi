@@ -589,3 +589,17 @@ export async function playSpeechText(text: string, options: VoicePlaybackOptions
 export function isVoicePlaybackActive(): boolean {
   return $voicePlayback.get().status !== 'idle'
 }
+
+const INTERRUPT_TTL_MS = 120_000
+let interruptedAt: null | number = null
+
+export function markVoicePlaybackInterrupted() {
+  interruptedAt = Date.now()
+}
+
+export function takeVoicePlaybackInterrupted(): boolean {
+  const at = interruptedAt
+  interruptedAt = null
+
+  return at !== null && Date.now() - at < INTERRUPT_TTL_MS
+}

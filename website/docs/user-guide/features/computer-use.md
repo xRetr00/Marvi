@@ -130,7 +130,7 @@ halo).
 
 ## Going deeper — the cua-driver skill pack
 
-Hermes intentionally keeps its skill (`skills/computer-use/SKILL.md`)
+Hermes intentionally keeps its skill (`skills/autonomous-ai-agents/computer-use/SKILL.md`)
 focused on the Hermes-side `computer_use` action vocabulary — the
 single source of truth the agent loads. For the deeper material —
 platform-specific deep dives, recording semantics, browser page
@@ -449,14 +449,14 @@ autostart pattern — see
 
 ## See also
 
-- **Marvi-side skill** — `skills/computer-use/SKILL.md` — teaches the
-  Marvi `computer_use` action vocabulary; this is what the agent loads.
+- **Hermes-side skill** — `skills/autonomous-ai-agents/computer-use/SKILL.md` — teaches the
+  Hermes `computer_use` action vocabulary; this is what the agent loads.
 - **cua-driver skill pack** — for platform-specific deep dives
   (macOS no-foreground contract, Windows UIA + Session 0, Linux AT-SPI
   + X11/Wayland, recording, browser pages), run
   `cua-driver skills install` and read `MACOS.md` / `WINDOWS.md` /
   `LINUX.md` / `RECORDING.md` / `WEB_APPS.md`. Once `cua-driver skills
-  install` autodetects Marvi (planned follow-up), this happens
+  install` autodetects Hermes (planned follow-up), this happens
   automatically on install.
 - **cua.ai/docs** — the cua-driver project's documentation:
   - [What is computer use?](https://cua.ai/docs/explanation/what-is-computer-use) — concept intro
@@ -465,6 +465,6 @@ autostart pattern — see
   - [Personalize the agent cursor](https://cua.ai/docs/how-to-guides/driver/personalize-cursor) — built-in shapes, custom assets, runtime overrides
   - [Drive Windows over SSH](https://cua.ai/docs/how-to-guides/driver/windows-ssh) — the Session 0 → Session 1+ autostart pattern
   - [Keep cua-driver running](https://cua.ai/docs/how-to-guides/driver/keep-running) — autostart / daemon lifecycle
-  - [Connect your agent](https://cua.ai/docs/how-to-guides/driver/connect-your-agent) — register cua-driver with various harnesses (Marvi among them)
+  - [Connect your agent](https://cua.ai/docs/how-to-guides/driver/connect-your-agent) — register cua-driver with various harnesses (Hermes among them)
 - [cua-driver source (trycua/cua)](https://github.com/trycua/cua)
 - [Browser automation](./browser.md) for cross-platform web tasks where you don't need to drive native apps.

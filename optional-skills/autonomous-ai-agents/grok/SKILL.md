@@ -1,8 +1,8 @@
 ---
 name: grok
 description: "Delegate coding to xAI Grok Build CLI (features, PRs)."
-version: 0.1.0
-author: Matt Maximo (MattMaximo), Marvi Agent
+version: 0.1.1
+author: Matt Maximo (MattMaximo), Hermes Agent
 license: MIT
 platforms: [linux, macos, windows]
 metadata:
@@ -11,7 +11,7 @@ metadata:
     related_skills: [codex, claude-code, hermes-agent]
 ---
 
-# Grok Build CLI — Marvi Orchestration Guide
+# Grok Build CLI — Hermes Orchestration Guide
 
 Delegate coding tasks to [Grok Build](https://docs.x.ai/build/overview) (xAI's
 autonomous coding agent CLI, the `grok` command) via the Hermes terminal. Grok
@@ -108,14 +108,16 @@ For pure automation, headless `-p` is still cleaner than the TUI.
 |------|--------|
 | `-p, --single <PROMPT>` | Send one prompt, run headless, exit |
 | `-m, --model <MODEL>` | Choose a model |
-| `-s, --session-id <ID>` | Create or resume a named headless session |
-| `-r, --resume <ID>` | Resume an existing session |
+| `-s, --session-id <UUID>` | Assign a **NEW** valid UUID to a fresh conversation (must not already exist). Does **not** resume — use `--resume`/`--continue` for that. Only valid with `--resume`/`--continue` when paired with `--fork-session` |
+| `-r, --resume [<UUID>]` | Resume an existing session by its UUID (or the most recent if omitted) |
 | `-c, --continue` | Continue the most recent session in the current directory |
+| `--fork-session` | When resuming, create a new session ID instead of reusing the original |
+| `--max-turns <N>` | Cap the maximum number of agent turns |
 | `--cwd <PATH>` | Set the working directory |
 | `--output-format <FMT>` | `plain` (default), `json`, or `streaming-json` |
 | `--always-approve` | Auto-approve all tool executions (the `--full-auto` / `--yolo` equivalent) |
 | `--no-alt-screen` | Run inline, no fullscreen TUI takeover |
-| `--no-auto-update` | Skip background update checks (use in all automation) |
+| `--no-auto-update` | Skip background update checks (use in all automation; hidden from `--help` but still works) |
 
 ### Output Formats
 
@@ -151,14 +153,19 @@ with `tmux capture-pane`, exactly like the `claude-code` / `codex` skills.
 
 ### Session Continuation
 
+Sessions are keyed by **UUID**, not by name. `--session-id` assigns a *new* UUID
+to a fresh run (it does **not** resume); `--resume` takes an existing session's
+UUID (or omit the value to resume the most recent).
+
 ```
-# Start a named session
-terminal(command="grok --no-auto-update -s refactor-db -p 'Start refactoring the database layer' --always-approve", workdir="/project", timeout=240)
+# Start a session with a self-assigned UUID (must be a valid, unused UUID)
+SID=$(uuidgen)
+terminal(command="grok --no-auto-update -s $SID -p 'Start refactoring the database layer' --always-approve", workdir="/project", timeout=240)
 
-# Resume it later
-terminal(command="grok --no-auto-update -r refactor-db -p 'Now add connection pooling' --always-approve", workdir="/project", timeout=180)
+# Resume that exact session later by its UUID
+terminal(command="grok --no-auto-update -r $SID -p 'Now add connection pooling' --always-approve", workdir="/project", timeout=180)
 
-# Or continue the most recent session in this directory
+# Or just continue the most recent session in this directory (no UUID needed)
 terminal(command="grok --no-auto-update -c -p 'What did you change last time?'", workdir="/project", timeout=60)
 ```
 
@@ -283,7 +290,7 @@ Put global preferences in `~/.grok/config.toml` (not project-scoped
    `mktemp -d && git init` for scratch commit tasks.
 9. **Clean up tmux sessions** with `tmux kill-session -t <name>` when done.
 
-## Rules for Marvi Agents
+## Rules for Hermes Agents
 
 1. **Prefer headless `-p`** for single tasks — cleanest integration, structured
    output via `--output-format json`.

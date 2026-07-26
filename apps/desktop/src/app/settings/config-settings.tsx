@@ -20,6 +20,7 @@ import {
 import { useI18n } from '@/i18n'
 import { $keepAwake, setKeepAwake } from '@/store/keep-awake'
 import { notify, notifyError } from '@/store/notifications'
+import { repoDiscoveryPolicyFromConfig, repoDiscoveryPolicySignature, scanAndRecordRepos } from '@/store/projects'
 import type { ConfigFieldSchema, HermesConfigRecord } from '@/types/hermes'
 
 import { setHermesConfigCache, useHermesConfigRecord } from '../hooks/use-config-record'
@@ -31,7 +32,7 @@ import { enumOptionsFor, getNested, isExternalMemoryProvider, sectionFieldEntrie
 import { MemoryConnect } from './memory/connect'
 import { ProviderConfigPanel } from './memory/provider-config-panel'
 import { ModelSettings, ModelSettingsSkeleton } from './model-settings'
-import { EmptyState, LoadingState, SettingsContent, ToggleRow } from './primitives'
+import { EmptyState, SettingsContent, SettingsSkeleton, ToggleRow } from './primitives'
 
 const STREAMING_PROVIDER_FIELDS: Record<string, Set<string>> = {
   moonshine: new Set([
@@ -107,15 +108,18 @@ export function ConfigSettings({
   const [elevenLabsVoiceOptions, setElevenLabsVoiceOptions] = useState<string[] | null>(null)
   const [elevenLabsVoiceLabels, setElevenLabsVoiceLabels] = useState<Record<string, string>>({})
   const saveVersionRef = useRef(0)
+  const savedDiscoverySignatureRef = useRef<string | undefined>(undefined)
   const [saveVersion, setSaveVersion] = useState(0)
 
   // Seed the local draft once, the first time the shared record lands.
   // Background refetches thereafter must not clobber in-progress edits.
   const configSeeded = useRef(false)
 
+  // eslint-disable-next-line no-restricted-syntax -- legitimate non-atom ref write (see eslint rule comment)
   useEffect(() => {
     if (loadedConfig && !configSeeded.current) {
       configSeeded.current = true
+      savedDiscoverySignatureRef.current = repoDiscoveryPolicySignature(repoDiscoveryPolicyFromConfig(loadedConfig))
       setConfig(loadedConfig)
     }
   }, [loadedConfig])
@@ -126,6 +130,7 @@ export function ConfigSettings({
   // the pending debounced autosave is cancelled by its effect cleanup.
   useOnProfileSwitch(() => {
     configSeeded.current = false
+    savedDiscoverySignatureRef.current = undefined
     setConfig(null)
     saveVersionRef.current = 0
     setSaveVersion(0)
@@ -153,6 +158,7 @@ export function ConfigSettings({
     return () => void (cancelled = true)
   }, [])
 
+  // eslint-disable-next-line no-restricted-syntax -- autosave bookkeeping refs, not an atom mirror
   useEffect(() => {
     if (!config || saveVersion === 0) {
       return
@@ -163,12 +169,24 @@ export function ConfigSettings({
     const t = window.setTimeout(() => {
       void (async () => {
         try {
-          await saveHermesConfig(config)
+          const result = await saveHermesConfig(config)
+
+          if (!result.ok) {
+            throw new Error(c.autosaveFailed)
+          }
+
           // Mirror the saved record into the shared cache so MCP/model surfaces
           // reflect the edit without their own refetch.
           setHermesConfigCache(config)
 
           if (saveVersionRef.current === v) {
+            const discoverySignature = repoDiscoveryPolicySignature(repoDiscoveryPolicyFromConfig(config))
+
+            if (savedDiscoverySignatureRef.current !== discoverySignature) {
+              savedDiscoverySignatureRef.current = discoverySignature
+              await scanAndRecordRepos(true)
+            }
+
             onConfigSaved?.()
             void warmTextToSpeech().catch(() => undefined)
           }
@@ -280,8 +298,8 @@ export function ConfigSettings({
       )
     }
 
-    // Model keeps its shape via a skeleton (its catalog fetch is the slow part);
-    // other sections are quick config/schema reads, so a light loader is fine.
+    // Every section keeps its shape via a skeleton; model gets its bespoke one
+    // (its catalog fetch is the slow part), the rest the shared field rhythm.
     if (activeSectionId === 'model') {
       return (
         <SettingsContent>
@@ -292,7 +310,7 @@ export function ConfigSettings({
       )
     }
 
-    return <LoadingState label={c.loading} />
+    return <SettingsSkeleton sections={[{ rows: 6 }]} />
   }
 
   const visibleFields = activeSectionId === 'voice' ? fields.filter(([key]) => voiceFieldVisible(key, config)) : fields

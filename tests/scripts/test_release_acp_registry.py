@@ -131,6 +131,33 @@ def test_update_version_files_bumps_manifest_alongside_pyproject(
         '__version__ = "0.13.0"\n__release_date__ = "2026-05-14"\n',
         encoding="utf-8",
     )
+    (tmp_path / "package.json").write_text(
+        json.dumps({"name": "marvi-agent", "version": "0.13.0"}) + "\n",
+        encoding="utf-8",
+    )
+    desktop_dir = tmp_path / "apps" / "desktop"
+    desktop_dir.mkdir(parents=True)
+    (desktop_dir / "package.json").write_text(
+        json.dumps({"name": "marvi-desktop", "version": "0.13.0"}) + "\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "package-lock.json").write_text(
+        json.dumps(
+            {
+                "name": "marvi-agent",
+                "version": "0.13.0",
+                "packages": {
+                    "": {"name": "marvi-agent", "version": "0.13.0"},
+                    "apps/desktop": {
+                        "name": "marvi-desktop",
+                        "version": "0.13.0",
+                    },
+                },
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
 
     module = _load_release_module(monkeypatch, tmp_path)
     monkeypatch.setattr(module, "VERSION_FILE", version_dir / "__init__.py")
@@ -146,3 +173,12 @@ def test_update_version_files_bumps_manifest_alongside_pyproject(
     )
     assert manifest["version"] == "0.14.0"
     assert manifest["distribution"]["uvx"]["package"] == "marvi-agent[acp]==0.14.0"
+
+    assert json.loads((tmp_path / "package.json").read_text())["version"] == "0.14.0"
+    assert (
+        json.loads((desktop_dir / "package.json").read_text())["version"] == "0.14.0"
+    )
+    lock = json.loads((tmp_path / "package-lock.json").read_text())
+    assert lock["version"] == "0.14.0"
+    assert lock["packages"][""]["version"] == "0.14.0"
+    assert lock["packages"]["apps/desktop"]["version"] == "0.14.0"

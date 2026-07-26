@@ -9,14 +9,20 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 REQUIRED_TEXT = {
-    "AGENTS.md": ["**Upstream sync rule:**", "NeuTTS and KittenTTS are intentionally blocked"],
+    "AGENTS.md": [
+        "**Upstream sync rule:**",
+        "NeuTTS and KittenTTS are intentionally blocked",
+        "Graph Mind, autonomy, and Composio",
+    ],
     "skills/autonomous-ai-agents/hermes-agent/SKILL.md": [
         "streaming STT",
         "NeuTTS and KittenTTS are intentionally blocked",
+        "Graph Mind, autonomy, and Composio",
     ],
     "website/docs/developer-guide/contributing.md": [
         "instant voice lane",
         "NeuTTS and KittenTTS are deliberately blocked",
+        "Graph Mind, autonomy, and Composio",
     ],
     "hermes_cli/web_server.py": [
         '@app.get("/api/mind")',
@@ -29,6 +35,10 @@ REQUIRED_TEXT = {
         '@app.get("/api/memory/episodes")',
         '@app.get("/api/memory/archived")',
         '@app.post("/api/memory/restore/{entry_id}")',
+        '@app.get("/api/memory/graph")',
+        '@app.get("/api/autonomy/status")',
+        '@app.get("/api/composio/status")',
+        '@app.get("/api/cron/delivery-targets")',
         '@app.get("/api/voice/instant/status")',
         '@app.post("/api/audio/transcribe")',
         '@app.websocket("/api/audio/transcribe/stream")',
@@ -41,7 +51,13 @@ REQUIRED_TEXT = {
         'provider == "parakeet"',
     ],
     "hermes_cli/config.py": ["live voice defaults to no thinking"],
+    "hermes_constants.py": [
+        'PRODUCT_NAME = "Marvi Agent"',
+        'MARVI_HOME_ENV = "MARVI_HOME"',
+        "def _get_platform_default_marvi_home",
+    ],
     "apps/desktop/src/app/routes.ts": ["MIND_ROUTE = '/mind'"],
+    "apps/desktop/src/app/chat/voice-mode-stage.tsx": ["export function VoiceModeViewport"],
     "apps/desktop/src/app/chat/sidebar/index.tsx": ["MIND_ROUTE", "id: 'mind'"],
     "apps/desktop/src/app/contrib/surfaces.tsx": [
         "MindView",
@@ -54,6 +70,14 @@ REQUIRED_TEXT = {
     "apps/desktop/electron/main.ts": ["hermes:island:work", "closeIslandWindow()"],
     "apps/desktop/electron/preload.ts": ["pushWork:", "hermes:island:work"],
     "apps/desktop/src/store/voice-island.ts": ["currentIslandWork", "pushWork(currentIslandWork())"],
+    "apps/desktop/src/store/proactive-delivery.ts": [
+        "DEFERRED_RUNS_KEY",
+        "proactiveDeliveryAction",
+        "isEnglishTtsText",
+    ],
+    "apps/desktop/src/app/mind/graph-tab.tsx": ["export function GraphTab", "/api/memory/graph"],
+    "apps/desktop/src/app/mind/autonomy-panel.tsx": ["export function AutonomyPanel", "/api/autonomy/"],
+    "apps/desktop/src/app/mind/composio-tab.tsx": ["export function ComposioTab", "/api/composio/"],
     "apps/desktop/src/app/voice-island/duplex-protocol.ts": ["DuplexSpeakerUpdateEvent", "utterance_id"],
     "apps/desktop/src/app/voice-island/duplex-session.ts": ["case 'speaker_update'", "utteranceId"],
     "agent/transports/chat_completions.py": ["deepseek-v4-flash", 'extra_body["thinking"]'],
@@ -75,7 +99,9 @@ REQUIRED_TEXT = {
         "append_location_report",
         '"room_entry"',
         "unreported_visitor_entries",
+        "_mmwave_occupied_since",
     ],
+    "plugins/smart_room/runtime/presence_fusion.py": ["identity_sticky", "ble_sticky_mmwave"],
     "plugins/smart_room/runtime/models.py": ["unreported_visitor_entries"],
     "plugins/smart_room/bridge.py": ["unreported_visitor_entries"],
     "plugins/smart_room/runtime/command_router.py": ["location_history", "location_limit"],
@@ -85,6 +111,11 @@ REQUIRED_TEXT = {
     "agent/memory/episodic.py": ["def record_episode", "def episodic_config"],
     "agent/memory/decay.py": ["def relevance_score", "def _run_dedup_pass"],
     "agent/memory/retrieval.py": ["def rank_entries", "def capture_previous_batch_outcome"],
+    "agent/memory/graph.py": ["def upsert_node", "def neighbors", "CREATE TABLE IF NOT EXISTS edges"],
+    "agent/memory/graph_builder.py": ["def record_from_episode", "def record_from_memory_entry"],
+    "agent/autonomy/budget.py": ["def try_spend"],
+    "agent/autonomy/research.py": ["def run_research_question"],
+    "agent/autonomy/ask.py": ["def ask_user"],
     # Learning loops (outcomes ledger feeding trust/room/focus/voice/timing/config proposals).
     "agent/learning/outcomes.py": ["def record(loop: str"],
     "agent/learning/trust.py": ["def evaluate_trust"],
@@ -110,7 +141,13 @@ REQUIRED_TEXT = {
         "FETCHERS[_smart_room.APP] = _smart_room.fetch_delta",
         "BUILTIN_SURFACES[_smart_room.APP] = _smart_room_looks_active",
     ],
-    "cron/scheduler.py": ["_world_activity_is_meaningful", "_select_rotation_keep_lines"],
+    "cron/scheduler.py": [
+        "_world_activity_is_meaningful",
+        "_select_rotation_keep_lines",
+        "def cron_delivery_targets",
+        "from gateway.channel_directory import load_directory",
+        "def _is_channel_dm_topic",
+    ],
     # Composio subconscious fetchers.
     "cron/scripts/subconscious/gmail.py": ["_extract_new_message_ids"],
     "cron/scripts/subconscious/github.py": ["_extract_notifications"],
@@ -121,6 +158,9 @@ REQUIRED_TEXT = {
     "tools/goal_tools.py": ['origin="inferred"'],
     # Voice (three-zone speaker focus, instant lane curated defaults).
     "tools/voice_speaker_id.py": ["def focus_mode_setting", "three-zone identify"],
+    "tools/send_message_tool.py": ["def _agent_send_enabled", 'name="send_message"'],
+    "tools/show_card.py": ['"weather"', '"time"', 'name="show_card"'],
+    "plugins/uni_portal/plugin.yaml": ["uni_portal_check", "OS credential store"],
 }
 
 

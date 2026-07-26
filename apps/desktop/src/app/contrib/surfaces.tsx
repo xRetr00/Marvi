@@ -15,6 +15,7 @@ import { ContribBoundary } from '@/contrib/react/boundary'
 import { useContributions } from '@/contrib/react/use-contributions'
 import { cn } from '@/lib/utils'
 import type { WakeWordConfig } from '@/lib/wake-word'
+import { $activeGatewayProfile } from '@/store/profile'
 import { $freshDraftReady, $gatewayState } from '@/store/session'
 import { $voicePlayback } from '@/store/voice-playback'
 import { $wakeStatus } from '@/store/voice-presence'
@@ -31,6 +32,7 @@ import { ModelMenuPanel } from '../shell/model-menu-panel'
 import { StatusbarControls } from '../shell/statusbar-controls'
 import type { StatusbarItem } from '../shell/statusbar-controls'
 
+import { latestChatActions, latestSidebarActions } from './latest-actions'
 import { setStatusbarItemGroup, useStatusbarContributions } from './panes'
 import type { SidebarActions, WiringActions } from './types'
 
@@ -55,7 +57,9 @@ export const SidebarSurface = memo(function SidebarSurface({
   actions: SidebarActions
   currentView: ComponentProps<typeof ChatSidebar>['currentView']
 }) {
-  return <ChatSidebar currentView={currentView} {...actions} />
+  const latestActions = useMemo(() => latestSidebarActions(actions), [actions])
+
+  return <ChatSidebar currentView={currentView} {...latestActions} />
 })
 
 export const TerminalSurface = memo(function TerminalSurface() {
@@ -252,6 +256,7 @@ export const ChatRoutesSurface = memo(function ChatRoutesSurface({
   streamingSttEnabled: boolean
   wakeWordConfig: WakeWordConfig
 }) {
+  const activeGatewayProfile = useStore($activeGatewayProfile)
   const gatewayState = useStore($gatewayState)
   useContributions(ROUTES_AREA)
   const routeContributions = contributedRoutes()
@@ -271,11 +276,14 @@ export const ChatRoutesSurface = memo(function ChatRoutesSurface({
         <ModelMenuPanel
           gateway={gateway || undefined}
           onSelectModel={actions.selectModel}
+          profile={activeGatewayProfile}
           requestGateway={actions.requestGateway}
         />
       ) : null,
-    [actions, gateway, gatewayState]
+    [actions, activeGatewayProfile, gateway, gatewayState]
   )
+
+  const chatActions = useMemo(() => latestChatActions(actions), [actions])
 
   const chatView = (
     <ChatView
@@ -283,31 +291,10 @@ export const ChatRoutesSurface = memo(function ChatRoutesSurface({
       gateway={gateway}
       maxVoiceRecordingSeconds={maxVoiceRecordingSeconds}
       modelMenuContent={modelMenuContent}
-      onAddContextRef={actions.onAddContextRef}
-      onAddUrl={actions.onAddUrl}
-      onAttachDroppedItems={actions.onAttachDroppedItems}
-      onAttachImageBlob={actions.onAttachImageBlob}
-      onBranchInNewChat={actions.onBranchInNewChat}
-      onCancel={actions.onCancel}
-      onDeleteSelectedSession={actions.onDeleteSelectedSession}
-      onDismissError={actions.onDismissError}
-      onEdit={actions.onEdit}
-      onPasteClipboardImage={actions.onPasteClipboardImage}
-      onPickFiles={actions.onPickFiles}
-      onPickFolders={actions.onPickFolders}
-      onPickImages={actions.onPickImages}
-      onReload={actions.onReload}
-      onRemoveAttachment={actions.onRemoveAttachment}
-      onRestoreToMessage={actions.onRestoreToMessage}
-      onRetryResume={actions.onRetryResume}
-      onSteer={actions.onSteer}
-      onSubmit={actions.onSubmit}
-      onThreadMessagesChange={actions.onThreadMessagesChange}
-      onToggleSelectedPin={actions.onToggleSelectedPin}
-      onTranscribeAudio={actions.onTranscribeAudio}
       semanticTurnEnabled={semanticTurnEnabled}
       streamingSttEnabled={streamingSttEnabled}
       wakeWordConfig={wakeWordConfig}
+      {...chatActions}
     />
   )
 

@@ -628,6 +628,15 @@ owner-return voice notice/clear flow even when the welcome threshold suppresses
 a greeting. Also retain the OpenCode Go DeepSeek V4 explicit thinking-disable
 passthrough.
 
+Protect the newest downstream surfaces too: Graph Mind, autonomy, and Composio
+APIs/UI; budgeted self-research, ask-user delivery, and the opt-in university
+portal; discovered cron chat/topic targets and gated agent messaging; proactive
+`defer`/`quiet`/`speak`/`telegram` modes with TTS language limits;
+overlay-persistent voice mode; Dynamic Island weather/time cards; and Smart
+Room mmWave debounce, sleeping-phone sticky identity, and false-alert
+suppression. Keep their implementation, config, navigation, API/IPC contracts,
+and tests together.
+
 For every upstream sync, first run
 `python scripts/prepare_marvi_upstream_sync.py --review-only`. Resolve against
 its protected-overlap report, then require both

@@ -76,6 +76,38 @@ describe('buildToolView terminal exit-code status', () => {
       'error'
     )
   })
+
+  it('keeps the command and exit code for the terminal transcript', () => {
+    const view = buildToolView(
+      part({
+        args: { command: 'npm run check --workspace=apps/desktop' },
+        result: { exit_code: 0, output: 'done' },
+        toolName: 'terminal'
+      }),
+      ''
+    )
+
+    expect(view.terminalCommand).toBe('npm run check --workspace=apps/desktop')
+    expect(view.terminalExitCode).toBe(0)
+  })
+})
+
+describe('buildToolView web-search query', () => {
+  it('keeps the query separate from structured search results', () => {
+    const view = buildToolView(
+      part({
+        args: { query: 'Marvi Agent Desktop tool calls' },
+        result: { web: [{ snippet: 'Desktop docs', title: 'Marvi docs', url: 'https://example.com/docs' }] },
+        toolName: 'web_search'
+      }),
+      ''
+    )
+
+    expect(view.searchQuery).toBe('Marvi Agent Desktop tool calls')
+    expect(view.searchHits).toEqual([
+      { snippet: 'Desktop docs', title: 'Marvi docs', url: 'https://example.com/docs' }
+    ])
+  })
 })
 
 describe('buildToolView browser_navigate title', () => {
@@ -90,7 +122,7 @@ describe('buildToolView browser_navigate title', () => {
     )
 
     expect(view.status).toBe('error')
-    expect(view.title).toBe('Failed to open github.com/xRetr00/Marvi')
+    expect(view.title).toBe('Failed to open github.com/xRetr00/Marvi/docs')
   })
 
   it('shows opened title on success', () => {
@@ -104,7 +136,7 @@ describe('buildToolView browser_navigate title', () => {
     )
 
     expect(view.status).toBe('success')
-    expect(view.title).toBe('Opened github.com/xRetr00/Marvi')
+    expect(view.title).toBe('Opened github.com/xRetr00/Marvi/docs')
   })
 })
 

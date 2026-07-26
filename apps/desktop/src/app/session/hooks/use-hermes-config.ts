@@ -13,6 +13,7 @@ import {
   setCurrentPersonality,
   setCurrentReasoningEffort,
   setCurrentServiceTier,
+  setDefaultReasoningEffort,
   setIntroPersonality
 } from '@/store/session'
 import { applyAutoSpeakFromConfig } from '@/store/voice-prefs'
@@ -44,7 +45,7 @@ function normalizeConfigEffort(value: unknown): string {
 
 interface HermesConfigOptions {
   activeSessionIdRef: MutableRefObject<string | null>
-  refreshProjectBranch: (cwd: string) => Promise<void>
+  refreshProjectBranch?: (cwd: string) => Promise<void>
 }
 
 export function useHermesConfig({ activeSessionIdRef, refreshProjectBranch }: HermesConfigOptions) {
@@ -92,17 +93,24 @@ export function useHermesConfig({ activeSessionIdRef, refreshProjectBranch }: He
         ])
 
         const cwd = (config.terminal?.cwd ?? '').trim()
+        const selectedCwd = $currentCwd.get()
+        const branchCwd = selectedCwd || (cwd !== '.' ? cwd : '')
 
-        if (cwd && cwd !== '.') {
-          // Configured terminal.cwd beats a stale remembered workspace cwd
-          // (#38855) — but never yank the workspace out from under an active
-          // session; those keep their own cwd until the user detaches.
-          setCurrentCwd(prev => (activeSessionIdRef.current ? prev : cwd))
-          void refreshProjectBranch($currentCwd.get() || cwd)
+        if (branchCwd) {
+          if (!selectedCwd && !activeSessionIdRef.current) {
+            setCurrentCwd(branchCwd)
+          }
+          void refreshProjectBranch?.(branchCwd)
         }
 
         const reasoning = normalizeConfigEffort(config.agent?.reasoning_effort)
         const tier = (config.agent?.service_tier ?? '').trim()
+
+        // Publish the profile default regardless of whether the composer is
+        // reseeded below: picker rows and preset application resolve "the
+        // default" from here, so a manual model pick must not leave them
+        // rendering/applying Hermes' built-in medium over the user's config.
+        setDefaultReasoningEffort(reasoning)
 
         const shouldSeedComposer =
           !activeSessionIdRef.current &&

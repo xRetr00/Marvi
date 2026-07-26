@@ -33,10 +33,6 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 VERSION_FILE = REPO_ROOT / "hermes_cli" / "__init__.py"
 PYPROJECT_FILE = REPO_ROOT / "pyproject.toml"
-
-# ACP Registry manifest must stay version-locked with pyproject.toml.
-# tests/acp/test_registry_manifest.py enforces this lockstep so the release
-# bump touches both files atomically.
 ACP_REGISTRY_MANIFEST = REPO_ROOT / "acp_registry" / "agent.json"
 
 # ──────────────────────────────────────────────────────────────────────
@@ -49,6 +45,8 @@ ACP_REGISTRY_MANIFEST = REPO_ROOT / "acp_registry" / "agent.json"
 # This dict is kept only so existing history keeps resolving; the effective
 # AUTHOR_MAP below merges it with the directory (directory wins).
 LEGACY_AUTHOR_MAP = {
+    "declanbatesmith@outlook.com": "cat-thats-fat",  # PR #60489 (desktop: first-run remote connection option)
+    "drbs2004@me.com": "cat-thats-fat",  # PR #60489 (desktop: first-run remote connection option; historical merge email)
     "122438640+ragingbulld@users.noreply.github.com": "ragingbulld",  # PR #65606 salvage (non-finite API wait deadlines; #65746)
     "zzpigpinggai@users.noreply.github.com": "zzpigpinggai",  # PR #66017 salvage of #63617 (OpenRouter explicit-provider picker visibility)
     "stellarisw@users.noreply.github.com": "StellarisW",  # PR #66222 salvage (Discord WebSocket liveness + systemd watchdog; #26656 follow-up)
@@ -86,6 +84,7 @@ LEGACY_AUTHOR_MAP = {
     "marceloparra.hm@gmail.com": "marcelohildebrand",  # PR #42346 salvage (lmstudio: JIT load mode)
     "qlskssk@gmail.com": "Soju06",  # agent turn-latency perf PRs
     "m.guttmann@journaway.com": "mguttmann",  # PR #63738 salvage (Anthropic setup-token pool auth normalization)
+    "wangzhe00zju@gmail.com": "flyingdoubleG",  # PR #18166 salvage (memory-provider tools honor disabled_toolsets in initial and MCP-refresh injection)
     "VrtxOmega@pm.me": "VrtxOmega",  # PR #43809 salvage (desktop: WSL folder-picker path bridge)
     "gn00742754@gmail.com": "SemonCat",  # PR #56786 salvage (Slack Agent View manifests and Assistant APIs)
     "KCAYAAI@users.noreply.github.com": "KCAYAAI",  # PR #62248 partial salvage (resume typing after clarify reply)
@@ -924,6 +923,7 @@ LEGACY_AUTHOR_MAP = {
     "thomasjhon6666@gmail.com": "ThomassJonax",
     "focusflow.app.help@gmail.com": "yes999zc",
     "rob@atlas.lan": "rmoen",
+    "huajiang@tubi.tv": "thirstycrow",  # PR #23630 salvage (config-aware memory status labels)
     # Slack ephemeral slash-ack salvage (May 2026)
     "probepark@users.noreply.github.com": "probepark",
     # Slack batch salvage (May 2026)
@@ -993,6 +993,7 @@ LEGACY_AUTHOR_MAP = {
     "massivemassimo@users.noreply.github.com": "MassiveMassimo",
     "82637225+kshitijk4poor@users.noreply.github.com": "kshitijk4poor",
     "keifergu@tencent.com": "keifergu",
+    "kshitij@kshitij.dev": "kshitijk4poor",
     "kshitijk4poor@users.noreply.github.com": "kshitijk4poor",
     "SHL0MS@users.noreply.github.com": "SHL0MS",
     "abner.the.foreman@agentmail.to": "Abnertheforeman",
@@ -1177,6 +1178,7 @@ LEGACY_AUTHOR_MAP = {
     "jan@mg5.org": "mijanx",
     "incharge.automation@gmail.com": "inchargeautomation-lab",
     "danielrpike9@gmail.com": "Bartok9",
+    "kuangmi@deeparchi.com": "kuangmi-bit",
     "96944678+ymylive@users.noreply.github.com": "sweetcornna",
     "laflamme@illinoisalumni.org": "briancl2",
     "skozyuk@cruxexperts.com": "CruxExperts",
@@ -1998,6 +2000,8 @@ LEGACY_AUTHOR_MAP = {
     "andrewdmwalker@gmail.com": "capt-marbles",  # PR #38440 salvage (resolve xAI OAuth credentials across profiles; #43589)
     "infinitycrew39@gmail.com": "infinitycrew39",  # PR #47945 salvage (scope langfuse trace state by turn/request ids; #48292)
     "eurekaxun@163.com": "huangxun375-stack",  # PR #37251 / #48894 structured OpenViking sync
+    "koshaji@gmail.com": "koshaji",  # PR #49832 salvage (OpenViking runtime autostart shutdown drain)
+    "thor753@foxmail.com": "wgd753",  # PR #59454 salvage (OpenViking trusted-mode retry matching)
     "218421507+Sahil-SS9@users.noreply.github.com": "Sahil-SS9",  # PR #48466/#44919/#44909/#42209 salvage (cron/checkpoint/kanban/skill)
     "mango001@126.com": "max-chen",  # PR #51194 salvage (single-pass list_profiles alias map + skill-count cache; #54751)
     # v0.17.0 additions
@@ -2149,7 +2153,7 @@ def next_available_tag(base_tag: str) -> tuple[str, str]:
 
 def get_current_version():
     """Read current semver from __init__.py."""
-    content = VERSION_FILE.read_text()
+    content = VERSION_FILE.read_text(encoding="utf-8")
     match = re.search(r'__version__\s*=\s*"([^"]+)"', content)
     return match.group(1) if match else "0.0.0"
 
@@ -2179,7 +2183,7 @@ def bump_version(current: str, part: str) -> str:
 def update_version_files(semver: str, calver_date: str):
     """Update version strings in source files."""
     # Update __init__.py
-    content = VERSION_FILE.read_text()
+    content = VERSION_FILE.read_text(encoding="utf-8")
     content = re.sub(
         r'__version__\s*=\s*"[^"]+"',
         f'__version__ = "{semver}"',
@@ -2190,36 +2194,49 @@ def update_version_files(semver: str, calver_date: str):
         f'__release_date__ = "{calver_date}"',
         content,
     )
-    VERSION_FILE.write_text(content)
+    VERSION_FILE.write_text(content, encoding="utf-8")
 
     # Update pyproject.toml
-    pyproject = PYPROJECT_FILE.read_text()
+    pyproject = PYPROJECT_FILE.read_text(encoding="utf-8")
     pyproject = re.sub(
         r'^version\s*=\s*"[^"]+"',
         f'version = "{semver}"',
         pyproject,
         flags=re.MULTILINE,
     )
-    PYPROJECT_FILE.write_text(pyproject)
+    PYPROJECT_FILE.write_text(pyproject, encoding="utf-8")
 
-    # Keep the desktop Electron app's package.json version in lockstep with the
-    # Python package version. The desktop About panel reads the live Hermes
-    # version at runtime, but app.getVersion()/packaging metadata still come
-    # from this field, so it must track pyproject to avoid drift.
-    desktop_pkg = REPO_ROOT / "apps" / "desktop" / "package.json"
-    if desktop_pkg.exists():
-        pkg_text = desktop_pkg.read_text(encoding="utf-8")
-        pkg_text = re.sub(
-            r'("version"\s*:\s*)"[^"]+"',
-            rf'\g<1>"{semver}"',
-            pkg_text,
-            count=1,
-        )
-        desktop_pkg.write_text(pkg_text, encoding="utf-8")
+    _update_npm_versions(semver)
 
     # Update ACP Registry manifest + npm launcher (must stay version-locked
     # with pyproject — enforced by tests/acp/test_registry_manifest.py).
     _update_acp_registry_versions(semver)
+
+
+def _update_npm_versions(semver: str) -> None:
+    """Keep root, desktop, and lockfile workspace metadata in lockstep."""
+    for relative_path in ("package.json", "apps/desktop/package.json"):
+        path = REPO_ROOT / relative_path
+        if path.exists():
+            data = json.loads(path.read_text(encoding="utf-8"))
+            data["version"] = semver
+            path.write_text(
+                json.dumps(data, indent=2, ensure_ascii=False) + "\n",
+                encoding="utf-8",
+            )
+
+    lock_path = REPO_ROOT / "package-lock.json"
+    if lock_path.exists():
+        lock = json.loads(lock_path.read_text(encoding="utf-8"))
+        lock["version"] = semver
+        for workspace in ("", "apps/desktop"):
+            package = lock.get("packages", {}).get(workspace)
+            if package is not None:
+                package["version"] = semver
+        lock_path.write_text(
+            json.dumps(lock, indent=2, ensure_ascii=False) + "\n",
+            encoding="utf-8",
+        )
 
 
 def _update_acp_registry_versions(semver: str) -> None:
@@ -2620,7 +2637,13 @@ def main():
             print(f"  ✓ Updated version files to v{new_version} ({calver_date})")
 
             # Commit version bump
-            add_files = [str(VERSION_FILE), str(PYPROJECT_FILE)]
+            add_files = [
+                str(VERSION_FILE),
+                str(PYPROJECT_FILE),
+                str(REPO_ROOT / "package.json"),
+                str(REPO_ROOT / "apps" / "desktop" / "package.json"),
+                str(REPO_ROOT / "package-lock.json"),
+            ]
             if ACP_REGISTRY_MANIFEST.exists():
                 add_files.append(str(ACP_REGISTRY_MANIFEST))
             add_result = git_result("add", *add_files)
@@ -2655,14 +2678,6 @@ def main():
             print("    Continue manually after fixing access:")
             print("    git push origin HEAD --tags")
 
-        # Build semver-named Python artifacts so downstream packagers
-        # (e.g. Homebrew) can target them without relying on CalVer tag names.
-        artifacts = build_release_artifacts(new_version)
-        if artifacts:
-            print("  ✓ Built release artifacts:")
-            for artifact in artifacts:
-                print(f"    - {artifact.relative_to(REPO_ROOT)}")
-
         # Create GitHub release
         changelog_file = REPO_ROOT / ".release_notes.md"
         changelog_file.write_text(changelog, encoding="utf-8")
@@ -2672,13 +2687,12 @@ def main():
             "--title", f"Marvi Agent v{new_version} ({calver_date})",
             "--notes-file", str(changelog_file),
         ]
-        gh_cmd.extend(str(path) for path in artifacts)
 
         gh_bin = shutil.which("gh")
         if gh_bin:
             result = subprocess.run(
                 gh_cmd,
-                capture_output=True, text=True,
+                capture_output=True, text=True, encoding="utf-8", errors="replace",
                 cwd=str(REPO_ROOT),
             )
         else:
@@ -2699,7 +2713,7 @@ def main():
                 f"    gh release create {tag_name} --title 'Marvi Agent v{new_version} ({calver_date})' "
                 f"--notes-file .release_notes.md {' '.join(str(path) for path in artifacts)}"
             )
-            print(f"\n  ✓ Release artifacts prepared for manual publish: v{new_version} ({tag_name})")
+            print(f"\n  ✓ Release v{new_version} ({tag_name}) prepared for manual publish.")
     else:
         print(f"\n{'='*60}")
         print("  Dry run complete. To publish, add --publish")

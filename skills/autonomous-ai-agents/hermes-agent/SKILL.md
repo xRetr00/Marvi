@@ -565,6 +565,11 @@ presence-aware resource policy, and backend supervision. Preserve their config
 keys, Settings UI, Electron IPC/window wiring, desktop composer/status hooks,
 tests, and installer/updater integration during upstream syncs.
 
+Desktop packaging is part of that protected contract: builds emit
+`Marvi.exe`/`Marvi.app`/`Marvi` and `Marvi-${version}-...` installers, and the
+Python `--build-only` resolver must prefer those names. Legacy Hermes names are
+fallback-only for existing installations.
+
 Marvi also keeps the subconscious and presence stack: goal storage/tools,
 proactive tick and idle trigger, connected-account snapshots (GitHub, Gmail,
 Calendar, Slack), ActivityWatch/media/rhythm observation, distilled-memory

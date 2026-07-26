@@ -35,6 +35,11 @@ STT (Parakeet/Moonshine), wake word, voice presence/Dynamic Island, glow
 overlay, Qwen3-TTS, PocketTTS, voice-residency/resource supervision, and their
 desktop settings, IPC, installer/updater integration, and tests.
 
+Desktop packaging must keep the Marvi identity end to end: unpacked builds use
+`Marvi.exe`/`Marvi.app`/`Marvi`, installers use `Marvi-${version}-...`, and the
+Python `--build-only` resolver prefers those outputs. Legacy Hermes filenames
+are compatibility fallbacks only.
+
 Also preserve the subconscious and presence system: goals, proactive and idle
 triggers, connected-account snapshots, ActivityWatch/media/rhythm observation,
 distilled-memory viewer, activation REST endpoints, CLI commands, and the

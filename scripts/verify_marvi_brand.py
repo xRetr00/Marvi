@@ -144,7 +144,11 @@ ALLOWED_SNIPPETS = [
 ]
 
 REQUIRED_TEXT = {
-    "apps/desktop/package.json": ["\"productName\": \"Marvi\"", "\"executableName\": \"Marvi\""],
+    "apps/desktop/package.json": [
+        "\"productName\": \"Marvi\"",
+        "\"executableName\": \"Marvi\"",
+        "\"artifactName\": \"Marvi-${version}-${os}-${arch}.${ext}\"",
+    ],
     "apps/desktop/src/components/chat/intro.tsx": ["const WORDMARK = 'MARVI'"],
     "apps/desktop/src/components/brand-mark.tsx": ["assetPath('hermes.png')"],
     "apps/bootstrap-installer/src/routes/welcome.tsx": [">MARVI<", "Install Marvi"],

@@ -56,6 +56,10 @@ REQUIRED_TEXT = {
         'MARVI_HOME_ENV = "MARVI_HOME"',
         "def _get_platform_default_marvi_home",
     ],
+    "hermes_cli/main.py": [
+        'for executable_name in ("Marvi.exe", "Hermes.exe")',
+        'marvi = [p for p in existing if p.name.casefold().startswith("marvi")]',
+    ],
     "apps/desktop/src/app/routes.ts": ["MIND_ROUTE = '/mind'"],
     "apps/desktop/src/app/chat/voice-mode-stage.tsx": ["export function VoiceModeViewport"],
     "apps/desktop/src/app/chat/sidebar/index.tsx": ["MIND_ROUTE", "id: 'mind'"],

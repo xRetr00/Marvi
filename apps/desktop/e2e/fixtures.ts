@@ -494,16 +494,16 @@ providers:
  */
 function resolvePackagedBinaryPath(): string {
   if (process.platform === 'win32') {
-    return path.join(RELEASE_ROOT, 'win-unpacked', 'Hermes.exe')
+    return path.join(RELEASE_ROOT, 'win-unpacked', 'Marvi.exe')
   }
 
   if (process.platform === 'darwin') {
     const arch = process.arch === 'arm64' ? 'arm64' : 'x64'
 
-    return path.join(RELEASE_ROOT, `mac-${arch}`, 'Hermes.app', 'Contents', 'MacOS', 'Hermes')
+    return path.join(RELEASE_ROOT, `mac-${arch}`, 'Marvi.app', 'Contents', 'MacOS', 'Marvi')
   }
 
-  return path.join(RELEASE_ROOT, 'linux-unpacked', 'hermes')
+  return path.join(RELEASE_ROOT, 'linux-unpacked', 'Marvi')
 }
 
 export const PACKAGED_BINARY_PATH = resolvePackagedBinaryPath()

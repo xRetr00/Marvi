@@ -107,7 +107,9 @@ def test_parse_pe_machine_rejects_bad_pe_signature(tmp_path):
     ],
 )
 def test_expected_machines_per_host(host, loadable, not_loadable):
-    with patch("hermes_cli.main._windows_native_machine", return_value=host):
+    with patch(
+        "hermes_cli.main._windows_user_runnable_pe_machines", return_value=None
+    ), patch("hermes_cli.main._windows_native_machine", return_value=host):
         expected = cli_main._expected_windows_pe_machines()
     assert loadable <= expected
     assert not (not_loadable & expected)
@@ -115,7 +117,11 @@ def test_expected_machines_per_host(host, loadable, not_loadable):
 
 def test_expected_machines_unknown_host_is_permissive():
     """The gate must never brick launch on hosts we don't recognize."""
-    with patch("hermes_cli.main._windows_native_machine", return_value="RISCV64"):
+    with patch(
+        "hermes_cli.main._windows_user_runnable_pe_machines", return_value=None
+    ), patch(
+        "hermes_cli.main._windows_native_machine", return_value="RISCV64"
+    ):
         expected = cli_main._expected_windows_pe_machines()
     assert {PE_AMD64, PE_ARM64, PE_I386} <= expected
 
@@ -353,6 +359,26 @@ def test_integrity_error_reports_corruption_reason(tmp_path):
 
 
 # ─── _desktop_packaged_executable arch preference (win32) ───────────────────
+
+
+def test_packaged_executable_prefers_marvi_over_legacy_name(tmp_path, monkeypatch):
+    monkeypatch.setattr(cli_main.sys, "platform", "win32")
+    desktop_dir = tmp_path / "apps" / "desktop"
+    marvi = make_pe(
+        desktop_dir / "release" / "win-unpacked" / "Marvi.exe", PE_AMD64
+    )
+    legacy = make_pe(
+        desktop_dir / "release" / "win-unpacked" / "Hermes.exe", PE_AMD64
+    )
+    import os
+
+    os.utime(
+        legacy,
+        (legacy.stat().st_atime + 1000, legacy.stat().st_mtime + 1000),
+    )
+
+    with patch("hermes_cli.main._windows_native_machine", return_value="AMD64"):
+        assert cli_main._desktop_packaged_executable(desktop_dir) == marvi
 
 
 def test_packaged_executable_prefers_host_arch_over_mtime(tmp_path, monkeypatch):

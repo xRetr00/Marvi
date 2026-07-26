@@ -5499,19 +5499,28 @@ def _desktop_packaged_executable(desktop_dir: Path) -> Optional[Path]:
     """Return the current platform's unpacked Electron app executable."""
     release_dir = desktop_dir / "release"
     if sys.platform == "darwin":
-        candidates = list(release_dir.glob("mac*/Hermes.app/Contents/MacOS/Hermes"))
+        candidates = [
+            path
+            for product_name in ("Marvi", "Hermes")
+            for path in release_dir.glob(
+                f"mac*/{product_name}.app/Contents/MacOS/{product_name}"
+            )
+        ]
     elif sys.platform == "win32":
         candidates = [
-            release_dir / "win-unpacked" / "Hermes.exe",
-            release_dir / "win-ia32-unpacked" / "Hermes.exe",
-            release_dir / "win-arm64-unpacked" / "Hermes.exe",
+            release_dir / unpacked_dir / executable_name
+            for unpacked_dir in (
+                "win-unpacked",
+                "win-ia32-unpacked",
+                "win-arm64-unpacked",
+            )
+            for executable_name in ("Marvi.exe", "Hermes.exe")
         ]
     else:
         candidates = [
-            release_dir / "linux-unpacked" / "hermes",
-            release_dir / "linux-unpacked" / "Hermes",
-            release_dir / "linux-arm64-unpacked" / "hermes",
-            release_dir / "linux-arm64-unpacked" / "Hermes",
+            release_dir / unpacked_dir / executable_name
+            for unpacked_dir in ("linux-unpacked", "linux-arm64-unpacked")
+            for executable_name in ("Marvi", "marvi", "Hermes", "hermes")
         ]
 
     existing = [p for p in candidates if p.exists()]
@@ -5528,6 +5537,9 @@ def _desktop_packaged_executable(desktop_dir: Path) -> Optional[Path]:
         matching = [p for p in existing if _pe_machine_or_none(p) in expected]
         if matching:
             existing = matching
+    marvi = [p for p in existing if p.name.casefold().startswith("marvi")]
+    if marvi:
+        existing = marvi
     return max(existing, key=lambda p: p.stat().st_mtime)
 
 

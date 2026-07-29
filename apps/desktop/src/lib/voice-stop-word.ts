@@ -1,6 +1,6 @@
 // Spoken stop-word detection for the voice conversation loop.
 //
-// When someone is in a hands-free "Hey Hermes" voice chat, the natural way to
+// When someone is in a hands-free "Hey Marvi" voice chat, the natural way to
 // end it is to SAY "stop" — not reach for the mouse. Without this, a spoken
 // "stop" is just transcribed and sent to the agent as a normal turn, so the
 // conversation never ends (the reported bug). This matcher recognises a short
@@ -33,9 +33,9 @@ const STOP_PHRASES: readonly string[] = [
   'cancel'
 ]
 
-// Optional address prefixes so "hermes stop" / "ok stop" / "hey hermes, stop"
+// Optional address prefixes so "marvi stop" / "ok stop" / "hey marvi, stop"
 // still count. Stripped before matching the core phrase.
-const ADDRESS_PREFIXES: readonly string[] = ['hey hermes', 'hey hermes,', 'hermes', 'hermes,', 'ok', 'okay', 'hey']
+const ADDRESS_PREFIXES: readonly string[] = ['hey marvi', 'hey marvi,', 'marvi', 'marvi,', 'ok', 'okay', 'hey']
 
 // Normalise: lowercase, strip surrounding punctuation/whitespace, collapse
 // internal runs of spaces. Trailing punctuation (".", "!", "…") is common in

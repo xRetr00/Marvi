@@ -30,7 +30,7 @@ describe('isVoiceStopCommand', () => {
   })
 
   it('matches stop commands addressed to Hermes', () => {
-    for (const phrase of ['hermes stop', 'hey hermes stop', 'hey hermes, stop', 'ok stop', 'okay stop']) {
+    for (const phrase of ['marvi stop', 'hey marvi stop', 'hey marvi, stop', 'ok stop', 'okay stop']) {
       expect(isVoiceStopCommand(phrase)).toBe(true)
     }
   })
@@ -49,7 +49,7 @@ describe('isVoiceStopCommand', () => {
   })
 
   it('does not match bare address words or empty input', () => {
-    for (const phrase of ['', '  ', 'hermes', 'hey hermes', 'ok', 'okay', 'hey']) {
+    for (const phrase of ['', '  ', 'marvi', 'hey marvi', 'ok', 'okay', 'hey']) {
       expect(isVoiceStopCommand(phrase)).toBe(false)
     }
   })

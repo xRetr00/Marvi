@@ -353,7 +353,7 @@ slack:
   # 触发机器人的自定义提及模式
   # （除默认 @mention 检测外）
   mention_patterns:
-    - "hey hermes"
+    - "hey marvi"
     - "hermes,"
 
   # 每条发出消息前添加的文本

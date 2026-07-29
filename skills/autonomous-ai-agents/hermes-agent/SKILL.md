@@ -565,6 +565,11 @@ presence-aware resource policy, and backend supervision. Preserve their config
 keys, Settings UI, Electron IPC/window wiring, desktop composer/status hooks,
 tests, and installer/updater integration during upstream syncs.
 
+Marvi's wake word is exclusively the `voice.wake_word` "Hey Marvi" pipeline.
+Do not restore upstream's standalone "Hey Hermes" detector, bundled
+`hey_hermes` models, top-level `wake_word` config, `/wake` command, `wake.*`
+gateway RPCs, or duplicate Desktop/TUI controls.
+
 Desktop packaging is part of that protected contract: builds emit
 `Marvi.exe`/`Marvi.app`/`Marvi` and `Marvi-${version}-...` installers, and the
 Python `--build-only` resolver must prefer those names. Legacy Hermes names are

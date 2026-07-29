@@ -35,6 +35,11 @@ STT (Parakeet/Moonshine), wake word, voice presence/Dynamic Island, glow
 overlay, Qwen3-TTS, PocketTTS, voice-residency/resource supervision, and their
 desktop settings, IPC, installer/updater integration, and tests.
 
+Marvi's wake word is exclusively the `voice.wake_word` "Hey Marvi" pipeline.
+Do not reintroduce upstream's standalone "Hey Hermes" detector, bundled
+`hey_hermes` models, top-level `wake_word` config, `/wake` command, `wake.*`
+gateway RPCs, or duplicate Desktop/TUI controls.
+
 Desktop packaging must keep the Marvi identity end to end: unpacked builds use
 `Marvi.exe`/`Marvi.app`/`Marvi`, installers use `Marvi-${version}-...`, and the
 Python `--build-only` resolver prefers those outputs. Legacy Hermes filenames

@@ -11,16 +11,19 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 REQUIRED_TEXT = {
     "AGENTS.md": [
         "**Upstream sync rule:**",
+        'Marvi\'s only wake-word implementation is `voice.wake_word`',
         "NeuTTS and KittenTTS are intentionally blocked",
         "Graph Mind, autonomy, and Composio",
     ],
     "skills/autonomous-ai-agents/hermes-agent/SKILL.md": [
         "streaming STT",
+        "wake word is exclusively the `voice.wake_word`",
         "NeuTTS and KittenTTS are intentionally blocked",
         "Graph Mind, autonomy, and Composio",
     ],
     "website/docs/developer-guide/contributing.md": [
         "instant voice lane",
+        "wake word is exclusively the `voice.wake_word`",
         "NeuTTS and KittenTTS are deliberately blocked",
         "Graph Mind, autonomy, and Composio",
     ],
@@ -172,6 +175,21 @@ REQUIRED_TEXT = {
     "plugins/uni_portal/plugin.yaml": ["uni_portal_check", "OS credential store"],
 }
 
+PROHIBITED_PATHS = (
+    "tools/wake_word.py",
+    "tools/wakewords/hey_hermes.onnx",
+    "tools/wakewords/hey_hermes.tflite",
+    "apps/desktop/src/store/wake-word.ts",
+    "ui-tui/src/app/slash/commands/wake.ts",
+)
+
+PROHIBITED_TEXT = {
+    "hermes_cli/config.py": ['"provider": "openwakeword"', '"phrase": "hey hermes"', '"model": "hey_hermes"'],
+    "hermes_cli/commands.py": ['CommandDef("wake"'],
+    "tui_gateway/server.py": ['@method("wake.start")', '@method("wake.status")'],
+    "pyproject.toml": ["wake = ["],
+}
+
 
 def check_contract(root: Path = REPO_ROOT) -> list[str]:
     failures: list[str] = []
@@ -184,6 +202,14 @@ def check_contract(root: Path = REPO_ROOT) -> list[str]:
         for marker in markers:
             if marker not in text:
                 failures.append(f"{relative_path}: missing protected marker {marker!r}")
+    for relative_path in PROHIBITED_PATHS:
+        if (root / relative_path).exists():
+            failures.append(f"{relative_path}: blocked upstream wake-word surface exists")
+    for relative_path, markers in PROHIBITED_TEXT.items():
+        text = (root / relative_path).read_text(encoding="utf-8", errors="replace")
+        for marker in markers:
+            if marker in text:
+                failures.append(f"{relative_path}: blocked upstream wake-word marker {marker!r}")
     return failures
 
 

@@ -85,7 +85,12 @@ REQUIRED_TEXT = {
     "apps/desktop/src/app/voice-island/duplex-protocol.ts": ["DuplexSpeakerUpdateEvent", "utterance_id"],
     "apps/desktop/src/app/voice-island/duplex-session.ts": ["case 'speaker_update'", "utteranceId"],
     "agent/transports/chat_completions.py": ["deepseek-v4-flash", 'extra_body["thinking"]'],
-    "tools/tts_tool.py": ["Provider: PocketTTS", "def _generate_pockettts"],
+    "tools/tts_tool.py": [
+        "Provider: PocketTTS",
+        "def _generate_pockettts",
+        'BLOCKED_TTS_PROVIDERS = frozenset({"neutts", "kittentts"})',
+        "is blocked in Marvi; use PocketTTS or Piper",
+    ],
     "hermes_cli/tools_config.py": ['"name": "PocketTTS"', "Qwen3-TTS"],
     "tools/voice_instant_lane.py": ["recall_episode", "barge", "_LOCAL_TIME_QUERY_RE"],
     "tools/episodic_tool.py": ['name="recall_episode"'],

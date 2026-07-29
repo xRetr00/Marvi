@@ -370,7 +370,7 @@ Profiles 使用 `~/.hermes/profiles/<name>/`，布局相同。
 | `compression` | `enabled`, `threshold` (0.50), `target_ratio` (0.20) |
 | `display` | `skin`, `tool_progress`, `show_reasoning`, `show_cost` |
 | `stt` | `enabled`, `provider` (local/groq/openai/mistral) |
-| `tts` | `provider` (edge/elevenlabs/openai/minimax/mistral/neutts) |
+| `tts` | `provider` (pockettts/edge/elevenlabs/openai/minimax/mistral/gemini/piper/xai) |
 | `memory` | `memory_enabled`, `user_profile_enabled`, `provider` |
 | `security` | `tirith_enabled`, `website_blocklist` |
 | `delegation` | `model`, `provider`, `base_url`, `api_key`, `max_iterations` (50), `reasoning_effort` |
@@ -538,7 +538,9 @@ stt:
 | OpenAI | `VOICE_TOOLS_OPENAI_KEY` | 付费 |
 | MiniMax | `MINIMAX_API_KEY` | 付费 |
 | Mistral (Voxtral) | `MISTRAL_API_KEY` | 付费 |
-| NeuTTS（本地） | 无（`pip install neutts[all]` + `espeak-ng`） | 免费 |
+| PocketTTS / Piper（本地） | 无 | 免费 |
+
+Marvi 明确禁用 NeuTTS 和 KittenTTS。
 
 语音命令：`/voice on`（语音对语音）、`/voice tts`（始终语音）、`/voice off`。
 

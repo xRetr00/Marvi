@@ -27,6 +27,7 @@ import { unified } from 'unified'
 const EMOJI_RE = /(?:[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}]|[\u{FE0F}\u{200D}]|[\u{E0020}-\u{E007F}])+/gu
 
 const PARAGRAPH_BREAK_RE = /[ \t]*\n{2,}[ \t]*/g
+const PUNCTUATED_PARAGRAPH_BREAK_RE = /([.!?])([*_~`>"'’”)}\]]*)[ \t]*\n{2,}[ \t]*/g
 const SOFT_BREAK_RE = /[ \t]*\n[ \t]*/g
 
 const THINKING_PREFIX_RE =
@@ -40,6 +41,7 @@ function normalizeLineBreaks(text: string): string {
   return text
     .replace(/\r\n?/g, '\n')
     .replace(/(\p{L})-\n(\p{L})/gu, '$1$2')
+    .replace(PUNCTUATED_PARAGRAPH_BREAK_RE, '$1$2 ')
     .replace(PARAGRAPH_BREAK_RE, '. ')
     .replace(SOFT_BREAK_RE, ' ')
 }

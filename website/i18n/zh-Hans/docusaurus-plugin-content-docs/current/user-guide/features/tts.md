@@ -25,8 +25,7 @@ Hermes Agent 支持跨所有消息平台的文字转语音（TTS）输出和语�
 | **Mistral (Voxtral TTS)** | 优秀 | 付费 | `MISTRAL_API_KEY` |
 | **Google Gemini TTS** | 优秀 | 免费额度 | `GEMINI_API_KEY` |
 | **xAI TTS** | 优秀 | 付费 | `XAI_API_KEY` |
-| **NeuTTS** | 良好 | 免费（本地） | 无需 |
-| **KittenTTS** | 良好 | 免费（本地） | 无需 |
+| **PocketTTS** | 良好 | 免费（本地） | 无需 |
 | **Piper** | 良好 | 免费（本地） | 无需 |
 
 ### 平台投递方式
@@ -43,7 +42,7 @@ Hermes Agent 支持跨所有消息平台的文字转语音（TTS）输出和语�
 ```yaml
 # In ~/.hermes/config.yaml
 tts:
-  provider: "edge"              # "edge" | "elevenlabs" | "openai" | "minimax" | "mistral" | "gemini" | "xai" | "neutts" | "kittentts" | "piper"
+  provider: "pockettts"         # "pockettts" | "piper" | "edge" | "elevenlabs" | "openai" | "minimax" | "mistral" | "gemini" | "xai"
   speed: 1.0                    # Global speed multiplier (provider-specific settings override this)
   edge:
     voice: "en-US-AriaNeural"   # 322 voices, 74 languages
@@ -74,16 +73,9 @@ tts:
     sample_rate: 24000          # 22050 / 24000 (default) / 44100 / 48000
     bit_rate: 128000            # MP3 bitrate; only applies when codec=mp3
     # base_url: "https://api.x.ai/v1"   # Override via XAI_BASE_URL env var
-  neutts:
-    ref_audio: ''
-    ref_text: ''
-    model: neuphonic/neutts-air-q4-gguf
+  pockettts:
+    voice: alba
     device: cpu
-  kittentts:
-    model: KittenML/kitten-tts-nano-0.8-int8   # 25MB int8; also: kitten-tts-micro-0.8 (41MB), kitten-tts-mini-0.8 (80MB)
-    voice: Jasper                               # Jasper, Bella, Luna, Bruno, Rosie, Hugo, Kiki, Leo
-    speed: 1.0                                  # 0.5 - 2.0
-    clean_text: true                            # Expand numbers, currencies, units
   piper:
     voice: en_US-lessac-medium                  # voice name (auto-downloaded) OR absolute path to .onnx
     # voices_dir: ''                            # default: ~/.hermes/cache/piper-voices/
@@ -111,8 +103,7 @@ tts:
 | Mistral | 4000 |
 | Google Gemini | 5000 |
 | ElevenLabs | 取决于模型（见下文） |
-| NeuTTS | 2000 |
-| KittenTTS | 2000 |
+| PocketTTS | 5000 |
 
 **ElevenLabs** 根据配置的 `model_id` 选择上限：
 
@@ -143,8 +134,7 @@ Telegram 语音气泡需要 Opus/OGG 音频格式：
 - **MiniMax TTS** 输出 MP3，需要 **ffmpeg** 转换以在 Telegram 显示语音气泡
 - **Google Gemini TTS** 输出原始 PCM，使用 **ffmpeg** 直接编码为 Opus 以在 Telegram 显示语音气泡
 - **xAI TTS** 输出 MP3，需要 **ffmpeg** 转换以在 Telegram 显示语音气泡
-- **NeuTTS** 输出 WAV，同样需要 **ffmpeg** 转换以在 Telegram 显示语音气泡
-- **KittenTTS** 输出 WAV，同样需要 **ffmpeg** 转换以在 Telegram 显示语音气泡
+- **PocketTTS** 输出 WAV，同样需要 **ffmpeg** 转换以在 Telegram 显示语音气泡
 - **Piper** 输出 WAV，同样需要 **ffmpeg** 转换以在 Telegram 显示语音气泡
 
 ```bash
@@ -158,7 +148,9 @@ brew install ffmpeg
 sudo dnf install ffmpeg
 ```
 
-若未安装 ffmpeg，Edge TTS、MiniMax TTS、NeuTTS、KittenTTS 和 Piper 的音频将作为普通音频文件发送（可播放，但显示为矩形播放器而非语音气泡）。
+若未安装 ffmpeg，Edge TTS、MiniMax TTS、PocketTTS 和 Piper 的音频将作为普通音频文件发送（可播放，但显示为矩形播放器而非语音气泡）。
+
+Marvi 明确禁用 NeuTTS 和 KittenTTS。请使用 PocketTTS 或 Piper 作为本地 TTS。
 
 :::tip
 如果你希望在不安装 ffmpeg 的情况下使用语音气泡，请切换至 OpenAI、ElevenLabs 或 Mistral 提供商。

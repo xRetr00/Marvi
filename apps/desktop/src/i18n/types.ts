@@ -238,7 +238,6 @@ export interface Translations {
     search: string
     searchTitle: string
     swapSidebarSides: string
-    swapSidebarSidesTitle: string
     hideRightSidebar: string
     showRightSidebar: string
     muteHaptics: string
@@ -262,6 +261,12 @@ export interface Translations {
     conflictWith: (label: string) => string
     categories: Record<string, string>
     actions: Record<string, string>
+  }
+
+  // Find-in-page bar (⌘F). `close` reuses common.close.
+  findInPage: {
+    next: string
+    previous: string
   }
 
   language: {
@@ -467,6 +472,9 @@ export interface Translations {
       builtinOnly: string
       notSet: string
       commaSeparated: string
+      searchPlaceholder: string
+      noResults: string
+      systemDefault: string
       loading: string
       emptyTitle: string
       emptyDesc: string
@@ -476,6 +484,19 @@ export interface Translations {
       invalidJson: string
       keepAwakeTitle: string
       keepAwakeDesc: string
+      attachmentSizeTitle: string
+      attachmentSizeDesc: string
+      attachmentSizeUnit: string
+      attachmentSizeLabel: string
+    }
+    quickEntry: {
+      enabledTitle: string
+      enabledDesc: string
+      shortcutTitle: string
+      shortcutDesc: string
+      active: string
+      takenBy: string
+      invalidShortcut: string
     }
     credentials: {
       pasteKey: string
@@ -488,8 +509,7 @@ export interface Translations {
       saving: string
     }
     envActions: {
-      actionsFor: (label: string) => string
-      credentialActions: string
+      actions: string
       manageInKeys: string
       docs: string
       hideValue: string
@@ -1281,9 +1301,9 @@ export interface Translations {
     showAllProfiles: string
     switchToProfile: (name: string) => string
     manageProfiles: string
-    actionsFor: (name: string) => string
+    actions: string
     color: string
-    colorFor: (name: string) => string
+    colorFor: string
     setColor: (color: string) => string
     autoColor: string
     noProfiles: string
@@ -1377,7 +1397,6 @@ export interface Translations {
     showRuns: string
     hideRuns: string
     runHistory: string
-    actionsFor: (title: string) => string
     actionsTitle: string
     resume: string
     pause: string
@@ -1478,6 +1497,26 @@ export interface Translations {
     copyPath: string
   }
 
+  artifactCard: {
+    kind: Record<'code' | 'html' | 'svg', string>
+    generating: (lines: number) => string
+    versionBadge: (count: number) => string
+    open: string
+  }
+
+  artifactPreview: {
+    versionOf: (current: number, total: number) => string
+    olderVersion: string
+    newerVersion: string
+    latest: string
+    copyContent: string
+    download: string
+    openInBrowser: string
+    openInBrowserFailed: string
+    missingTitle: string
+    missingBody: string
+  }
+
   sidebar: {
     nav: Record<string, string>
     searchAria: string
@@ -1497,11 +1536,11 @@ export interface Translations {
     allPinned: string
     shiftClickHint: string
     noWorkspace: string
-    noProject: string
     projectEmpty: string
     noSessions: string
     projects: {
       sectionLabel: string
+      home: string
       newButton: string
       createTitle: string
       createDesc: string
@@ -1578,7 +1617,6 @@ export interface Translations {
       openInNewTab: string
       openInSplit: string
       copyIdFailed: string
-      actionsFor: (title: string) => string
       sessionActions: string
       sessionRunning: string
       needsInput: string
@@ -1636,6 +1674,9 @@ export interface Translations {
     voiceDictation: string
     speakReplies: string
     stopSpeakingReplies: string
+    wakeWordListening: (phrase: string) => string
+    wakeWordOff: (phrase: string) => string
+    wakeWordPausedVoice: (phrase: string) => string
     lookupLoading: string
     lookupNoMatches: string
     lookupTry: string
@@ -1696,6 +1737,10 @@ export interface Translations {
   statusStack: {
     agents: string
     background: (count: number) => string
+    goalActive: string
+    goalDone: string
+    goalPaused: string
+    goalWaiting: string
     subagents: (count: number) => string
     todos: (done: number, total: number) => string
     running: string
@@ -2064,6 +2109,17 @@ export interface Translations {
       gatewayOffline: string
       gatewayRestarting: string
       gatewayTitle: string
+      customizeTitle: string
+      hideStatusbar: string
+      toggleApprovalMode: string
+      toggleBackendVersion: string
+      toggleCommandCenter: string
+      toggleContextUsage: string
+      toggleRunningTimer: string
+      toggleSessionTimer: string
+      toggleTerminal: string
+      toggleVersion: string
+      toggleWorkspace: string
       agents: string
       closeAgents: string
       openAgents: string
@@ -2077,7 +2133,6 @@ export interface Translations {
       starmap: string
       openStarmap: string
       turnRunning: string
-      currentTurnElapsed: string
       contextUsage: string
       contextUsagePanel: {
         categories: {
@@ -2096,9 +2151,7 @@ export interface Translations {
         title: string
         tokenSummary: (used: string, max: string) => string
       }
-      openContextUsage: string
       session: string
-      runtimeSessionElapsed: string
       yoloOn: string
       yoloOff: string
       modelNone: string
@@ -2292,6 +2345,9 @@ export interface Translations {
       loadingResponse: string
       resumeWhenBackgroundDone: (count: number) => string
       thinking: string
+      thought: string
+      thoughtBriefly: string
+      thoughtFor: (duration: string) => string
       today: (time: string) => string
       yesterday: (time: string) => string
       copy: string
@@ -2347,7 +2403,6 @@ export interface Translations {
       lateAnswerHint: string
     }
     tool: {
-      code: string
       copyCode: string
       renderingImage: string
       copyOutput: string

@@ -17,6 +17,7 @@ vi.mock('@/hermes', () => ({
   saveHermesConfig: (c: unknown) => saveHermesConfig(c),
   getElevenLabsVoices: () => getElevenLabsVoices(),
   warmTextToSpeech: () => warmTextToSpeech(),
+  setApiRequestProfile: vi.fn(),
   getMemoryProviderOAuthStatus: () => Promise.reject(new Error('no')),
   startMemoryProviderOAuth: () => Promise.resolve()
 }))

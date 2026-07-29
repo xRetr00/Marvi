@@ -530,7 +530,7 @@ describe('DesktopInstallOverlay first-run setup', () => {
 
     render(<DesktopInstallOverlay />)
 
-    expect(await screen.findByText('Hermes needs a one-time install')).toBeTruthy()
+    expect(await screen.findByText('Marvi needs a one-time install')).toBeTruthy()
 
     fireEvent.click(screen.getByText('Connect existing'))
 
@@ -571,6 +571,6 @@ describe('DesktopInstallOverlay first-run setup', () => {
     fireEvent.click(screen.getByText('Apply and reconnect'))
 
     await waitFor(() => expect(screen.queryByText('Gateway URL')).toBeNull())
-    expect(screen.queryByText('Hermes needs a one-time install')).toBeNull()
+    expect(screen.queryByText('Marvi needs a one-time install')).toBeNull()
   })
 })

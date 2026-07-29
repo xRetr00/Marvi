@@ -61,9 +61,11 @@ Hermes 内置完整的浏览器自动化功能，提供多种后端选项，用�
 | **ElevenLabs** | 优秀 | 付费 | `ELEVENLABS_API_KEY` |
 | **OpenAI TTS** | 良好 | 付费 | `VOICE_TOOLS_OPENAI_KEY` |
 | **MiniMax** | 良好 | 付费 | `MINIMAX_API_KEY` |
-| **NeuTTS** | 良好 | 免费 | 无需 |
+| **PocketTTS** | 良好 | 免费 | 无需 |
 
 语音转文字支持六个提供商：本地 faster-whisper（免费，设备端运行）、本地命令封装器、Groq、OpenAI Whisper API、Mistral 和 xAI。语音消息转录支持 Telegram、Discord、WhatsApp 及其他消息平台。详见[语音与 TTS](/user-guide/features/tts) 和[语音模式](/user-guide/features/voice-mode)。
+
+Marvi 明确禁用 NeuTTS 和 KittenTTS。请使用 PocketTTS 或 Piper 作为本地 TTS。
 
 ## IDE 与编辑器集成
 

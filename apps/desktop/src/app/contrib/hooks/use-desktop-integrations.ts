@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react'
 
 import { closeActiveTab } from '@/app/chat/close-tab'
 import { getSmartRoomClapDataset, reviewSmartRoomClap } from '@/hermes'
+import { openSession } from '@/app/open-session'
 import { storedSessionIdForNotification } from '@/lib/session-ids'
 import { respondToApprovalAction } from '@/store/native-notifications'
 import { notify, notifyError } from '@/store/notifications'
@@ -190,12 +191,13 @@ export function useDesktopIntegrations({
     }
   }, [resumeExhaustedSessionId])
 
-  // Native-notification click -> jump to the session (runtime id translated to
-  // the stored id the chat route is keyed by); action buttons resolve in place.
+  // Native-notification click -> jump to the session WHERE IT ALREADY IS (open
+  // tile / main) instead of forcing main. Runtime id is translated to the
+  // stored id the chat route is keyed by; action buttons resolve in place.
   useEffect(() => {
     const unsubscribe = window.hermesDesktop?.onFocusSession?.(sessionId => {
       if (sessionId) {
-        navigate(sessionRoute(storedSessionIdForNotification(sessionId, runtimeIdByStoredSessionId.current)))
+        openSession(storedSessionIdForNotification(sessionId, runtimeIdByStoredSessionId.current), navigate)
       }
     })
 

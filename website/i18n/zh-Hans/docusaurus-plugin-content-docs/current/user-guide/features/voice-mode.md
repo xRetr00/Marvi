@@ -48,9 +48,6 @@ cd ~/.hermes/hermes-agent && uv pip install -e ".[messaging]"
 # 高级 TTS（ElevenLabs）
 cd ~/.hermes/hermes-agent && uv pip install -e ".[tts-premium]"
 
-# 本地 TTS（NeuTTS，可选）
-python -m pip install -U neutts[all]
-
 # 一次性安装所有内容
 cd ~/.hermes/hermes-agent && uv pip install -e ".[all]"
 ```
@@ -61,7 +58,7 @@ cd ~/.hermes/hermes-agent && uv pip install -e ".[all]"
 | `messaging` | `discord.py[voice]`、`python-telegram-bot`、`aiohttp` | Discord 和 Telegram 机器人 |
 | `tts-premium` | `elevenlabs` | ElevenLabs TTS 提供商 |
 
-可选本地 TTS 提供商：使用 `python -m pip install -U neutts[all]` 单独安装 `neutts`。首次使用时会自动下载模型。
+本地 TTS 请使用 PocketTTS 或 Piper。Marvi 明确禁用 NeuTTS 和 KittenTTS。
 
 :::info
 `discord.py[voice]` 会自动安装 **PyNaCl**（用于语音加密）和 **opus 绑定**。这是 Discord 语音频道支持的必要条件。
@@ -72,11 +69,9 @@ cd ~/.hermes/hermes-agent && uv pip install -e ".[all]"
 ```bash
 # macOS
 brew install portaudio ffmpeg opus
-brew install espeak-ng   # for NeuTTS
 
 # Ubuntu/Debian
 sudo apt install portaudio19-dev ffmpeg libopus0
-sudo apt install espeak-ng   # for NeuTTS
 ```
 
 | 依赖项 | 用途 | 适用场景 |
@@ -84,7 +79,6 @@ sudo apt install espeak-ng   # for NeuTTS
 | **PortAudio** | 麦克风输入和音频播放 | CLI 语音模式 |
 | **ffmpeg** | 音频格式转换（MP3 → Opus、PCM → WAV） | 所有平台 |
 | **Opus** | Discord 语音编解码器 | Discord 语音频道 |
-| **espeak-ng** | Phonemizer 后端 | 本地 NeuTTS 提供商 |
 
 ### API 密钥
 
@@ -96,7 +90,7 @@ sudo apt install espeak-ng   # for NeuTTS
 GROQ_API_KEY=your-key                 # Groq Whisper — 速度快，有免费额度（云端）
 VOICE_TOOLS_OPENAI_KEY=your-key       # OpenAI Whisper — 付费（云端）
 
-# 文字转语音（TTS，可选 — Edge TTS 和 NeuTTS 无需任何密钥）
+# 文字转语音（TTS，可选 — Edge TTS、PocketTTS 和 Piper 无需任何密钥）
 ELEVENLABS_API_KEY=***           # ElevenLabs — 高级音质
 # 上方的 VOICE_TOOLS_OPENAI_KEY 同时启用 OpenAI TTS
 ```
@@ -318,7 +312,7 @@ DISCORD_ALLOWED_USERS=your-user-id
 # STT — 本地提供商无需密钥（pip install faster-whisper）
 # GROQ_API_KEY=your-key            # 替代方案：云端，速度快，有免费额度
 
-# TTS — 可选。Edge TTS 和 NeuTTS 无需密钥。
+# TTS — 可选。Edge TTS、PocketTTS 和 Piper 无需密钥。
 # ELEVENLABS_API_KEY=***      # 高级音质
 # VOICE_TOOLS_OPENAI_KEY=***  # OpenAI TTS / Whisper
 ```
@@ -407,7 +401,7 @@ stt:
 
 # 文字转语音（TTS）
 tts:
-  provider: "edge"                 # "edge"（免费）| "elevenlabs" | "openai" | "neutts" | "minimax" | "mistral" | "gemini" | "xai" | "kittentts" | "piper"
+  provider: "pockettts"            # "pockettts" | "piper" | "edge" | "elevenlabs" | "openai" | "minimax" | "mistral" | "gemini" | "xai"
   edge:
     voice: "en-US-AriaNeural"      # 322 种声音，74 种语言
   elevenlabs:
@@ -417,10 +411,8 @@ tts:
     model: "gpt-4o-mini-tts"
     voice: "alloy"                 # alloy, echo, fable, onyx, nova, shimmer
     base_url: "https://api.openai.com/v1"  # 可选：覆盖为自托管或兼容 OpenAI 的端点
-  neutts:
-    ref_audio: ''
-    ref_text: ''
-    model: neuphonic/neutts-air-q4-gguf
+  pockettts:
+    voice: alba
     device: cpu
 ```
 
@@ -438,7 +430,7 @@ STT_OPENAI_MODEL=whisper-1               # 覆盖默认 OpenAI STT 模型
 GROQ_BASE_URL=https://api.groq.com/openai/v1     # 自定义 Groq 端点
 STT_OPENAI_BASE_URL=https://api.openai.com/v1    # 自定义 OpenAI STT 端点
 
-# 文字转语音提供商（Edge TTS 和 NeuTTS 无需密钥）
+# 文字转语音提供商（Edge TTS、PocketTTS 和 Piper 无需密钥）
 ELEVENLABS_API_KEY=***             # ElevenLabs（高级音质）
 # 上方的 VOICE_TOOLS_OPENAI_KEY 同时启用 OpenAI TTS
 
@@ -468,9 +460,9 @@ DISCORD_ALLOWED_USERS=...
 | **Edge TTS** | 良好 | 免费 | 约 1 秒 | 否 |
 | **ElevenLabs** | 优秀 | 付费 | 约 2 秒 | 是 |
 | **OpenAI TTS** | 良好 | 付费 | 约 1.5 秒 | 是 |
-| **NeuTTS** | 良好 | 免费 | 取决于 CPU/GPU | 否 |
+| **PocketTTS** | 良好 | 免费 | 取决于 CPU/GPU | 否 |
 
-NeuTTS 使用上方的 `tts.neutts` 配置块。
+Marvi 明确禁用 NeuTTS 和 KittenTTS。
 
 ---
 

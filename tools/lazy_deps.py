@@ -142,6 +142,43 @@ LAZY_DEPS: dict[str, tuple[str, ...]] = {
     "stt.moonshine.windows": ("moonshine-voice==0.0.66",),
     "voice.semantic_turn": ("pipecat-ai==1.4.0", "numpy==2.4.3"),
     "voice.speaker_id": ("sherpa-onnx==1.13.4",),
+    # SILK voice-note decoding (WeChat/QQ .silk voice messages). pilk is a
+    # small silk-v3 codec binding; installed on first .silk transcription.
+    "stt.silk": ("pilk==0.2.4",),
+
+    # ─── Wake word ("Hey Hermes") engines ──────────────────────────────────
+    # Keep in sync with the `wake` extra in pyproject.toml. openWakeWord is the
+    # free, local default (ONNX runtime); Porcupine is the premium engine.
+    # openWakeWord's ONNX embedding model returns near-zero scores on macOS
+    # ARM64 (dscripka/openWakeWord#336), so the wake word runs on the tflite
+    # backend there. Upstream declares tflite-runtime for Linux only;
+    # ai-edge-litert is the macOS equivalent, bridged in tools/wake_word.py.
+    # It lives in its own feature because lazy-dep specs cannot carry PEP 508
+    # environment markers (_spec_is_safe rejects ";"), so the platform gate is
+    # applied by the caller instead.
+    "wake.openwakeword.tflite": (
+        "ai-edge-litert==2.1.6",
+    ),
+    "wake.openwakeword": (
+        "openwakeword==0.6.0",
+        "onnxruntime==1.27.0",
+        "sounddevice==0.5.5",
+        "numpy==2.4.3",
+    ),
+    # Open-vocabulary keyword spotting: any typed phrase, zero training.
+    # sentencepiece is required by sherpa_onnx.text2token (runtime phrase
+    # tokenization) even though sherpa-onnx doesn't declare it.
+    "wake.sherpa": (
+        "sherpa-onnx==1.13.4",
+        "sentencepiece==0.2.2",
+        "sounddevice==0.5.5",
+        "numpy==2.4.3",
+    ),
+    "wake.porcupine": (
+        "pvporcupine==4.0.3",
+        "sounddevice==0.5.5",
+        "numpy==2.4.3",
+    ),
 
     # ─── Image generation backends ─────────────────────────────────────────
     "image.fal": ("fal-client==0.13.1",),
@@ -235,8 +272,8 @@ LAZY_DEPS: dict[str, tuple[str, ...]] = {
     "tool.dashboard": (
         "fastapi==0.133.1",
         "uvicorn[standard]==0.41.0",
-        "starlette==1.0.1",  # CVE-2026-48710 (BadHost) — keep lazy-install in sync with pyproject [web]
-        "python-multipart==0.0.27",  # FastAPI UploadFile/Form for streaming uploads (NS-501)
+        "starlette==1.3.1",  # CVE-2026-48710 (BadHost) — keep lazy-install in sync with pyproject [web]
+        "python-multipart==0.0.32",  # FastAPI UploadFile/Form for streaming uploads (NS-501)
     ),
     # Vision image-resize recovery (Pillow). Pillow is now a CORE dependency
     # (pyproject `dependencies`), so this entry is a belt-and-suspenders fallback
@@ -251,10 +288,10 @@ LAZY_DEPS: dict[str, tuple[str, ...]] = {
     # installs so computer_use never dead-ends on `No module named 'mcp'`.
     "tool.computer_use": (
         "mcp==1.26.0",
-        "starlette==1.0.1",  # CVE-2026-48710 — keep in sync with pyproject [computer-use]
+        "starlette==1.3.1",  # CVE-2026-48710 — keep in sync with pyproject [computer-use]
     ),
     # HF Agent Trace Viewer upload (hermes trace upload / /upload-trace).
-    "tool.trace_upload": ("huggingface-hub==1.2.3",),
+    "tool.trace_upload": ("huggingface-hub==1.24.0",),
 
     # ─── Account-awareness integrations ────────────────────────────────────
     # Composio (https://composio.dev) powers Marvi's account-awareness sync
@@ -896,8 +933,12 @@ def feature_install_command(feature: str) -> Optional[str]:
 def active_features() -> list[str]:
     """Return the list of features the user has ever lazy-installed.
 
-    A feature counts as "active" if at least one of its declared packages
-    is currently installed in the venv (presence check, ignoring version).
+    A feature counts as "active" if its anchor package (the first declared
+    spec) is currently installed in the venv (presence check, ignoring
+    version). We intentionally do NOT treat shared helper packages as proof
+    that a backend was enabled: for example ``platform.matrix`` depends on
+    generic packages like ``asyncpg``/``aiosqlite`` that can be installed for
+    unrelated reasons, while the actual Matrix adapter anchor is ``mautrix``.
     Features the user has never enabled stay quiet.
 
     Used by ``hermes update`` to figure out which lazy backends need a
@@ -905,7 +946,7 @@ def active_features() -> list[str]:
     """
     active = []
     for feature, specs in LAZY_DEPS.items():
-        if any(_is_present(s) for s in specs):
+        if specs and _is_present(specs[0]):
             active.append(feature)
     return active
 

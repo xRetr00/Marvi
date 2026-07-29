@@ -6,6 +6,7 @@ import { isLikelyHallucination, isLikelySelfEchoTranscript } from '@/lib/voice-e
 import { openStreamingTranscription, type StreamingTranscriptionSession } from '@/lib/streaming-transcription'
 import { enqueueSpeech, finishSpeech, startSpeechSession, stopVoicePlayback } from '@/lib/voice-playback'
 import { vpLog } from '@/lib/voice-presence-log'
+import { isVoiceStopCommand } from '@/lib/voice-stop-word'
 import { notify, notifyError } from '@/store/notifications'
 import { setUserCaption } from '@/store/voice-presence'
 
@@ -25,12 +26,16 @@ interface VoiceConversationOptions {
   enabled: boolean
   onFatalError?: () => void
   onInterrupt?: () => Promise<void> | void
+  onStopWord?: () => void
   onSubmit: (text: string) => Promise<void> | void
   onTranscribeAudio?: (audio: Blob) => Promise<string>
   streamingSttEnabled?: boolean
   pendingResponse: () => PendingVoiceResponse | null
   semanticTurnEnabled?: boolean
   consumePendingResponse: () => void
+  /** Awaited right before the mic is opened. Used to let the wake-word listener
+   *  fully release the capture device first, so the two never contend. */
+  beforeMicOpen?: () => Promise<void> | void
 }
 
 export function useVoiceConversation({
@@ -39,12 +44,14 @@ export function useVoiceConversation({
   enabled,
   onFatalError,
   onInterrupt,
+  onStopWord,
   onSubmit,
   onTranscribeAudio,
   streamingSttEnabled,
   pendingResponse,
   semanticTurnEnabled = true,
-  consumePendingResponse
+  consumePendingResponse,
+  beforeMicOpen
 }: VoiceConversationOptions) {
   const { t } = useI18n()
   const voiceCopy = t.notifications.voice
@@ -70,6 +77,16 @@ export function useVoiceConversation({
   const speakingRef = useRef(false)
   const bargeInterruptedRef = useRef(false)
   const bargeInStopRef = useRef<(() => void) | null>(null)
+  const onStopWordRef = useRef(onStopWord)
+  const beforeMicOpenRef = useRef(beforeMicOpen)
+
+  useEffect(() => {
+    onStopWordRef.current = onStopWord
+  }, [onStopWord])
+
+  useEffect(() => {
+    beforeMicOpenRef.current = beforeMicOpen
+  }, [beforeMicOpen])
 
   useEffect(() => {
     enabledRef.current = enabled
@@ -202,6 +219,14 @@ export function useVoiceConversation({
             return
           }
 
+          if (isVoiceStopCommand(transcript)) {
+            setUserCaption(null)
+            setStatus('idle')
+            onStopWordRef.current?.()
+
+            return
+          }
+
           setUserCaption(transcript)
           awaitingSpokenResponseRef.current = true
           resetSpeechBuffer()
@@ -245,6 +270,16 @@ export function useVoiceConversation({
     }
 
     if (statusRef.current !== 'idle') {
+      return
+    }
+
+    try {
+      await beforeMicOpenRef.current?.()
+    } catch {
+      // An unavailable wake listener must not block explicit voice start.
+    }
+
+    if (!enabledRef.current || mutedRef.current || busyRef.current || statusRef.current !== 'idle') {
       return
     }
 

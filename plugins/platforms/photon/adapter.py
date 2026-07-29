@@ -83,7 +83,11 @@ _MAX_MESSAGE_LENGTH = 8000
 _DEDUP_MAX_SIZE = 4000
 _DEDUP_WINDOW_SECONDS = 48 * 3600
 
+_FFFC_WAIT_SECONDS = 15.0  # Timeout for waiting on an attachment after a U+FFFC placeholder.
+
 _SIDECAR_DIR = Path(__file__).parent / "sidecar"
+_NPM_ERROR_LOG = _SIDECAR_DIR / ".photon-npm-error.log"
+_NPM_ERROR_LOG_MAX_CHARS = 300
 
 # Cap on a self-heal `npm ci`/`npm install` of the sidecar deps. A cold
 # install of the pinned spectrum-ts tree normally takes well under a minute;
@@ -129,16 +133,59 @@ def _coerce_port(value: Any, default: int) -> int:
         return default
 
 
+def sidecar_deps_installed() -> bool:
+    """True when spectrum-ts is present under node_modules/.
+
+    Checks the dependency's own directory, not just node_modules/'s
+    existence: npm creates node_modules/ before aborting on ENOSPC, a
+    network timeout, or EACCES, so an empty/partial node_modules/ would
+    otherwise read as "installed". Shared by check_requirements(),
+    _start_sidecar(), and `hermes photon status` so all three agree on
+    what "installed" means.
+    """
+    return (_SIDECAR_DIR / "node_modules" / "spectrum-ts").exists()
+
+
 def check_requirements() -> bool:
     """Return True when both Python deps and the Node sidecar are available."""
     if not HTTPX_AVAILABLE:
+        logger.warning("photon: httpx not installed — pip install httpx")
         return False
     if not shutil.which(os.getenv("PHOTON_NODE_BIN") or "node"):
+        logger.warning(
+            "photon: node binary '%s' not found on PATH",
+            os.getenv("PHOTON_NODE_BIN") or "node",
+        )
         return False
-    if not (_SIDECAR_DIR / "node_modules").exists():
-        # spectrum-ts not installed yet — `hermes photon setup` will
-        # install it.  check_fn still returns False so the gateway
-        # surfaces the missing-deps state in `hermes setup` / status.
+    if not sidecar_deps_installed():
+        # spectrum-ts not installed yet, or node_modules/ was partially created
+        # by an aborted npm install (ENOSPC, network timeout, EACCES).
+        # Checking spectrum-ts presence — not just node_modules/ existence —
+        # prevents a false positive where an empty/broken node_modules/ dir
+        # causes check_requirements() to return True while the sidecar crashes
+        # at runtime with an unrelated-looking missing-module error.
+        # DEBUG (not WARNING): this is the normal pre-setup state.
+        # check_fn() is called from multiple hot paths in the core
+        # (load_gateway_config, hermes status, GET /api/status polling) —
+        # WARNING here would spam logs on every probe for unconfigured photon.
+        npm_error = ""
+        try:
+            if _NPM_ERROR_LOG.exists():
+                npm_error = _NPM_ERROR_LOG.read_text(encoding="utf-8").strip()[:_NPM_ERROR_LOG_MAX_CHARS]
+        except OSError:
+            pass
+        if npm_error:
+            logger.debug(
+                "photon: spectrum-ts not installed at %s "
+                "(last npm error: %s) — run: hermes photon setup",
+                _SIDECAR_DIR,
+                npm_error,
+            )
+        else:
+            logger.debug(
+                "photon: spectrum-ts not installed at %s — run: hermes photon setup",
+                _SIDECAR_DIR,
+            )
         return False
     return True
 
@@ -278,6 +325,10 @@ class PhotonAdapter(BasePlatformAdapter):
     """
 
     MAX_MESSAGE_LENGTH = _MAX_MESSAGE_LENGTH
+    # Photon (iMessage) has no real edit API for already-sent messages.
+    # Mark it explicitly so streaming suppresses the visible cursor instead
+    # of leaving a stale tofu square (▉) behind when edit attempts fail.
+    SUPPORTS_MESSAGE_EDITING = False
 
     def __init__(self, config: PlatformConfig):
         super().__init__(config, Platform("photon"))
@@ -339,6 +390,8 @@ class PhotonAdapter(BasePlatformAdapter):
         self._last_inbound_by_chat: Dict[str, str] = {}
         # Last time we sent a typing indicator per chat, for cooldown gating.
         self._typing_last_sent: Dict[str, float] = {}
+
+        self._pending_fffc: Dict[str, tuple[float, Any]] = {}  # chat_key → (timestamp, asyncio.Task)
 
         # Group-chat mention gating (parity with BlueBubbles). When enabled,
         # group messages are ignored unless they match a wake word; DMs are
@@ -432,7 +485,7 @@ class PhotonAdapter(BasePlatformAdapter):
             )
             return False
 
-        client = httpx.AsyncClient(timeout=30.0)
+        client = httpx.AsyncClient(timeout=30.0, trust_env=False)
         self._http_client = client
 
         # The sidecar holds the gRPC stream for BOTH directions, so it is
@@ -492,6 +545,11 @@ class PhotonAdapter(BasePlatformAdapter):
             except Exception:
                 pass
             self._inbound_task = None
+        # Cancel any pending U+FFFC placeholder tasks.
+        for chat_key, (_, fffc_task) in list(self._pending_fffc.items()):
+            if fffc_task and not fffc_task.done():
+                fffc_task.cancel()
+        self._pending_fffc.clear()
         await self._stop_sidecar()
         if self._http_client is not None:
             try:
@@ -617,6 +675,14 @@ class PhotonAdapter(BasePlatformAdapter):
                 del seen[old]
         return False
 
+    async def _fffc_timeout_handler(self, chat_key: str, message_id: str) -> None:
+        await asyncio.sleep(_FFFC_WAIT_SECONDS)
+        if self._pending_fffc.pop(chat_key, None):
+            logger.warning(
+                "[photon] wait for attachment was too long, can't retrieve attachment data "
+                "(message %s, chat %s)", message_id, chat_key,
+            )
+
     async def _dispatch_inbound(self, event: Dict[str, Any]) -> None:
         """Normalize a sidecar inbound event and dispatch it to the gateway.
 
@@ -677,6 +743,11 @@ class PhotonAdapter(BasePlatformAdapter):
             is_voice = payload.get("type") == "voice"
             name = payload.get("name") or ("voice" if is_voice else "(unnamed)")
             mime = payload.get("mimeType") or ""
+            # Promote CAF attachments to VOICE (iMessage voice notes use CAF).
+            # Check both filename and MIME: the sidecar may send "(unnamed)"
+            # when no name is supplied, so the MIME type is the reliable signal.
+            if not is_voice and (name.lower().endswith(".caf") or mime == "audio/x-caf"):
+                is_voice = True
             mtype = MessageType.VOICE if is_voice else _attachment_message_type(mime)
             cached = _cache_inbound_attachment(
                 payload, name, mime, force_audio=is_voice
@@ -704,6 +775,19 @@ class PhotonAdapter(BasePlatformAdapter):
             )
 
         ctype = content.get("type")
+        if ctype == "text":
+            raw_text = content.get("text") or ""
+            # iMessage emits U+FFFC OBJECT REPLACEMENT CHARACTER as a transient
+            # placeholder for some media bubbles (notably voice notes). Photon
+            # can then deliver the real attachment/voice event immediately
+            # afterwards with a different message id. If we dispatch the
+            # placeholder as a standalone text turn, the subsequent media event
+            # arrives while that turn is active and the gateway sends a bogus
+            # "Interrupting current task" busy ack. Drop placeholder-only text
+            # at the platform boundary; the real media event carries the bytes.
+            if raw_text.strip() == "\ufffc":
+                logger.debug("[photon] ignoring iMessage object-placeholder text event")
+                return
         if ctype == "reaction":
             # Route only tapbacks on messages WE sent — those are implicitly
             # addressed to the bot (feishu precedent: synthetic text event).
@@ -747,6 +831,28 @@ class PhotonAdapter(BasePlatformAdapter):
                 )
             )
             return
+        # U+FFFC placeholder — wait for the real attachment instead of
+        # dispatching. Detected before _record_last_inbound so the placeholder
+        # is not recorded as the reaction target — the real attachment will be.
+        if ctype == "text" and (content.get("text") or "").strip() == "\ufffc":
+            chat_key = space_id
+            prev = self._pending_fffc.pop(chat_key, None)
+            if prev and prev[1] and not prev[1].done():
+                prev[1].cancel()
+            task = asyncio.create_task(
+                self._fffc_timeout_handler(chat_key, event.get("messageId") or "")
+            )
+            self._pending_fffc[chat_key] = (time.monotonic(), task)
+            logger.debug("[photon] U+FFFC placeholder received — waiting for attachment")
+            return
+
+        # Cancel any pending U+FFFC timeout — the real message arrived.
+        if ctype in {"attachment", "voice"}:
+            prev = self._pending_fffc.pop(space_id, None)
+            if prev and prev[1] and not prev[1].done():
+                prev[1].cancel()
+                logger.debug("[photon] attachment arrived — cancelling U+FFFC timeout")
+
         # Anything past here is a real (reactable) message — remember it as
         # the chat's latest inbound so `add_reaction` can target it when the
         # caller doesn't pass an explicit message id. Recorded before the
@@ -875,7 +981,7 @@ class PhotonAdapter(BasePlatformAdapter):
         if sys.platform == "win32":  # lsof/ps; orphaning is a POSIX-only path
             return
         try:
-            async with httpx.AsyncClient(timeout=2.0) as client:
+            async with httpx.AsyncClient(timeout=2.0, trust_env=False) as client:
                 await client.post(
                     f"http://{self._sidecar_bind}:{self._sidecar_port}/healthz",
                     headers={"X-Hermes-Sidecar-Token": self._sidecar_token},
@@ -919,7 +1025,7 @@ class PhotonAdapter(BasePlatformAdapter):
             )
 
     async def _start_sidecar(self) -> None:
-        if not (_SIDECAR_DIR / "node_modules").exists():
+        if not sidecar_deps_installed():
             raise RuntimeError(
                 f"Photon sidecar deps not installed. Run: "
                 f"cd {_SIDECAR_DIR} && npm install   (or `hermes photon setup`)"
@@ -1001,7 +1107,7 @@ class PhotonAdapter(BasePlatformAdapter):
         # Wait for /healthz to come up — give it up to 15s on cold start.
         deadline = time.time() + 15.0
         last_err: Optional[Exception] = None
-        async with httpx.AsyncClient(timeout=2.0) as client:
+        async with httpx.AsyncClient(timeout=2.0, trust_env=False) as client:
             while time.time() < deadline:
                 if self._sidecar_proc.poll() is not None:
                     raise RuntimeError(
@@ -1564,7 +1670,7 @@ class PhotonAdapter(BasePlatformAdapter):
         # _http_client directly — it always runs on the gateway's loop.
         url = f"http://{self._sidecar_bind}:{self._sidecar_port}{path}"
         headers = {"X-Hermes-Sidecar-Token": self._sidecar_token}
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        async with httpx.AsyncClient(timeout=30.0, trust_env=False) as client:
             resp = await client.post(url, json=body, headers=headers)
         if resp.status_code != 200:
             raise RuntimeError(
@@ -1610,7 +1716,7 @@ _AUDIO_EXT_BY_MIME = {
     "audio/mpeg": ".mp3",
     "audio/ogg": ".ogg",
     "audio/wav": ".wav",
-    "audio/x-caf": ".mp3",
+    "audio/x-caf": ".caf",
     "audio/mp4": ".m4a",
     "audio/aac": ".m4a",
 }
@@ -1704,7 +1810,7 @@ async def _standalone_send(
     headers = {"X-Hermes-Sidecar-Token": token}
     last_message_id: Optional[str] = None
     try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        async with httpx.AsyncClient(timeout=30.0, trust_env=False) as client:
             # 1. Text body first (if any), so it leads the conversation.
             if message:
                 send_body: Dict[str, Any] = {

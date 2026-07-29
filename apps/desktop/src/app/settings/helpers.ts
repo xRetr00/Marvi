@@ -166,7 +166,7 @@ function personalityOptions(config: HermesConfigRecord): string[] {
   return [...new Set(['', ...BUILTIN_PERSONALITIES, ...customNames])]
 }
 
-// Built-in provider names, mirroring `tts_tool.py:BUILTIN_TTS_PROVIDERS` and
+// Reserved provider names, mirroring `tts_tool.py:BUILTIN_TTS_PROVIDERS` and
 // `transcription_tools.py:BUILTIN_STT_PROVIDERS`. The runtime rejects a built-in
 // name as a command provider before any config lookup
 // (`_resolve_command_provider_config`: `key = provider.lower().strip()`, then
@@ -185,6 +185,7 @@ const BUILTIN_TTS_PROVIDERS = new Set([
   'xai',
   'mistral',
   'gemini',
+  // Blocked Marvi providers stay reserved so custom config cannot restore them.
   'neutts',
   'kittentts',
   'piper',

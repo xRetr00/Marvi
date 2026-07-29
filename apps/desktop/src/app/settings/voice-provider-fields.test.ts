@@ -23,7 +23,6 @@ describe('voiceProviderKeys', () => {
       'elevenlabs',
       'mistral',
       'gemini',
-      'kittentts',
       'piper',
       'deepinfra',
       'minimax'
@@ -62,7 +61,6 @@ describe('voice field option coverage', () => {
 
   it('keeps closed enums (devices, providers) out of the free-input set', () => {
     expect(FREE_INPUT_KEYS.has('tts.provider')).toBe(false)
-    expect(FREE_INPUT_KEYS.has('tts.neutts.device')).toBe(false)
     expect(FREE_INPUT_KEYS.has('stt.provider')).toBe(false)
   })
 

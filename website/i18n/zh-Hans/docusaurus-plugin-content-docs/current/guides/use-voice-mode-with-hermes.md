@@ -72,12 +72,6 @@ cd ~/.hermes/hermes-agent && uv pip install -e ".[messaging]"
 cd ~/.hermes/hermes-agent && uv pip install -e ".[tts-premium]"
 ```
 
-### 本地 NeuTTS（可选）
-
-```bash
-python -m pip install -U neutts[all]
-```
-
 ### 全部安装
 
 ```bash
@@ -104,7 +98,6 @@ sudo apt install espeak-ng
 - `portaudio` → CLI 语音模式的麦克风输入与播放
 - `ffmpeg` → TTS 和消息传递的音频转换
 - `opus` → Discord 语音编解码器支持
-- `espeak-ng` → NeuTTS 的 phonemizer 后端
 
 ## 第四步：选择 STT 和 TTS 提供商
 
@@ -142,20 +135,14 @@ ELEVENLABS_API_KEY=***
 #### 文字转语音（TTS）
 
 - `edge` → 免费，对大多数用户已足够
-- `neutts` → 免费的本地/设备端 TTS
+- `pockettts` → 免费的本地/设备端 TTS
 - `elevenlabs` → 最佳质量
 - `openai` → 良好的中间选项
 - `mistral` → 多语言，原生 Opus
 
 ### 如果使用 `hermes setup`
 
-如果你在设置向导中选择了 NeuTTS，Hermes 会检查 `neutts` 是否已安装。如果缺失，向导会告知你 NeuTTS 需要 Python 包 `neutts` 和系统包 `espeak-ng`，并提供自动安装，使用平台包管理器安装 `espeak-ng`，然后运行：
-
-```bash
-python -m pip install -U neutts[all]
-```
-
-如果跳过安装或安装失败，向导会回退到 Edge TTS。
+本地 TTS 请选择 PocketTTS 或 Piper。Marvi 明确禁用 NeuTTS 和 KittenTTS。
 
 ## 第五步：推荐配置
 
@@ -185,11 +172,9 @@ tts:
 
 ```yaml
 tts:
-  provider: "neutts"
-  neutts:
-    ref_audio: ''
-    ref_text: ''
-    model: neuphonic/neutts-air-q4-gguf
+  provider: "pockettts"
+  pockettts:
+    voice: alba
     device: cpu
 ```
 

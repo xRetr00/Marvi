@@ -2058,19 +2058,16 @@ def test_provider_readiness_xai_grok_row_tracks_credentials(monkeypatch):
 
 
 def test_provider_readiness_local_install_rows_track_module_presence(monkeypatch):
-    kitten = {"name": "KittenTTS", "env_vars": [], "post_setup": "kittentts"}
     piper = {"name": "Piper", "env_vars": [], "post_setup": "piper"}
 
     monkeypatch.setattr(
         "hermes_cli.tools_config._module_installed", lambda name: False
     )
-    assert provider_readiness_status(kitten, {}) == "needs_setup"
     assert provider_readiness_status(piper, {}) == "needs_setup"
 
     monkeypatch.setattr(
         "hermes_cli.tools_config._module_installed", lambda name: True
     )
-    assert provider_readiness_status(kitten, {}) == "ready"
     assert provider_readiness_status(piper, {}) == "ready"
 
 

@@ -338,14 +338,7 @@ export const ENUM_OPTIONS: Record<string, string[]> = {
   'tts.xai.voice_id': ['eve'],
   'tts.minimax.model': ['speech-02-hd', 'speech-02-turbo'],
   'tts.mistral.model': ['voxtral-mini-tts-2603'],
-  'tts.kittentts.model': [
-    'KittenML/kitten-tts-nano-0.8-int8',
-    'KittenML/kitten-tts-micro-0.8-int8',
-    'KittenML/kitten-tts-mini-0.8-int8'
-  ],
-  'tts.kittentts.voice': ['Jasper'],
   'tts.piper.voice': ['en_US-lessac-medium', 'en_US-amy-medium', 'en_US-ryan-high', 'en_GB-alan-medium'],
-  'tts.neutts.model': ['neuphonic/neutts-air-q4-gguf', 'neuphonic/neutts-air-q8-gguf', 'neuphonic/neutts-air'],
   // Text-to-speech backends — kept in sync with the built-in source of truth
   // (agent/tts_registry.py::_BUILTIN_NAMES / tools/tts_tool.py::
   // BUILTIN_TTS_PROVIDERS). 'xai' is Grok TTS.
@@ -398,9 +391,6 @@ export const FREE_INPUT_KEYS = new Set([
   'tts.minimax.voice_id',
   'tts.mistral.model',
   'tts.mistral.voice_id',
-  'tts.neutts.model',
-  'tts.kittentts.model',
-  'tts.kittentts.voice',
   'tts.piper.voice',
   'tts.deepinfra.model',
   'tts.deepinfra.voice'

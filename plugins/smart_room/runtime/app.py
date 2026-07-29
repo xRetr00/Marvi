@@ -565,7 +565,8 @@ class Runtime:
             try:
                 self._poll_devices()
             except Exception as e:
-                logger.error("Device poll failed: %s", e)
+                if self._running:
+                    logger.error("Device poll failed: %s", e)
             self._exit_event.wait(_STATE_POLL_INTERVAL)
 
     def _poll_devices(self) -> None:

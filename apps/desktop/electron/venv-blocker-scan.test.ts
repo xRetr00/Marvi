@@ -182,6 +182,34 @@ describe('scanVenvBlockers', () => {
     assert.equal((await scanVenvBlockers('/r', execReturn(blockedJson), stubVenv)).kind, 'blocked')
   })
 
+  it('leaves updater-managed gateway and Smart Room runtime for updater teardown', async () => {
+    const managed = JSON.stringify({
+      ok: true,
+      blocked: true,
+      processes: [
+        { pid: 1, name: 'python.exe', cmdline: 'python -m hermes_cli.main gateway run --replace' },
+        { pid: 2, name: 'python.exe', cmdline: 'python -m plugins.smart_room.runtime.app' }
+      ]
+    })
+
+    assert.equal((await scanVenvBlockers('/r', execReturn(managed), stubVenv)).kind, 'clear')
+  })
+
+  it('still blocks an orphaned Smart Room runtime and unrelated backend', async () => {
+    const holders = JSON.stringify({
+      ok: true,
+      blocked: true,
+      processes: [
+        { pid: 1, name: 'python.exe', cmdline: 'python -m plugins.smart_room.runtime.app' },
+        { pid: 2, name: 'python.exe', cmdline: 'python -m hermes_cli.main serve' }
+      ]
+    })
+    const outcome = await scanVenvBlockers('/r', execReturn(holders), stubVenv)
+
+    assert.equal(outcome.kind, 'blocked')
+    assert.equal(outcome.kind === 'blocked' ? outcome.result.processes.length : 0, 2)
+  })
+
   it('non-zero exit is probe-failure', async () => {
     const o = await scanVenvBlockers('/r', execThrow(2, 'ModuleNotFoundError'), stubVenv)
     assert.equal(o.kind, 'probe-failure')

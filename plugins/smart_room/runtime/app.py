@@ -55,6 +55,7 @@ from plugins.smart_room.runtime.automation_engine import evaluate_automations, A
 from plugins.smart_room.runtime.scheduler import Scheduler
 from plugins.smart_room.runtime.command_router import CommandRouter
 from plugins.smart_room.runtime.health import check_device_health
+from hermes_cli._subprocess_compat import windows_hide_flags
 
 logger = logging.getLogger(__name__)
 
@@ -962,6 +963,7 @@ class Runtime:
                 stderr=subprocess.DEVNULL,
                 timeout=2,
                 check=False,
+                creationflags=windows_hide_flags(),
             ).returncode == 0
         except (OSError, subprocess.TimeoutExpired):
             return False

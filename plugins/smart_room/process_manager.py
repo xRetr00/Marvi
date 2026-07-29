@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 from hermes_constants import get_hermes_home
+from hermes_cli._subprocess_compat import windows_hide_flags
 
 _lock = threading.RLock()
 _supervisor_stop = threading.Event()
@@ -221,6 +222,7 @@ def _start(config: Optional[Dict[str, Any]] = None, *, restart_count: int = 0) -
             env=env,
             start_new_session=True,
             close_fds=True,
+            creationflags=windows_hide_flags(),
         )
         record = {
             "pid": _process.pid,

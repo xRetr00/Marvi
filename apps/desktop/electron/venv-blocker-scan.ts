@@ -148,7 +148,30 @@ export async function scanVenvBlockers(
     return { kind: 'probe-failure', error: diag.join('; ') }
   }
 
-  return parseVenvBlockerScanOutput(stdout)
+  const outcome = parseVenvBlockerScanOutput(stdout)
+
+  if (outcome.kind !== 'blocked') {
+    return outcome
+  }
+
+  // The native updater deliberately pauses and resumes every gateway before
+  // mutating the venv. Its Smart Room runtime is a supervised gateway child,
+  // so neither is an external blocker at this Desktop hand-off boundary.
+  const hasGateway = outcome.result.processes.some(proc =>
+    proc.cmdline.toLowerCase().includes('hermes_cli.main gateway ')
+  )
+  const processes = outcome.result.processes.filter(proc => {
+    const cmdline = proc.cmdline.toLowerCase()
+
+    return (
+      !cmdline.includes('hermes_cli.main gateway ') &&
+      !(hasGateway && cmdline.includes('plugins.smart_room.runtime.app'))
+    )
+  })
+
+  return processes.length
+    ? { kind: 'blocked', result: { blocked: true, processes } }
+    : { kind: 'clear', result: { blocked: false, processes: [] } }
 }
 
 // ---------------------------------------------------------------------------

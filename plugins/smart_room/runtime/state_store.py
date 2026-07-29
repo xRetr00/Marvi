@@ -10,18 +10,21 @@ import json
 import logging
 import shutil
 import threading
+import time
 from collections import deque
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict
 
 from hermes_constants import get_hermes_home
+from utils import atomic_json_write
 
 from plugins.smart_room.runtime.models import RoomState
 
 logger = logging.getLogger(__name__)
 _events_lock = threading.Lock()
 _locations_lock = threading.Lock()
+_state_file_lock = threading.Lock()
 _last_location_keys: Dict[str, str] = {}
 
 
@@ -55,13 +58,19 @@ def save_state(state: RoomState) -> None:
     """Atomically write state to disk."""
     p = state_path()
     p.parent.mkdir(parents=True, exist_ok=True)
-    tmp = p.with_suffix(".json.tmp")
     backup = p.with_suffix(".json.bak")
     data = state.to_dict()
-    tmp.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
-    if p.is_file():
-        shutil.copy2(p, backup)
-    tmp.replace(p)
+    with _state_file_lock:
+        if p.is_file():
+            shutil.copy2(p, backup)
+        for attempt in range(5):
+            try:
+                atomic_json_write(p, data)
+                break
+            except PermissionError:
+                if attempt == 4:
+                    raise
+                time.sleep(0.05 * (attempt + 1))
     logger.debug("State saved (event_id=%d)", state.event_id)
 
 

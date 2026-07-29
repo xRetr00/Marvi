@@ -2574,6 +2574,10 @@ async function readCommitLog(cwd, branch) {
 
 let updateInFlight = false
 
+function resumeBackendAfterFailedUpdate() {
+  setTimeout(() => startHermes().catch(() => {}), 0)
+}
+
 // Set to true when the desktop is about to quit so a detached swap/install/
 // uninstall script can take over. On macOS, app.quit() closes windows but
 // window-all-closed deliberately keeps the process alive (standard Electron
@@ -2917,7 +2921,7 @@ async function applyUpdates(opts = {}) {
         'Update aborted: another process is holding the Marvi install open ' +
         '(a second Marvi window or a terminal running hermes?). Close it and retry.'
       emitUpdateProgress({ stage: 'error', message, percent: null })
-      startHermes().catch(() => {})
+      resumeBackendAfterFailedUpdate()
 
       return { ok: false, error: message }
     }
@@ -2939,7 +2943,7 @@ async function applyUpdates(opts = {}) {
 
         rememberLog(`[updates] venv-blocked: ${scanOutcome.result.processes.length} process(es) hold the install`)
         emitUpdateProgress({ stage: 'error', message, percent: null })
-        startHermes().catch(() => {})
+        resumeBackendAfterFailedUpdate()
 
         return { ok: false, error: 'venv-blocked', message }
       }
@@ -2949,7 +2953,7 @@ async function applyUpdates(opts = {}) {
 
         rememberLog(`[updates] venv-blocker probe failed: ${scanOutcome.error}`)
         emitUpdateProgress({ stage: 'error', message, percent: null })
-        startHermes().catch(() => {})
+        resumeBackendAfterFailedUpdate()
 
         return { ok: false, error: 'venv-probe-failed', message }
       }
@@ -8396,6 +8400,10 @@ async function prepareProfileDeleteRequest(request) {
 }
 
 async function startHermes() {
+  if (updateInFlight) {
+    throw new Error('Update preflight is releasing the local backend.')
+  }
+
   // Latched-failure short-circuit: once bootstrap has failed in this
   // process, every subsequent startHermes() call re-throws the same error
   // without re-running install.ps1. This prevents the renderer's

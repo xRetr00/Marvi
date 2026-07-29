@@ -23,6 +23,7 @@ from plugins.smart_room.runtime.app import Runtime
 from plugins.smart_room.runtime.models import DeviceHealth, MmWaveState, PhoneLocation, Presence, RoomState
 from plugins.smart_room.runtime.presence_fusion import fuse
 from plugins.smart_room.runtime.scheduler import Scheduler
+from plugins.smart_room.runtime import state_store
 from plugins.smart_room.runtime.state_store import append_location_report, append_transition, load_location_reports
 from plugins.smart_room.runtime.state_store import save_state
 from plugins.smart_room.tools import handle_smart_room_state
@@ -595,6 +596,24 @@ def test_context_line_is_config_gated_and_uses_fused_source():
         "smart_room": {"enabled": True, "context": {"enabled": False}}
     }), encoding="utf-8")
     assert build_context_line() is None
+
+
+def test_state_save_retries_transient_windows_file_lock(monkeypatch):
+    real_write = state_store.atomic_json_write
+    calls = 0
+
+    def flaky_write(path, data):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise PermissionError("transient file lock")
+        real_write(path, data)
+
+    monkeypatch.setattr(state_store, "atomic_json_write", flaky_write)
+    monkeypatch.setattr(state_store.time, "sleep", lambda _seconds: None)
+    state_store.save_state(RoomState(event_id=42))
+    assert calls == 2
+    assert json.loads(state_store.state_path().read_text(encoding="utf-8"))["event_id"] == 42
 
 
 def test_runtime_has_no_memory_writer_imports():

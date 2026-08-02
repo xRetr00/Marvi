@@ -277,6 +277,40 @@ class LearningNodeEdit(BaseModel):
     profile: Optional[str] = None
 
 
+class MemoryGraphNodeRef(BaseModel):
+    id: int
+
+
+class MemoryGraphNodeEdit(BaseModel):
+    id: int
+    type: Literal["person", "project", "fact", "event", "preference", "place", "topic", "goal", "device", "org"]
+    label: str
+    summary: str = ""
+    salience: float = 0.5
+
+    @field_validator("label")
+    @classmethod
+    def validate_label(cls, value: str) -> str:
+        value = value.strip()
+        if not value or len(value) > 200:
+            raise ValueError("label must be between 1 and 200 characters")
+        return value
+
+    @field_validator("summary")
+    @classmethod
+    def validate_summary(cls, value: str) -> str:
+        if len(value) > 2000:
+            raise ValueError("summary must be at most 2000 characters")
+        return value.strip()
+
+    @field_validator("salience")
+    @classmethod
+    def validate_salience(cls, value: float) -> float:
+        if not 0 <= value <= 1:
+            raise ValueError("salience must be between 0 and 1")
+        return value
+
+
 # --- from web_server.py (originally lines 3786-3792) ---
 
 class DebugShareRequest(BaseModel):

@@ -119,6 +119,35 @@ class TestAddEdge:
         assert edge["note"] == "conflicting facts"
 
 
+class TestNodeMutations:
+    def test_edit_updates_node_and_search_index(self):
+        node_id = graph.upsert_node(type="fact", label="Old label", summary="Old summary", salience=0.2)
+
+        updated = graph.edit_node(
+            node_id,
+            type="project",
+            label="New label",
+            summary="New summary",
+            salience=0.8,
+        )
+
+        assert updated is not None
+        assert updated["type"] == "project"
+        assert updated["label"] == "New label"
+        assert updated["summary"] == "New summary"
+        assert updated["salience"] == 0.8
+        assert graph.query(text="New summary")[0]["id"] == node_id
+        assert graph.query(text="Old summary") == []
+
+    def test_delete_archives_node_and_removes_its_edges(self):
+        node_id, neighbor_id, _ = _make_star()
+
+        assert graph.delete_node(node_id) is True
+        assert graph.get_node(node_id) is None
+        assert graph.neighbors(neighbor_id)["edges"] == []
+        assert any(row["orig_node_id"] == node_id and row["reason"] == "deleted by user" for row in graph.archived())
+
+
 class TestQuery:
     def test_query_by_type_orders_by_salience(self):
         graph.upsert_node(type="fact", label="low", salience=0.1)

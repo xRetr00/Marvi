@@ -2256,6 +2256,46 @@ export const ja = defineLocale({
 
   mind: {
     proactiveTitle: 'Marvi が大切な変化に気づきました',
+    graph: {
+      title: 'グラフ',
+      nodeCount: count => `${count} ノード`,
+      description:
+        'Marvi が人、プロジェクト、事実、出来事をどう結び付けているか確認できます。ノードを選ぶと表示や編集ができます。',
+      searchPlaceholder: 'ノードを検索またはフォーカス',
+      filterLabel: 'ノードの種類を絞り込む',
+      allTypes: 'すべての種類',
+      types: {
+        person: '人物',
+        project: 'プロジェクト',
+        fact: '事実',
+        event: '出来事',
+        preference: '好み',
+        place: '場所',
+        topic: 'トピック',
+        goal: '目標',
+        device: 'デバイス',
+        org: '組織'
+      },
+      unavailable: 'バックエンドがオフラインのため、グラフを利用できません。',
+      empty: 'Marvi が学んだことを結び付けるにつれて、マインドマップが構築されます。',
+      canvasLabel: '知識グラフ',
+      selectHint: 'ノードを選ぶと、概要、情報源、接続、操作を確認できます。',
+      connections: '接続',
+      noConnections: '記録された接続はまだありません。',
+      connectionsFailed: 'ノードの接続を読み込めませんでした',
+      salience: value => `重要度 ${value}%`,
+      source: kind => `${kind} から`,
+      edit: '編集',
+      delete: '削除',
+      editTitle: label => `${label} を編集`,
+      label: 'ラベル',
+      summary: '概要',
+      type: '種類',
+      loadFailed: 'グラフを読み込めませんでした',
+      saveFailed: 'グラフノードを保存できませんでした',
+      deleteTitle: label => `${label} を削除しますか？`,
+      deleteDescription: 'ノードとその接続をグラフから削除します。元のメモリは変更されません。'
+    },
     composio: {
       title: '接続済みアプリ',
       description:

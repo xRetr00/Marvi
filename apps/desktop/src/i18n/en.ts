@@ -2421,6 +2421,46 @@ export const en: Translations = {
 
   mind: {
     proactiveTitle: 'Marvi noticed something',
+    graph: {
+      title: 'Graph',
+      nodeCount: count => `${count} node${count === 1 ? '' : 's'}`,
+      description:
+        'Explore how Marvi connects people, projects, facts, and events. Select a node to inspect or change it.',
+      searchPlaceholder: 'Search or focus a node',
+      filterLabel: 'Filter node type',
+      allTypes: 'All types',
+      types: {
+        person: 'Person',
+        project: 'Project',
+        fact: 'Fact',
+        event: 'Event',
+        preference: 'Preference',
+        place: 'Place',
+        topic: 'Topic',
+        goal: 'Goal',
+        device: 'Device',
+        org: 'Organization'
+      },
+      unavailable: 'Graph is unavailable while the backend is offline.',
+      empty: "Marvi's mind map fills in as it connects what it learns.",
+      canvasLabel: 'Knowledge graph',
+      selectHint: 'Select a node to see its summary, source, connections, and available actions.',
+      connections: 'Connections',
+      noConnections: 'No recorded connections yet.',
+      connectionsFailed: 'Failed to load node connections',
+      salience: value => `Salience ${value}%`,
+      source: kind => `via ${kind}`,
+      edit: 'Edit',
+      delete: 'Delete',
+      editTitle: label => `Edit ${label}`,
+      label: 'Label',
+      summary: 'Summary',
+      type: 'Type',
+      loadFailed: 'Failed to load Graph',
+      saveFailed: 'Failed to save graph node',
+      deleteTitle: label => `Delete ${label}?`,
+      deleteDescription: 'This removes the node and its connections from the graph. Its source memory is unchanged.'
+    },
     composio: {
       title: 'Connected apps',
       description:

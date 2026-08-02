@@ -106,3 +106,21 @@ class TestMemoryGraphEndpoint:
 
         assert resp.status_code == 500
         assert "boom" not in resp.json()["detail"]
+
+    def test_edit_and_delete_node(self, client):
+        from agent.memory.graph import archived, get_node, upsert_node
+
+        node_id = upsert_node(type="fact", label="Old label", summary="Old summary")
+        edited = client.put(
+            "/api/memory/graph/node",
+            json={"id": node_id, "type": "project", "label": "New label", "summary": "New summary", "salience": 0.8},
+        )
+
+        assert edited.status_code == 200
+        assert edited.json()["node"]["label"] == "New label"
+        assert get_node(node_id)["type"] == "project"
+
+        deleted = client.request("DELETE", "/api/memory/graph/node", json={"id": node_id})
+        assert deleted.status_code == 200
+        assert get_node(node_id) is None
+        assert archived()[0]["orig_node_id"] == node_id

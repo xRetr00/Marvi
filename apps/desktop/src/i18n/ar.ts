@@ -2016,6 +2016,47 @@ export const ar = defineLocale({
     noAuthenticatedProviders: 'لا يوجد مزوّدون مصادق عليهم.',
     addProvider: 'إضافة مزوّد…'
   },
+  mind: {
+    graph: {
+      title: 'الرسم البياني',
+      nodeCount: count => `${count} عقدة`,
+      description: 'استكشف كيف يربط Marvi الأشخاص والمشاريع والحقائق والأحداث. اختر عقدة لعرضها أو تعديلها.',
+      searchPlaceholder: 'ابحث عن عقدة أو ركّز عليها',
+      filterLabel: 'تصفية نوع العقدة',
+      allTypes: 'كل الأنواع',
+      types: {
+        person: 'شخص',
+        project: 'مشروع',
+        fact: 'حقيقة',
+        event: 'حدث',
+        preference: 'تفضيل',
+        place: 'مكان',
+        topic: 'موضوع',
+        goal: 'هدف',
+        device: 'جهاز',
+        org: 'منظمة'
+      },
+      unavailable: 'الرسم البياني غير متاح عندما تكون الواجهة الخلفية غير متصلة.',
+      empty: 'تتكوّن خريطة Marvi الذهنية كلما ربط ما يتعلمه.',
+      canvasLabel: 'الرسم البياني للمعرفة',
+      selectHint: 'اختر عقدة لعرض ملخصها ومصدرها واتصالاتها والإجراءات المتاحة.',
+      connections: 'الاتصالات',
+      noConnections: 'لا توجد اتصالات مسجلة بعد.',
+      connectionsFailed: 'تعذر تحميل اتصالات العقدة',
+      salience: value => `الأهمية ${value}%`,
+      source: kind => `عبر ${kind}`,
+      edit: 'تعديل',
+      delete: 'حذف',
+      editTitle: label => `تعديل ${label}`,
+      label: 'التسمية',
+      summary: 'الملخص',
+      type: 'النوع',
+      loadFailed: 'تعذر تحميل الرسم البياني',
+      saveFailed: 'تعذر حفظ عقدة الرسم البياني',
+      deleteTitle: label => `حذف ${label}؟`,
+      deleteDescription: 'يؤدي هذا إلى إزالة العقدة واتصالاتها من الرسم البياني دون تغيير الذاكرة المصدر.'
+    }
+  },
   shell: {
     windowControls: 'تحكم النافذة',
     paneControls: 'تحكم اللوحات',

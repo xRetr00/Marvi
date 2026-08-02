@@ -1,11 +1,33 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
+import { Button } from '@/components/ui/button'
+import { ConfirmDialog } from '@/components/ui/confirm-dialog'
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
-import { Network } from '@/lib/icons'
-import { cn } from '@/lib/utils'
+import { Loader } from '@/components/ui/loader'
+import { SearchField } from '@/components/ui/search-field'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { Textarea } from '@/components/ui/textarea'
+import { useI18n } from '@/i18n'
+import { Network, Pencil, Trash2 } from '@/lib/icons'
 import { notifyError } from '@/store/notifications'
 
 import { SectionHeading } from '../settings/primitives'
+
+const NODE_TYPES = [
+  'person',
+  'project',
+  'fact',
+  'event',
+  'preference',
+  'place',
+  'topic',
+  'goal',
+  'device',
+  'org'
+] as const
+
+type GraphNodeType = (typeof NODE_TYPES)[number]
 
 interface GraphNode {
   id: number
@@ -14,7 +36,7 @@ interface GraphNode {
   source_kind?: null | string
   source_ref?: null | string
   summary: string
-  type: string
+  type: GraphNodeType
 }
 
 interface GraphEdge {
@@ -30,38 +52,21 @@ interface GraphResponse {
   note?: string
 }
 
-const NODE_TYPE_LABELS: Record<string, string> = {
-  person: 'Person',
-  project: 'Project',
-  fact: 'Fact',
-  event: 'Event',
-  preference: 'Preference',
-  place: 'Place',
-  topic: 'Topic',
-  goal: 'Goal',
-  device: 'Device',
-  org: 'Org'
+const NODE_TYPE_COLORS: Record<GraphNodeType, string> = {
+  person: 'var(--ui-orange)',
+  project: 'var(--ui-blue)',
+  fact: 'var(--ui-text-secondary)',
+  event: 'var(--ui-red)',
+  preference: 'var(--ui-cyan)',
+  place: 'var(--ui-green)',
+  topic: 'var(--ui-cyan)',
+  goal: 'var(--ui-yellow)',
+  device: 'var(--ui-purple)',
+  org: 'var(--ui-red)'
 }
 
-const NODE_TYPES = Object.keys(NODE_TYPE_LABELS)
-
-const NODE_TYPE_COLORS: Record<string, string> = {
-  person: '#f97316',
-  project: '#6366f1',
-  fact: '#64748b',
-  event: '#ec4899',
-  preference: '#14b8a6',
-  place: '#22c55e',
-  topic: '#38bdf8',
-  goal: '#eab308',
-  device: '#a855f7',
-  org: '#ef4444'
-}
-
-const DEFAULT_NOTE = "Marvi's mind map fills in as it connects what it learns."
-
-function colorForType(type: string): string {
-  return NODE_TYPE_COLORS[type] ?? '#94a3b8'
+function colorForType(type: GraphNodeType): string {
+  return NODE_TYPE_COLORS[type] ?? 'var(--ui-text-secondary)'
 }
 
 function nodeRadius(salience: number): number {
@@ -90,6 +95,7 @@ function useForceLayout(nodeIds: number[], edgePairs: [number, number][], width:
   const nodeKey = nodeIds.join(',')
   const edgeKey = edgePairs.map(pair => pair.join('-')).join(',')
 
+  // eslint-disable-next-line no-restricted-syntax -- force simulation positions are an imperative animation cache.
   useEffect(() => {
     if (width <= 0 || height <= 0) {
       return
@@ -228,40 +234,56 @@ function useMeasuredSize<T extends HTMLElement>() {
   return [ref, size] as const
 }
 
-/** The Mind page's "Graph" tab -- a read-only, interactive force-directed view over Marvi's knowledge graph. */
+interface GraphNodeDraft {
+  id: number
+  label: string
+  salience: number
+  summary: string
+  type: GraphNodeType
+}
+
+/** Interactive force-directed view over Marvi's editable knowledge graph. */
 export function GraphTab() {
+  const { t } = useI18n()
+  const copy = t.mind.graph
   const [data, setData] = useState<GraphResponse | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(false)
   const [query, setQuery] = useState('')
-  const [typeFilter, setTypeFilter] = useState<null | string>(null)
+  const [typeFilter, setTypeFilter] = useState<null | GraphNodeType>(null)
   const [selectedId, setSelectedId] = useState<null | number>(null)
   const [neighborData, setNeighborData] = useState<GraphResponse | null>(null)
+  const [editing, setEditing] = useState<GraphNodeDraft | null>(null)
+  const [deleting, setDeleting] = useState<GraphNode | null>(null)
+  const [saving, setSaving] = useState(false)
+  const [editError, setEditError] = useState<null | string>(null)
 
-  const load = useCallback(async (focus: string, type: null | string) => {
-    setLoading(true)
+  const load = useCallback(
+    async (focus: string, type: null | GraphNodeType) => {
+      setLoading(true)
 
-    try {
-      const params = new URLSearchParams()
+      try {
+        const params = new URLSearchParams({ depth: '2' })
 
-      if (focus.trim()) {params.set('focus', focus.trim())}
+        if (focus.trim()) {
+          params.set('focus', focus.trim())
+        }
 
-      if (type) {params.set('type', type)}
-      params.set('depth', '2')
+        if (type) {
+          params.set('type', type)
+        }
 
-      const response = await window.hermesDesktop.api<GraphResponse>({
-        path: `/api/memory/graph?${params.toString()}`
-      })
-
-      setData(response)
-      setError(false)
-    } catch (err) {
-      setError(true)
-      notifyError(err, 'Failed to load Graph')
-    } finally {
-      setLoading(false)
-    }
-  }, [])
+        setData(await window.hermesDesktop.api<GraphResponse>({ path: `/api/memory/graph?${params.toString()}` }))
+        setError(false)
+      } catch (err) {
+        setError(true)
+        notifyError(err, copy.loadFailed)
+      } finally {
+        setLoading(false)
+      }
+    },
+    [copy.loadFailed]
+  )
 
   useEffect(() => {
     const handle = window.setTimeout(() => void load(query, typeFilter), 250)
@@ -271,13 +293,12 @@ export function GraphTab() {
 
   const nodes = useMemo(() => data?.nodes ?? [], [data])
   const edges = useMemo(() => data?.edges ?? [], [data])
-  const nodesById = useMemo(() => new Map(nodes.map(n => [n.id, n])), [nodes])
+  const nodesById = useMemo(() => new Map(nodes.map(node => [node.id, node])), [nodes])
   const selectedNode = selectedId !== null ? (nodesById.get(selectedId) ?? null) : null
-
-  const nodeIds = useMemo(() => nodes.map(n => n.id), [nodes])
+  const nodeIds = useMemo(() => nodes.map(node => node.id), [nodes])
 
   const edgePairs = useMemo<[number, number][]>(
-    () => edges.filter(e => nodesById.has(e.src) && nodesById.has(e.dst)).map(e => [e.src, e.dst]),
+    () => edges.filter(edge => nodesById.has(edge.src) && nodesById.has(edge.dst)).map(edge => [edge.src, edge.dst]),
     [edges, nodesById]
   )
 
@@ -291,13 +312,9 @@ export function GraphTab() {
     try {
       const params = new URLSearchParams({ depth: '1', focus: node.label, type: node.type })
 
-      const response = await window.hermesDesktop.api<GraphResponse>({
-        path: `/api/memory/graph?${params.toString()}`
-      })
-
-      setNeighborData(response)
+      setNeighborData(await window.hermesDesktop.api<GraphResponse>({ path: `/api/memory/graph?${params.toString()}` }))
     } catch (err) {
-      notifyError(err, 'Failed to load node connections')
+      notifyError(err, copy.connectionsFailed)
     }
   }
 
@@ -306,65 +323,126 @@ export function GraphTab() {
       return []
     }
 
-    const byId = new Map(neighborData.nodes.map(n => [n.id, n]))
+    const byId = new Map(neighborData.nodes.map(node => [node.id, node]))
     byId.set(selectedNode.id, selectedNode)
 
-    return neighborData.edges.map(edge => {
-      const src = byId.get(edge.src)
-      const dst = byId.get(edge.dst)
-
-      return { key: `${edge.src}-${edge.relation}-${edge.dst}`, src: src?.label ?? '?', relation: edge.relation, dst: dst?.label ?? '?' }
-    })
+    return neighborData.edges.map(edge => ({
+      dst: byId.get(edge.dst)?.label ?? '?',
+      key: `${edge.src}-${edge.relation}-${edge.dst}`,
+      relation: edge.relation,
+      src: byId.get(edge.src)?.label ?? '?'
+    }))
   }, [selectedNode, neighborData])
+
+  async function saveEdit() {
+    if (!editing || !editing.label.trim()) {
+      return
+    }
+
+    setSaving(true)
+    setEditError(null)
+
+    try {
+      const { node } = await window.hermesDesktop.api<{ node: GraphNode; ok: true }>({
+        body: { ...editing, label: editing.label.trim(), summary: editing.summary.trim() },
+        method: 'PUT',
+        path: '/api/memory/graph/node'
+      })
+
+      setData(previous =>
+        previous ? { ...previous, nodes: previous.nodes.map(item => (item.id === node.id ? node : item)) } : previous
+      )
+      setNeighborData(previous =>
+        previous ? { ...previous, nodes: previous.nodes.map(item => (item.id === node.id ? node : item)) } : previous
+      )
+      setEditing(null)
+    } catch (err) {
+      setEditError(err instanceof Error ? err.message : copy.saveFailed)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  async function deleteSelected() {
+    if (!deleting) {
+      return
+    }
+
+    const previous = data
+    const id = deleting.id
+    setData(current =>
+      current
+        ? {
+            ...current,
+            edges: current.edges.filter(edge => edge.src !== id && edge.dst !== id),
+            nodes: current.nodes.filter(node => node.id !== id)
+          }
+        : current
+    )
+    setSelectedId(null)
+    setNeighborData(null)
+
+    try {
+      await window.hermesDesktop.api({ body: { id }, method: 'DELETE', path: '/api/memory/graph/node' })
+    } catch (err) {
+      setData(previous)
+      setSelectedId(id)
+      throw err
+    }
+  }
 
   return (
     <div className="grid gap-5">
       <section>
-        <SectionHeading icon={Network} meta={`${nodes.length} node${nodes.length === 1 ? '' : 's'}`} title="Graph" />
-        <p className="mb-3 text-xs text-muted-foreground">
-          Marvi's knowledge graph -- people, projects, facts, events, and how they connect. Click a node for its
-          summary, source, and neighbors.
-        </p>
-        <div className="flex flex-wrap items-center gap-2">
-          <Input
-            className="max-w-xs"
-            onChange={event => setQuery(event.target.value)}
-            placeholder="Search or focus a node"
+        <SectionHeading icon={Network} meta={copy.nodeCount(nodes.length)} title={copy.title} />
+        <p className="mb-3 text-xs text-muted-foreground">{copy.description}</p>
+        <div className="flex items-center gap-3">
+          <SearchField
+            containerClassName="max-w-xs flex-1"
+            loading={loading}
+            onChange={setQuery}
+            placeholder={copy.searchPlaceholder}
             value={query}
           />
-          <div className="flex flex-wrap gap-1.5">
-            <button className={typeChipClass(typeFilter === null)} onClick={() => setTypeFilter(null)} type="button">
-              All
-            </button>
-            {NODE_TYPES.map(type => (
-              <button className={typeChipClass(typeFilter === type)} key={type} onClick={() => setTypeFilter(type)} type="button">
-                {NODE_TYPE_LABELS[type]}
-              </button>
-            ))}
-          </div>
+          <Select
+            onValueChange={value => setTypeFilter(value === 'all' ? null : (value as GraphNodeType))}
+            value={typeFilter ?? 'all'}
+          >
+            <SelectTrigger aria-label={copy.filterLabel} className="w-36" size="sm">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">{copy.allTypes}</SelectItem>
+              {NODE_TYPES.map(type => (
+                <SelectItem key={type} value={type}>
+                  {copy.types[type]}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </div>
       </section>
 
       {error && nodes.length === 0 ? (
-        <div className="rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">
-          Graph is unavailable while the backend is offline.{' '}
-          <button className="underline" onClick={() => void load(query, typeFilter)} type="button">
-            Retry
-          </button>
+        <div className="py-8 text-center text-sm text-muted-foreground">
+          {copy.unavailable}{' '}
+          <Button onClick={() => void load(query, typeFilter)} size="inline" variant="textStrong">
+            {t.common.retry}
+          </Button>
         </div>
       ) : loading && nodes.length === 0 ? (
-        <div className="px-3 py-6 text-center text-xs text-muted-foreground">Loading…</div>
-      ) : nodes.length === 0 ? (
-        <div className="rounded-md border border-dashed border-(--ui-stroke-secondary) px-3 py-10 text-center text-xs text-muted-foreground">
-          {data?.note || DEFAULT_NOTE}
+        <div className="grid place-items-center py-6">
+          <Loader label={t.common.loading} type="lemniscate-bloom" />
         </div>
+      ) : nodes.length === 0 ? (
+        <div className="py-10 text-center text-xs text-muted-foreground">{data?.note || copy.empty}</div>
       ) : (
-        <div className="grid gap-4 lg:grid-cols-[1fr_18rem]">
+        <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_19rem]">
           <div
-            className="relative h-[26rem] w-full overflow-hidden rounded-xl border border-(--ui-stroke-secondary) bg-(--ui-sidebar-surface-background)"
+            className="relative h-[30rem] w-full overflow-hidden rounded-xl border border-(--ui-stroke-tertiary) bg-(--ui-sidebar-surface-background)"
             ref={containerRef}
           >
-            <svg className="size-full" height={height} width={width}>
+            <svg aria-label={copy.canvasLabel} className="size-full" height={height} width={width}>
               <g>
                 {edges.map(edge => {
                   const a = positions.get(edge.src)
@@ -374,13 +452,10 @@ export function GraphTab() {
                     return null
                   }
 
-                  const mx = (a.x + b.x) / 2
-                  const my = (a.y + b.y) / 2
-
                   return (
                     <g key={`${edge.src}-${edge.relation}-${edge.dst}`}>
                       <line
-                        className="text-muted-foreground/25"
+                        className="text-muted-foreground/20"
                         stroke="currentColor"
                         strokeWidth={Math.min(3, 0.6 + edge.weight * 0.3)}
                         x1={a.x}
@@ -388,7 +463,13 @@ export function GraphTab() {
                         y1={a.y}
                         y2={b.y}
                       />
-                      <text className="fill-muted-foreground/60" fontSize={9} textAnchor="middle" x={mx} y={my}>
+                      <text
+                        className="fill-muted-foreground/55"
+                        fontSize={9}
+                        textAnchor="middle"
+                        x={(a.x + b.x) / 2}
+                        y={(a.y + b.y) / 2}
+                      >
                         {edge.relation}
                       </text>
                     </g>
@@ -397,18 +478,19 @@ export function GraphTab() {
               </g>
               <g>
                 {nodes.map(node => {
-                  const p = positions.get(node.id)
+                  const point = positions.get(node.id)
 
-                  if (!p) {
+                  if (!point) {
                     return null
                   }
 
-                  const isSelected = node.id === selectedId
-                  const r = nodeRadius(node.salience)
+                  const selected = node.id === selectedId
+                  const radius = nodeRadius(node.salience)
 
                   return (
                     <g
-                      className="cursor-pointer"
+                      aria-label={`${node.label}, ${copy.types[node.type]}`}
+                      className="cursor-pointer outline-none"
                       key={node.id}
                       onClick={() => void selectNode(node)}
                       onKeyDown={event => {
@@ -421,21 +503,21 @@ export function GraphTab() {
                       tabIndex={0}
                     >
                       <circle
-                        cx={p.x}
-                        cy={p.y}
+                        cx={point.x}
+                        cy={point.y}
                         fill={colorForType(node.type)}
-                        fillOpacity={isSelected ? 0.95 : 0.75}
-                        r={r}
-                        stroke={isSelected ? 'white' : 'transparent'}
-                        strokeWidth={isSelected ? 2 : 0}
+                        fillOpacity={selected ? 1 : 0.72}
+                        r={radius}
+                        stroke={selected ? 'var(--ui-text-primary)' : 'transparent'}
+                        strokeWidth={selected ? 2 : 0}
                       />
                       <text
                         className="fill-foreground/90"
                         fontSize={10}
-                        fontWeight={isSelected ? 600 : 400}
+                        fontWeight={selected ? 600 : 400}
                         textAnchor="middle"
-                        x={p.x}
-                        y={p.y + r + 11}
+                        x={point.x}
+                        y={point.y + radius + 11}
                       >
                         {node.label.length > 22 ? `${node.label.slice(0, 21)}…` : node.label}
                       </text>
@@ -446,33 +528,62 @@ export function GraphTab() {
             </svg>
           </div>
 
-          <div className="rounded-xl border border-(--ui-stroke-secondary) p-4">
+          <aside className="min-h-52 border-l border-(--ui-stroke-tertiary) pl-4">
             {selectedNode ? (
-              <div className="grid gap-3">
+              <div className="grid gap-4">
                 <div>
-                  <span
-                    className="inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[0.65rem] font-medium text-white"
-                    style={{ backgroundColor: colorForType(selectedNode.type) }}
+                  <div className="flex items-center gap-1.5 text-[0.68rem] font-medium text-muted-foreground">
+                    <span
+                      aria-hidden
+                      className="size-2 rounded-full"
+                      style={{ backgroundColor: colorForType(selectedNode.type) }}
+                    />
+                    {copy.types[selectedNode.type]}
+                  </div>
+                  <h3 className="mt-1 text-sm font-semibold text-foreground">{selectedNode.label}</h3>
+                </div>
+
+                <div className="flex gap-1.5">
+                  <Button
+                    onClick={() => {
+                      setEditError(null)
+                      setEditing({
+                        id: selectedNode.id,
+                        label: selectedNode.label,
+                        salience: selectedNode.salience,
+                        summary: selectedNode.summary,
+                        type: selectedNode.type
+                      })
+                    }}
+                    size="xs"
+                    variant="secondary"
                   >
-                    {NODE_TYPE_LABELS[selectedNode.type] ?? selectedNode.type}
-                  </span>
-                  <h3 className="mt-1.5 text-sm font-semibold text-foreground">{selectedNode.label}</h3>
+                    <Pencil aria-hidden />
+                    {copy.edit}
+                  </Button>
+                  <Button onClick={() => setDeleting(selectedNode)} size="xs" variant="ghost">
+                    <Trash2 aria-hidden />
+                    {copy.delete}
+                  </Button>
                 </div>
-                {selectedNode.summary && <p className="text-xs text-muted-foreground">{selectedNode.summary}</p>}
-                <div className="text-[0.65rem] text-muted-foreground">
-                  Salience {Math.round(selectedNode.salience * 100)}%
-                  {selectedNode.source_kind && ` · via ${selectedNode.source_kind}`}
+
+                {selectedNode.summary ? (
+                  <p className="text-xs leading-5 text-muted-foreground">{selectedNode.summary}</p>
+                ) : null}
+                <div className="text-[0.68rem] text-muted-foreground">
+                  {copy.salience(Math.round(selectedNode.salience * 100))}
+                  {selectedNode.source_kind ? ` · ${copy.source(selectedNode.source_kind)}` : ''}
                 </div>
                 <div>
-                  <h4 className="mb-1.5 text-[0.68rem] font-medium tracking-wide text-muted-foreground uppercase">
-                    Connections
+                  <h4 className="mb-2 text-[0.68rem] font-medium tracking-wide text-muted-foreground uppercase">
+                    {copy.connections}
                   </h4>
                   {neighborLines.length === 0 ? (
-                    <p className="text-xs text-muted-foreground">No recorded connections yet.</p>
+                    <p className="text-xs text-muted-foreground">{copy.noConnections}</p>
                   ) : (
-                    <ul className="grid gap-1.5">
+                    <ul className="grid gap-2">
                       {neighborLines.map(line => (
-                        <li className="text-xs text-foreground/85" key={line.key}>
+                        <li className="text-xs leading-4 text-foreground/85" key={line.key}>
                           {line.src} <span className="text-muted-foreground">—{line.relation}→</span> {line.dst}
                         </li>
                       ))}
@@ -481,20 +592,114 @@ export function GraphTab() {
                 </div>
               </div>
             ) : (
-              <p className="text-xs text-muted-foreground">Click a node to see its summary, source, and neighbors.</p>
+              <div className="grid gap-4">
+                <p className="text-xs leading-5 text-muted-foreground">{copy.selectHint}</p>
+                <div className="grid grid-cols-2 gap-x-3 gap-y-2">
+                  {NODE_TYPES.map(type => (
+                    <div className="flex items-center gap-1.5 text-[0.68rem] text-muted-foreground" key={type}>
+                      <span
+                        aria-hidden
+                        className="size-2 rounded-full"
+                        style={{ backgroundColor: colorForType(type) }}
+                      />
+                      {copy.types[type]}
+                    </div>
+                  ))}
+                </div>
+              </div>
             )}
-          </div>
+          </aside>
         </div>
       )}
-    </div>
-  )
-}
 
-function typeChipClass(active: boolean) {
-  return cn(
-    'rounded-full border px-2.5 py-1 text-[0.65rem] font-medium transition',
-    active
-      ? 'border-primary/40 bg-primary/10 text-primary'
-      : 'border-(--ui-stroke-secondary) text-muted-foreground hover:text-foreground'
+      <Dialog onOpenChange={open => !open && !saving && setEditing(null)} open={Boolean(editing)}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>{copy.editTitle(editing?.label ?? '')}</DialogTitle>
+          </DialogHeader>
+          {editing ? (
+            <div className="grid gap-4">
+              <label className="grid gap-1.5 text-xs text-muted-foreground">
+                {copy.label}
+                <Input
+                  autoFocus
+                  maxLength={200}
+                  onChange={event =>
+                    setEditing(current => (current ? { ...current, label: event.target.value } : current))
+                  }
+                  value={editing.label}
+                />
+              </label>
+              <label className="grid gap-1.5 text-xs text-muted-foreground">
+                {copy.summary}
+                <Textarea
+                  className="min-h-28 resize-y"
+                  maxLength={2000}
+                  onChange={event =>
+                    setEditing(current => (current ? { ...current, summary: event.target.value } : current))
+                  }
+                  value={editing.summary}
+                />
+              </label>
+              <div className="grid grid-cols-2 gap-4">
+                <label className="grid gap-1.5 text-xs text-muted-foreground">
+                  {copy.type}
+                  <Select
+                    onValueChange={type =>
+                      setEditing(current => (current ? { ...current, type: type as GraphNodeType } : current))
+                    }
+                    value={editing.type}
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {NODE_TYPES.map(type => (
+                        <SelectItem key={type} value={type}>
+                          {copy.types[type]}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </label>
+                <label className="grid gap-1.5 text-xs text-muted-foreground">
+                  {copy.salience(Math.round(editing.salience * 100))}
+                  <input
+                    className="h-8 accent-primary"
+                    max="1"
+                    min="0"
+                    onChange={event =>
+                      setEditing(current => (current ? { ...current, salience: Number(event.target.value) } : current))
+                    }
+                    step="0.05"
+                    type="range"
+                    value={editing.salience}
+                  />
+                </label>
+              </div>
+              {editError ? <p className="text-xs text-destructive">{editError}</p> : null}
+            </div>
+          ) : null}
+          <DialogFooter>
+            <Button disabled={saving} onClick={() => setEditing(null)} variant="ghost">
+              {t.common.cancel}
+            </Button>
+            <Button disabled={saving || !editing?.label.trim()} onClick={() => void saveEdit()}>
+              {saving ? t.common.saving : t.common.save}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <ConfirmDialog
+        confirmLabel={t.common.delete}
+        description={copy.deleteDescription}
+        destructive
+        onClose={() => setDeleting(null)}
+        onConfirm={deleteSelected}
+        open={Boolean(deleting)}
+        title={copy.deleteTitle(deleting?.label ?? '')}
+      />
+    </div>
   )
 }

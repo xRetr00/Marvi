@@ -397,6 +397,71 @@ def add_edge(
         return None
 
 
+def edit_node(node_id: int, *, type: str, label: str, summary: str, salience: float) -> Optional[Dict[str, Any]]:
+    """Update one graph node and its search index. Never raises."""
+    if not _enabled():
+        return None
+    try:
+        node_id = int(node_id)
+        type_norm = _normalize_type(type)
+        label = str(label or "").strip()
+        summary = str(summary or "").strip()
+        if not label:
+            return None
+        with _lock:
+            conn = _connect()
+            try:
+                row = conn.execute("SELECT id FROM nodes WHERE id = ?", (node_id,)).fetchone()
+                conflict = conn.execute(
+                    "SELECT id FROM nodes WHERE type = ? AND label_norm = ? AND id <> ?",
+                    (type_norm, normalize_label(label), node_id),
+                ).fetchone()
+                if not row or conflict:
+                    return None
+                with conn:
+                    conn.execute(
+                        "UPDATE nodes SET type = ?, label = ?, label_norm = ?, summary = ?, salience = ?, updated_at = ? WHERE id = ?",
+                        (type_norm, label, normalize_label(label), summary, _clamp01(salience), _now_iso(), node_id),
+                    )
+                    conn.execute("DELETE FROM nodes_fts WHERE node_id = ?", (node_id,))
+                    conn.execute(
+                        "INSERT INTO nodes_fts(node_id, label, summary) VALUES (?, ?, ?)",
+                        (node_id, label, summary),
+                    )
+                updated = conn.execute("SELECT * FROM nodes WHERE id = ?", (node_id,)).fetchone()
+                return _node_row_to_dict(updated) if updated else None
+            finally:
+                conn.close()
+    except Exception:
+        logger.debug("graph: edit_node failed", exc_info=True)
+        return None
+
+
+def delete_node(node_id: int, reason: str = "deleted by user") -> bool:
+    """Archive a node, then remove it and its edges from the live graph. Never raises."""
+    if not _enabled():
+        return False
+    try:
+        node_id = int(node_id)
+        with _lock:
+            conn = _connect()
+            try:
+                row = conn.execute("SELECT * FROM nodes WHERE id = ?", (node_id,)).fetchone()
+                if not row:
+                    return False
+                with conn:
+                    _archive_node_row(conn, row, reason=reason)
+                    conn.execute("DELETE FROM edges WHERE src_id = ? OR dst_id = ?", (node_id, node_id))
+                    conn.execute("DELETE FROM nodes_fts WHERE node_id = ?", (node_id,))
+                    conn.execute("DELETE FROM nodes WHERE id = ?", (node_id,))
+                return True
+            finally:
+                conn.close()
+    except Exception:
+        logger.debug("graph: delete_node failed", exc_info=True)
+        return False
+
+
 # ---------------------------------------------------------------------------
 # Reads
 # ---------------------------------------------------------------------------

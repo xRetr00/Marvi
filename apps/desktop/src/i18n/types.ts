@@ -2022,6 +2022,37 @@ export interface Translations {
 
   mind: {
     proactiveTitle: string
+    graph: {
+      title: string
+      nodeCount: (count: number) => string
+      description: string
+      searchPlaceholder: string
+      filterLabel: string
+      allTypes: string
+      types: Record<
+        'person' | 'project' | 'fact' | 'event' | 'preference' | 'place' | 'topic' | 'goal' | 'device' | 'org',
+        string
+      >
+      unavailable: string
+      empty: string
+      canvasLabel: string
+      selectHint: string
+      connections: string
+      noConnections: string
+      connectionsFailed: string
+      salience: (value: number) => string
+      source: (kind: string) => string
+      edit: string
+      delete: string
+      editTitle: (label: string) => string
+      label: string
+      summary: string
+      type: string
+      loadFailed: string
+      saveFailed: string
+      deleteTitle: (label: string) => string
+      deleteDescription: string
+    }
     composio: {
       title: string
       description: string

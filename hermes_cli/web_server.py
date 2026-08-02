@@ -1755,6 +1755,8 @@ from hermes_cli.web_models import (  # noqa: F401
     CuratorPause,
     LearningNodeRef,
     LearningNodeEdit,
+    MemoryGraphNodeRef,
+    MemoryGraphNodeEdit,
     DebugShareRequest,
     TTSSpeakRequest,
     OAuthSubmitBody,
@@ -14273,6 +14275,32 @@ async def get_memory_graph(focus: Optional[str] = None, depth: int = 2, type: Op
     except Exception:
         _log.exception("GET /api/memory/graph failed")
         raise HTTPException(status_code=500, detail="Failed to read graph memory")
+
+
+@app.put("/api/memory/graph/node")
+async def update_memory_graph_node(body: MemoryGraphNodeEdit):
+    from agent.memory.graph import edit_node
+
+    node = await run_in_threadpool(
+        edit_node,
+        body.id,
+        type=body.type,
+        label=body.label,
+        summary=body.summary,
+        salience=body.salience,
+    )
+    if node is None:
+        raise HTTPException(status_code=409, detail="Node is missing or conflicts with an existing node")
+    return {"ok": True, "node": node}
+
+
+@app.delete("/api/memory/graph/node")
+async def delete_memory_graph_node(body: MemoryGraphNodeRef):
+    from agent.memory.graph import delete_node
+
+    if not await run_in_threadpool(delete_node, body.id):
+        raise HTTPException(status_code=404, detail="Graph node not found")
+    return {"ok": True}
 
 
 def _mind_state_sync(history: bool = False) -> Dict[str, Any]:

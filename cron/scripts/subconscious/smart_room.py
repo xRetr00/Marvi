@@ -11,6 +11,7 @@ APP = "smart_room"
 
 
 def fetch_delta(store: SurfaceStore) -> Optional[str]:
+    from hermes_time import format_timestamp
     after_id = int(store.cursor.get("event_id", 0))
     events = load_transition_events(after_id)
     if store.is_first_run():
@@ -35,5 +36,5 @@ def fetch_delta(store: SurfaceStore) -> Optional[str]:
             for key, value in event.items()
             if key not in {"id", "at", "type", "summary"} and value is not None
         )
-        lines.append(f"- {event.get('at')}: {event.get('summary') or event.get('type')}" + (f" ({detail})" if detail else ""))
+        lines.append(f"- {format_timestamp(event.get('at'))}: {event.get('summary') or event.get('type')}" + (f" ({detail})" if detail else ""))
     return "\n".join(lines)

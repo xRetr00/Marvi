@@ -13449,6 +13449,23 @@ async def get_autonomy_status():
         raise HTTPException(status_code=500, detail="Failed to read autonomy status")
 
 
+class AutonomyAnswerRequest(BaseModel):
+    answer: str
+
+
+@app.post("/api/autonomy/questions/{question_id}/answer")
+async def answer_autonomy_question(question_id: str, body: AutonomyAnswerRequest):
+    from agent.autonomy.ask import answer_question
+
+    try:
+        result = await run_in_threadpool(answer_question, question_id, body.answer)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if result is None:
+        raise HTTPException(status_code=404, detail="Pending question not found")
+    return {"ok": True, "question": result}
+
+
 class AutonomyConfigUpdate(BaseModel):
     enabled: Optional[bool] = None
     daily_action_budget: Optional[int] = None

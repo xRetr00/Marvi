@@ -649,6 +649,9 @@ def proactive_delivery_context() -> Dict[str, Any]:
         presence = room.get("presence") if isinstance(room.get("presence"), dict) else {}
         location = room.get("location") if isinstance(room.get("location"), dict) else {}
         modes = room.get("modes") if isinstance(room.get("modes"), dict) else {}
+        devices = room.get("devices") if isinstance(room.get("devices"), dict) else {}
+        bulb = devices.get("tuya_bulb") if isinstance(devices.get("tuya_bulb"), dict) else {}
+        he20 = devices.get("tuya_he20") if isinstance(devices.get("tuya_he20"), dict) else {}
         room_present = bool(presence.get("detected"))
         room_mode = str(modes.get("active_mode") or "").strip().lower()
         zone = str(location.get("zone") or "").strip().lower()
@@ -734,10 +737,14 @@ def build_runtime_context(job_name: str) -> str:
     from agent.goal_store import format_active_goals_for_prompt
     from cron.subconscious_initiatives import due_initiatives
     from cron.suggestions import list_pending
+    from hermes_time import format_timestamp, now as local_now
 
     narrative = read_narrative() or "No durable narrative yet."
     due = due_initiatives()
-    parts = [f"## Durable narrative\n{narrative}"]
+    parts = [
+        f"## Current local time\n{local_now().strftime('%Y-%m-%d %H:%M %Z')}",
+        f"## Durable narrative\n{narrative}",
+    ]
     try:
         from plugins.smart_room.bridge import read_state_snapshot
         from plugins.smart_room.runtime.state_store import (
@@ -751,7 +758,7 @@ def build_runtime_context(job_name: str) -> str:
         modes = room.get("modes") if isinstance(room.get("modes"), dict) else {}
         movement = [
             (
-                f"- {report.get('reported_at') or report.get('received_at')}: "
+                f"- {format_timestamp(report.get('reported_at') or report.get('received_at'))}: "
                 f"{report.get('event') or 'location'} "
                 f"{report.get('zone') or 'outside known regions'}"
             )
@@ -759,7 +766,7 @@ def build_runtime_context(job_name: str) -> str:
         ]
         evidence = [
             (
-                f"- {event.get('at')}: {event.get('type')} "
+                f"- {format_timestamp(event.get('at'))}: {event.get('type')} "
                 f"mode={event.get('mode') or 'unknown'} "
                 f"phone_home={event.get('phone_home')} "
                 f"classification={event.get('classification') or 'n/a'} "
@@ -783,11 +790,18 @@ def build_runtime_context(job_name: str) -> str:
             "OwnTracks describes the owner's phone location; ESPresense/BLE and "
             "HE20 describe room occupancy. Read the following reports in time "
             "order and connect a leave -> arrive home -> room-entry sequence as "
-            "one journey when the evidence supports it.\n"
+            "one journey when the evidence supports it. Short arrive/leave pairs "
+            "at non-home regions (including Bakery) can be valid drive-by events; "
+            "treat them as route evidence, not necessarily a destination or sensor fault. "
+            "All displayed timestamps are in the configured local timezone.\n"
+            "The Current line is authoritative over an older durable narrative; "
+            "do not describe an offline device as healthy.\n"
             f"Current: phone_home={bool(location.get('home'))}, "
             f"phone_zone={location.get('zone') or 'unknown'}, "
             f"room_present={bool(presence.get('detected'))}, "
-            f"room_mode={modes.get('active_mode') or 'none'}.\n"
+            f"room_mode={modes.get('active_mode') or 'none'}, "
+            f"tuya_bulb_online={bool(bulb.get('online'))}, "
+            f"tuya_he20_online={bool(he20.get('online'))}.\n"
             + ("\n".join(movement) if movement else "- No recent OwnTracks reports.")
             + "\nRecent HE20/mode/device evidence:\n"
             + ("\n".join(evidence) if evidence else "- No recent sensor transitions.")

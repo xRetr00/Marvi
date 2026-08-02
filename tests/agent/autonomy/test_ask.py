@@ -140,7 +140,7 @@ class TestQuietInDeepWork:
 
 
 class TestPendingQuestionCorrelation:
-    def test_reconcile_marks_answered_when_user_activity_follows(self, _isolate, _fake_delivery, monkeypatch):
+    def test_unrelated_user_activity_is_not_treated_as_an_answer(self, _isolate, _fake_delivery, monkeypatch):
         record = _isolate.ask_user("Should I shift your morning brief?")
         assert record is not None
 
@@ -150,12 +150,18 @@ class TestPendingQuestionCorrelation:
         )
 
         changed = _isolate.reconcile_pending_questions()
-        assert changed == 1
+        assert changed == 0
 
         rows = _isolate.list_pending_questions()
-        answered = [r for r in rows if r["id"] == record["id"]][0]
+        pending = [r for r in rows if r["id"] == record["id"]][0]
+        assert pending["status"] == "pending"
+
+    def test_explicit_answer_uses_question_id(self, _isolate, _fake_delivery):
+        record = _isolate.ask_user("Should I shift your morning brief?")
+        answered = _isolate.answer_question(record["id"], "Yes, move it to 9am")
         assert answered["status"] == "answered"
-        assert "9am" in answered["answer_text"]
+        assert answered["answer_text"] == "Yes, move it to 9am"
+        assert _isolate.answer_question(record["id"], "again") is None
 
     def test_reconcile_leaves_question_pending_with_no_user_activity(self, _isolate, _fake_delivery, monkeypatch):
         record = _isolate.ask_user("Still waiting?")
@@ -220,6 +226,17 @@ class TestGraphContradictionSurfacing:
         )
         assert _isolate.surface_graph_contradictions(limit=1) == 0
         assert _fake_delivery == []
+
+    def test_resolved_graph_edge_is_not_asked_again(self, _isolate, _fake_delivery, monkeypatch):
+        graph = {
+            "nodes": [{"id": 1, "label": "A"}, {"id": 2, "label": "B"}],
+            "edges": [{"src": 1, "dst": 2, "relation": "contradicts"}],
+        }
+        monkeypatch.setattr("agent.memory.graph.top_salience_subgraph", lambda **kw: graph)
+        assert _isolate.surface_graph_contradictions() == 1
+        record = _isolate.list_pending_questions()[0]
+        assert _isolate.answer_question(record["id"], "A is current") is not None
+        assert _isolate.surface_graph_contradictions() == 0
 
     def test_never_raises_when_graph_module_broken(self, _isolate, monkeypatch):
         monkeypatch.setattr(

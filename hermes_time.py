@@ -133,3 +133,17 @@ def now() -> datetime:
     return datetime.now().astimezone()
 
 
+def format_timestamp(value: object, fmt: str = "%Y-%m-%d %H:%M %Z") -> str:
+    """Render an ISO timestamp in the configured local timezone."""
+    if isinstance(value, datetime):
+        stamp = value
+    else:
+        try:
+            stamp = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        except (TypeError, ValueError):
+            return str(value or "unknown time")
+    if stamp.tzinfo is None:
+        stamp = stamp.astimezone()
+    return stamp.astimezone(get_timezone() or now().tzinfo).strftime(fmt)
+
+

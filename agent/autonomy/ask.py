@@ -9,16 +9,8 @@ read-only). Budgeted via ``agent.autonomy.budget`` (category ``ask_user``),
 separately hard-rate-limited (``autonomy.ask.max_per_day``), deduped against
 open questions, and persisted so a later reply can be correlated back.
 
-Correlation design note (spec §1.4 asks for "the less invasive" of two
-options): rather than adding a hook into the live inbound-message path
-(gateway/run.py), :func:`reconcile_pending_questions` runs at reflection
-time and matches any user-authored episodic activity recorded since a
-question was asked. This is a heuristic ("the user said *something* since
-being asked" — not semantic verification that they answered *this*
-question), documented here and at the call site
-(``cron/scheduler.py``'s autonomy hook). Picked over a message-path hook
-because it touches zero files on the hot inbound-message path and reuses
-machinery that already exists (episodic memory).
+Answers are correlated explicitly by question id. Unrelated chat activity is
+never treated as an answer.
 """
 
 from __future__ import annotations
@@ -241,6 +233,7 @@ def ask_user(
     category: str = "general",
     *,
     urgent: bool = False,
+    stable_key: Optional[str] = None,
 ) -> Optional[Dict[str, Any]]:
     """Ask the user ``question`` through the normal proactive delivery path.
 
@@ -264,11 +257,13 @@ def ask_user(
             logger.debug("autonomy ask: deferred — user appears to be in deep work")
             return None
 
-        dedup_key = _dedup_key(question)
+        stable_dedup = _dedup_key(stable_key or question)
         with _lock:
             pending = _load_pending()
             for row in pending["questions"]:
-                if row.get("status") == "pending" and row.get("dedup_key") == dedup_key:
+                if row.get("dedup_key") == stable_dedup and (
+                    row.get("status") == "pending" or stable_key is not None
+                ):
                     return None
             if _count_asked_today(pending) >= ask_cfg["max_per_day"]:
                 return None
@@ -288,7 +283,7 @@ def ask_user(
                 "question": question,
                 "context": context,
                 "category": category,
-                "dedup_key": dedup_key,
+                "dedup_key": stable_dedup,
                 "status": "pending",
                 "asked_at": _now_iso(),
                 "target": target,
@@ -307,45 +302,29 @@ def ask_user(
 
 
 def reconcile_pending_questions(*, lookback_limit: int = 5) -> int:
-    """Best-effort correlation pass: for each still-open pending question,
-    check for user-authored episodic activity recorded since it was asked
-    and, if any exists, mark the question answered (capturing the nearest
-    matching episode's text as a heuristic "answer").
+    """Compatibility no-op; answers now require an explicit question id."""
+    return 0
 
-    Intended to be called periodically from reflection/dreaming (see
-    ``cron/scheduler.py``'s autonomy hook) — see the module docstring for
-    why this reflection-time pass was chosen over a live message-path hook.
-    Returns the number of questions marked answered. Never raises.
-    """
-    try:
-        with _lock:
-            pending = _load_pending()
-            changed = 0
-            for row in pending["questions"]:
-                if row.get("status") != "pending":
-                    continue
-                asked_at = row.get("asked_at")
-                if not asked_at:
-                    continue
-                try:
-                    from agent.memory.episodic import query as query_episodes
 
-                    matches = query_episodes(kind="conversation", since=str(asked_at), limit=lookback_limit)
-                except Exception:
-                    matches = []
-                user_matches = [m for m in matches if m.get("actor") == "user"]
-                if user_matches:
-                    row["status"] = "answered"
-                    row["answered_at"] = _now_iso()
-                    text = str(user_matches[0].get("summary") or user_matches[0].get("title") or "").strip()
-                    row["answer_text"] = text[:1000]
-                    changed += 1
-            if changed:
-                _save_pending(pending)
-            return changed
-    except Exception:
-        logger.debug("autonomy ask: reconcile_pending_questions failed", exc_info=True)
-        return 0
+def answer_question(question_id: str, answer_text: str) -> Optional[Dict[str, Any]]:
+    """Answer one pending autonomy question by its stable id."""
+    question_id = str(question_id or "").strip()
+    answer_text = str(answer_text or "").strip()
+    if not question_id or not answer_text:
+        raise ValueError("question id and answer are required")
+    with _lock:
+        pending = _load_pending()
+        for row in pending["questions"]:
+            if row.get("id") != question_id:
+                continue
+            if row.get("status") != "pending":
+                return None
+            row["status"] = "answered"
+            row["answered_at"] = _now_iso()
+            row["answer_text"] = answer_text[:1000]
+            _save_pending(pending)
+            return dict(row)
+    return None
 
 
 def expire_stale_questions(*, max_age_days: int = 14) -> int:
@@ -411,7 +390,13 @@ def surface_graph_contradictions(*, limit: int = 1, scan_limit: int = 200) -> in
                 f"\"{src_label}\" vs \"{dst_label}\"" + (f" ({note})" if note else "") +
                 ". Which one still holds — or are they not actually in conflict?"
             )
-            record = ask_user(question, context="graph contradiction", category="contradiction")
+            edge_key = ":".join(sorted((str(edge.get("src")), str(edge.get("dst")))))
+            record = ask_user(
+                question,
+                context="graph contradiction",
+                category="contradiction",
+                stable_key=f"graph-contradiction:{edge_key}",
+            )
             if record is not None:
                 asked += 1
         return asked

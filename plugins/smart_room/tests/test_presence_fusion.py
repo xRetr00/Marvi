@@ -100,6 +100,21 @@ class TestFusionAxioms:
         )
         assert p.detected is True
 
+    def test_offline_mmwave_never_refreshes_presence_or_turns_light_off(self):
+        p = Presence(detected=True, confidence=0.7, source="geofence_mmwave")
+        mm = MmWaveState(occupied=True, last_seen="2026-01-01T00:00:00+00:00")
+        p, mm, _, light_on, light_off = fuse(
+            p, mm, PhoneLocation(home=True, zone="home"),
+            ble_detected=False, ble_rssi=None, mmwave_occupied=True,
+            geofence_zone=None, exit_timeout_elapsed=True, mmwave_available=False,
+        )
+        assert p.source == "sensor_unavailable"
+        assert p.detected is False
+        assert mm.occupied is False
+        assert mm.last_seen == "2026-01-01T00:00:00+00:00"
+        assert light_on is False
+        assert light_off is False
+
 
 class TestStickyDecay:
     """Confidence decay curve tests."""

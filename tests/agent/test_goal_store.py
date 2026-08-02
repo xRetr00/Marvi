@@ -107,6 +107,14 @@ class TestCRUD:
             mode = os.stat(store.GOALS_FILE).st_mode & 0o777
             assert mode == 0o600
 
+    def test_profile_switch_resolves_goal_path_at_call_time(self, store, tmp_path, monkeypatch):
+        other = tmp_path / "other-profile"
+        other.mkdir()
+        monkeypatch.setattr(store, "get_hermes_home", lambda: other)
+        store.add_goal(title="Other profile goal")
+        assert (other / "goals.json").exists()
+        assert store.list_goals()[0]["title"] == "Other profile goal"
+
 
 class TestOrigin:
     """origin ("user"/"inferred") -- see tools/goal_tools.py's auto-goal

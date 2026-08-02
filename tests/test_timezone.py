@@ -65,6 +65,10 @@ class TestHermesTimeNow:
         offset_hours = result.utcoffset().total_seconds() / 3600
         assert offset_hours in {-5, -4}
 
+    def test_format_timestamp_uses_configured_timezone(self):
+        os.environ["HERMES_TIMEZONE"] = "Europe/Istanbul"
+        assert hermes_time.format_timestamp("2026-08-02T00:15:00Z") == "2026-08-02 03:15 +03"
+
 
 
 

@@ -1,4 +1,4 @@
-import { cleanup, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { AutonomyPanel } from './autonomy-panel'
@@ -127,5 +127,17 @@ describe('AutonomyPanel', () => {
   it('requests /api/autonomy/status on mount', async () => {
     render(<AutonomyPanel />)
     await waitFor(() => expect(api).toHaveBeenCalledWith({ path: '/api/autonomy/status' }))
+  })
+
+  it('answers the exact pending question', async () => {
+    render(<AutonomyPanel />)
+    const input = await screen.findByLabelText('Answer: Shift your morning brief later?')
+    fireEvent.change(input, { target: { value: 'Yes, move it to 9am' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Answer' }))
+    await waitFor(() => expect(api).toHaveBeenCalledWith({
+      path: '/api/autonomy/questions/q1/answer',
+      method: 'POST',
+      body: { answer: 'Yes, move it to 9am' }
+    }))
   })
 })

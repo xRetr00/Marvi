@@ -144,12 +144,10 @@ def _managed_runtime_alive(active: Optional[Dict[str, Any]] = None) -> bool:
     pid = int(active.get("pid", 0))
     if not _pid_alive(pid):
         return False
-    if (
-        _process is not None
-        and _process.pid == pid
-        and _process.poll() is None
-        and time.time() - float(active.get("started_at", 0)) < 5
-    ):
+    # Another Marvi process can observe the child before its RPC socket is
+    # ready. Trust the live recorded PID briefly so it does not rotate the
+    # shared token and start a competing runtime.
+    if time.time() - float(active.get("started_at", 0)) < 10:
         return True
     try:
         return bool(_call_runtime("ping", {}).get("success"))
@@ -348,7 +346,9 @@ def stop_supervisor() -> None:
     if thread and thread is not threading.current_thread():
         thread.join(timeout=4)
     _supervisor_thread = None
-    stop(reason="gateway stopped")
+    active = _read_active() or {}
+    if _process is not None and _process.pid == int(active.get("pid", 0)):
+        stop(reason="gateway stopped")
     _supervisor_config = {}
     _supervisor_home = None
 

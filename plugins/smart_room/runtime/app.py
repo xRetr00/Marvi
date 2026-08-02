@@ -461,6 +461,10 @@ class Runtime:
             exit_timeout_elapsed=self._check_exit_timeout(),
             wifi_detected=wifi_detected,
             other_identity_detected=other_identity_detected,
+            mmwave_available=bool(
+                self._state.devices.get("tuya_he20")
+                and self._state.devices["tuya_he20"].online
+            ),
         )
         self._state.last_updated = now_iso()
         save_state(self._state)

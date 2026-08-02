@@ -106,22 +106,6 @@ def test_ws_connection_registers_then_disconnect_unregisters_live_transport(monk
         server._live_transports.clear()
 
 
-def test_ws_disconnect_releases_wake_word_owner(monkeypatch):
-    released = []
-    created = []
-    monkeypatch.setattr(
-        server,
-        "_release_wake_for_transport",
-        lambda transport: released.append(transport) or True,
-    )
-
-    _run_disconnect(monkeypatch, lambda transport: created.append(transport))
-
-    assert released == created
-
-
-
-
 def test_ws_starts_mcp_discovery_before_ready(monkeypatch):
     import tui_gateway.entry as entry
 

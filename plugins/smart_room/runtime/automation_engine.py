@@ -17,7 +17,12 @@ logger = logging.getLogger(__name__)
 
 
 def _inside_window(start: str, end: str, now: Optional[datetime] = None) -> bool:
-    current = now or datetime.now()
+    if now is None:
+        from hermes_time import now as local_now
+
+        current = local_now()
+    else:
+        current = now
     try:
         start_h, start_m = map(int, start.split(":"))
         end_h, end_m = map(int, end.split(":"))

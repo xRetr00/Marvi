@@ -662,6 +662,41 @@ def test_tuya_v35_bulb_uses_standard_hsv_dps(monkeypatch):
     assert Device.values == expected
 
 
+def test_tuya_rejects_duplicate_inflight_device_work_without_filling_queue(monkeypatch):
+    import threading
+    from plugins.smart_room.runtime.tuya import controller
+
+    monkeypatch.setattr(controller, "HAS_TINYTUYA", False)
+    room = controller.TuyaController({"tuya": {"worker": {"queue_size": 2}}})
+    entered = threading.Event()
+    release = threading.Event()
+
+    def blocked():
+        entered.set()
+        release.wait(2)
+        return {"success": True}
+
+    worker = threading.Thread(target=lambda: room._run("bulb", "first", blocked, timeout=2))
+    worker.start()
+    assert entered.wait(1)
+    duplicate = room._run("bulb", "second", lambda: {"success": True})
+    assert duplicate["code"] == "DEVICE_BUSY"
+    assert room.health()["bulb"]["queue_depth"] == 1
+    release.set()
+    worker.join(2)
+    room.stop()
+
+
+def test_supervisor_trusts_a_live_runtime_during_rpc_startup_grace(monkeypatch):
+    monkeypatch.setattr(process_manager, "_pid_alive", lambda _pid: True)
+    monkeypatch.setattr(
+        process_manager,
+        "_call_runtime",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("RPC probed too early")),
+    )
+    assert process_manager._managed_runtime_alive({"pid": 123, "started_at": time.time()}) is True
+
+
 def test_subconscious_fetcher_baselines_then_returns_only_new_events():
     from cron.scripts.subconscious.smart_room import fetch_delta
     from cron.scripts.subconscious.snapshot_store import SurfaceStore

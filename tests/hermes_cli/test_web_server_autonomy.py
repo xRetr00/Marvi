@@ -72,6 +72,20 @@ class TestAutonomyStatusSync:
         assert result["recent_actions"] == []
 
 
+class TestAutonomyAnswer:
+    def test_answer_question_persists_exact_pending_id(self, monkeypatch):
+        from agent.autonomy import ask
+
+        monkeypatch.setattr(ask, "get_hermes_home", lambda: __import__("pathlib").Path(
+            __import__("os").environ["HERMES_HOME"]
+        ))
+        state = {"questions": [{"id": "q1", "status": "pending", "question": "Choose?"}]}
+        ask._save_pending(state)
+        result = ask.answer_question("q1", "Option A")
+        assert result["answer_text"] == "Option A"
+        assert ask.list_pending_questions()[0]["status"] == "answered"
+
+
 class TestAutonomyConfigUpdateSync:
     def test_updates_enabled_and_per_category_and_ask_settings(self, monkeypatch):
         import hermes_cli.web_server as web_server

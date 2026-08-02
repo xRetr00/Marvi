@@ -11199,6 +11199,8 @@ def main():
 
     parser, subparsers, chat_parser = build_top_level_parser()
     chat_parser.set_defaults(func=cmd_chat)
+    from hermes_cli.presence_cmd import add_parser as add_presence_parser
+    add_presence_parser(subparsers)
 
     # =========================================================================
     # model command  (parser built in hermes_cli/subcommands/model.py)

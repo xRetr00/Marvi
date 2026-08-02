@@ -9,6 +9,12 @@ from typing import Any, Dict, Iterable, Optional
 from .outcomes import recent, record
 
 
+def _local_time(value: datetime) -> datetime:
+    from hermes_time import get_timezone
+
+    return value.astimezone(get_timezone() or datetime.now().astimezone().tzinfo)
+
+
 def _settings() -> tuple[bool, int]:
     try:
         from hermes_cli.config import cfg_get, load_config
@@ -79,7 +85,7 @@ def propose_windows(events: Iterable[Dict[str, Any]], *, minimum_deliveries: int
     total_by_hour: Counter[int] = Counter()
     for ref, row in deliveries.items():
         try:
-            hour = datetime.fromisoformat(str(row["at"]).replace("Z", "+00:00")).astimezone().hour
+            hour = _local_time(datetime.fromisoformat(str(row["at"]).replace("Z", "+00:00"))).hour
         except (KeyError, ValueError):
             continue
         total_by_hour[hour] += 1
@@ -128,5 +134,9 @@ def mark_ignored(*, window_minutes: int = 60, now: Optional[datetime] = None) ->
 
 
 def is_quiet_now(windows: Iterable[str], when: Optional[datetime] = None) -> bool:
-    hour = (when or datetime.now().astimezone()).hour
+    if when is None:
+        from hermes_time import now as local_now
+
+        when = local_now()
+    hour = _local_time(when).hour
     return any(str(window).startswith(f"{hour:02d}:00-") for window in windows)

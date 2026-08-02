@@ -37,7 +37,8 @@ class TuyaController:
         self._flash_stop = threading.Event()
         self._flash_thread: Optional[threading.Thread] = None
         self._executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="smart_room_tuya")
-        self._slots = threading.BoundedSemaphore(int((config.get("tuya") or {}).get("queue_size", 16)))
+        worker = ((config.get("tuya") or {}).get("worker") or {})
+        self._slots = threading.BoundedSemaphore(int(worker.get("queue_size", 16)))
         self._locks = {"bulb": threading.Lock(), "he20": threading.Lock()}
         self._health = {
             name: {"consecutive_failures": 0, "last_success": None, "last_command": None, "queue_depth": 0, "circuit_open_until": 0.0}
@@ -84,29 +85,33 @@ class TuyaController:
         health = self._health[device]
         if time.monotonic() < health["circuit_open_until"]:
             return {"success": False, "error": f"{device} circuit breaker is open", "code": "CIRCUIT_OPEN"}
+        if not self._locks[device].acquire(blocking=False):
+            return {"success": False, "error": f"{device} command already in progress", "code": "DEVICE_BUSY"}
         if not self._slots.acquire(blocking=False):
+            self._locks[device].release()
             return {"success": False, "error": "Tuya command queue is full", "code": "QUEUE_FULL"}
         health["queue_depth"] += 1
 
         def execute():
             try:
-                with self._locks[device]:
-                    retries = max(0, min(3, int(((self._config.get("tuya") or {}).get("worker") or {}).get("retries", 1))))
-                    result = None
-                    for attempt in range(retries + 1):
-                        result = operation()
-                        if result.get("success") or attempt == retries:
-                            return result
-                        time.sleep(0.2 * (2 ** attempt))
-                    return result
+                retries = max(0, min(3, int(((self._config.get("tuya") or {}).get("worker") or {}).get("retries", 1))))
+                result = None
+                for attempt in range(retries + 1):
+                    result = operation()
+                    if result.get("success") or attempt == retries:
+                        return result
+                    time.sleep(0.2 * (2 ** attempt))
+                return result
             finally:
                 health["queue_depth"] -= 1
                 self._slots.release()
+                self._locks[device].release()
 
         future = self._executor.submit(execute)
         try:
             result = future.result(timeout=timeout)
         except FutureTimeout:
+            future.cancel()
             result = {"success": False, "error": f"{device} command timed out", "code": "DEVICE_TIMEOUT"}
         health["last_command"] = command
         if result.get("success"):

@@ -41,6 +41,7 @@ from utils import atomic_replace
 logger = logging.getLogger(__name__)
 
 GOALS_FILE = get_hermes_home().resolve() / "goals.json"
+_INITIAL_GOALS_FILE = GOALS_FILE
 
 # In-process lock protecting load->modify->save cycles.
 _goals_lock = threading.Lock()
@@ -93,15 +94,23 @@ def _secure_file(path: Path) -> None:
         pass
 
 
+def goals_file() -> Path:
+    """Resolve the active profile at call time, while keeping test overrides."""
+    if GOALS_FILE != _INITIAL_GOALS_FILE:
+        return GOALS_FILE
+    return get_hermes_home().resolve() / "goals.json"
+
+
 def _ensure_dir() -> None:
-    GOALS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    goals_file().parent.mkdir(parents=True, exist_ok=True)
 
 
 def _load_raw() -> Dict[str, Any]:
-    if not GOALS_FILE.exists():
+    path = goals_file()
+    if not path.exists():
         return {"goals": []}
     try:
-        with open(GOALS_FILE, "r", encoding="utf-8") as f:
+        with open(path, "r", encoding="utf-8") as f:
             data = json.load(f)
     except (json.JSONDecodeError, OSError) as e:
         logger.warning("goals.json unreadable (%s); starting empty", e)
@@ -116,7 +125,8 @@ def _load_raw() -> Dict[str, Any]:
 
 def _save_raw(goals: List[Dict[str, Any]]) -> None:
     _ensure_dir()
-    fd, tmp_path = tempfile.mkstemp(dir=str(GOALS_FILE.parent), suffix=".tmp", prefix=".goals_")
+    path = goals_file()
+    fd, tmp_path = tempfile.mkstemp(dir=str(path.parent), suffix=".tmp", prefix=".goals_")
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             json.dump(
@@ -126,8 +136,8 @@ def _save_raw(goals: List[Dict[str, Any]]) -> None:
             )
             f.flush()
             os.fsync(f.fileno())
-        atomic_replace(tmp_path, GOALS_FILE)
-        _secure_file(GOALS_FILE)
+        atomic_replace(tmp_path, path)
+        _secure_file(path)
     except BaseException:
         try:
             os.unlink(tmp_path)

@@ -71,6 +71,7 @@ const QUESTION_STATUS_META: Record<PendingQuestion['status'], { className: strin
 export function AutonomyPanel() {
   const [status, setStatus] = useState<AutonomyStatus | null>(null)
   const [loading, setLoading] = useState(true)
+  const [answers, setAnswers] = useState<Record<string, string>>({})
   const marvi = useMarviConfig()
 
   const load = useCallback(async () => {
@@ -93,6 +94,23 @@ export function AutonomyPanel() {
   const categories = status?.budget.categories ?? {}
   const pending = status?.pending_questions.filter(q => q.status === 'pending') ?? []
   const resolved = status?.pending_questions.filter(q => q.status !== 'pending').slice(0, 5) ?? []
+
+  const answer = async (id: string) => {
+    const value = answers[id]?.trim()
+
+    if (!value) return
+    try {
+      await window.hermesDesktop.api({
+        path: `/api/autonomy/questions/${encodeURIComponent(id)}/answer`,
+        method: 'POST',
+        body: { answer: value }
+      })
+      setAnswers(current => ({ ...current, [id]: '' }))
+      await load()
+    } catch (err) {
+      notifyError(err, 'Failed to answer Autonomy question')
+    }
+  }
 
   return (
     <section>
@@ -218,6 +236,22 @@ export function AutonomyPanel() {
                       </div>
                       {question.answer_text && (
                         <p className="mt-1 text-xs text-muted-foreground">Reply: {question.answer_text}</p>
+                      )}
+                      {question.status === 'pending' && (
+                        <div className="mt-2 flex gap-2">
+                          <Input
+                            aria-label={`Answer: ${question.question}`}
+                            onChange={event => setAnswers(current => ({ ...current, [question.id]: event.target.value }))}
+                            onKeyDown={event => {
+                              if (event.key === 'Enter') void answer(question.id)
+                            }}
+                            placeholder="Your answer"
+                            value={answers[question.id] ?? ''}
+                          />
+                          <Button disabled={!answers[question.id]?.trim()} onClick={() => void answer(question.id)} size="sm">
+                            Answer
+                          </Button>
+                        </div>
                       )}
                     </div>
                   )

@@ -58,6 +58,7 @@ def fuse(
     exit_timeout_elapsed: bool,
     wifi_detected: bool = False,
     other_identity_detected: bool = False,
+    mmwave_available: bool = True,
 ) -> tuple[Presence, MmWaveState, PhoneLocation, bool, bool]:
     """Fuse all signals into updated presence state.
 
@@ -66,8 +67,9 @@ def fuse(
     now = now_iso()
 
     # Update mmWave
-    mmwave.occupied = mmwave_occupied
-    if mmwave_occupied:
+    occupied = mmwave_occupied and mmwave_available
+    mmwave.occupied = occupied
+    if occupied:
         mmwave.last_seen = now
 
     # Update geofence
@@ -90,7 +92,16 @@ def fuse(
         logger.debug("BLE detected — identity established (rssi=%s)", ble_rssi)
 
     # Positive-only fallback identity signals require current room occupancy.
-    elif wifi_detected and mmwave_occupied:
+    elif not mmwave_available:
+        # A failed sensor is unknown evidence, not an empty room. Drop stale
+        # identity, but never use the outage to turn the light off.
+        presence.detected = False
+        presence.source = "sensor_unavailable"
+        presence.confidence = 0.0
+        presence.identity_sticky = False
+        presence.sticky_since = None
+
+    elif wifi_detected and occupied:
         presence.detected = True
         presence.source = "wifi_mmwave"
         presence.confidence = 0.75
@@ -98,7 +109,7 @@ def fuse(
         presence.identity_sticky = False
         presence.sticky_since = None
 
-    elif location.home and mmwave_occupied and not presence.detected:
+    elif location.home and occupied and not presence.detected:
         presence.detected = True
         presence.source = "geofence_mmwave"
         presence.confidence = 0.7
@@ -107,12 +118,12 @@ def fuse(
         presence.sticky_since = None
 
     # Keep non-BLE evidence honest; only BLE is allowed to become BLE-sticky.
-    elif not ble_detected and mmwave_occupied and presence.source in {"wifi_mmwave", "geofence_mmwave"}:
+    elif not ble_detected and occupied and presence.source in {"wifi_mmwave", "geofence_mmwave"}:
         presence.detected = True
         presence.last_seen = now
 
     # Case 2: BLE absent but mmWave occupied and identity was previously established by BLE
-    elif not ble_detected and mmwave_occupied and (presence.detected or presence.identity_sticky):
+    elif not ble_detected and occupied and (presence.detected or presence.identity_sticky):
         # Sticky identity — phone is probably asleep
         if not presence.identity_sticky:
             presence.identity_sticky = True
@@ -126,14 +137,14 @@ def fuse(
         logger.debug("Sticky identity held (confidence=%.2f)", presence.confidence)
 
     # Case 3: mmWave occupied but no identity ever established this session
-    elif mmwave_occupied and not presence.detected:
+    elif occupied and not presence.detected:
         presence.detected = False  # someone is there but we don't know who
         presence.source = "mmwave_only"
         presence.confidence = 0.0
         logger.debug("mmWave occupied but no identity signal")
 
     # Case 4: mmWave clear and BLE absent — room is empty
-    elif not mmwave_occupied and not ble_detected:
+    elif not occupied and not ble_detected:
         if exit_timeout_elapsed:
             presence.detected = False
             presence.source = "none"
@@ -162,9 +173,11 @@ def fuse(
     # --- Light decisions ---
     # Occupancy controls the room, identity only personalizes it. A guest (or
     # an owner whose phone is unavailable) must still get safe automatic light.
-    light_should_on = mmwave_occupied or (presence.detected and presence.confidence > 0)
+    light_should_on = occupied or (presence.detected and presence.confidence > 0)
 
     # Light off: mmWave clear for timeout AND BLE absent
-    light_should_off = (not mmwave_occupied and not ble_detected and exit_timeout_elapsed)
+    light_should_off = (
+        mmwave_available and not occupied and not ble_detected and exit_timeout_elapsed
+    )
 
     return presence, mmwave, location, light_should_on, light_should_off

@@ -271,6 +271,7 @@ def tts_chunks(monkeypatch):
 @pytest.fixture
 def vad_gate(monkeypatch):
     gate = FakeVadGate()
+    gate.speaking = True
     monkeypatch.setattr(web_server, "_duplex_make_vad_gate", lambda: gate)
     return gate
 

@@ -263,6 +263,26 @@ describe('settings helpers', () => {
       expect(opts).toEqual(['local', 'docker', 'singularity', 'modal', 'daytona', 'ssh'])
     })
 
+    it('narrows OpenAI TTS voice suggestions to what the selected model supports', () => {
+      // gpt-4o-mini-tts (and unset/unknown models): full 13-voice set.
+      const full = enumOptionsFor('tts.openai.voice', 'alloy', { tts: { openai: { model: 'gpt-4o-mini-tts' } } })
+      expect(full).toContain('marin')
+      expect(full).toContain('cedar')
+      expect(full).toContain('ballad')
+      expect(full).toContain('verse')
+      expect(full).toHaveLength(13)
+
+      // tts-1 / tts-1-hd: the 9-voice set — no ballad/verse/marin/cedar.
+      for (const model of ['tts-1', 'tts-1-hd']) {
+        const narrowed = enumOptionsFor('tts.openai.voice', 'alloy', { tts: { openai: { model } } })
+        expect(narrowed).toEqual(['alloy', 'ash', 'coral', 'echo', 'fable', 'nova', 'onyx', 'sage', 'shimmer'])
+      }
+
+      // A hand-typed custom voice still stays selectable on tts-1.
+      const custom = enumOptionsFor('tts.openai.voice', 'my-cloned-voice', { tts: { openai: { model: 'tts-1' } } })
+      expect(custom).toContain('my-cloned-voice')
+    })
+
     it('appends a hand-typed value not in the known list so it stays selected', () => {
       const opts = enumOptionsFor('tts.provider', 'my-custom-command-tts', config)
       expect(opts).toContain('my-custom-command-tts')
@@ -318,15 +338,15 @@ describe('settings helpers', () => {
 
     // The runtime rejects a built-in name as a command provider before any config
     // lookup, so such a block must never be offered — including the names the
-    // display list omits (`deepinfra` for TTS; `deepinfra`/`local_command` for
-    // STT), where filtering on ENUM_OPTIONS instead of the runtime's built-in set
-    // would wrongly offer a provider that can never dispatch.
-    it('never offers a built-in name as a command provider, even one absent from the dropdown list', () => {
+    // display list omits (`deepinfra`/`local_command` for STT), where filtering
+    // on ENUM_OPTIONS instead of the runtime's built-in set would wrongly offer
+    // a provider that can never dispatch.
+    it('never duplicates a built-in name as a command provider', () => {
       const shadowing: HermesConfigRecord = {
         tts: {
           provider: 'edge',
           providers: {
-            // built-in and absent from ENUM_OPTIONS['tts.provider']
+            // built-in and already present in ENUM_OPTIONS['tts.provider']
             deepinfra: { type: 'command', command: 'curl …' },
             // built-in guard is case-insensitive at runtime (provider.lower())
             EDGE: { type: 'command', command: 'curl …' },
@@ -337,7 +357,7 @@ describe('settings helpers', () => {
       }
 
       const opts = enumOptionsFor('tts.provider', 'edge', shadowing)
-      expect(opts).not.toContain('deepinfra')
+      expect(opts!.filter(o => o === 'deepinfra')).toHaveLength(1)
       expect(opts).not.toContain('EDGE')
       expect(opts).toContain('higgs8')
       expect(opts!.filter(o => o === 'edge')).toHaveLength(1)

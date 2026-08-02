@@ -14,6 +14,12 @@ import { cn } from '@/lib/utils'
 import { notifyThreadEditOpen } from '@/store/thread-scroll'
 import { isWatchWindow } from '@/store/windows'
 
+export function hasTextSelection(): boolean {
+  const selection = window.getSelection()
+
+  return Boolean(selection && !selection.isCollapsed && selection.toString().length > 0)
+}
+
 export function StickyHumanMessageContainer({
   attachments,
   children,
@@ -265,7 +271,7 @@ export const UserMessage: FC<{
                   aria-expanded={bodyClamped ? expanded : undefined}
                   className={cn(bubbleClassName, !bodyClamped && 'cursor-default')}
                   onClick={() => {
-                    if (!bodyClamped) {
+                    if (hasTextSelection() || !bodyClamped) {
                       return
                     }
 
@@ -284,8 +290,21 @@ export const UserMessage: FC<{
                   <button
                     aria-label={copy.editMessage}
                     className={bubbleClassName}
-                    onClick={() => triggerHaptic('selection')}
-                    onPointerDown={() => notifyThreadEditOpen()}
+                    onClick={event => {
+                      if (hasTextSelection()) {
+                        event.preventDefault()
+                        event.stopPropagation()
+
+                        return
+                      }
+
+                      triggerHaptic('selection')
+                    }}
+                    onPointerDown={() => {
+                      if (!hasTextSelection()) {
+                        notifyThreadEditOpen()
+                      }
+                    }}
                     title={copy.editMessage}
                     type="button"
                   >

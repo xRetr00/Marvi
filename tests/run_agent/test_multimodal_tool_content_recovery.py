@@ -442,6 +442,7 @@ class TestToolResultContentShortCircuit:
 
 
 
+
     def test_missing_cache_attribute_falls_through(self, monkeypatch):
 
         """Agents built via ``object.__new__`` without calling ``__init__``

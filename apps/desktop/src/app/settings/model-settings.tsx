@@ -668,6 +668,20 @@ export function ModelSettings({ onMainModelChanged }: ModelSettingsProps) {
     }
   }, [onMainModelChanged, refresh, selectedModel, selectedProvider, selectedProviderRow])
 
+  // Sibling of the applyMainModel endpoint passthrough (#65254): auxiliary
+  // assignments targeting a user-defined provider must carry that provider's
+  // endpoint too, or the backend pins the slot without a base_url and the
+  // aux resolver falls back to the (possibly different, possibly cleared)
+  // main endpoint.
+  const endpointForProvider = useCallback(
+    (provider: string) => {
+      const row = providers.find(entry => entry.slug === provider)
+
+      return row?.api_url ? { base_url: row.api_url } : {}
+    },
+    [providers]
+  )
+
   const setAuxiliaryToMain = useCallback(
     async (task: string) => {
       if (!mainModel) {
@@ -683,11 +697,12 @@ export function ModelSettings({ onMainModelChanged }: ModelSettingsProps) {
           provider: mainModel.provider,
           scope: 'auxiliary',
           task,
-          confirm_expensive_model: true // already the user's chosen main model, not a new pick
+          confirm_expensive_model: true,
+          ...endpointForProvider(mainModel.provider)
         })
 
         if (!res.ok) {
-          setError(res.confirm_message || 'Could not apply model — the change was not saved.')
+          setError(res.confirm_message || 'Could not apply model - the change was not saved.')
 
           return
         }
@@ -699,7 +714,7 @@ export function ModelSettings({ onMainModelChanged }: ModelSettingsProps) {
         setApplying(false)
       }
     },
-    [mainModel, refresh]
+    [endpointForProvider, mainModel, refresh]
   )
 
   const applyAuxiliaryDraft = useCallback(
@@ -717,15 +732,10 @@ export function ModelSettings({ onMainModelChanged }: ModelSettingsProps) {
           provider: auxDraft.provider,
           scope: 'auxiliary',
           task,
-          confirm_expensive_model: confirmExpensive
+          confirm_expensive_model: confirmExpensive,
+          ...endpointForProvider(auxDraft.provider)
         })
 
-        // A resolved promise here does NOT mean the assignment was saved --
-        // the cost guard can respond ok:false without persisting anything.
-        // Surface that instead of silently treating the click as applied
-        // (the bug this round fixed: the Instant voice model Apply button
-        // could close the editor and refresh() with nothing actually
-        // written to auxiliary.voice_instant.*).
         if (!res.ok) {
           if (res.confirm_required) {
             setAuxConfirm({ task, message: res.confirm_message || 'This model may be expensive. Apply anyway?' })
@@ -733,7 +743,7 @@ export function ModelSettings({ onMainModelChanged }: ModelSettingsProps) {
             return
           }
 
-          setError('Could not apply model — the change was not saved.')
+          setError('Could not apply model - the change was not saved.')
 
           return
         }
@@ -747,7 +757,7 @@ export function ModelSettings({ onMainModelChanged }: ModelSettingsProps) {
         setApplying(false)
       }
     },
-    [auxDraft, refresh]
+    [auxDraft, endpointForProvider, refresh]
   )
 
   const beginAuxiliaryEdit = useCallback(
@@ -973,7 +983,10 @@ export function ModelSettings({ onMainModelChanged }: ModelSettingsProps) {
                               }
                               value={instantEffortValue}
                             >
-                              <SelectTrigger aria-label="Instant voice reasoning" className={cn('min-w-24', CONTROL_TEXT)}>
+                              <SelectTrigger
+                                aria-label="Instant voice reasoning"
+                                className={cn('min-w-24', CONTROL_TEXT)}
+                              >
                                 <SelectValue />
                               </SelectTrigger>
                               <SelectContent>

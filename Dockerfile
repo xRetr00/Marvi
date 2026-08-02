@@ -200,6 +200,22 @@ RUN npm install --prefer-offline --no-audit --fetch-retries=5 && \
     done && \
     npm cache clean --force
 
+# ---------- Photon iMessage sidecar deps (baked, NS-606) ----------
+# The photon plugin's Node sidecar needs its own node_modules
+# (spectrum-ts). The install tree is immutable at runtime, so a lazy
+# `npm ci` on first connect would hit EROFS — bake the deps here instead
+# (deterministic installs, NS-559). The patch script is copied alongside
+# the manifests because package.json's postinstall runs it, which also
+# means the spectrum-ts patch is applied at build time. Layer-cached:
+# only re-runs when the sidecar manifests/patch change.
+COPY plugins/platforms/photon/sidecar/package.json \
+     plugins/platforms/photon/sidecar/package-lock.json \
+     plugins/platforms/photon/sidecar/patch-spectrum-mixed-attachments.mjs \
+     plugins/platforms/photon/sidecar/
+RUN cd plugins/platforms/photon/sidecar && \
+    npm ci --no-audit --fetch-retries=5 && \
+    npm cache clean --force
+
 # ---------- Layer-cached Python dependency install ----------
 # Copy only pyproject.toml + uv.lock so the Python dep resolve + wheel
 # download + native-extension compile layer is cached unless those inputs
@@ -211,7 +227,7 @@ RUN npm install --prefer-offline --no-audit --fetch-retries=5 && \
 # frontend stats the readme path during dep resolution, so we `touch` an
 # empty placeholder — the real README is restored by `COPY . .` below.
 #
-# `uv sync --frozen --no-install-project --extra all --extra messaging`
+# `uv sync --frozen --no-install-project --extra all --extra messaging --extra otlp`
 # installs the deps reachable through the composite `[all]` extra
 # (handpicked set intended for the production image — excludes `[dev]`),
 # plus gateway messaging adapters that should work in the published image
@@ -223,6 +239,10 @@ RUN npm install --prefer-offline --no-audit --fetch-retries=5 && \
 # Provider packages (anthropic, bedrock, azure-identity) are included
 # so Docker users can use these providers without requiring runtime
 # lazy-install access to PyPI (often blocked in containerized envs).
+#
+# The [otlp] extra contains the SDK/exporter imported by Hermes when Gateway
+# Health export is enabled. Collector and observability-backend dependencies
+# remain external and are not part of the Hermes production image.
 #
 # The hindsight memory provider's client (hindsight-client) is baked in
 # for the same reason: it lazy-installs into /opt/hermes/.venv at first
@@ -241,7 +261,7 @@ RUN npm install --prefer-offline --no-audit --fetch-retries=5 && \
 # The editable link is created after the source copy below.
 COPY pyproject.toml uv.lock ./
 RUN touch ./README.md
-RUN uv sync --frozen --no-install-project --extra all --extra messaging --extra anthropic --extra bedrock --extra azure-identity --extra hindsight --extra matrix
+RUN uv sync --frozen --no-install-project --extra all --extra messaging --extra otlp --extra anthropic --extra bedrock --extra azure-identity --extra hindsight --extra matrix
 
 # ---------- Frontend build (cached independently from Python source) ----------
 # Copy only the frontend source trees first so that Python-only changes don't
@@ -382,6 +402,11 @@ ENV HERMES_LAZY_INSTALL_TARGET=/opt/data/lazy-packages
 # source for the opt-out env var (HERMES_DOCKER_EXEC_AS_ROOT=1).
 COPY --chmod=0755 docker/hermes-exec-shim.sh /opt/hermes/bin/hermes
 COPY --chmod=0755 docker/hermes-exec-shim.sh /opt/hermes/bin/marvi
+# Recursion is impossible because the shim exec's the venv binary by
+# absolute path (/opt/hermes/.venv/bin/hermes). See the shim source for
+# the opt-out env var (HERMES_DOCKER_EXEC_AS_ROOT=1).
+COPY --chmod=0755 docker/hermes-exec-shim.sh /opt/hermes/bin/hermes
+COPY --chmod=0755 docker/entrypoint-dispatch.sh /opt/hermes/docker/entrypoint-dispatch.sh
 
 # Pre-s6 entrypoint.sh did `source .venv/bin/activate` which exported
 # the venv bin onto PATH; Architecture B's main-wrapper.sh does the
@@ -399,27 +424,37 @@ ENV PATH="/opt/hermes/bin:/opt/hermes/.venv/bin:/opt/data/.local/bin:${PATH}"
 RUN mkdir -p /opt/data
 VOLUME [ "/opt/data" ]
 
-# s6-overlay's /init is PID 1. It sets up the supervision tree, runs
-# /etc/cont-init.d/* (our stage2 hook), starts s6-rc services
-# declared in /etc/s6-overlay/s6-rc.d/, then exec's its remaining
-# argv as the container's "main program" with stdin/stdout/stderr
-# inherited (this is what makes interactive --tui work). When the
-# main program exits, /init begins stage 3 shutdown and the container
-# exits with the program's exit code. Replaces tini — see Phase 2 of
-# docs/plans/2026-05-07-s6-overlay-dynamic-subagent-gateways.md.
+# The image ENTRYPOINT is a tiny dispatcher rather than `/init` directly.
+# When the image really owns PID 1 (normal Docker / Podman), the dispatcher
+# execs `/init` and preserves the full s6 supervision tree. When a platform
+# wraps the image entrypoint under its own PID-1 init (Fly Machines,
+# `docker run --init`, some schedulers), `/init` would abort with
+# `can only run as pid 1`; in that case the dispatcher falls back to
+# `stage2-hook.sh` + `main-wrapper.sh` directly so foreground commands still
+# work. See #38349.
+#
+# On the PID-1 path, s6-overlay's /init sets up the supervision tree, runs
+# /etc/cont-init.d/* (our stage2 hook), starts s6-rc services declared in
+# /etc/s6-overlay/s6-rc.d/, then exec's its remaining argv as the container's
+# "main program" with stdin/stdout/stderr inherited (this is what makes
+# interactive --tui work). When the main program exits, /init begins stage 3
+# shutdown and the container exits with the program's exit code. Replaces
+# tini — see Phase 2 of docs/plans/2026-05-07-s6-overlay-dynamic-subagent-gateways.md.
 #
 # We use the ENTRYPOINT+CMD split rather than CMD alone so the
 # wrapper is prepended to user-supplied args automatically:
 #
-#   docker run <image>                  → /init main-wrapper.sh   (CMD default)
-#   docker run <image> chat -q "hi"     → /init main-wrapper.sh chat -q hi
-#   docker run <image> sleep infinity   → /init main-wrapper.sh sleep infinity
-#   docker run <image> --tui            → /init main-wrapper.sh --tui
+#   docker run <image>                  → entrypoint-dispatch.sh   (CMD default)
+#   docker run <image> chat -q "hi"     → entrypoint-dispatch.sh chat -q hi
+#   docker run <image> sleep infinity   → entrypoint-dispatch.sh sleep infinity
+#   docker run <image> --tui            → entrypoint-dispatch.sh --tui
 #
 # main-wrapper.sh handles arg routing (bare-exec vs. hermes
 # subcommand vs. no-args), drops to the hermes user via s6-setuidgid,
 # and exec's the final program so its exit code becomes the container
-# exit code. Without the wrapper-as-ENTRYPOINT, leading-dash args
-# like `--version` would be intercepted by /init's POSIX shell.
-ENTRYPOINT [ "/init", "/opt/hermes/docker/main-wrapper.sh" ]
+# exit code. The dispatcher preserves that contract across both the
+# supervised PID-1 path and the non-PID-1 fallback path. Without the
+# wrapper-as-ENTRYPOINT, leading-dash args like `--version` would be
+# intercepted by /init's POSIX shell.
+ENTRYPOINT [ "/opt/hermes/docker/entrypoint-dispatch.sh" ]
 CMD [ ]

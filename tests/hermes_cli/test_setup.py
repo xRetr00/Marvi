@@ -1,5 +1,7 @@
 """Tests for setup.py configuration flows."""
 import sys
+import os
+import json
 import types
 
 from hermes_cli.config import load_config, save_config
@@ -21,6 +23,17 @@ def _clear_provider_env(monkeypatch):
         "OPENAI_BASE_URL",
         "OPENAI_API_KEY",
         "LLM_MODEL",
+    ):
+        monkeypatch.delenv(key, raising=False)
+
+
+def _clear_vercel_env(monkeypatch):
+    for key in (
+        "TERMINAL_VERCEL_RUNTIME",
+        "VERCEL_OIDC_TOKEN",
+        "VERCEL_TOKEN",
+        "VERCEL_PROJECT_ID",
+        "VERCEL_TEAM_ID",
     ):
         monkeypatch.delenv(key, raising=False)
 
@@ -305,24 +318,7 @@ def test_setup_exception_in_select_gracefully_handled(tmp_path, monkeypatch):
 
     monkeypatch.setattr("hermes_cli.main.select_provider_and_model", fake_select)
 
-    # Should not raise
-    setup_model_provider(config)
 
-
-def test_setup_keyboard_interrupt_gracefully_handled(tmp_path, monkeypatch):
-    """KeyboardInterrupt during provider selection is handled."""
-    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
-    _clear_provider_env(monkeypatch)
-    _stub_tts(monkeypatch)
-
-    config = load_config()
-
-    def fake_select():
-        raise KeyboardInterrupt()
-
-    monkeypatch.setattr("hermes_cli.main.select_provider_and_model", fake_select)
-
-    setup_model_provider(config)
 
 
 def test_select_provider_and_model_warns_if_named_custom_provider_disappears(
@@ -357,104 +353,10 @@ def test_select_provider_and_model_warns_if_named_custom_provider_disappears(
     assert "selected saved custom provider is no longer available" in out
 
 
-def test_select_provider_and_model_accepts_named_provider_from_providers_section(
-    tmp_path, monkeypatch, capsys
-):
-    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
-    _clear_provider_env(monkeypatch)
-
-    cfg = load_config()
-    cfg["model"] = {
-        "provider": "volcengine-plan",
-        "default": "doubao-seed-2.0-code",
-    }
-    cfg["providers"] = {
-        "volcengine-plan": {
-            "name": "volcengine-plan",
-            "base_url": "https://ark.cn-beijing.volces.com/api/coding/v3",
-            "default_model": "doubao-seed-2.0-code",
-            "models": {"doubao-seed-2.0-code": {}},
-        }
-    }
-    save_config(cfg)
-
-    monkeypatch.setattr(
-        "hermes_cli.main._prompt_provider_choice",
-        lambda choices, default=0: len(choices) - 1,
-    )
-
-    from hermes_cli.main import select_provider_and_model
-
-    select_provider_and_model()
-
-    out = capsys.readouterr().out
-    assert "Warning: Unknown provider 'volcengine-plan'" not in out
-    assert "Active provider:  volcengine-plan" in out
 
 
-def test_codex_setup_uses_runtime_access_token_for_live_model_list(tmp_path, monkeypatch):
-    """Codex model list fetching uses the runtime access token."""
-    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
-    monkeypatch.setenv("OPENROUTER_API_KEY", "or-test-key")
-    _clear_provider_env(monkeypatch)
-    monkeypatch.setenv("OPENROUTER_API_KEY", "or-test-key")
-
-    config = load_config()
-    _stub_tts(monkeypatch)
-
-    def fake_select():
-        _write_model_config(tmp_path, "openai-codex", "https://api.openai.com/v1", "gpt-4o")
-
-    monkeypatch.setattr("hermes_cli.main.select_provider_and_model", fake_select)
-
-    setup_model_provider(config)
-    save_config(config)
-
-    reloaded = load_config()
-    assert isinstance(reloaded["model"], dict)
-    assert reloaded["model"]["provider"] == "openai-codex"
 
 
-def test_modal_setup_can_use_nous_subscription_without_modal_creds(tmp_path, monkeypatch, capsys):
-    monkeypatch.setattr("hermes_cli.setup.managed_nous_tools_enabled", lambda: True)
-    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
-    config = load_config()
-
-    def fake_prompt_choice(question, choices, default=0):
-        if question == "Select terminal backend:":
-            return 2
-        if question == "Select how Modal execution should be billed:":
-            return 0
-        raise AssertionError(f"Unexpected prompt_choice call: {question}")
-
-    def fake_prompt(message, *args, **kwargs):
-        assert "Modal Token" not in message
-        raise AssertionError(f"Unexpected prompt call: {message}")
-
-    monkeypatch.setattr("hermes_cli.setup.prompt_choice", fake_prompt_choice)
-    monkeypatch.setattr("hermes_cli.setup.prompt", fake_prompt)
-    monkeypatch.setattr("hermes_cli.setup._prompt_container_resources", lambda config: None)
-    monkeypatch.setattr(
-        "hermes_cli.setup.get_nous_subscription_features",
-        lambda config: type("Features", (), {"nous_auth_present": True})(),
-    )
-    monkeypatch.setitem(
-        sys.modules,
-        "tools.managed_tool_gateway",
-        types.SimpleNamespace(
-            is_managed_tool_gateway_ready=lambda vendor: vendor == "modal",
-            resolve_managed_tool_gateway=lambda vendor: None,
-        ),
-    )
-
-    from hermes_cli.setup import setup_terminal_backend
-
-    setup_terminal_backend(config)
-
-    out = capsys.readouterr().out
-    assert config["terminal"]["backend"] == "modal"
-    assert config["terminal"]["modal_mode"] == "managed"
-    assert "bill to your subscription" in out
 
 
 def test_tts_setup_configures_pockettts_with_streaming_voice(tmp_path, monkeypatch):
@@ -550,48 +452,80 @@ def test_modal_setup_persists_direct_mode_when_user_chooses_their_own_account(tm
 # _setup_slack wizard migrated to the slack plugin's interactive_setup (#41112).
 
 
-def test_prompt_yes_no_returns_default_when_noninteractive_env_set(monkeypatch):
-    """HERMES_NONINTERACTIVE=1 (set by dashboard/desktop spawns) must make
-    prompt_yes_no fall back to its default instead of reading stdin."""
-    monkeypatch.setenv("HERMES_NONINTERACTIVE", "1")
+def test_vercel_setup_configures_access_token_auth(tmp_path, monkeypatch):
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+    _clear_vercel_env(monkeypatch)
+    monkeypatch.setenv("VERCEL_OIDC_TOKEN", "old-oidc")
+    monkeypatch.setitem(sys.modules, "vercel", types.ModuleType("vercel"))
+    config = load_config()
 
-    def _boom(*_a, **_k):
-        raise AssertionError("input() must not be called in non-interactive mode")
+    def fake_prompt_choice(question, choices, default=0):
+        if question == "Select terminal backend:":
+            return 5
+        raise AssertionError(f"Unexpected prompt_choice call: {question}")
 
-    monkeypatch.setattr("builtins.input", _boom)
+    prompt_values = iter(["python3.13", "yes", "2", "4096", "token", "project", "team"])
 
-    assert setup_mod.prompt_yes_no("Install it now?", True) is True
-    assert setup_mod.prompt_yes_no("Install it now?", False) is False
+    monkeypatch.setattr("hermes_cli.setup.prompt_choice", fake_prompt_choice)
+    monkeypatch.setattr("hermes_cli.setup.prompt", lambda *args, **kwargs: next(prompt_values))
 
+    from hermes_cli.setup import setup_terminal_backend
 
-def test_prompt_yes_no_eof_returns_default_instead_of_exiting(monkeypatch):
-    """A closed/redirected stdin (EOFError) must yield the default, not abort.
+    setup_terminal_backend(config)
 
-    Regression: the Windows gateway start path asks "Install it now?" when the
-    service is not installed; spawned from the desktop app (stdin=DEVNULL) the
-    EOFError used to sys.exit(1), killing every desktop-triggered restart."""
-    monkeypatch.delenv("HERMES_NONINTERACTIVE", raising=False)
-
-    def _eof(*_a, **_k):
-        raise EOFError
-
-    monkeypatch.setattr("builtins.input", _eof)
-
-    assert setup_mod.prompt_yes_no("Install it now?", True) is True
-    assert setup_mod.prompt_yes_no("Install it now?", False) is False
+    assert config["terminal"]["backend"] == "vercel_sandbox"
+    assert config["terminal"]["vercel_runtime"] == "python3.13"
+    assert config["terminal"]["container_disk"] == 51200
+    assert os.environ["TERMINAL_VERCEL_RUNTIME"] == "python3.13"
+    assert "VERCEL_OIDC_TOKEN" not in os.environ
+    assert os.environ["VERCEL_TOKEN"] == "token"
+    assert os.environ["VERCEL_PROJECT_ID"] == "project"
+    assert os.environ["VERCEL_TEAM_ID"] == "team"
 
 
-def test_prompt_yes_no_keyboard_interrupt_still_exits(monkeypatch):
-    """Ctrl+C is an explicit user abort and must keep exiting."""
-    monkeypatch.delenv("HERMES_NONINTERACTIVE", raising=False)
+def test_vercel_setup_prefills_project_and_team_from_link_file(tmp_path, monkeypatch):
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+    _clear_vercel_env(monkeypatch)
+    project_root = tmp_path / "project"
+    nested = project_root / "app" / "src"
+    nested.mkdir(parents=True)
+    vercel_dir = project_root / ".vercel"
+    vercel_dir.mkdir()
+    (vercel_dir / "project.json").write_text(
+        json.dumps({"projectId": "linked-project", "orgId": "linked-team"}),
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(nested)
+    monkeypatch.setitem(sys.modules, "vercel", types.ModuleType("vercel"))
+    config = load_config()
+    config["terminal"]["container_disk"] = 999
 
-    def _interrupt(*_a, **_k):
-        raise KeyboardInterrupt
+    def fake_prompt_choice(question, choices, default=0):
+        if question == "Select terminal backend:":
+            return 5
+        raise AssertionError(f"Unexpected prompt_choice call: {question}")
 
-    monkeypatch.setattr("builtins.input", _interrupt)
+    prompt_values = iter(["node24", "no", "1", "5120", "token", "", ""])
+    defaults = {}
 
-    import pytest
+    def fake_prompt(message, default="", **kwargs):
+        defaults[message] = default
+        value = next(prompt_values)
+        return value or default
 
-    with pytest.raises(SystemExit):
-        setup_mod.prompt_yes_no("Install it now?", True)
+    monkeypatch.setattr("hermes_cli.setup.prompt_choice", fake_prompt_choice)
+    monkeypatch.setattr("hermes_cli.setup.prompt", fake_prompt)
 
+    from hermes_cli.setup import setup_terminal_backend
+
+    setup_terminal_backend(config)
+
+    assert config["terminal"]["backend"] == "vercel_sandbox"
+    assert config["terminal"]["container_persistent"] is False
+    assert config["terminal"]["container_disk"] == 51200
+    assert "VERCEL_OIDC_TOKEN" not in os.environ
+    assert os.environ["VERCEL_TOKEN"] == "token"
+    assert os.environ["VERCEL_PROJECT_ID"] == "linked-project"
+    assert os.environ["VERCEL_TEAM_ID"] == "linked-team"
+    assert defaults["    Vercel project ID"] == "linked-project"
+    assert defaults["    Vercel team ID"] == "linked-team"

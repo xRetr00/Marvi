@@ -1,9 +1,9 @@
 # Marvi Smart Room Engine — Revised Architecture & Implementation Specification
 
-> **Version:** 0.2 Revised Draft  
-> **Date:** 2026-07-14  
-> **Owner:** Shereef / Marvi  
-> **Status:** Ready for Phase 0 validation  
+> **Version:** 0.2 Revised Draft
+> **Date:** 2026-07-14
+> **Owner:** Shereef / Marvi
+> **Status:** Ready for Phase 0 validation
 > **Target Platform:** Windows 11, native Python, no Docker or WSL
 
 ---
@@ -1330,4 +1330,3 @@ Once this foundation is stable, modes and automations can be added without rebui
 - ESPresense for BLE room-presence detection.
 - TinyTuya for local Tuya LAN communication.
 - Python `asyncio` for orchestration and an isolated worker for blocking device I/O.
-

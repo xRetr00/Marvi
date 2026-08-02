@@ -162,8 +162,8 @@ test('installZoomReassertOnWindowEvents skips destroyed windows', () => {
   assert.equal(calls, 0)
 })
 
-// Zoom-wiring contract: chat windows keep global UI zoom, the pet overlay
-// opts out. Tested via the extracted config — no source-text regex.
+// Zoom-wiring contract: chat windows keep global UI zoom while fixed-size
+// helper windows opt out. Tested via the extracted config — no source-text regex.
 test('chat windows opt into zoom', () => {
   assert.deepEqual(zoomWiringForWindowKind('chat'), { zoom: true })
 })

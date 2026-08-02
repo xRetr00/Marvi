@@ -235,7 +235,7 @@ hermes setup --portal
 | **GitHub Copilot** | GitHub Copilot 订阅（GPT-5.x、Claude、Gemini 等） | 通过 `hermes model` 进行 OAuth，或设置 `COPILOT_GITHUB_TOKEN` / `GH_TOKEN` |
 
 | **GitHub Copilot ACP** | Copilot ACP agent 后端（在本地启动 `copilot` CLI） | `hermes model`（需要 `copilot` CLI + `copilot login`） |
-
+| **Vercel AI Gateway** | Vercel AI Gateway 路由 | 设置 `AI_GATEWAY_API_KEY` |
 | **Custom Endpoint** | VLLM、SGLang、Ollama 或任何兼容 OpenAI 的 API | 设置 base URL + API key |
 
 

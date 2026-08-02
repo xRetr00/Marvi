@@ -53,7 +53,7 @@ REQUIRED_TEXT = {
         '"type": "speaker_update"',
         'provider == "parakeet"',
     ],
-    "hermes_cli/config.py": ["live voice defaults to no thinking"],
+    "hermes_cli/config_defaults.py": ["live voice defaults to no thinking"],
     "hermes_constants.py": [
         'PRODUCT_NAME = "Marvi Agent"',
         'MARVI_HOME_ENV = "MARVI_HOME"',
@@ -184,7 +184,11 @@ PROHIBITED_PATHS = (
 )
 
 PROHIBITED_TEXT = {
-    "hermes_cli/config.py": ['"provider": "openwakeword"', '"phrase": "hey hermes"', '"model": "hey_hermes"'],
+    "hermes_cli/config_defaults.py": [
+        '"provider": "openwakeword"',
+        '"phrase": "hey hermes"',
+        '"model": "hey_hermes"',
+    ],
     "hermes_cli/commands.py": ['CommandDef("wake"'],
     "tui_gateway/server.py": ['@method("wake.start")', '@method("wake.status")'],
     "pyproject.toml": ["wake = ["],

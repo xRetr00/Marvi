@@ -851,6 +851,40 @@ describe('createGatewayEventHandler', () => {
     expect(polarityBackgroundFromForeground('not-a-color')).toBeUndefined()
   })
 
+  it('ends voice mode on a stop-phrase transcript without submitting a turn', () => {
+    const ctx = buildCtx([])
+    const onEvent = createGatewayEventHandler(ctx)
+
+    onEvent({ payload: { stop_phrase: true, text: 'stop' }, type: 'voice.transcript' } as any)
+
+    expect(ctx.voice.setVoiceEnabled).toHaveBeenCalledWith(false)
+    expect(ctx.voice.setRecording).toHaveBeenCalledWith(false)
+    expect(ctx.voice.setProcessing).toHaveBeenCalledWith(false)
+    expect(ctx.system.sys).toHaveBeenCalledWith('voice: stop phrase — voice chat ended')
+    // The stop phrase is user intent to END the chat — never a turn.
+    expect(ctx.submission.submitRef.current).not.toHaveBeenCalled()
+  })
+
+  it('ends voice mode on a typed stop phrase consumed server-side', () => {
+    const ctx = buildCtx([])
+    const onEvent = createGatewayEventHandler(ctx)
+
+    onEvent({ payload: { stop_phrase: true, typed: true }, type: 'voice.transcript' } as any)
+
+    expect(ctx.voice.setVoiceEnabled).toHaveBeenCalledWith(false)
+    expect(ctx.submission.submitRef.current).not.toHaveBeenCalled()
+  })
+
+  it('still submits ordinary voice transcripts as turns', async () => {
+    const ctx = buildCtx([])
+    const onEvent = createGatewayEventHandler(ctx)
+
+    onEvent({ payload: { text: 'stop the docker container' }, type: 'voice.transcript' } as any)
+
+    await vi.waitFor(() => expect(ctx.submission.submitRef.current).toHaveBeenCalledWith('stop the docker container'))
+    expect(ctx.voice.setVoiceEnabled).not.toHaveBeenCalled()
+  })
+
   it('on gateway.ready with no STARTUP_RESUME_ID and auto_resume off, forges a new session', async () => {
     const appended: Msg[] = []
     const newSession = vi.fn()

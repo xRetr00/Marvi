@@ -1,6 +1,7 @@
 import type { GatewayWsUrlResult } from '@hermes/shared'
 import type { IslandCard } from './lib/island-queue'
 import type { IslandWorkState } from './lib/island-work'
+
 import type {
   PetOverlayBounds,
   PetOverlayControl,
@@ -193,6 +194,10 @@ declare global {
       revealPath?: (path: string) => Promise<boolean>
       // Open a DIRECTORY (created if missing) in the OS file manager.
       openDir?: (path: string) => Promise<{ ok: boolean; error?: string }>
+      // Local Desktop runtime-plugin root (<HERMES_HOME>/desktop-plugins),
+      // resolved by Electron independently of the connected backend (#66899).
+      // Created on demand; returns the normalized absolute path.
+      desktopPluginsRoot?: () => Promise<string>
       // Rename a file/folder in place (new base name, same parent dir).
       renamePath?: (path: string, newName: string) => Promise<{ path: string }>
       // Write a small UTF-8 text file (hardened path, parent must exist).
@@ -266,6 +271,7 @@ declare global {
         write: (id: string, data: string) => Promise<boolean>
       }
       onClosePreviewRequested?: (callback: () => void) => () => void
+      onOpenFolderRequested?: (callback: () => void) => () => void
       onOpenUpdatesRequested?: (callback: () => void) => () => void
       onDeepLink?: (
         callback: (payload: { kind: string; name: string; params: Record<string, string> }) => void
@@ -280,6 +286,8 @@ declare global {
       // reload. Wipe session lists (skeletons) and re-dial.
       onConnectionApplied?: (callback: () => void) => () => void
       onPowerResume?: (callback: () => void) => () => void
+      getOnBattery?: () => Promise<boolean>
+      onBatteryChanged?: (callback: (onBattery: boolean) => void) => () => void
       onBootProgress: (callback: (payload: DesktopBootProgress) => void) => () => void
       getBootstrapState: () => Promise<DesktopBootstrapState>
       continueBootstrapLocal: () => Promise<{ ok: boolean }>
@@ -402,6 +410,8 @@ export interface DesktopUpdateStatus {
   error?: string
   behind?: number
   currentSha?: string
+  /** Backend only: the version string the backend reports for itself. */
+  currentVersion?: string
   targetSha?: string
   commits?: DesktopUpdateCommit[]
   dirty?: boolean
@@ -547,6 +557,7 @@ export interface DesktopConnectionConfig {
   sshPort: number | null
   sshKeyPath: string
   sshRemoteHermesPath: string
+  sshRemoteProfile: string
 }
 
 export interface DesktopConnectionConfigInput {
@@ -565,6 +576,7 @@ export interface DesktopConnectionConfigInput {
   sshPort?: number | null
   sshKeyPath?: string
   sshRemoteHermesPath?: string
+  sshRemoteProfile?: string
 }
 
 export interface DesktopConnectionTestResult {

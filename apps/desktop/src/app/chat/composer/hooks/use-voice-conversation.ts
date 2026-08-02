@@ -35,6 +35,10 @@ interface VoiceConversationOptions {
   consumePendingResponse: () => void
 }
 
+/** How long a barge-triggered interrupt may take to settle before we submit
+ *  the captured utterance anyway. */
+const INTERRUPT_SETTLE_TIMEOUT_MS = 5_000
+
 export function useVoiceConversation({
   bargeInEnabled = true,
   busy,
@@ -74,6 +78,12 @@ export function useVoiceConversation({
   const bargeInterruptedRef = useRef(false)
   const bargeInStopRef = useRef<(() => void) | null>(null)
   const onStopWordRef = useRef(onStopWord)
+  const onInterruptRef = useRef(onInterrupt)
+
+  // eslint-disable-next-line no-restricted-syntax -- legitimate non-atom ref write (see eslint rule comment)
+  useEffect(() => {
+    onInterruptRef.current = onInterrupt
+  }, [onInterrupt])
 
   useEffect(() => {
     onStopWordRef.current = onStopWord
@@ -295,6 +305,12 @@ export function useVoiceConversation({
         onSilence: () => handleSilence()
       })
       setStatus('listening')
+      // Clear any prior turn-timeout before arming a fresh one. Each listen
+      // cycle reassigns turnTimeoutRef; without clearing first, a stale 60s
+      // timer from an earlier cycle survives and later fires handleTurn() in
+      // the middle of a new listen, cutting it short (or, after enough idle
+      // re-listens, wedging the loop into a state it doesn't re-arm from).
+      clearTurnTimeout()
       turnTimeoutRef.current = window.setTimeout(() => void handleTurn(), 60_000)
     } catch (error) {
       vpLog('stt', 'listen start failed', { error: String(error) })

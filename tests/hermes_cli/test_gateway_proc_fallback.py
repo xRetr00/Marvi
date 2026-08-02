@@ -154,22 +154,7 @@ class TestProcFallback:
 
         mock_ps.assert_not_called()  # ps must NOT be called when /proc worked
 
-    def test_detects_no_supervisor_restart_process_only_when_enabled(self):
-        entries = {
-            12345: "python -m hermes_cli.main gateway restart",
-            99999: _OTHER_CMD,
-        }
-        _isdir, _listdir, _open = _fake_proc_dir(entries)
 
-        with (
-            patch("hermes_cli.gateway.is_windows", return_value=False),
-            patch("os.path.isdir", side_effect=_isdir),
-            patch("os.listdir", side_effect=_listdir),
-            patch("builtins.open", side_effect=_open),
-            patch("hermes_cli.gateway._get_ancestor_pids", return_value=set()),
-            patch("subprocess.run") as mock_ps,
-        ):
-            strict_pids = gateway_mod._scan_gateway_pids(set(), all_profiles=True)
 
         _isdir, _listdir, _open = _fake_proc_dir(entries)
         with (

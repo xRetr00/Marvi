@@ -621,20 +621,14 @@ model:
 
 ```
 
-
-
-Or for custom endpoints, add it per-model:
+Or for custom endpoints, add it per-model on the provider entry:
 
 
 
 ```yaml
-
-custom_providers:
-
-  - name: "My Server"
-
-    base_url: "http://localhost:11434/v1"
-
+providers:
+  my-server:
+    api: "http://localhost:11434/v1"
     models:
 
       qwen3.5:27b:
@@ -643,7 +637,7 @@ custom_providers:
 
 ```
 
-
+(Older configs use the legacy `custom_providers:` list — still supported and auto-migrated to `providers:`.)
 
 See [Context Length Detection](../integrations/providers.md#context-length-detection) for how auto-detection works and all override options.
 

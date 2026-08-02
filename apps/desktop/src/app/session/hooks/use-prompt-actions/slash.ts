@@ -60,7 +60,6 @@ import {
 // default WS request timeout on large sessions — give it the TUI client's
 // 120s RPC budget (HERMES_TUI_RPC_TIMEOUT_MS default) instead.
 const SESSION_COMPRESS_TIMEOUT_MS = 120_000
-
 /** Everything a slash handler needs about the invocation it's serving. */
 interface SlashActionCtx {
   arg: string

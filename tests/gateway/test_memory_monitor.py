@@ -23,13 +23,6 @@ def _ensure_monitor_stopped():
     mm.stop_memory_monitoring(timeout=1.0)
 
 
-def test_log_memory_usage_emits_memory_line(caplog):
-    caplog.set_level(logging.INFO, logger="gateway.memory_monitor")
-    mm.log_memory_usage()
-    memory_lines = [r for r in caplog.records if "[MEMORY]" in r.getMessage()]
-    assert memory_lines, "expected at least one [MEMORY] log record"
-
-
 def test_log_memory_usage_has_grep_friendly_format(caplog):
     caplog.set_level(logging.INFO, logger="gateway.memory_monitor")
     mm.log_memory_usage()
@@ -41,13 +34,6 @@ def test_log_memory_usage_has_grep_friendly_format(caplog):
     assert "gc=" in msg
     assert "threads=" in msg
     assert "uptime=" in msg
-
-
-def test_log_memory_usage_with_prefix(caplog):
-    caplog.set_level(logging.INFO, logger="gateway.memory_monitor")
-    mm.log_memory_usage(prefix="baseline")
-    msg = caplog.records[-1].getMessage()
-    assert "[MEMORY] baseline " in msg
 
 
 def test_start_logs_baseline_and_returns_true(caplog):

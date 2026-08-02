@@ -1,5 +1,6 @@
 import { type MutableRefObject, useCallback, useRef, useState } from 'react'
 
+import { setTerminalFontFamilyFromConfig } from '@/app/right-sidebar/terminal/terminal-font'
 import { getHermesConfig, getHermesConfigDefaults } from '@/hermes'
 import { BUILTIN_PERSONALITIES, normalizePersonalityValue, personalityNamesFromConfig } from '@/lib/chat-runtime'
 import { normalize } from '@/lib/text'
@@ -16,8 +17,12 @@ import {
   setDefaultReasoningEffort,
   setIntroPersonality
 } from '@/store/session'
-import { applyAutoSpeakFromConfig } from '@/store/voice-prefs'
 import { normalizeWakeWordConfig, type WakeWordConfig } from '@/lib/wake-word'
+import {
+  applyAutoSpeakFromConfig,
+  applyThinkingSoundFromConfig,
+  applyVoiceStopPhraseFromConfig
+} from '@/store/voice-prefs'
 
 const DEFAULT_VOICE_SECONDS = 120
 const FAST_TIERS = new Set(['fast', 'priority', 'on'])
@@ -133,7 +138,10 @@ export function useHermesConfig({ activeSessionIdRef, refreshProjectBranch }: He
         setTtsProvider((config.tts?.provider ?? '').trim())
         setStreamingSttProvider((config.stt?.streaming?.provider ?? '').trim())
         setStreamingSttEnabled(config.stt?.streaming?.enabled !== false && Boolean(config.stt?.streaming?.provider))
+        setTerminalFontFamilyFromConfig(config.terminal?.font_family)
         applyAutoSpeakFromConfig(config)
+        applyVoiceStopPhraseFromConfig(config)
+        applyThinkingSoundFromConfig(config)
       } catch {
         // Config is nice-to-have; chat still works without it.
       }

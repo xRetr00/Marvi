@@ -811,7 +811,12 @@ export const zh: Translations = {
       shortcutDesc: '至少需要一个修饰键，例如 CommandOrControl+Shift+Space。',
       active: '快捷键已生效。',
       takenBy: '此快捷键已被其他应用占用，请换一个。',
-      invalidShortcut: '不是有效的快捷键。请至少包含一个修饰键。'
+      invalidShortcut: '不是有效的快捷键。请至少包含一个修饰键。',
+      placeholder: '向 Marvi 提问…',
+      disconnected: '打开 Marvi 以重新连接',
+      sendTo: '发送到',
+      currentChat: '当前聊天',
+      newSession: '新会话'
     },
     credentials: {
       pasteKey: '粘贴密钥',

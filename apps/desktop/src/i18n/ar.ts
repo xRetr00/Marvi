@@ -630,7 +630,12 @@ export const ar = defineLocale({
       shortcutDesc: 'يحتاج إلى مفتاح تعديل واحد على الأقل، مثل CommandOrControl+Shift+Space.',
       active: 'الاختصار مفعّل.',
       takenBy: 'يستخدم تطبيق آخر هذا الاختصار — اختر اختصارا مختلفا.',
-      invalidShortcut: 'ليس اختصارا صالحا. أضف مفتاح تعديل واحدا على الأقل.'
+      invalidShortcut: 'ليس اختصارا صالحا. أضف مفتاح تعديل واحدا على الأقل.',
+      placeholder: 'اسأل Marvi عن أي شيء…',
+      disconnected: 'افتح Marvi لإعادة الاتصال',
+      sendTo: 'إرسال إلى',
+      currentChat: 'المحادثة الحالية',
+      newSession: 'جلسة جديدة'
     },
     credentials: {
       pasteKey: 'لصق المفتاح',
@@ -1856,8 +1861,7 @@ export const ar = defineLocale({
     done: 'تم',
     applyingBody:
       'يتولّى مُحدِّث Marvi المهمة في نافذته الخاصة ويعيد فتح Marvi تلقائيا عند الانتهاء. الرجاء عدم إعادة فتح Marvi بنفسك أثناء التحديث.',
-    applyingBodyBackend:
-      'تطبّق الواجهة الخلفية البعيدة التحديث وستعيد التشغيل. يعيد Marvi الاتصال تلقائيا عند عودتها.',
+    applyingBodyBackend: 'تطبّق الواجهة الخلفية البعيدة التحديث وستعيد التشغيل. يعيد Marvi الاتصال تلقائيا عند عودتها.',
     applyingClose: 'ستُغلق هذه النافذة أثناء تشغيل التحديث، ثم يعيد Marvi فتح نفسه تلقائيا.',
     errorTitle: 'لم يكتمل التحديث',
     errorBody: 'لا داعي للقلق — لم يُفقد شيء. يمكنك إعادة المحاولة الآن.',

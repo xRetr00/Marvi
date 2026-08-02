@@ -508,6 +508,11 @@ export interface Translations {
       active: string
       takenBy: string
       invalidShortcut: string
+      placeholder: string
+      disconnected: string
+      sendTo: string
+      currentChat: string
+      newSession: string
     }
     credentials: {
       pasteKey: string

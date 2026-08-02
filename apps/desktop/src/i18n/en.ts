@@ -606,7 +606,12 @@ export const en: Translations = {
       shortcutDesc: 'Needs at least one modifier, e.g. CommandOrControl+Shift+Space.',
       active: 'Shortcut is active.',
       takenBy: 'Another app already uses this shortcut — pick a different one.',
-      invalidShortcut: 'Not a valid shortcut. Include at least one modifier key.'
+      invalidShortcut: 'Not a valid shortcut. Include at least one modifier key.',
+      placeholder: 'Ask Marvi anything…',
+      disconnected: 'Open Marvi to reconnect',
+      sendTo: 'Send to',
+      currentChat: 'Current chat',
+      newSession: 'New session'
     },
     credentials: {
       pasteKey: 'Paste key',
@@ -2258,8 +2263,7 @@ export const en: Translations = {
     installTo: 'Will install to',
     retryAfterRun: 'I’ve run it -- retry',
     setupChoiceTitle: 'Set up Marvi Desktop',
-    setupChoiceDesc:
-      'Connect this app to a Marvi gateway you already run, or install Marvi locally on this computer.',
+    setupChoiceDesc: 'Connect this app to a Marvi gateway you already run, or install Marvi locally on this computer.',
     connectExistingTitle: 'Connect to existing Marvi',
     connectExistingShort: 'Connect existing',
     connectExistingDesc: 'Use a remote backend with a session token or browser sign-in. No local install will start.',

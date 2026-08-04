@@ -549,7 +549,7 @@ def test_barge_in_rejects_noise_and_fillers(text):
     assert web_server._duplex_meaningful_barge_text(text) is False
 
 
-@pytest.mark.parametrize("text", ["stop", "wait", "actually", "I need", "change that"])
+@pytest.mark.parametrize("text", ["stop", "wait", "actually", "yeah", "okay", "sure", "I need", "change that"])
 def test_barge_in_accepts_control_words_and_real_phrases(text):
     assert web_server._duplex_meaningful_barge_text(text) is True
 
@@ -1087,6 +1087,25 @@ def test_focus_abstain_resolves_to_owner_via_continuity(monkeypatch):
         assert utterance["speaker"] == "unknown"
         assert _speaker_update(ws)["speaker"] == "owner"
         assert run_calls == [("and also this", "unknown")]
+
+    asyncio.run(run())
+
+
+def test_short_audio_cannot_establish_owner_identity(monkeypatch):
+    _patch_zoned(
+        monkeypatch, zone="OWNER", label="owner", score=0.99,
+        audio_ms=500, name="Shereef",
+    )
+    monkeypatch.setattr(web_server, "_duplex_focus_mode_active", lambda cfg: True)
+
+    async def run():
+        session, ws = _make_focus_test_session()
+        await session._identify_utterance_speaker(b"\0\0" * 8000, "short")
+
+        update = _speaker_update(ws)
+        assert update["speaker"] == "unknown"
+        assert update["speaker_name"] is None
+        assert session._last_owner_activity_at is None
 
     asyncio.run(run())
 

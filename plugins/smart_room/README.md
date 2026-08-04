@@ -58,6 +58,8 @@ smart_room:
     adaptive_light:
       enabled: true
       auto_off: true           # all modes except Focus
+  esp32:
+    exit_timeout: 300          # ignore brief HE20 false-clears
   # ... see NEEDS_YOU_AT_HOME.md for full config
 ```
 

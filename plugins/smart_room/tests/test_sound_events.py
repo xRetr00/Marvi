@@ -150,7 +150,7 @@ def test_clap_dataset_requires_human_confirmation_and_tracks_200_target(tmp_path
     assert pending["confirmed"] == 0
     assert pending["pending"] == 2
     assert pending["target"] == 200
-    assert pending["next_pending"]["id"] == first["id"]
+    assert pending["next_pending"]["id"] == second["id"]
 
     accepted = dataset.review(first["id"], True)
     rejected = dataset.review(second["id"], False)

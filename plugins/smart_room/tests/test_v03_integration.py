@@ -121,6 +121,26 @@ def test_he20_clear_event_is_delayed_and_edge_triggered(monkeypatch):
     assert [event for event, _ in emitted] == ["he20_cleared", "presence_cleared"]
 
 
+def test_busy_tuya_poll_does_not_mark_devices_offline(monkeypatch):
+    runtime = Runtime({"runtime": {"device_offline_failures": 1}})
+    runtime._state.devices["tuya_bulb"] = DeviceHealth(online=True)
+    runtime._state.devices["tuya_he20"] = DeviceHealth(online=True)
+    runtime._tuya = MagicMock()
+    runtime._tuya.get_light_status.return_value = {"success": False, "code": "DEVICE_BUSY"}
+    runtime._tuya.get_mmwave_status.return_value = {"success": False, "code": "DEVICE_BUSY"}
+    runtime._tuya.health.return_value = {}
+    runtime._mqtt = None
+    emitted = []
+    monkeypatch.setattr(runtime, "_probe_wifi_presence", lambda: False)
+    monkeypatch.setattr(runtime, "_emit_event", lambda event, data: emitted.append((event, data)))
+
+    runtime._poll_devices()
+
+    assert runtime._state.devices["tuya_bulb"].online is True
+    assert runtime._state.devices["tuya_he20"].online is True
+    assert emitted == []
+
+
 def test_he20_single_occupied_pulse_does_not_create_room_entry(monkeypatch):
     runtime = Runtime({"esp32": {"exit_timeout": 60}})
     runtime._state.mmwave.occupied = False
@@ -429,6 +449,27 @@ def test_owntracks_heartbeat_uses_phone_report_time_not_mqtt_delivery_time():
     assert int(stamp.timestamp()) == reported
 
 
+def test_owntracks_transition_preserves_phone_time_in_room_history(monkeypatch):
+    runtime = Runtime({"owner": "Shereef", "automations": {"work_return": {"enabled": False}}})
+    reported = int(time.time()) - 300
+    emitted = []
+    original_emit = runtime._emit_event
+
+    def capture(event, data):
+        emitted.append((event, dict(data)))
+        original_emit(event, data)
+
+    monkeypatch.setattr(runtime, "_emit_event", capture)
+    runtime._on_owntracks("owntracks/shereef/iphone", {
+        "_type": "transition", "event": "enter", "desc": "Home", "tst": reported,
+    })
+    runtime._on_geofence("enter", "home")
+
+    event = next(data for name, data in emitted if name == "phone_location_changed")
+    assert int(datetime.fromisoformat(event["reported_at"]).timestamp()) == reported
+    assert runtime._state.location.last_event_key.endswith(event["reported_at"])
+
+
 def test_welcome_activity_has_a_dedicated_tts_source(monkeypatch):
     from cron import scheduler
     from plugins.smart_room.runtime.state_store import publish_welcome
@@ -556,9 +597,25 @@ def test_plugin_registers_tools_lifecycle_and_context(monkeypatch):
     plugin.register(ctx)
     assert len(ctx.tools) == 8
     assert {name for name, _ in ctx.hooks} == {
-        "on_gateway_start", "on_gateway_stop",
+        "on_gateway_start", "on_gateway_stop", "pre_llm_call",
     }
     assert [name for name, _ in ctx.context] == ["smart_room"]
+
+
+def test_operational_context_shares_recent_marvi_actions(monkeypatch):
+    import cron.subconscious as subconscious
+    import plugins.smart_room as plugin
+
+    monkeypatch.setattr(plugin, "build_context_line", lambda: "Current room truth")
+    monkeypatch.setattr(
+        subconscious, "recent_activity_summary",
+        lambda **kwargs: "- 01:23 subconscious: checked the room",
+    )
+
+    context = plugin._current_operational_context()
+    assert "Current room truth" in context
+    assert "Recent Marvi background actions" in context
+    assert "subconscious: checked the room" in context
 
 
 def test_context_provider_host_contract():

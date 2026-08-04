@@ -97,7 +97,10 @@ export function useDesktopIntegrations({
         const answer = (confirmed: boolean) => {
           void reviewSmartRoomClap(sample.id, confirmed)
             .then(() => window.setTimeout(() => void poll(), 250))
-            .catch(error => notifyError(error, 'Could not save clap feedback'))
+            .catch(error => {
+              shown.delete(sample.id)
+              notifyError(error, 'Could not save clap feedback')
+            })
         }
 
         notify({

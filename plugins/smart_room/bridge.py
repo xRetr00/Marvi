@@ -19,6 +19,7 @@ from typing import Any, Dict, Optional
 from pathlib import Path
 
 from hermes_constants import get_hermes_home
+from hermes_time import format_timestamp
 
 
 # Socket path for JSON-RPC communication with the runtime child process.
@@ -162,7 +163,8 @@ def build_context_line() -> Optional[str]:
         latest = load_location_reports(limit=1)
         if latest:
             report = latest[-1]
-            detail = f"OwnTracks {report.get('reported_at')}"
+            reported_at = report.get("reported_at")
+            detail = f"OwnTracks {format_timestamp(reported_at) if reported_at else 'unknown time'}"
             if report.get("latitude") is not None and report.get("longitude") is not None:
                 detail += f" ({report['latitude']}, {report['longitude']} ±{report.get('accuracy_m', '?')}m)"
             if report.get("event"):
@@ -193,12 +195,44 @@ def build_context_line() -> Optional[str]:
     visitor_entries = state.get("unreported_visitor_entries") or []
     if visitor_entries:
         latest = visitor_entries[-1]
+        visited_at = latest.get("at")
         parts.append(
             f"{len(visitor_entries)} unreported visitor entry/entries; "
-            f"latest {latest.get('classification', 'visitor')} at {latest.get('at', 'unknown time')}"
+            f"latest {latest.get('classification', 'visitor')} at "
+            f"{format_timestamp(visited_at) if visited_at else 'unknown time'}"
         )
+
+    # Compact recent evidence lets the main chat, voice lane, and
+    # subconscious reason from the same operational history rather than
+    # treating a stale session-start snapshot as current truth.
+    try:
+        from plugins.smart_room.runtime.state_store import load_transition_events
+
+        recent = [
+            event
+            for event in load_transition_events()[-12:]
+            if event.get("type") in {
+                "phone_location_changed",
+                "room_entry",
+                "room_presence_unverified",
+                "mode_changed",
+                "device_offline",
+                "device_online",
+            }
+        ][-4:]
+        if recent:
+            evidence = "; ".join(
+                f"{format_timestamp(event.get('reported_at') or event.get('at'), '%H:%M')} "
+                f"{event.get('type')}"
+                + (f" {event.get('transition')} {event.get('zone')}" if event.get("transition") else "")
+                + (f" {event.get('classification')}" if event.get("classification") else "")
+                for event in recent
+            )
+            parts.append(f"recent verified events: {evidence}")
+    except Exception:
+        pass
 
     if not parts:
         return None
 
-    return "Room: " + ", ".join(parts) + "."
+    return "Current Smart Room truth: " + ", ".join(parts) + "."

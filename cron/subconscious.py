@@ -369,7 +369,9 @@ def extract_autonomy_requests(text: str) -> Tuple[List[Dict[str, Any]], List[Dic
     return research, ask
 
 
-def _recent_activity_summary(hours: int = 24) -> str:
+def recent_activity_summary(hours: int = 24, limit: int = 30) -> str:
+    from hermes_time import format_timestamp
+
     path = _subconscious_dir() / "activity.jsonl"
     if not path.exists():
         return "No recent background activity."
@@ -388,8 +390,11 @@ def _recent_activity_summary(hours: int = 24) -> str:
         if at.tzinfo is None:
             at = at.replace(tzinfo=timezone.utc)
         if at >= cutoff:
-            rows.append(f"- {item.get('source', 'tick')}: {item.get('summary') or item.get('outcome') or 'completed'}")
-    return "\n".join(rows[-30:]) or "No recent background activity."
+            rows.append(
+                f"- {format_timestamp(at)} {item.get('source', 'tick')}: "
+                f"{item.get('summary') or item.get('outcome') or 'completed'}"
+            )
+    return "\n".join(rows[-limit:]) or "No recent background activity."
 
 
 def dreaming_config(cfg: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
@@ -744,6 +749,7 @@ def build_runtime_context(job_name: str) -> str:
     parts = [
         f"## Current local time\n{local_now().strftime('%Y-%m-%d %H:%M %Z')}",
         f"## Durable narrative\n{narrative}",
+        f"## Recent Marvi actions\n{recent_activity_summary(hours=6)}",
     ]
     try:
         from plugins.smart_room.bridge import read_state_snapshot
@@ -794,6 +800,8 @@ def build_runtime_context(job_name: str) -> str:
             "at non-home regions (including Bakery) can be valid drive-by events; "
             "treat them as route evidence, not necessarily a destination or sensor fault. "
             "All displayed timestamps are in the configured local timezone.\n"
+            "Never reinterpret them as UTC, append Z, or manually add/subtract an offset. "
+            "When mentioning now, copy the Current local time above.\n"
             "The Current line is authoritative over an older durable narrative; "
             "do not describe an offline device as healthy.\n"
             f"Current: phone_home={bool(location.get('home'))}, "
@@ -872,7 +880,7 @@ def build_runtime_context(job_name: str) -> str:
             recent_episodes = "Recent episodes unavailable."
         parts.extend(
             [
-                f"## Last 24 hours\n{_recent_activity_summary()}",
+                f"## Last 24 hours\n{recent_activity_summary()}",
                 f"## Presence digest\n{presence_digest}",
                 f"## Rhythm\n{rhythm}",
                 f"## Recent episodes\n{recent_episodes}",

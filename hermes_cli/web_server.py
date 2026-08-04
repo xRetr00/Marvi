@@ -17394,6 +17394,10 @@ _DUPLEX_BARGE_CONFIRM_WINDOW_MS = 700.0
 _DUPLEX_BARGE_CONFIRM_WINDOW_BYTES = int(16000 * 2 * (_DUPLEX_BARGE_CONFIRM_WINDOW_MS / 1000.0))
 _DUPLEX_BARGE_NEGATIVE_SCREEN_MIN_MS = 300.0
 _DUPLEX_BARGE_NEGATIVE_SCREEN_MIN_BYTES = int(16000 * 2 * (_DUPLEX_BARGE_NEGATIVE_SCREEN_MIN_MS / 1000.0))
+# Full-utterance attribution below one second is too noisy to establish a
+# speaker identity.  The shorter barge-in screen remains intentionally
+# separate so a real interruption is never blocked on Speaker ID.
+_DUPLEX_SPEAKER_ID_MIN_AUDIO_MS = 1000.0
 # Self-adaptation (spec Part 1.4): a direct-score OWNER-zone utterance with
 # at least this much clean audio appends its embedding to the owner's
 # adaptive ring -- short utterances are noisier speaker-embedding material,
@@ -17480,6 +17484,9 @@ def _duplex_meaningful_barge_text(text: str, assistant_text: str = "") -> bool:
         "stop",
         "wait",
         "what",
+        "yeah",
+        "okay",
+        "sure",
     }
     return words[0] in controls or len(words) >= 2
 
@@ -19017,6 +19024,12 @@ class _DuplexSession:
                 audio_ms = zoned["audio_ms"]
                 now = time.monotonic()
                 resolved_by = "score"
+
+                if audio_ms < _DUPLEX_SPEAKER_ID_MIN_AUDIO_MS:
+                    zone = "ABSTAIN"
+                    speaker_label = "unknown"
+                    speaker_name = None
+                    resolved_by = "short_audio"
 
                 if zoned.get("model_mismatch") and not self._speaker_model_mismatch_warned:
                     self._speaker_model_mismatch_warned = True

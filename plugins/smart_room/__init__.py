@@ -63,6 +63,27 @@ def _on_gateway_stop(**_kwargs) -> None:
     process_manager.stop_supervisor()
 
 
+def _current_operational_context():
+    """Share live room truth and recent background work across Marvi lanes."""
+    line = build_context_line()
+    if not line:
+        return None
+    try:
+        from cron.subconscious import recent_activity_summary
+
+        activity = recent_activity_summary(hours=6, limit=8)
+    except Exception:
+        logger.debug("smart_room: recent Marvi activity unavailable", exc_info=True)
+        activity = "No recent background activity."
+    return f"{line}\nRecent Marvi background actions:\n{activity}"
+
+
+def _current_room_context(**_kwargs):
+    """Refresh operational truth per turn without changing the cached prompt."""
+    context = _current_operational_context()
+    return {"context": context} if context else None
+
+
 def register(ctx) -> None:
     """Register tools, CLI, and lifecycle hooks.
 
@@ -87,7 +108,8 @@ def register(ctx) -> None:
     # Register context provider for ambient session context
     ctx.register_context_provider(
         name="smart_room",
-        handler=build_context_line,
+        handler=_current_operational_context,
     )
     ctx.register_hook("on_gateway_start", _on_gateway_start)
     ctx.register_hook("on_gateway_stop", _on_gateway_stop)
+    ctx.register_hook("pre_llm_call", _current_room_context)

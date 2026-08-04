@@ -92,7 +92,7 @@ interface SmartRoomConfig {
     zones: string[]
   }
   automations: {
-    adaptive_light: { enabled: boolean; auto_off: boolean; debounce: number; exit_timeout: number }
+    adaptive_light: { enabled: boolean; auto_off: boolean; debounce: number }
     evening_sleep: { enabled: boolean; time: string }
     work_return: { enabled: boolean; work_hours_start: string; work_hours_end: string; settle_delay: number }
     daily_reset: string
@@ -150,13 +150,13 @@ const DEFAULT_CONFIG: SmartRoomConfig = {
     rssi_enter_threshold: -70,
     rssi_exit_threshold: -85,
     enter_debounce_seconds: 3,
-    exit_timeout: 60,
+    exit_timeout: 300,
     missing_timeout_seconds: 30
   },
   presence: { wifi_ping: { enabled: false, ip: '', interval_seconds: 60 } },
   owntracks: { topic: 'owntracks/shereef/#', zones: ['home', 'university', 'bakery'] },
   automations: {
-    adaptive_light: { enabled: true, auto_off: true, debounce: 3, exit_timeout: 60 },
+    adaptive_light: { enabled: true, auto_off: true, debounce: 3 },
     evening_sleep: { enabled: true, time: '18:00' },
     work_return: { enabled: true, work_hours_start: '06:00', work_hours_end: '10:00', settle_delay: 300 },
     daily_reset: '00:00'
@@ -1369,8 +1369,9 @@ export function SmartRoomSettings() {
                 value={config.esp32.enter_debounce_seconds}
               />
               <TextField
+                hint="Keep this above brief HE20 false-clears; 300 seconds is recommended."
                 label="Exit Timeout (seconds)"
-                onChange={v => updatePath('esp32.exit_timeout', parseInt(v) || 60)}
+                onChange={v => updatePath('esp32.exit_timeout', Math.max(30, parseInt(v) || 300))}
                 type="number"
                 value={config.esp32.exit_timeout}
               />

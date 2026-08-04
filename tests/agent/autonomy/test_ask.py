@@ -182,6 +182,22 @@ class TestPendingQuestionCorrelation:
         # Must not raise.
         assert _isolate.reconcile_pending_questions() == 0
 
+    def test_reconcile_expires_older_paraphrased_duplicate(self, _isolate, _fake_delivery):
+        first = _isolate.ask_user(
+            "Is the HE20 false-clear issue still happening in the Smart Room?",
+            category="contradiction",
+        )
+        second = _isolate.ask_user(
+            "Does the Smart Room still have the HE20 false-clear issue?",
+            category="contradiction",
+        )
+
+        assert first is not None and second is not None
+        assert _isolate.reconcile_pending_questions() == 1
+        rows = {row["id"]: row for row in _isolate.list_pending_questions()}
+        assert rows[first["id"]]["status"] == "expired"
+        assert rows[second["id"]]["status"] == "pending"
+
 
 class TestExpiry:
     def test_stale_pending_question_expires(self, _isolate, _fake_delivery):

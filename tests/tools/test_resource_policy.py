@@ -306,6 +306,20 @@ class TestEnforce:
         rp.enforce()
         assert calls["demote"] == ["heavy-foreground-app"]
 
+    def test_restarts_enabled_media_watcher(self, monkeypatch):
+        import hermes_cli.presence_cmd as presence_cmd
+        import tools.presence.common as presence_common
+
+        started = []
+        monkeypatch.setattr(presence_common, "get_presence_config", lambda: {"enabled": True})
+        monkeypatch.setattr(presence_cmd, "watcher_pid_if_running", lambda: None)
+        monkeypatch.setattr(presence_cmd, "start_watcher", lambda: (started.append(True) or True, "started"))
+        monkeypatch.setattr(rp, "should_defer_background_work", lambda: False)
+
+        rp.enforce()
+
+        assert started == [True]
+
     def test_no_demote_when_not_busy(self, monkeypatch):
         monkeypatch.setattr(rp, "should_defer_background_work", lambda: False)
         calls = self._install_fake_voice_residency(monkeypatch, tier="hot")

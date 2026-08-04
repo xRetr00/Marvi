@@ -287,6 +287,18 @@ def enforce() -> None:
     workstream and may not exist yet while this module is being developed.
     Idempotent by nature of ``demote()`` -- safe to call every watch tick.
     """
+    # The media watcher is part of Presence, so the existing 60-second
+    # Presence supervisor loop is also its cheapest crash-recovery path.
+    try:
+        from hermes_cli.presence_cmd import start_watcher, watcher_pid_if_running
+        from tools.presence.common import get_presence_config
+
+        if get_presence_config().get("enabled") and watcher_pid_if_running() is None:
+            ok, message = start_watcher()
+            (logger.info if ok else logger.warning)("resource_policy: %s", message)
+    except Exception:
+        logger.debug("resource_policy: media watcher supervision failed", exc_info=True)
+
     if not should_defer_background_work():
         return
 

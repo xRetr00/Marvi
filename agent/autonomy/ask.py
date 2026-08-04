@@ -18,10 +18,11 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import tempfile
 import threading
 import uuid
-from datetime import date, datetime, timezone
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -118,7 +119,7 @@ def _dedup_key(question: str) -> str:
 
 
 def _count_asked_today(pending: Dict[str, Any]) -> int:
-    today = date.today().isoformat()
+    today = datetime.now(timezone.utc).date().isoformat()
     count = 0
     for row in pending.get("questions") or []:
         asked_at = str(row.get("asked_at") or "")
@@ -302,8 +303,37 @@ def ask_user(
 
 
 def reconcile_pending_questions(*, lookback_limit: int = 5) -> int:
-    """Compatibility no-op; answers now require an explicit question id."""
-    return 0
+    """Expire duplicate open questions without guessing that chat answered one.
+
+    Explicit IDs remain the only answer path. This pass only removes the
+    repeated paraphrases that otherwise leave several copies waiting forever.
+    """
+    del lookback_limit
+    try:
+        with _lock:
+            state = _load_pending()
+            pending = [row for row in state["questions"] if row.get("status") == "pending"]
+            changed = 0
+            for index, row in enumerate(pending):
+                text = _dedup_key(str(row.get("question") or ""))
+                for newer in pending[index + 1 :]:
+                    other = _dedup_key(str(newer.get("question") or ""))
+                    left = set(re.findall(r"[a-z0-9]+", text))
+                    right = set(re.findall(r"[a-z0-9]+", other))
+                    shared = left & right
+                    same_topic = len(shared) >= 4 and len(shared) / max(1, min(len(left), len(right))) >= 0.7
+                    if row.get("category") == newer.get("category") and same_topic:
+                        row["status"] = "expired"
+                        row["answered_at"] = _now_iso()
+                        row["answer_text"] = "Superseded by a newer equivalent question."
+                        changed += 1
+                        break
+            if changed:
+                _save_pending(state)
+            return changed
+    except Exception:
+        logger.debug("autonomy ask: duplicate reconciliation failed", exc_info=True)
+        return 0
 
 
 def answer_question(question_id: str, answer_text: str) -> Optional[Dict[str, Any]]:

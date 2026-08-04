@@ -117,6 +117,7 @@ class Runtime:
         ).strip().lower()
         self._rpc_token = os.environ.get("SMART_ROOM_RPC_TOKEN", "")
         self._last_wifi_probe = 0.0
+        self._last_owntracks_record: Optional[Dict[str, Any]] = None
         if not self._state.mmwave.occupied and not self._state.room_empty_since:
             self._state.room_empty_since = now_iso()
 
@@ -365,11 +366,13 @@ class Runtime:
 
     def _on_geofence(self, action: str, zone: str) -> None:
         """Handle optional OwnTracks events through the same location path."""
+        record = self._last_owntracks_record or {}
+        reported_at = str(record.get("reported_at") or now_iso())
         if action == "sync":
             with self._state_lock:
                 if self._state.location.zone == zone and self._state.location.source == "owntracks":
                     return
-                stamp = now_iso()
+                stamp = reported_at
                 self._state.location.zone = zone
                 self._state.location.home = zone == "home"
                 self._state.location.since = stamp
@@ -382,13 +385,14 @@ class Runtime:
             who=self._owner,
             transition=transition,
             zone=zone,
-            at=now_iso(),
-            delivery_id=f"owntracks:{transition}:{zone}:{int(time.time())}",
+            at=reported_at,
+            delivery_id=f"owntracks:{transition}:{zone}:{reported_at}",
             source="owntracks",
         )
 
     def _on_owntracks(self, topic: str, payload: Dict[str, Any]) -> None:
         record = append_location_report(topic, payload)
+        self._last_owntracks_record = record
         if record.get("duplicate"):
             logger.debug("Ignored duplicate retained OwnTracks report at=%s", record["reported_at"])
             return
@@ -517,6 +521,7 @@ class Runtime:
                 "zone": zone,
                 "source": source,
                 "delivery_id": delivery_id,
+                "reported_at": at,
             },
         )
         if transition == "arrive" and zone == "home":
@@ -599,7 +604,7 @@ class Runtime:
                     bulb.last_poll = bulb.last_success = now_iso()
                     bulb.consecutive_failures = 0
                     bulb.last_command = "get_status"
-                else:
+                elif bulb_status.get("code") != "DEVICE_BUSY":
                     bulb.last_poll = now_iso()
                     bulb.last_command = "get_status"
                     bulb.consecutive_failures += 1
@@ -628,7 +633,7 @@ class Runtime:
                     he20.last_poll = he20.last_success = now_iso()
                     he20.consecutive_failures = 0
                     he20.last_command = "get_status"
-                else:
+                elif he20_status.get("code") != "DEVICE_BUSY":
                     he20.last_poll = now_iso()
                     he20.last_command = "get_status"
                     he20.consecutive_failures += 1
@@ -975,7 +980,7 @@ class Runtime:
 
     def _check_exit_timeout(self) -> bool:
         """Check whether mmWave has remained clear for the exit timeout."""
-        exit_timeout = self._config.get("esp32", {}).get("exit_timeout", 60)
+        exit_timeout = self._config.get("esp32", {}).get("exit_timeout", 300)
         if self._state.mmwave.occupied:
             return False
         last_seen = self._state.mmwave.last_seen

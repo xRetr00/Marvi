@@ -103,7 +103,9 @@ class ClapDataset:
             pending = [item for item in samples if item.get("label") == "pending"]
             next_pending = None
             if pending:
-                item = pending[0]
+                # Ask about the clap the user can still remember, not the
+                # oldest item in a historical backlog.
+                item = pending[-1]
                 next_pending = {
                     "id": item["id"],
                     "captured_at": item["captured_at"],

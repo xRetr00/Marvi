@@ -1543,7 +1543,7 @@ def build_local_transcribe_kwargs(stt_config: Optional[Dict[str, Any]] = None) -
         "condition_on_previous_text": False,
     }
 
-    vad_enabled = local_cfg.get("vad", True)
+    vad_enabled = local_cfg.get("vad_filter", local_cfg.get("vad", True))
     if vad_enabled is None:
         vad_enabled = True
     if bool(vad_enabled):
@@ -1557,6 +1557,19 @@ def build_local_transcribe_kwargs(stt_config: Optional[Dict[str, Any]] = None) -
         kwargs["vad_parameters"] = {"min_silence_duration_ms": min_silence_ms}
     else:
         kwargs["vad_filter"] = False
+
+    # Push the confidence gate down into faster-whisper itself. Without this the
+    # library's own internal defaults (no_speech_threshold=0.6, log_prob_
+    # threshold=-1.0) drop low-confidence segments BEFORE they reach our
+    # _is_hallucinated_segment post-filter, so the ``stt.local`` threshold knobs
+    # were dead for that first gate. Non-English speech decodes at a lower
+    # avg_logprob, so the English-tuned defaults silently discard whole
+    # utterances. Mapping the same config values through keeps both gates in
+    # sync and makes the knobs actually usable. Defaults are unchanged, so
+    # behavior is identical unless a user tunes them.
+    no_speech_threshold, log_prob_threshold = _confidence_thresholds(local_cfg)
+    kwargs["no_speech_threshold"] = no_speech_threshold
+    kwargs["log_prob_threshold"] = log_prob_threshold
 
     forced_lang = _resolve_stt_language("local", stt_config)
     if forced_lang:
@@ -1652,21 +1665,19 @@ def _transcribe_local(file_path: str, model_name: str) -> Dict[str, Any]:
                     )
                     _local_model_name = model_key
 
-        # Desktop voice commands are short English utterances by default; avoid
-        # auto-detect and beam-search overhead unless the user overrides it.
+        # Keep Marvi's low-latency voice settings while routing every local
+        # Whisper call through the shared VAD/confidence configuration.
         _forced_lang = _resolve_stt_language("local", stt_config)
         if not _forced_lang and "language" not in stt_config:
             _forced_lang = os.getenv(LOCAL_STT_LANGUAGE_ENV) or DEFAULT_LOCAL_STT_LANGUAGE
         if isinstance(_forced_lang, str):
             _forced_lang = _forced_lang.strip().lower()
-        transcribe_kwargs = {
-            "beam_size": 1,
-            "best_of": 1,
-            "condition_on_previous_text": False,
-            "without_timestamps": True,
-        }
-        if "vad_filter" in local_cfg:
-            transcribe_kwargs["vad_filter"] = is_truthy_value(local_cfg.get("vad_filter"), default=False)
+        transcribe_kwargs = build_local_transcribe_kwargs(stt_config)
+        transcribe_kwargs.update(
+            beam_size=1,
+            best_of=1,
+            without_timestamps=True,
+        )
         if _forced_lang:
             transcribe_kwargs["language"] = _forced_lang
         initial_prompt = local_cfg.get("initial_prompt")
@@ -1675,7 +1686,7 @@ def _transcribe_local(file_path: str, model_name: str) -> Dict[str, Any]:
 
         try:
             segments, info = _local_model.transcribe(file_path, **transcribe_kwargs)
-            transcript = _join_confident_segments(segments, local_config)
+            transcript = _join_confident_segments(segments, local_cfg)
         except Exception as exc:
             # CUDA runtime libs sometimes only fail at dlopen-on-first-use,
             # AFTER the model loaded successfully.  Evict the broken cached
@@ -1695,7 +1706,7 @@ def _transcribe_local(file_path: str, model_name: str) -> Dict[str, Any]:
             _local_model = WhisperModel(model_name, device="cpu", compute_type="int8")
             _local_model_name = (model_name, "cpu", "int8")
             segments, info = _local_model.transcribe(file_path, **transcribe_kwargs)
-            transcript = _join_confident_segments(segments, local_config)
+            transcript = _join_confident_segments(segments, local_cfg)
 
         logger.info(
             "Transcribed %s via local whisper (%s, lang=%s, %.1fs audio)",

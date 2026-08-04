@@ -119,7 +119,7 @@ then require `python scripts/verify_marvi_upstream_contract.py` and
 | **Git**              | With the `git-lfs` extension installed                                                        |
 | **Python 3.11–3.13** | uv will install it if missing                                                                 |
 | **uv**               | Fast Python package manager ([install](https://docs.astral.sh/uv/))                           |
-| **Node.js 20+**      | Optional — needed for browser tools and WhatsApp bridge (matches root `package.json` engines) |
+| **Node.js 26+**      | Optional — needed for browser tools and WhatsApp bridge (matches root `package.json` engines) |
 
 ### Install with the standard installer
 

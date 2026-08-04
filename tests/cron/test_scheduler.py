@@ -662,7 +662,7 @@ class TestRunJobSessionPersistence:
             "enabled": True,
         }
         with patch("cron.scheduler.get_due_jobs", return_value=[job]), patch(
-            "cron.scheduler.advance_next_run"
+            "cron.scheduler.advance_next_runs"
         ) as advance, patch("cron.scheduler.run_one_job") as run_one:
             assert tick(verbose=False, sync=True, can_dispatch=lambda: False) == 0
 
@@ -835,6 +835,18 @@ class TestRunJobConfigEnvVarExpansion:
 
 class TestRunJobModelResolution:
     """Verify defensive model resolution for jobs stored with ``model: null``.
+    """
+
+    _RUNTIME = {
+        "api_key": "test-key",
+        "base_url": "https://example.invalid/v1",
+        "provider": "openrouter",
+        "api_mode": "chat_completions",
+    }
+
+    @contextlib.contextmanager
+    def _run_job_patches(self, tmp_path, extra=()):
+        """Apply the shared run_job patches plus optional test-specific patches.
 
         ``extra`` is an iterable of additional context managers (e.g. a
         per-test ``_get_platform_tools`` patch) entered alongside the base set.
@@ -963,20 +975,6 @@ class TestRunJobModelResolution:
         extra = [patch("hermes_cli.tools_config._get_platform_tools", return_value={"web", "file"})]
         with self._run_job_patches(tmp_path, extra=extra) as (_fake_db, mock_agent_cls):
             run_job(job)
-    Issue #23979: a cron job created without an explicit model is stored as
-    ``model: null``. At fire time the scheduler must:
-      1. fall back to ``HERMES_MODEL`` env if set,
-      2. else fall back to config.yaml ``model.default`` if set,
-      3. else fail fast with an actionable error — never let an empty string
-         reach the provider where it surfaces as an opaque 400.
-    """
-
-    _RUNTIME = {
-        "api_key": "test-key",
-        "base_url": "https://example.invalid/v1",
-        "provider": "openrouter",
-        "api_mode": "chat_completions",
-    }
 
     def test_null_job_model_falls_back_to_env(self, tmp_path, monkeypatch):
         """``model: null`` on the job uses HERMES_MODEL when set."""
@@ -3287,14 +3285,41 @@ class TestDeliverResultTimeoutCancelsFuture:
         loop = MagicMock()
         loop.is_running.return_value = True
 
-            try:
-                success, output, final_response, error = run_job(job)
-            finally:
-                clear_env_passthrough()
+        captured_future = Future()
+        cancel_calls = []
 
-        assert success is True
-        assert error is None
-        assert final_response == "ok"
+        def in_flight_cancel():
+            cancel_calls.append(True)
+            return False
+
+        captured_future.cancel = in_flight_cancel
+        captured_future.result = MagicMock(side_effect=TimeoutError("timed out"))
+
+        def fake_run_coro(coro, _loop):
+            coro.close()
+            return captured_future
+
+        job = {
+            "id": "timeout-job",
+            "deliver": "origin",
+            "origin": {"platform": "telegram", "chat_id": "123"},
+        }
+        standalone_send = AsyncMock(return_value={"success": True})
+
+        with patch("gateway.config.load_gateway_config", return_value=mock_cfg), \
+             patch("cron.scheduler.load_config", return_value={"cron": {"wrap_response": False}}), \
+             patch("asyncio.run_coroutine_threadsafe", side_effect=fake_run_coro), \
+             patch("tools.send_message_tool._send_to_platform", new=standalone_send):
+            result = _deliver_result(
+                job,
+                "Hello world",
+                adapters={Platform.TELEGRAM: adapter},
+                loop=loop,
+            )
+
+        assert cancel_calls == [True]
+        assert result is None
+        standalone_send.assert_not_awaited()
 
 
 class TestSilentDelivery:
@@ -3629,7 +3654,7 @@ class TestParallelTick:
         ]
 
         with patch("cron.scheduler.get_due_jobs", return_value=jobs), \
-             patch("cron.scheduler.advance_next_run"), \
+             patch("cron.scheduler.advance_next_runs"), \
              patch("cron.scheduler.run_job", side_effect=mock_run_job), \
              patch("cron.scheduler.save_job_output", return_value="/tmp/out.md"), \
              patch("cron.scheduler._deliver_result", return_value=None), \
@@ -3674,7 +3699,7 @@ class TestParallelTick:
         ]
 
         with patch("cron.scheduler.get_due_jobs", return_value=jobs), \
-             patch("cron.scheduler.advance_next_run"), \
+             patch("cron.scheduler.advance_next_runs"), \
              patch("cron.scheduler.run_job", side_effect=mock_run_job), \
              patch("cron.scheduler.save_job_output", return_value="/tmp/out.md"), \
              patch("cron.scheduler._deliver_result", return_value=None), \

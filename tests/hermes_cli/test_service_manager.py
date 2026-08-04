@@ -248,8 +248,8 @@ def test_seed_supervise_skeleton_creates_expected_layout(tmp_path) -> None:
         assert control.is_file(), "supervise/control fallback must be a file"
     if os.name != "nt":
         assert stat.S_IMODE(control.stat().st_mode) == 0o660
-
-
+def test_seed_supervise_skeleton_handles_log_subservice(tmp_path) -> None:
+    """When a log/ subdir exists, its supervise tree also gets seeded.
 
     Without this, ``unregister_profile_gateway``'s rmtree would EACCES
     on the logger's root-owned supervise dir even after the parent
@@ -258,9 +258,18 @@ def test_seed_supervise_skeleton_creates_expected_layout(tmp_path) -> None:
     import os
     import stat
 
+    from hermes_cli.service_manager import _seed_supervise_skeleton
 
+    svc_dir = tmp_path / "gateway-foo"
+    svc_dir.mkdir()
+    (svc_dir / "log").mkdir()
 
+    _seed_supervise_skeleton(svc_dir)
 
+    log_event = svc_dir / "log" / "event"
+    log_supervise = svc_dir / "log" / "supervise"
+    log_supervise_event = log_supervise / "event"
+    log_control = log_supervise / "control"
 
     assert log_event.is_dir()
     assert log_supervise.is_dir()

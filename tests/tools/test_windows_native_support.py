@@ -52,8 +52,6 @@ class TestConfigureWindowsStdio:
         yield
         sys.modules.pop("hermes_cli.stdio", None)
 
-    @pytest.mark.skipif(os.name == "nt", reason="POSIX-only behavior")
-    def test_no_op_on_posix(self):
     def test_no_op_on_posix(self, monkeypatch):
         from hermes_cli import stdio
 

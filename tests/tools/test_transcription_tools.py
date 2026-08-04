@@ -536,6 +536,10 @@ class TestTranscribeLocalExtended:
             best_of=1,
             condition_on_previous_text=False,
             language="en",
+            log_prob_threshold=-1.0,
+            no_speech_threshold=0.6,
+            vad_filter=True,
+            vad_parameters={"min_silence_duration_ms": 500},
             without_timestamps=True,
         )
 

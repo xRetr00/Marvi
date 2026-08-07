@@ -13297,6 +13297,22 @@ def _(rid, params: dict) -> dict:
                 if isinstance(duration, (int, float)) and not isinstance(duration, bool)
                 else 3.0
             )
+            max_rec = voice_cfg.get("max_recording_seconds")
+            safe_max_rec = (
+                (max_rec if max_rec > 0 else 0.0)
+                if isinstance(max_rec, (int, float)) and not isinstance(max_rec, bool)
+                else 120.0
+            )
+
+            def _on_stop_phrase(text: str) -> None:
+                os.environ["HERMES_VOICE"] = "0"
+                os.environ["HERMES_VOICE_TTS"] = "0"
+                try:
+                    _tts_stream_stop(user_barge=False)
+                except Exception:
+                    pass
+                _voice_emit("voice.transcript", {"stop_phrase": True, "text": text})
+
             started = start_continuous(
                 on_transcript=lambda t: _voice_emit("voice.transcript", {"text": t}),
                 on_status=lambda s: _voice_emit("voice.status", {"state": s}),
@@ -13326,8 +13342,6 @@ def _(rid, params: dict) -> dict:
             rid, 5025, "voice module not available — install audio dependencies"
         )
     except Exception as e:
-        if wake_paused or action == "stop":
-            _resume_voice_wake()
         return _err(rid, 5025, str(e))
 
 

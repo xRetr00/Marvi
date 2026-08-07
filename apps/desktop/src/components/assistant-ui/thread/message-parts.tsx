@@ -18,6 +18,7 @@ import { useI18n } from '@/i18n'
 import { CheckCircle2, Clock, Cloud, HelpCircle, iconSize, Info } from '@/lib/icons'
 import type { IslandCardKind } from '@/lib/island-queue'
 import { generatedImageFromResult } from '@/lib/generated-images'
+import { separateGluedReasoningBlocks } from '@/lib/reasoning-blocks'
 import { useEnterAnimation } from '@/lib/use-enter-animation'
 import { cn } from '@/lib/utils'
 
@@ -299,7 +300,7 @@ const ReasoningTextPart: ReasoningMessagePartComponent = () => {
       containerProps={{ 'data-slot': 'aui_reasoning-text' } as ComponentProps<'div'>}
       disableArtifacts
       isRunning={status.type === 'running' || messageRunning}
-      text={text.trimStart()}
+      text={separateGluedReasoningBlocks(text.trimStart())}
     />
   )
 }

@@ -1467,321 +1467,6 @@ def test_prompt_submit_longer_text_not_consumed_in_voice_mode(monkeypatch):
     assert resp.get("result") != {"voice_stopped": True}
 
 
-def test_wake_owner_is_sticky_and_routes_detection_to_first_transport(monkeypatch):
-    from tools import wake_word
-
-    state = {"owner": None, "callback": None, "paused": False}
-    voice_callbacks = {}
-
-    def start_listening(callback, *, owner, config):
-        if state["owner"] is not None and state["owner"] is not owner:
-            raise wake_word.WakeWordInUse
-        state.update(owner=owner, callback=callback, paused=False)
-
-    def pause_listening(*, owner):
-        if state["owner"] is not owner:
-            return False
-        state["paused"] = True
-        return True
-
-    def stop_listening(*, owner):
-        if state["owner"] is not owner:
-            return False
-        state.update(owner=None, callback=None, paused=False)
-        return True
-
-    def resume_listening(*, owner):
-        if state["owner"] is not owner:
-            return False
-        state["paused"] = False
-        return True
-
-    def start_continuous(**callbacks):
-        voice_callbacks.update(callbacks)
-        return True
-
-    monkeypatch.setattr(wake_word, "load_wake_word_config", lambda: {
-        "enabled": True,
-        "phrase": "hey hermes",
-        "surface": "auto",
-        "start_new_session": True,
-    })
-    monkeypatch.setattr(wake_word, "check_wake_word_requirements", lambda _cfg: {
-        "available": True,
-        "phrase": "hey hermes",
-        "provider": "test",
-        "hint": "",
-    })
-    monkeypatch.setattr(wake_word, "start_listening", start_listening)
-    monkeypatch.setattr(wake_word, "pause_listening", pause_listening)
-    monkeypatch.setattr(wake_word, "stop_listening", stop_listening)
-    monkeypatch.setattr(wake_word, "owns_listener", lambda owner: state["owner"] is owner)
-    monkeypatch.setattr(
-        wake_word,
-        "is_listening",
-        lambda: state["owner"] is not None and not state["paused"],
-    )
-    monkeypatch.setattr(
-        wake_word,
-        "resume_listening",
-        resume_listening,
-    )
-    monkeypatch.setitem(
-        sys.modules,
-        "hermes_cli.voice",
-        types.SimpleNamespace(
-            start_continuous=start_continuous,
-            stop_continuous=lambda **_kwargs: None,
-        ),
-    )
-    monkeypatch.setenv("HERMES_VOICE", "1")
-
-    first = types.SimpleNamespace(_closed=False)
-    second = types.SimpleNamespace(_closed=False)
-    emitted = []
-    monkeypatch.setattr(
-        server,
-        "_emit",
-        lambda event, sid, payload: emitted.append(
-            (event, sid, payload, server.current_transport())
-        ),
-    )
-    server._wake_owner_transport = None
-    server._wake_owner_surface = ""
-    try:
-        started = server.dispatch({
-            "id": "wake-1",
-            "method": "wake.start",
-            "params": {"surface": "gui", "session_id": "first-session"},
-        }, transport=first)
-        denied = server.dispatch({
-            "id": "wake-2",
-            "method": "wake.start",
-            "params": {"surface": "tui", "session_id": "second-session"},
-        }, transport=second)
-        denied_stop = server.dispatch({
-            "id": "wake-stop-2",
-            "method": "wake.stop",
-            "params": {},
-        }, transport=second)
-        denied_voice_stop = server.dispatch({
-            "id": "voice-stop-2",
-            "method": "voice.record",
-            "params": {"action": "stop"},
-        }, transport=second)
-
-        assert started["result"]["started"] is True
-        assert denied["result"] == {
-            "started": False,
-            "reason": "owned",
-            "owner_surface": "gui",
-        }
-        assert denied_stop["result"] == {
-            "stopped": False,
-            "reason": "not_owner",
-            "disabled_persisted": False,
-        }
-        assert denied_voice_stop["result"] == {
-            "status": "busy",
-            "reason": "wake_owned",
-        }
-
-        state["callback"]()
-        assert emitted == [(
-            "wake.detected",
-            "first-session",
-            {"phrase": "hey hermes", "profile": None, "start_new_session": True},
-            first,
-        )]
-        assert state["paused"] is True
-
-        voice_started = server.dispatch({
-            "id": "voice-start-1",
-            "method": "voice.record",
-            "params": {"action": "start", "session_id": "first-session"},
-        }, transport=first)
-        assert voice_started["result"]["status"] == "recording"
-        voice_callbacks["on_status"]("idle")
-        assert state["paused"] is False
-
-        stopped = server.dispatch({
-            "id": "wake-stop-1",
-            "method": "wake.stop",
-            "params": {},
-        }, transport=first)
-        assert stopped["result"] == {
-            "stopped": True,
-            "reason": None,
-            "disabled_persisted": False,
-        }
-
-        reclaimed = server.dispatch({
-            "id": "wake-reclaim-2",
-            "method": "wake.start",
-            "params": {"surface": "tui", "session_id": "second-session"},
-        }, transport=second)
-        assert reclaimed["result"]["started"] is True
-        assert state["owner"] is second
-
-        state["callback"]()
-        assert emitted[-1] == (
-            "wake.detected",
-            "second-session",
-            {"phrase": "hey hermes", "profile": None, "start_new_session": True},
-            second,
-        )
-
-        stopped_again = server.dispatch({
-            "id": "wake-stop-2-after-reclaim",
-            "method": "wake.stop",
-            "params": {},
-        }, transport=second)
-        assert stopped_again["result"] == {
-            "stopped": True,
-            "reason": None,
-            "disabled_persisted": False,
-        }
-    finally:
-        server._wake_owner_transport = None
-        server._wake_owner_surface = ""
-
-
-def test_wake_toggle_persists_enabled_flag_only_on_explicit_gesture(monkeypatch):
-    """The ear toggle / /wake on|off write wake_word.enabled; auto-arm never does."""
-    from tools import wake_word
-
-    config = {"enabled": False, "phrase": "hey hermes", "surface": "auto",
-              "start_new_session": True}
-    persisted = []
-
-    def fake_persist(enabled):
-        persisted.append(enabled)
-        config["enabled"] = enabled
-        return True
-
-    monkeypatch.setattr(server, "_persist_wake_enabled", fake_persist)
-    monkeypatch.setattr(wake_word, "load_wake_word_config", lambda: dict(config))
-    monkeypatch.setattr(wake_word, "check_wake_word_requirements", lambda _cfg: {
-        "available": True,
-        "phrase": "hey hermes",
-        "provider": "test",
-        "hint": "",
-    })
-    listener = {"owner": None}
-    monkeypatch.setattr(
-        wake_word, "start_listening",
-        lambda callback, *, owner, config: listener.update(owner=owner),
-    )
-    monkeypatch.setattr(
-        wake_word, "stop_listening",
-        lambda *, owner: listener["owner"] is owner and not listener.update(owner=None),
-    )
-    monkeypatch.setattr(wake_word, "owns_listener", lambda owner: listener["owner"] is owner)
-
-    transport = types.SimpleNamespace(_closed=False)
-    server._wake_owner_transport = None
-    server._wake_owner_surface = ""
-    try:
-        # Passive auto-arm (no persist): refused, config untouched.
-        passive = server.dispatch({
-            "id": "wake-passive",
-            "method": "wake.start",
-            "params": {"surface": "gui"},
-        }, transport=transport)
-        assert passive["result"] == {"started": False, "reason": "disabled"}
-        assert persisted == []
-
-        # Explicit gesture: enables in config AND arms.
-        clicked = server.dispatch({
-            "id": "wake-click",
-            "method": "wake.start",
-            "params": {"surface": "gui", "persist": True},
-        }, transport=transport)
-        assert clicked["result"]["started"] is True
-        assert clicked["result"]["enabled_persisted"] is True
-        assert persisted == [True]
-
-        # Explicit stop: disables in config.
-        stopped = server.dispatch({
-            "id": "wake-click-off",
-            "method": "wake.stop",
-            "params": {"persist": True},
-        }, transport=transport)
-        assert stopped["result"]["stopped"] is True
-        assert stopped["result"]["disabled_persisted"] is True
-        assert persisted == [True, False]
-
-        # persist does NOT override an explicit surface scoping.
-        config.update(enabled=True, surface="tui")
-        scoped = server.dispatch({
-            "id": "wake-scoped",
-            "method": "wake.start",
-            "params": {"surface": "gui", "persist": True},
-        }, transport=transport)
-        assert scoped["result"] == {"started": False, "reason": "disabled_for_surface"}
-        assert persisted == [True, False]
-    finally:
-        server._wake_owner_transport = None
-        server._wake_owner_surface = ""
-
-
-def test_wake_status_reports_configured_input_device_and_windows_silence_hint(monkeypatch):
-    from tools import wake_word
-
-    config = {
-        "enabled": True,
-        "phrase": "hey hermes",
-        "provider": "openwakeword",
-        "surface": "gui",
-        "input_device": "Microphone Array",
-    }
-    device = {
-        "selector": "Microphone Array",
-        "name": "Microphone Array",
-        "hostapi": "Windows WASAPI",
-        "default_samplerate": 48000.0,
-    }
-    transport = types.SimpleNamespace(_closed=False)
-
-    monkeypatch.setattr(wake_word, "load_wake_word_config", lambda: config)
-    monkeypatch.setattr(
-        wake_word,
-        "check_wake_word_requirements",
-        lambda cfg: {
-            "available": True,
-            "hint": "",
-            "phrase": "hey hermes",
-            "provider": "openwakeword",
-        },
-    )
-    monkeypatch.setattr(wake_word, "get_input_device_status", lambda cfg: device)
-    monkeypatch.setattr(wake_word, "owns_listener", lambda owner: owner is transport)
-    monkeypatch.setattr(wake_word, "is_listening", lambda: True)
-    monkeypatch.setattr(wake_word, "audio_is_silent", lambda: True)
-    monkeypatch.setattr(
-        wake_word,
-        "silent_audio_hint",
-        lambda details: f"silent input: {details['name']} ({details['hostapi']})",
-    )
-
-    server._wake_owner_transport = transport
-    server._wake_owner_surface = "gui"
-    try:
-        response = server.dispatch(
-            {"id": "wake-status", "method": "wake.status", "params": {}},
-            transport=transport,
-        )
-        assert response["result"]["configured_surface"] == "gui"
-        assert response["result"]["input_device"] == device
-        assert response["result"]["audio_silent"] is True
-        assert response["result"]["hint"] == (
-            "silent input: Microphone Array (Windows WASAPI)"
-        )
-    finally:
-        server._wake_owner_transport = None
-        server._wake_owner_surface = ""
-
-
 def test_voice_record_start_forwards_max_recording_seconds(monkeypatch):
     """voice.max_recording_seconds must reach start_continuous from the TUI.
 
@@ -1990,7 +1675,7 @@ def test_load_enabled_toolsets_folds_project_into_focus_posture(monkeypatch):
 
     monkeypatch.setattr(cc, "coding_selection", lambda **_: ["coding", "figma"])
 
-    assert server._load_enabled_toolsets() == ["coding", "figma", "project"]
+    assert server._load_enabled_toolsets("tui") == ["coding", "figma", "project"]
 
 
 def test_load_enabled_toolsets_rejects_disabled_mcp_env(monkeypatch, capsys):
@@ -3475,7 +3160,7 @@ def test_make_agent_passes_configured_fallback_chain(monkeypatch):
         },
     )
     monkeypatch.setattr("run_agent.AIAgent", fake_agent)
-    monkeypatch.setattr(server, "_load_enabled_toolsets", lambda: ["file"])
+    monkeypatch.setattr(server, "_load_enabled_toolsets", lambda *_a, **_kw: ["file"])
     monkeypatch.setattr(server, "_get_db", lambda: None)
 
     agent = server._make_agent("sid", "session-key")
@@ -3496,7 +3181,7 @@ def test_background_agent_kwargs_preserves_full_fallback_chain(monkeypatch):
         _fallback_chain=chain,
     )
     monkeypatch.setattr(server, "_load_cfg", lambda: {"max_turns": 25})
-    monkeypatch.setattr(server, "_load_enabled_toolsets", lambda: ["file"])
+    monkeypatch.setattr(server, "_load_enabled_toolsets", lambda *_a, **_kw: ["file"])
     monkeypatch.setattr(server, "_get_db", lambda: None)
 
     kwargs = server._background_agent_kwargs(agent, "task-id")
@@ -3520,7 +3205,7 @@ def test_background_agent_kwargs_preserves_empty_fallback_chain(monkeypatch):
             ],
         },
     )
-    monkeypatch.setattr(server, "_load_enabled_toolsets", lambda: ["file"])
+    monkeypatch.setattr(server, "_load_enabled_toolsets", lambda *_a, **_kw: ["file"])
     monkeypatch.setattr(server, "_get_db", lambda: None)
 
     kwargs = server._background_agent_kwargs(agent, "task-id")
@@ -4240,7 +3925,7 @@ def test_prompt_submit_rejects_negative_truncate_ordinal(monkeypatch):
     replaced = []
 
     class _FakeDB:
-        def replace_messages(self, key, messages):
+        def replace_messages(self, key, messages, active_only=False):
             replaced.append((key, list(messages)))
 
     history = [
@@ -4291,7 +3976,7 @@ def test_prompt_submit_refuses_empty_truncation_without_confirm(monkeypatch):
     replaced = []
 
     class _FakeDB:
-        def replace_messages(self, key, messages):
+        def replace_messages(self, key, messages, active_only=False):
             replaced.append((key, list(messages)))
 
     history = [
@@ -4376,7 +4061,7 @@ def test_prompt_submit_empty_truncation_allowed_with_confirm(monkeypatch):
             self._target()
 
     class _FakeDB:
-        def replace_messages(self, key, messages):
+        def replace_messages(self, key, messages, active_only=False):
             replaced.append((key, list(messages)))
 
     history = [
@@ -4739,6 +4424,58 @@ def _configure_immediate_prompt_run(
     monkeypatch.setattr(server, "_drain_queued_prompt", lambda *_args: False)
     monkeypatch.setattr(server, "_voice_tts_enabled", lambda: False)
     monkeypatch.setattr(server, "_get_db", lambda: None)
+
+
+def test_run_prompt_submit_binds_exact_steer_authority_and_resets_contextvars(
+    monkeypatch, tmp_path
+):
+    """The turn thread commissions children with this session generation only."""
+    from tools.delegate_tool import _capture_gateway_steer_authority
+    from tui_gateway.transport import (
+        bind_transport,
+        current_transport,
+        reset_transport,
+    )
+
+    class _Transport:
+        def write(self, _obj):
+            return True
+
+        def close(self):
+            return None
+
+    observed = {}
+    owner_transport = _Transport()
+    previous_transport = _Transport()
+    previous_record = {"session_key": "previous-generation"}
+
+    class _CapturingAgent(_RecordingAgent):
+        def run_conversation(self, prompt, **kwargs):
+            authority = _capture_gateway_steer_authority("sid-owner")
+            observed["transport"] = authority[0]
+            observed["record"] = authority[1]
+            return super().run_conversation(prompt, **kwargs)
+
+    _configure_immediate_prompt_run(monkeypatch, tmp_path)
+    session = _session(
+        session_key="session-owner",
+        agent=_CapturingAgent([]),
+        running=True,
+        transport=owner_transport,
+    )
+    server._sessions["sid-owner"] = session
+    transport_token = bind_transport(previous_transport)
+    record_token = server._current_runtime_session_record.set(previous_record)
+    try:
+        server._run_prompt_submit("rid-owner", "sid-owner", session, "commission")
+
+        assert observed == {"transport": owner_transport, "record": session}
+        assert current_transport() is previous_transport
+        assert server._current_runtime_session_record.get() is previous_record
+    finally:
+        server._current_runtime_session_record.reset(record_token)
+        reset_transport(transport_token)
+        server._sessions.pop("sid-owner", None)
 
 
 class _RecordingAgent:
@@ -9216,7 +8953,7 @@ def test_prompt_submit_can_truncate_before_user_ordinal(monkeypatch):
         def __init__(self):
             self.replaced = []
 
-        def replace_messages(self, session_id, messages):
+        def replace_messages(self, session_id, messages, active_only=False):
             self.replaced.append((session_id, list(messages)))
 
     stub_db = _StubDb()
@@ -9272,7 +9009,7 @@ def test_prompt_submit_refuses_turn_when_truncate_persist_fails(monkeypatch):
     server._sessions["trunc-fail-sid"] = sess
 
     class _FailDb:
-        def replace_messages(self, session_id, messages):
+        def replace_messages(self, session_id, messages, active_only=False):
             raise OSError("disk full")
 
     monkeypatch.setattr(server, "_get_db", lambda: _FailDb())
@@ -9363,7 +9100,7 @@ def test_prompt_submit_truncate_ordinal_skips_display_kind_rows(monkeypatch):
         def __init__(self):
             self.replaced = []
 
-        def replace_messages(self, session_id, messages):
+        def replace_messages(self, session_id, messages, active_only=False):
             self.replaced.append((session_id, list(messages)))
 
     stub_db = _StubDb()
@@ -13439,7 +13176,7 @@ def _setup_make_agent_mocks(monkeypatch, cfg):
     monkeypatch.setattr(server, "_load_tool_progress_mode", lambda: "off")
     monkeypatch.setattr(server, "_load_reasoning_config", lambda model="": None)
     monkeypatch.setattr(server, "_load_service_tier", lambda: None)
-    monkeypatch.setattr(server, "_load_enabled_toolsets", lambda: None)
+    monkeypatch.setattr(server, "_load_enabled_toolsets", lambda *_a, **_kw: None)
     monkeypatch.setattr(server, "_get_db", lambda: None)
     monkeypatch.setattr(server, "_agent_cbs", lambda sid: {})
 
@@ -15437,7 +15174,7 @@ class TestResolveRuntimeWithFallback:
             fake_resolve,
         )
         monkeypatch.setattr("run_agent.AIAgent", fake_agent)
-        monkeypatch.setattr(server, "_load_enabled_toolsets", lambda: ["file"])
+        monkeypatch.setattr(server, "_load_enabled_toolsets", lambda *_a, **_kw: ["file"])
         monkeypatch.setattr(server, "_get_db", lambda: None)
 
         agent = server._make_agent(

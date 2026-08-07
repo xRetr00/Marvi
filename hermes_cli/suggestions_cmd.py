@@ -104,8 +104,13 @@ def handle_suggestions_command(
     if sub in ("accept", "add", "schedule"):
         if not rest:
             return "Usage: /suggestions accept <number|id>"
+        from cron.scheduler import CronSchedulerRegistrationError
+
         suggestion = store.get_suggestion(rest)
-        result = store.accept_suggestion(rest, origin=origin)
+        try:
+            result = store.accept_suggestion(rest, origin=origin)
+        except CronSchedulerRegistrationError as e:
+            return e.user_message()
         if result is None:
             return f"No pending suggestion matches '{rest}'. Run /suggestions to list them."
         kind = (suggestion or {}).get("kind", "job")

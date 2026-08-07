@@ -26,15 +26,17 @@ Design:
 import hashlib
 import json
 import logging
-import time
+import os
 import re
+import tempfile
+import time
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from hermes_constants import get_hermes_home
 from typing import Dict, Any, List, Optional, Tuple
 
-from utils import atomic_write_text
+from utils import atomic_replace, atomic_write_text
 
 # fcntl is Unix-only; on Windows use msvcrt for file locking
 msvcrt = None

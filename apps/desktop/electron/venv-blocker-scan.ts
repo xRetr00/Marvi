@@ -7,7 +7,7 @@
  * returns a typed result for the Desktop update preflight.
  */
 
-import { execFile } from 'node:child_process'
+import { execFile, execFileSync } from 'node:child_process'
 import fs from 'node:fs'
 import path from 'node:path'
 import { promisify } from 'node:util'
@@ -172,6 +172,32 @@ export async function scanVenvBlockers(
   return processes.length
     ? { kind: 'blocked', result: { blocked: true, processes } }
     : { kind: 'clear', result: { blocked: false, processes: [] } }
+}
+
+export function stopManagedBackgroundProcesses(
+  updateRoot: string,
+  execOverride: typeof execFileSync = execFileSync,
+  resolveOverride: typeof resolveVenvPython = resolveVenvPython
+): boolean {
+  const venvPython = resolveOverride(updateRoot)
+
+  if (!venvPython) {
+    return false
+  }
+
+  try {
+    execOverride(
+      venvPython,
+      [
+        '-c',
+        'from hermes_cli.update_cmd import _stop_windows_managed_background_processes as stop; stop()'
+      ],
+      { cwd: updateRoot, stdio: 'ignore', windowsHide: true }
+    )
+    return true
+  } catch {
+    return false
+  }
 }
 
 // ---------------------------------------------------------------------------

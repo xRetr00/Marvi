@@ -5085,6 +5085,7 @@ from hermes_cli.update_cmd import (  # noqa: F401
     _should_skip_upstream_prompt,
     _stash_apply_failed_only_on_existing_untracked,
     _stash_local_changes_if_needed,
+    _stop_windows_managed_background_processes,
     _sync_fork_with_upstream,
     _sync_with_upstream_if_needed,
     _update_node_dependencies,

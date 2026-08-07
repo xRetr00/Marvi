@@ -19,7 +19,8 @@ import {
   formatProbeFailedMessage,
   parseVenvBlockerScanOutput,
   resolveVenvPython,
-  scanVenvBlockers
+  scanVenvBlockers,
+  stopManagedBackgroundProcesses
 } from './venv-blocker-scan'
 
 // ---------------------------------------------------------------------------
@@ -242,5 +243,30 @@ describe('scanVenvBlockers', () => {
     assert.equal(c.cwd, '/update/root')
     assert.equal(typeof c.timeout, 'number')
     assert.ok(c.timeout > 0)
+  })
+})
+
+describe('stopManagedBackgroundProcesses', () => {
+  it('runs the managed-background stop helper with the install venv', () => {
+    const calls: any[] = []
+    const exec = ((cmd: string, args: string[], opts: any) => {
+      calls.push({ cmd, args, opts })
+    }) as any
+
+    assert.equal(stopManagedBackgroundProcesses('/root', exec, () => '/root/venv/python.exe'), true)
+    assert.equal(calls.length, 1)
+    assert.equal(calls[0].cmd, '/root/venv/python.exe')
+    assert.equal(calls[0].args[0], '-c')
+    assert.match(calls[0].args[1], /_stop_windows_managed_background_processes/)
+    assert.equal(calls[0].opts.cwd, '/root')
+  })
+
+  it('fails closed when the helper cannot run', () => {
+    const fail = (() => {
+      throw new Error('nope')
+    }) as any
+
+    assert.equal(stopManagedBackgroundProcesses('/root', fail, () => '/root/venv/python.exe'), false)
+    assert.equal(stopManagedBackgroundProcesses('/root', fail, () => null), false)
   })
 })

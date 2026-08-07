@@ -207,7 +207,12 @@ import {
   spawnUpdaterProcess,
   stagedUpdaterSupportsPrewrittenMarker
 } from './updater-process'
-import { formatBlockerMessage, formatProbeFailedMessage, scanVenvBlockers } from './venv-blocker-scan'
+import {
+  formatBlockerMessage,
+  formatProbeFailedMessage,
+  scanVenvBlockers,
+  stopManagedBackgroundProcesses
+} from './venv-blocker-scan'
 import { fetchMarketplaceThemes, searchMarketplaceThemes } from './vscode-marketplace'
 import {
   computeWindowOptions,
@@ -2649,6 +2654,7 @@ function resumeBackendAfterFailedUpdate() {
 // set, window-all-closed calls app.quit() on every platform so the process
 // actually dies and the hand-off script can proceed immediately.
 let isQuittingForHandoff = false
+let managedBackgroundStopAttempted = false
 
 // Quit-guard latches: one while the confirmation is on screen (a second
 // Cmd-Q must not stack dialogs), one after the user has said "quit anyway"
@@ -2825,6 +2831,8 @@ async function releaseBackendLock(updateRoot, tag) {
   for (const pid of pids) {
     forceKillProcessTree(pid)
   }
+
+  stopManagedBackgroundProcesses(updateRoot)
 
   const shim = venvHermesShimPath(updateRoot)
   const deadlineMs = Date.now() + 15000
@@ -12497,6 +12505,10 @@ app.on('before-quit', event => {
 
   stopBackendChild(backendConnectionState.getProcess())
   stopAllPoolBackends()
+  if (!managedBackgroundStopAttempted) {
+    managedBackgroundStopAttempted = true
+    stopManagedBackgroundProcesses(resolveUpdateRoot())
+  }
 })
 
 app.on('window-all-closed', () => {

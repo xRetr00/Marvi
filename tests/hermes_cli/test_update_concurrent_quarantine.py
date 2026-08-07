@@ -200,6 +200,33 @@ def test_quarantine_falls_back_to_reboot_schedule(_winp, tmp_path, capsys, monke
 
 
 @patch.object(cli_main, "_is_windows", return_value=True)
+def test_stop_windows_managed_background_processes_targets_only_owned_helpers(
+    _winp,
+    monkeypatch,
+):
+    import gateway.status as status_mod
+
+    monkeypatch.setattr(
+        cli_main,
+        "_detect_venv_python_processes",
+        lambda: [
+            (11, "python.exe", "python -m plugins.smart_room.runtime.app"),
+            (12, "python.exe", "python -m tools.presence.media_watcher"),
+            (13, "python.exe", "python -m hermes_cli.main serve"),
+        ],
+    )
+    stopped = []
+    monkeypatch.setattr(
+        status_mod,
+        "terminate_pid",
+        lambda pid, force=False: stopped.append((pid, force)),
+    )
+
+    assert cli_main._stop_windows_managed_background_processes() == [11, 12]
+    assert stopped == [(11, True), (12, True)]
+
+
+@patch.object(cli_main, "_is_windows", return_value=True)
 def test_pause_windows_gateways_for_update_stops_profile_and_unmapped_pids(
     _winp,
     monkeypatch,
@@ -227,6 +254,12 @@ def test_pause_windows_gateways_for_update_stops_profile_and_unmapped_pids(
         return set()
 
     monkeypatch.setattr(cli_main, "_wait_for_windows_update_gateway_exit", fake_wait)
+    background_stops = []
+    monkeypatch.setattr(
+        cli_main,
+        "_stop_windows_managed_background_processes",
+        lambda: background_stops.append(True) or [303, 404],
+    )
     monkeypatch.setattr(
         gateway_mod,
         "_capture_gateway_argv",
@@ -257,6 +290,7 @@ def test_pause_windows_gateways_for_update_stops_profile_and_unmapped_pids(
     }
     assert waited_for == [101]
     assert terminated == [(202, True)]
+    assert background_stops == [True]
 
     marker = json.loads((profile_home / ".gateway-planned-stop.json").read_text())
     assert marker["target_pid"] == 101
@@ -265,6 +299,7 @@ def test_pause_windows_gateways_for_update_stops_profile_and_unmapped_pids(
     captured = capsys.readouterr().out
     assert "Paused gateway profile(s): work" in captured
     assert "without profile mapping" in captured
+    assert "Stopped 2 managed background process(es)" in captured
     # An unmapped PID whose argv we captured is respawnable, so we must NOT
     # tell the user to restart it manually.
     assert "Restart manually after update" not in captured
@@ -409,6 +444,9 @@ def test_pause_kill_set_covers_venv_guard_abort_set(
         status_mod,
         "terminate_pid",
         lambda pid, force=False: terminated.append(int(pid)),
+    )
+    monkeypatch.setattr(
+        cli_main, "_stop_windows_managed_background_processes", lambda: []
     )
 
     cli_main._pause_windows_gateways_for_update()

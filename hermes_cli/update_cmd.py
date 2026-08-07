@@ -2924,6 +2924,37 @@ def _detect_venv_python_processes(
         matches.append((int(pid), str(name), cmdline_raw[:120]))
     return matches
 
+
+_MANAGED_BACKGROUND_PROCESS_MODULES = (
+    "plugins.smart_room.runtime.app",
+    "tools.presence.media_watcher",
+)
+
+
+def _stop_windows_managed_background_processes() -> list[int]:
+    """Stop Marvi-owned detached helpers that would lock the venv during update."""
+    if not _m()._is_windows():
+        return []
+
+    try:
+        from gateway.status import terminate_pid
+    except Exception as exc:
+        logger.debug("Could not load managed background process cleanup: %s", exc)
+        return []
+
+    stopped: list[int] = []
+    for pid, _name, cmdline in _m()._detect_venv_python_processes():
+        lowered = cmdline.lower()
+        if not any(module in lowered for module in _MANAGED_BACKGROUND_PROCESS_MODULES):
+            continue
+        try:
+            terminate_pid(int(pid), force=True)
+            stopped.append(int(pid))
+        except Exception as exc:
+            logger.debug("Could not stop managed background PID %s: %s", pid, exc)
+    return stopped
+
+
 def _format_venv_python_holders_message(matches: list[tuple[int, str, str]]) -> str:
     """Explain which venv processes block the update and how to clear them."""
     lines = [
@@ -3094,6 +3125,12 @@ def _pause_windows_gateways_for_update() -> dict | None:
         logger.debug("Could not discover Windows gateway PIDs before update: %s", exc)
         return None
     if not running_pids:
+        stopped_background = _m()._stop_windows_managed_background_processes()
+        if stopped_background:
+            print(
+                f"  ✓ Stopped {len(stopped_background)} managed background "
+                "process(es)"
+            )
         # No gateway is running right now, but the user may have installed an
         # autostart entry (Scheduled Task or Startup-folder login item) — that
         # is an explicit "I want a gateway" signal. A gateway that died between
@@ -3196,6 +3233,13 @@ def _pause_windows_gateways_for_update() -> dict | None:
         print(f"  ✓ Paused gateway profile(s): {', '.join(sorted(profiles))}")
     if force_killed:
         print(f"  → Force-stopped {len(force_killed)} gateway process(es)")
+
+    stopped_background = _m()._stop_windows_managed_background_processes()
+    if stopped_background:
+        print(
+            f"  ✓ Stopped {len(stopped_background)} managed background "
+            "process(es)"
+        )
 
     if unmapped_pids:
         respawnable = sum(1 for u in unmapped if u.get("argv"))

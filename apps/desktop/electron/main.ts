@@ -12507,7 +12507,8 @@ app.on('before-quit', event => {
   stopAllPoolBackends()
   if (!managedBackgroundStopAttempted) {
     managedBackgroundStopAttempted = true
-    stopManagedBackgroundProcesses(resolveUpdateRoot())
+    // Native update handoff owns gateway pause/resume; a real user Quit stops it.
+    stopManagedBackgroundProcesses(resolveUpdateRoot(), !isQuittingForHandoff)
   }
 })
 

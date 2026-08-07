@@ -155,8 +155,8 @@ export async function scanVenvBlockers(
   }
 
   // The native updater deliberately pauses and resumes every gateway before
-  // mutating the venv. Its Smart Room runtime is a supervised gateway child,
-  // so neither is an external blocker at this Desktop hand-off boundary.
+  // mutating the venv. Smart Room and the media watcher are supervised gateway
+  // children, so none of them are external blockers at this hand-off boundary.
   const hasGateway = outcome.result.processes.some(proc =>
     proc.cmdline.toLowerCase().includes('hermes_cli.main gateway ')
   )
@@ -165,7 +165,11 @@ export async function scanVenvBlockers(
 
     return (
       !cmdline.includes('hermes_cli.main gateway ') &&
-      !(hasGateway && cmdline.includes('plugins.smart_room.runtime.app'))
+      !(
+        hasGateway &&
+        (cmdline.includes('plugins.smart_room.runtime.app') ||
+          cmdline.includes('tools.presence.media_watcher'))
+      )
     )
   })
 
@@ -176,6 +180,7 @@ export async function scanVenvBlockers(
 
 export function stopManagedBackgroundProcesses(
   updateRoot: string,
+  stopGateways = false,
   execOverride: typeof execFileSync = execFileSync,
   resolveOverride: typeof resolveVenvPython = resolveVenvPython
 ): boolean {
@@ -183,6 +188,20 @@ export function stopManagedBackgroundProcesses(
 
   if (!venvPython) {
     return false
+  }
+
+  let stopped = true
+
+  if (stopGateways) {
+    try {
+      execOverride(venvPython, ['-m', 'hermes_cli.main', 'gateway', 'stop', '--all'], {
+        cwd: updateRoot,
+        stdio: 'ignore',
+        windowsHide: true
+      })
+    } catch {
+      stopped = false
+    }
   }
 
   try {
@@ -194,7 +213,7 @@ export function stopManagedBackgroundProcesses(
       ],
       { cwd: updateRoot, stdio: 'ignore', windowsHide: true }
     )
-    return true
+    return stopped
   } catch {
     return false
   }

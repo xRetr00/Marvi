@@ -183,13 +183,14 @@ describe('scanVenvBlockers', () => {
     assert.equal((await scanVenvBlockers('/r', execReturn(blockedJson), stubVenv)).kind, 'blocked')
   })
 
-  it('leaves updater-managed gateway and Smart Room runtime for updater teardown', async () => {
+  it('leaves gateway-owned helpers for native updater teardown', async () => {
     const managed = JSON.stringify({
       ok: true,
       blocked: true,
       processes: [
         { pid: 1, name: 'python.exe', cmdline: 'python -m hermes_cli.main gateway run --replace' },
-        { pid: 2, name: 'python.exe', cmdline: 'python -m plugins.smart_room.runtime.app' }
+        { pid: 2, name: 'python.exe', cmdline: 'python -m plugins.smart_room.runtime.app' },
+        { pid: 3, name: 'python.exe', cmdline: 'python -m tools.presence.media_watcher' }
       ]
     })
 
@@ -202,13 +203,14 @@ describe('scanVenvBlockers', () => {
       blocked: true,
       processes: [
         { pid: 1, name: 'python.exe', cmdline: 'python -m plugins.smart_room.runtime.app' },
-        { pid: 2, name: 'python.exe', cmdline: 'python -m hermes_cli.main serve' }
+        { pid: 2, name: 'python.exe', cmdline: 'python -m tools.presence.media_watcher' },
+        { pid: 3, name: 'python.exe', cmdline: 'python -m hermes_cli.main serve' }
       ]
     })
     const outcome = await scanVenvBlockers('/r', execReturn(holders), stubVenv)
 
     assert.equal(outcome.kind, 'blocked')
-    assert.equal(outcome.kind === 'blocked' ? outcome.result.processes.length : 0, 2)
+    assert.equal(outcome.kind === 'blocked' ? outcome.result.processes.length : 0, 3)
   })
 
   it('non-zero exit is probe-failure', async () => {
@@ -253,12 +255,13 @@ describe('stopManagedBackgroundProcesses', () => {
       calls.push({ cmd, args, opts })
     }) as any
 
-    assert.equal(stopManagedBackgroundProcesses('/root', exec, () => '/root/venv/python.exe'), true)
-    assert.equal(calls.length, 1)
-    assert.equal(calls[0].cmd, '/root/venv/python.exe')
-    assert.equal(calls[0].args[0], '-c')
-    assert.match(calls[0].args[1], /_stop_windows_managed_background_processes/)
-    assert.equal(calls[0].opts.cwd, '/root')
+    assert.equal(stopManagedBackgroundProcesses('/root', true, exec, () => '/root/venv/python.exe'), true)
+    assert.equal(calls.length, 2)
+    assert.deepEqual(calls[0].args, ['-m', 'hermes_cli.main', 'gateway', 'stop', '--all'])
+    assert.equal(calls[1].cmd, '/root/venv/python.exe')
+    assert.equal(calls[1].args[0], '-c')
+    assert.match(calls[1].args[1], /_stop_windows_managed_background_processes/)
+    assert.equal(calls[1].opts.cwd, '/root')
   })
 
   it('fails closed when the helper cannot run', () => {
@@ -266,7 +269,21 @@ describe('stopManagedBackgroundProcesses', () => {
       throw new Error('nope')
     }) as any
 
-    assert.equal(stopManagedBackgroundProcesses('/root', fail, () => '/root/venv/python.exe'), false)
-    assert.equal(stopManagedBackgroundProcesses('/root', fail, () => null), false)
+    assert.equal(stopManagedBackgroundProcesses('/root', false, fail, () => '/root/venv/python.exe'), false)
+    assert.equal(stopManagedBackgroundProcesses('/root', false, fail, () => null), false)
+  })
+
+  it('still cleans helpers when gateway shutdown fails', () => {
+    let calls = 0
+    const failGateway = (() => {
+      calls += 1
+      if (calls === 1) throw new Error('gateway stuck')
+    }) as any
+
+    assert.equal(
+      stopManagedBackgroundProcesses('/root', true, failGateway, () => '/root/venv/python.exe'),
+      false
+    )
+    assert.equal(calls, 2)
   })
 })

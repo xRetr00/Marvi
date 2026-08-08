@@ -564,6 +564,14 @@ def _warm_moonshine_session(stt_config: dict[str, Any]) -> None:
     session: Any | None = None
     load_error: Optional[BaseException] = None
     try:
+        # moonshine-voice ships its own older onnxruntime.dll on Windows.
+        # Sherpa (speaker ID / TEN VAD) needs a newer API, but its runtime is
+        # backward-compatible with Moonshine. Load Sherpa first so Windows
+        # binds both engines to the compatible DLL instead of terminating the
+        # whole backend later when speaker ID initializes (exit 0xC0000005).
+        if sys.platform == "win32":
+            import sherpa_onnx  # noqa: F401
+
         from tools.moonshine_streaming_stt import MoonshineStreamingSession
 
         session = MoonshineStreamingSession(stt_config)

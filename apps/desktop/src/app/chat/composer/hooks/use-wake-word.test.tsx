@@ -266,6 +266,47 @@ describe('useWakeWord', () => {
     expect(onSubmit).not.toHaveBeenCalled()
   })
 
+  it('clears the handed-off waking state and re-arms after duplex ends', async () => {
+    let wakeOptions: { onDetected: (phrase: string) => void } | null = null
+    const wakeSession = { sendFrame: vi.fn(), stop: vi.fn() }
+    openWakeWordSession.mockImplementation(async options => {
+      wakeOptions = options
+      return wakeSession
+    })
+    startMic.mockResolvedValue(undefined)
+
+    const { result } = renderHook(() =>
+      useWakeWord({
+        busy: false,
+        config: {
+          boost: 2,
+          commandTimeoutMs: 8000,
+          cooldownMs: 10,
+          debug: false,
+          enabled: true,
+          phrases: ['hey marvi'],
+          provider: 'livekit',
+          sampleRate: 16000,
+          threshold: 0.35
+        },
+        enabled: true,
+        onSubmit: vi.fn(),
+        onTranscribeAudio: vi.fn(),
+        onWakeDetected: vi.fn()
+      })
+    )
+
+    await waitFor(() => expect(openWakeWordSession).toHaveBeenCalledTimes(1))
+    passStartupGrace()
+    act(() => wakeOptions?.onDetected('hey marvi'))
+    expect(result.current.status).toBe('woken')
+
+    act(() => result.current.rearm())
+    expect(result.current.status).toBe('idle')
+    await waitFor(() => expect(openWakeWordSession).toHaveBeenCalledTimes(2))
+    await waitFor(() => expect(result.current.status).toBe('armed'))
+  })
+
   it('submits a real wake transcript even when browser VAD misses speech', async () => {
     let wakeOptions: { debug?: boolean; onDetected: (phrase: string) => void } | null = null
     const recorderState: { options?: RecorderOptionsForTest } = {}

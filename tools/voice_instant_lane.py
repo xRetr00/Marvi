@@ -370,9 +370,11 @@ _INSTANT_DEFAULT_MODELS_SUPPLEMENTAL: Dict[str, str] = {
 }
 
 # Generic auxiliary tasks favor quality; live voice favors first-token speed.
-# OpenCode Go's generic auxiliary default is GLM-5, which measured materially
-# slower than MiniMax M2.5 on the same voice prompt.
-_VOICE_INSTANT_MODEL_OVERRIDES: Dict[str, str] = {"opencode-go": "minimax-m2.5"}
+# Keep OpenCode Go on the user's normal low-latency chat model so the voice
+# lane shares the same provider-side prompt cache and streaming path. A prior
+# MiniMax override made voice slower in the real desktop workload even though
+# its isolated one-line benchmark looked competitive.
+_VOICE_INSTANT_MODEL_OVERRIDES: Dict[str, str] = {"opencode-go": "deepseek-v4-flash"}
 
 # Provider names (and base_url substrings) that indicate a locally-hosted
 # endpoint (Ollama, llama.cpp, vLLM, LM Studio, ...). Local inference has no
@@ -929,9 +931,14 @@ def _new_instant_agent(runtime: Dict[str, Any], max_tokens: int):
     agent._user_profile_enabled = True
     agent._memory_nudge_interval = 0
     agent._skill_nudge_interval = 0
-    # Do not replace _cached_system_prompt with SOUL.md. Leaving it unset makes
-    # AIAgent build and cache the same full prompt and capability guidance as a
-    # normal turn; only the appended voice response policy differs.
+    # Build the exact normal system prompt during session warm-up, before the
+    # user speaks. Previously the first utterance spent several seconds here
+    # (context files, tool guidance, goals and plugin context) before it even
+    # opened the provider stream. This is still the ordinary byte-stable
+    # AIAgent prompt -- only its timing moves off the spoken-turn critical path.
+    build_prompt = getattr(agent, "_build_system_prompt", None)
+    if callable(build_prompt) and not getattr(agent, "_cached_system_prompt", None):
+        agent._cached_system_prompt = build_prompt()
     return agent
 
 

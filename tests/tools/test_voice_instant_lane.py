@@ -497,7 +497,7 @@ class TestResolveInstantRuntimeThinkingGuard:
 
 class TestCuratedInstantModel:
     def test_opencode_go_uses_voice_latency_override(self):
-        assert vil._curated_instant_model("opencode-go") == "minimax-m2.5"
+        assert vil._curated_instant_model("opencode-go") == "deepseek-v4-flash"
 
     def test_anthropic_resolves_via_aux_client_table(self):
         assert vil._curated_instant_model("anthropic") == "claude-haiku-4-5-20251001"
@@ -921,6 +921,27 @@ class TestWarmInstantLane:
         assert result["model"] == "test-model"
         assert transcript._instant_agent is fake_agent_cls.last_instance
         assert transcript._instant_agent_key is not None
+
+    def test_builds_the_stable_prompt_during_session_warmup(self, monkeypatch):
+        import run_agent
+
+        class PromptBuildingAgent:
+            def __init__(self, **_kwargs):
+                self._cached_system_prompt = None
+                self.build_calls = 0
+
+            def _build_system_prompt(self):
+                self.build_calls += 1
+                return "full stable Marvi prompt"
+
+        monkeypatch.setattr(run_agent, "AIAgent", PromptBuildingAgent)
+        transcript = vil.RollingTranscript()
+
+        result = vil.warm_instant_lane(transcript, cfg={})
+
+        assert result["ok"] is True
+        assert transcript._instant_agent.build_calls == 1
+        assert transcript._instant_agent._cached_system_prompt == "full stable Marvi prompt"
 
     def test_kicks_off_the_deferred_context_load(self, fake_agent_cls, monkeypatch):
         started = threading.Event()

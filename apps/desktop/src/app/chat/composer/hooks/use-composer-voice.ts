@@ -13,7 +13,12 @@ import { $autoSpeakReplies, setAutoSpeakReplies } from '@/store/voice-prefs'
 import { publishBargeInEnabled, publishConversation, setUserCaption, type VoiceStatus } from '@/store/voice-presence'
 
 import type { ComposerTarget } from '../focus'
-import { onComposerVoiceStartRequest, onComposerVoiceStopRequest, onComposerVoiceToggleRequest } from '../focus'
+import {
+  notifyVoiceConversationEnded,
+  onComposerVoiceStartRequest,
+  onComposerVoiceStopRequest,
+  onComposerVoiceToggleRequest
+} from '../focus'
 import { useComposerScope } from '../scope'
 import type { ChatBarProps } from '../types'
 
@@ -68,7 +73,13 @@ export function useComposerVoice({
   const { $messages } = useComposerScope()
   const [voiceConversationActive, setVoiceConversationActive] = useState(false)
   const lastSpokenIdRef = useRef<string | null>(null)
-  const handleDuplexConversationEnd = useCallback(() => setVoiceConversationActive(false), [])
+
+  const closeVoiceConversation = useCallback(() => {
+    setVoiceConversationActive(false)
+    notifyVoiceConversationEnded(target)
+  }, [target])
+
+  const handleDuplexConversationEnd = useCallback(() => closeVoiceConversation(), [closeVoiceConversation])
   const duplex = useDuplexVoice(voiceConversationActive, handleDuplexConversationEnd)
   const legacyVoiceEnabled = voiceConversationActive && duplex.status === 'unavailable'
   const voiceStartRequest = useStore($voiceConversationStartRequest)
@@ -135,9 +146,9 @@ export function useComposerVoice({
     busy,
     consumePendingResponse,
     enabled: legacyVoiceEnabled,
-    onFatalError: () => setVoiceConversationActive(false),
+    onFatalError: closeVoiceConversation,
     onInterrupt: onCancel,
-    onStopWord: () => setVoiceConversationActive(false),
+    onStopWord: closeVoiceConversation,
     onSubmit: submitVoiceTurn,
     onTranscribeAudio,
     pendingResponse: pendingTurnResponse,
@@ -151,16 +162,26 @@ export function useComposerVoice({
     streamingSttEnabled
   })
 
-  useEffect(() => {
-    const duplexStatus: VoiceStatus =
-      duplex.state.phase === 'listening'
-        ? 'listening'
-        : duplex.state.phase === 'replying'
-          ? 'thinking'
-          : duplex.state.phase === 'speaking'
-            ? 'speaking'
-            : 'idle'
+  const duplexStatus: VoiceStatus =
+    duplex.state.phase === 'listening'
+      ? 'listening'
+      : duplex.state.phase === 'replying'
+        ? 'thinking'
+        : duplex.state.phase === 'speaking'
+          ? 'speaking'
+          : 'idle'
 
+  // The composer controls must read the duplex machine while it owns voice.
+  // Returning the legacy recorder's idle status here made the status bar say
+  // Listening regardless of whether duplex was thinking or speaking.
+  const presentedConversation = {
+    ...conversation,
+    level: duplex.status === 'active' ? duplex.level : conversation.level,
+    muted: duplex.status === 'active' ? false : conversation.muted,
+    status: duplex.status === 'active' ? duplexStatus : conversation.status
+  }
+
+  useEffect(() => {
     // Reuse the shared duplex→UI mapping (duplex-presentation.ts) rather than
     // re-deriving label/speaker/deep-work bookkeeping here — the same pure
     // function backs the ambient (wake-word/island) duplex session in
@@ -195,6 +216,7 @@ export function useComposerVoice({
     duplex.level,
     duplex.state,
     duplex.status,
+    duplexStatus,
     voiceConversationActive
   ])
 
@@ -213,12 +235,12 @@ export function useComposerVoice({
     }
 
     if (voiceConversationActive) {
-      setVoiceConversationActive(false)
+      closeVoiceConversation()
       void conversation.end()
     } else {
       setVoiceConversationActive(true)
     }
-  }, [conversation, disabled, voiceConversationActive])
+  }, [closeVoiceConversation, conversation, disabled, voiceConversationActive])
 
   useEffect(
     () => onComposerVoiceToggleRequest(toggled => toggled === target && toggleVoiceConversation()),
@@ -235,10 +257,11 @@ export function useComposerVoice({
         if (stopped !== target) {
           return
         }
-        setVoiceConversationActive(false)
+
+        closeVoiceConversation()
         void conversation.end()
       }),
-    [conversation, target]
+    [closeVoiceConversation, conversation, target]
   )
 
   useEffect(() => {
@@ -252,9 +275,9 @@ export function useComposerVoice({
   const startConversation = useCallback(() => setVoiceConversationActive(true), [])
 
   const endConversation = useCallback(() => {
-    setVoiceConversationActive(false)
+    closeVoiceConversation()
     void conversation.end()
-  }, [conversation])
+  }, [closeVoiceConversation, conversation])
 
   const handleToggleAutoSpeak = useCallback(() => {
     void setAutoSpeakReplies(!$autoSpeakReplies.get()).catch(error =>
@@ -271,7 +294,7 @@ export function useComposerVoice({
   })
 
   return {
-    conversation,
+    conversation: presentedConversation,
     dictate,
     endConversation,
     handleToggleAutoSpeak,

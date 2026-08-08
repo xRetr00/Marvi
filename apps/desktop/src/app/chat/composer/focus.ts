@@ -45,6 +45,7 @@ const SUBMIT_EVENT = 'hermes:composer-submit'
 const VOICE_TOGGLE_EVENT = 'hermes:composer-voice-toggle'
 const VOICE_START_EVENT = 'hermes:composer-voice-start'
 const VOICE_STOP_EVENT = 'hermes:composer-voice-stop'
+const VOICE_ENDED_EVENT = 'hermes:composer-voice-ended'
 const MODEL_MENU_EVENT = 'hermes:composer-model-menu'
 
 /** Inline edit composer root — mounted only while a user bubble is being edited. */
@@ -273,6 +274,17 @@ export const onComposerVoiceStartRequest = (handler: (target: ComposerTarget) =>
 
 export const onComposerVoiceStopRequest = (handler: (target: ComposerTarget) => void) =>
   subscribe<{ at: number; target: ComposerTarget }>(VOICE_STOP_EVENT, ({ target }) => handler(target))
+
+/** Announce that a composer's voice lifecycle really transitioned active ->
+ * idle. The ambient wake listener owns a different microphone hook, so this
+ * hand-back is explicit: closing duplex must clear its handed-off `woken`
+ * state and re-arm presence mode instead of leaving the Island on Waking. */
+export const notifyVoiceConversationEnded = (target: ComposerTarget) =>
+  dispatch<{ at: number; target: ComposerTarget }>(VOICE_ENDED_EVENT, { at: Date.now(), target })
+
+export const onVoiceConversationEnded = (handler: (target: ComposerTarget) => void) =>
+  subscribe<{ at: number; target: ComposerTarget }>(VOICE_ENDED_EVENT, ({ target }) => handler(target))
+
 /** The chat surface inside the zone the pointer is over, if any. Mirrors the
  *  tab verbs' hover-first targeting (`tabTargetGroupId`, #74447): the model
  *  hotkey lands in the pane you're pointing at without clicking into it first.

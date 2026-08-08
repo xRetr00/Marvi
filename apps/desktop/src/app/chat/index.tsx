@@ -55,7 +55,7 @@ import { titlebarHeaderBaseClass, titlebarHeaderShadowClass, titlebarHeaderTitle
 import { ChatDropOverlay } from './chat-drop-overlay'
 import { ChatSwapOverlay } from './chat-swap-overlay'
 import { ChatBar, ChatBarFallback } from './composer'
-import { requestComposerInsert, requestVoiceStart } from './composer/focus'
+import { onVoiceConversationEnded, requestComposerInsert, requestVoiceStart } from './composer/focus'
 import { useWakeWord } from './composer/hooks/use-wake-word'
 import { droppedFileInlineRefs } from './composer/inline-refs'
 import { useComposerScope } from './composer/scope'
@@ -68,8 +68,8 @@ import { ScrollToBottomButton } from './scroll-to-bottom-button'
 import { useSessionView } from './session-view'
 import { SessionActionsMenu } from './sidebar/session-actions-menu'
 import { threadLoadingState } from './thread-loading'
-import { VoiceModeViewport } from './voice-mode-stage'
 import { selectTranscriptWindow } from './transcript-window'
+import { VoiceModeViewport } from './voice-mode-stage'
 
 interface ChatViewProps extends Omit<React.ComponentProps<'div'>, 'onSubmit'> {
   gateway: HermesGateway | null
@@ -414,15 +414,34 @@ export const ChatView = memo(function ChatView({
     streamingSttEnabled
   })
 
+  const { rearm: rearmWakeWord, status: wakeStatus } = wake
+
   useEffect(() => {
     if (!isPrimary) {
       return
     }
 
-    publishWakeStatus(wake.status)
+    publishWakeStatus(wakeStatus)
 
     return () => publishWakeStatus('idle')
-  }, [isPrimary, wake.status])
+  }, [isPrimary, wakeStatus])
+
+  useEffect(() => {
+    if (!isPrimary) {
+      return
+    }
+
+    return onVoiceConversationEnded(target => {
+      if (target !== 'main') {
+        return
+      }
+
+      // Clear the stale wake handoff immediately so the Island and taskbar do
+      // not render Waking/Listening for a conversation that already ended.
+      publishWakeStatus('idle')
+      rearmWakeWord()
+    })
+  }, [isPrimary, rearmWakeWord])
 
   // The URL points at a session the store hasn't loaded yet (sidebar / cmd-K /
   // direct nav). Derived in render so the swap reads instantly: the same frame

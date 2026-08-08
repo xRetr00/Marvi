@@ -253,6 +253,14 @@ export function useWakeWord({
     }, wakeConfig.cooldownMs)
   }, [debugLog, wakeConfig.cooldownMs])
 
+  /** Take the microphone back after the duplex conversation closes. `stop`
+   * clears the handed-off `woken` presentation synchronously; the normal
+   * cooldown then opens a fresh wake session without overlapping duplex. */
+  const rearm = useCallback(() => {
+    stop()
+    scheduleRestart()
+  }, [scheduleRestart, stop])
+
   const scheduleRestartAfterSubmittedTurn = useCallback(() => {
     // Stay in the conversation: once the agent + TTS finish (!busy), resume
     // capturing the next turn directly (no wake phrase). The resume runs in the
@@ -642,6 +650,7 @@ export function useWakeWord({
     busy,
     debugLog,
     enabled,
+    scheduleRestart,
     startTick,
     stop,
     transcribeAvailable,
@@ -655,5 +664,5 @@ export function useWakeWord({
 
   useEffect(() => () => stop(), [stop])
 
-  return { armed: status !== 'idle', status, stop }
+  return { armed: status !== 'idle', rearm, status, stop }
 }

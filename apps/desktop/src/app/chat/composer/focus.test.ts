@@ -6,9 +6,11 @@ import {
   blurComposerInput,
   getActiveComposer,
   markActiveComposer,
+  notifyVoiceConversationEnded,
   onComposerFocusRequest,
   onComposerModelMenuRequest,
   onComposerVoiceStartRequest,
+  onVoiceConversationEnded,
   releaseActiveComposer,
   requestComposerFocus,
   requestModelMenuToggle,
@@ -292,6 +294,17 @@ describe('requestVoiceStart', () => {
     const off = onComposerVoiceStartRequest(target => targets.push(target))
 
     requestVoiceStart()
+    await new Promise(resolve => window.setTimeout(resolve, 0))
+    off()
+
+    expect(targets).toEqual(['main'])
+  })
+
+  it('hands a completed main voice lifecycle back to the wake listener', async () => {
+    const targets: string[] = []
+    const off = onVoiceConversationEnded(target => targets.push(target))
+
+    notifyVoiceConversationEnded('main')
     await new Promise(resolve => window.setTimeout(resolve, 0))
     off()
 

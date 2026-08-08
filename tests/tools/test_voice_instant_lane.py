@@ -648,7 +648,10 @@ class TestStreamInstantReply:
         assert kwargs.get("ephemeral_system_prompt") in (None, "")
         assert kwargs["skip_context_files"] is False
         assert kwargs["load_soul_identity"] is True
-        assert kwargs["skip_memory"] is False
+        # Voice gets its bounded deferred personal context before speech; it
+        # must not also block first-token latency on an external provider's
+        # automatic first-turn prefetch. Recall remains available via tools.
+        assert kwargs["skip_memory"] is True
         assert fake_agent_cls.last_instance._memory_nudge_interval == 0
         assert fake_agent_cls.last_instance._skill_nudge_interval == 0
         assert not hasattr(fake_agent_cls.last_instance, "_cached_system_prompt")

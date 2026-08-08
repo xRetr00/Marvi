@@ -96,6 +96,33 @@ class TestDemoteHooks:
         messages = [r.getMessage() for r in caplog.records]
         assert any("idle" in m for m in messages), messages
 
+    def test_active_session_defers_demotion_until_release(self):
+        calls = []
+        vr.register_demote_hook(lambda: calls.append("unloaded"))
+
+        vr.begin_voice_session()
+        assert vr.has_active_session() is True
+        assert vr.demote("heavy-foreground-app") is False
+        assert vr.current_tier() == "hot"
+        assert calls == []
+
+        vr.end_voice_session()
+        assert vr.has_active_session() is False
+        assert vr.demote("heavy-foreground-app") is True
+        assert vr.current_tier() == "cold"
+        assert calls == ["unloaded"]
+
+    def test_overlapping_session_leases_keep_models_hot(self):
+        vr.begin_voice_session()
+        vr.begin_voice_session()
+        vr.end_voice_session()
+
+        assert vr.has_active_session() is True
+        assert vr.demote("memory-pressure") is False
+
+        vr.end_voice_session()
+        assert vr.has_active_session() is False
+
 
 class TestIdleWatch:
     def test_idle_watch_demotes_after_timeout(self):

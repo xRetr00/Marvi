@@ -225,13 +225,20 @@ export function useComposerVoice({
     [target, toggleVoiceConversation]
   )
 
-  useEffect(() => onComposerVoiceStartRequest(() => !disabled && setVoiceConversationActive(true)), [disabled])
   useEffect(
-    () => onComposerVoiceStopRequest(() => {
-      setVoiceConversationActive(false)
-      void conversation.end()
-    }),
-    [conversation]
+    () => onComposerVoiceStartRequest(started => started === target && !disabled && setVoiceConversationActive(true)),
+    [disabled, target]
+  )
+  useEffect(
+    () =>
+      onComposerVoiceStopRequest(stopped => {
+        if (stopped !== target) {
+          return
+        }
+        setVoiceConversationActive(false)
+        void conversation.end()
+      }),
+    [conversation, target]
   )
 
   useEffect(() => {

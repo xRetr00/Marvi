@@ -8,9 +8,11 @@ import {
   markActiveComposer,
   onComposerFocusRequest,
   onComposerModelMenuRequest,
+  onComposerVoiceStartRequest,
   releaseActiveComposer,
   requestComposerFocus,
-  requestModelMenuToggle
+  requestModelMenuToggle,
+  requestVoiceStart
 } from './focus'
 import { RICH_INPUT_SLOT } from './rich-editor'
 
@@ -281,5 +283,18 @@ describe('requestModelMenuToggle', () => {
     // Settings/profiles routes: no [data-composer-target] anywhere.
     expect(requestModelMenuToggle()).toBe(false)
     expect(await collectModelMenuTargets()).toEqual([])
+  })
+})
+
+describe('requestVoiceStart', () => {
+  it('addresses only the main composer when keep-alive composers are mounted', async () => {
+    const targets: string[] = []
+    const off = onComposerVoiceStartRequest(target => targets.push(target))
+
+    requestVoiceStart()
+    await new Promise(resolve => window.setTimeout(resolve, 0))
+    off()
+
+    expect(targets).toEqual(['main'])
   })
 })

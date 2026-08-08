@@ -204,6 +204,31 @@ describe('connectDuplexVoice', () => {
     expect(socket.sent).toContainEqual({ type: 'audio', data: 'BASE64FRAME' })
   })
 
+  it('abandons an opened socket that never reaches speech-recognition ready', async () => {
+    const onUnavailable = vi.fn()
+    const mic = fakeMicCapture()
+    const gate = socketGate()
+
+    const controllerPromise = connectDuplexVoice({
+      audioPlayerFactory: fakeAudioPlayer,
+      createWebSocket: gate.createWebSocket,
+      getConnection: async () => DEFAULT_CONNECTION,
+      micCaptureFactory: mic.factory,
+      onState: vi.fn(),
+      onUnavailable,
+      readyTimeoutMs: 5
+    })
+
+    const socket = await gate.ready
+    socket.open()
+    await controllerPromise
+    await new Promise(resolve => window.setTimeout(resolve, 10))
+
+    expect(onUnavailable).toHaveBeenCalledWith('duplex speech recognition did not become ready in time')
+    expect(mic.factory).not.toHaveBeenCalled()
+    expect(socket.readyState).toBe(FakeWebSocket.CLOSED)
+  })
+
   it('wires tts events into the audio player and sends playback_done once it drains', async () => {
     const player = fakeAudioPlayer()
     const gate = socketGate()

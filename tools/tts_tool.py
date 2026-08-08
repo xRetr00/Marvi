@@ -2536,6 +2536,11 @@ def stream_text_to_speech_chunks(text: str):
 _pockettts_model_cache: Dict[str, Any] = {}
 _pockettts_voice_cache: Dict[str, Any] = {}
 _pockettts_cache_lock = threading.Lock()
+# PocketTTS's autoregressive model/voice state is mutable and not documented
+# as thread-safe. Duplex sentence lookahead may request two generations at
+# once; serialize model execution while still allowing sentence N+1 to render
+# in the background as sentence N is emitted/played.
+_pockettts_generation_lock = threading.Lock()
 
 
 def _resolve_pockettts_model_and_voice(tts_config: Dict[str, Any]) -> tuple[Any, Any]:
@@ -2583,22 +2588,37 @@ def _pockettts_sample_rate(tts_config: Dict[str, Any]) -> int:
 
 
 def _stream_pockettts_audio(text: str, tts_config: Dict[str, Any]):
-    model, voice_state = _resolve_pockettts_model_and_voice(tts_config)
-    sample_rate = int(getattr(model, "sample_rate", 24000) or 24000)
-    audio = model.generate_audio(voice_state, text)
-    if hasattr(audio, "detach"):
-        audio = audio.detach()
-    if hasattr(audio, "cpu"):
-        audio = audio.cpu()
-    if hasattr(audio, "numpy"):
-        audio = audio.numpy()
+    with _pockettts_generation_lock:
+        model, voice_state = _resolve_pockettts_model_and_voice(tts_config)
+        sample_rate = int(getattr(model, "sample_rate", 24000) or 24000)
+        import numpy as np
 
-    import numpy as np
+        def _samples(audio: Any):
+            if hasattr(audio, "detach"):
+                audio = audio.detach()
+            if hasattr(audio, "cpu"):
+                audio = audio.cpu()
+            if hasattr(audio, "numpy"):
+                audio = audio.numpy()
+            return np.asarray(audio, dtype=np.float32).flatten()
 
-    samples = np.asarray(audio, dtype=np.float32).flatten()
-    chunk_samples = max(1, int(sample_rate * 0.18))
-    for start in range(0, samples.size, chunk_samples):
-        yield samples[start:start + chunk_samples], sample_rate
+        stream = getattr(model, "generate_audio_stream", None)
+        if callable(stream):
+            # PocketTTS's real generator yields decoded audio as it is made
+            # (~200ms first chunk upstream). The previous implementation used
+            # generate_audio(), which internally consumed this entire stream,
+            # then pretended to stream by slicing the finished tensor.
+            for audio_chunk in stream(voice_state, text):
+                samples = _samples(audio_chunk)
+                if samples.size:
+                    yield samples, sample_rate
+            return
+
+        # Compatibility with older PocketTTS releases and test doubles.
+        samples = _samples(model.generate_audio(voice_state, text))
+        chunk_samples = max(1, int(sample_rate * 0.18))
+        for start in range(0, samples.size, chunk_samples):
+            yield samples[start:start + chunk_samples], sample_rate
 
 
 def warm_tts_provider(tts_config: Optional[Dict[str, Any]] = None) -> bool:
@@ -2630,13 +2650,14 @@ def _generate_pockettts(text: str, output_path: str, tts_config: Dict[str, Any])
     """
     from scipy.io import wavfile
 
-    model, voice_state = _resolve_pockettts_model_and_voice(tts_config)
-    audio = model.generate_audio(voice_state, text)
-    if hasattr(audio, "detach"):
-        audio = audio.detach()
-    if hasattr(audio, "cpu"):
-        audio = audio.cpu()
-    samples = audio.numpy() if hasattr(audio, "numpy") else audio
+    with _pockettts_generation_lock:
+        model, voice_state = _resolve_pockettts_model_and_voice(tts_config)
+        audio = model.generate_audio(voice_state, text)
+        if hasattr(audio, "detach"):
+            audio = audio.detach()
+        if hasattr(audio, "cpu"):
+            audio = audio.cpu()
+        samples = audio.numpy() if hasattr(audio, "numpy") else audio
 
     wav_path = output_path
     if not output_path.endswith(".wav"):
@@ -2802,9 +2823,10 @@ def unload_tts_provider() -> None:
     lazily on next use, so this is safe to call at any time — the next TTS
     request just pays the one-time load cost again.
     """
-    with _pockettts_cache_lock:
-        _pockettts_model_cache.clear()
-        _pockettts_voice_cache.clear()
+    with _pockettts_generation_lock:
+        with _pockettts_cache_lock:
+            _pockettts_model_cache.clear()
+            _pockettts_voice_cache.clear()
     with _piper_voice_cache_lock:
         _piper_voice_cache.clear()
 

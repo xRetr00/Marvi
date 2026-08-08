@@ -193,6 +193,46 @@ class TestGeneratePocketTts:
         fake_cls.load_model.assert_called_once()
         fake_model.get_state_for_audio_prompt.assert_called_once_with("cosette")
 
+    def test_concurrent_generations_never_share_mutable_model_state(
+        self, tmp_path, mock_pockettts_modules
+    ):
+        import concurrent.futures
+        import threading
+        import time
+
+        from tools.tts_tool import _generate_pockettts
+
+        fake_model, _, _ = mock_pockettts_modules
+        guard = threading.Lock()
+        active = 0
+        max_active = 0
+
+        def generate(_voice, _text):
+            nonlocal active, max_active
+            with guard:
+                active += 1
+                max_active = max(max_active, active)
+            time.sleep(0.03)
+            with guard:
+                active -= 1
+            return _FakeAudio()
+
+        fake_model.generate_audio.side_effect = generate
+        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+            futures = [
+                executor.submit(
+                    _generate_pockettts,
+                    f"Sentence {index}",
+                    str(tmp_path / f"{index}.wav"),
+                    {},
+                )
+                for index in range(2)
+            ]
+            for future in futures:
+                future.result()
+
+        assert max_active == 1
+
     def test_unload_tts_provider_drops_cache_and_reloads_on_next_use(self, mock_pockettts_modules):
         from tools import tts_tool
 
@@ -226,6 +266,25 @@ class TestGeneratePocketTts:
         assert events[0] == {"type": "start", "sample_rate": 24000, "provider": "pockettts"}
         assert any(event.get("type") == "chunk" and event.get("audio") for event in events)
         assert events[-1] == {"type": "end", "provider": "pockettts"}
+
+    def test_streaming_uses_pockettts_native_generator(self, monkeypatch, mock_pockettts_modules):
+        from tools import tts_tool
+
+        fake_model, _, _ = mock_pockettts_modules
+        fake_model.generate_audio_stream = MagicMock(
+            return_value=iter((_FakeAudio(), _FakeAudio()))
+        )
+        monkeypatch.setattr(
+            tts_tool,
+            "_load_tts_config",
+            lambda: {"provider": "pockettts", "pockettts": {"voice": "jane"}},
+        )
+
+        events = list(tts_tool.stream_text_to_speech_chunks("hello"))
+
+        fake_model.generate_audio_stream.assert_called_once_with("voice-state", "hello")
+        fake_model.generate_audio.assert_not_called()
+        assert sum(event.get("type") == "chunk" for event in events) == 2
 
 
 class TestCheckPocketTtsAvailable:

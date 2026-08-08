@@ -368,6 +368,9 @@ class _ParakeetSubprocessSession:
 _WARM_PARAKEET_SESSION: _ParakeetSubprocessSession | None = None
 _WARM_PARAKEET_SIGNATURE = ""
 _WARM_PARAKEET_LOCK = threading.Lock()
+_WARM_PARAKEET_LOADING_SIGNATURE = ""
+_WARM_PARAKEET_LOADING_DONE = threading.Event()
+_WARM_PARAKEET_LOADING_DONE.set()
 
 
 def _parakeet_config_signature(stt_config: dict[str, Any]) -> str:
@@ -392,8 +395,10 @@ def _close_warm_parakeet_session() -> None:
 
 def _warm_parakeet_session(stt_config: dict[str, Any]) -> None:
     global _WARM_PARAKEET_SESSION, _WARM_PARAKEET_SIGNATURE
+    global _WARM_PARAKEET_LOADING_SIGNATURE
     signature = _parakeet_config_signature(stt_config)
     stale: _ParakeetSubprocessSession | None = None
+    wait_for_existing = False
     with _WARM_PARAKEET_LOCK:
         if (
             _WARM_PARAKEET_SESSION is not None
@@ -401,15 +406,44 @@ def _warm_parakeet_session(stt_config: dict[str, Any]) -> None:
             and _WARM_PARAKEET_SIGNATURE == signature
         ):
             return
+        if _WARM_PARAKEET_LOADING_SIGNATURE == signature:
+            wait_for_existing = True
+        else:
+            _WARM_PARAKEET_LOADING_SIGNATURE = signature
+            _WARM_PARAKEET_LOADING_DONE.clear()
         stale = _WARM_PARAKEET_SESSION
         _WARM_PARAKEET_SESSION = None
         _WARM_PARAKEET_SIGNATURE = ""
+
+    # Never hold the pool mutex while NeMo imports/loads the model. Duplex
+    # startup used to block invisibly on this lock for 10-20 seconds, and an
+    # abandoned websocket could then strand the next wake behind it too.
+    if wait_for_existing:
+        _WARM_PARAKEET_LOADING_DONE.wait(timeout=60.0)
+        return
+
+    session: _ParakeetSubprocessSession | None = None
+    load_error: Optional[BaseException] = None
+    try:
         session = _ParakeetSubprocessSession(stt_config)
         session.warm()
-        _WARM_PARAKEET_SESSION = session
-        _WARM_PARAKEET_SIGNATURE = signature
+        with _WARM_PARAKEET_LOCK:
+            _WARM_PARAKEET_SESSION = session
+            _WARM_PARAKEET_SIGNATURE = signature
+            session = None
+    except BaseException as exc:  # preserve cleanup, then re-raise unchanged
+        load_error = exc
+    finally:
+        with _WARM_PARAKEET_LOCK:
+            if _WARM_PARAKEET_LOADING_SIGNATURE == signature:
+                _WARM_PARAKEET_LOADING_SIGNATURE = ""
+                _WARM_PARAKEET_LOADING_DONE.set()
+        if session is not None:
+            session.shutdown()
     if stale is not None:
         stale.close()
+    if load_error is not None:
+        raise load_error
     _log.info("Warmed Parakeet Realtime EOU STT helper")
 
 
@@ -452,7 +486,157 @@ def _take_warm_parakeet_session(
         return session
 
 
+def _wait_for_warm_parakeet_session(
+    stt_config: dict[str, Any],
+    cancel_event: Optional[threading.Event] = None,
+    *,
+    timeout: float = 30.0,
+) -> _ParakeetSubprocessSession | None:
+    """Take the startup-prewarmed helper without racing a second model load.
+
+    The wait is cooperative so a websocket that disconnects during cold start
+    releases immediately instead of occupying the STT concurrency slot until
+    NeMo finishes loading.
+    """
+    signature = _parakeet_config_signature(stt_config)
+    deadline = time.monotonic() + max(0.0, timeout)
+    while True:
+        session = _take_warm_parakeet_session(stt_config)
+        if session is not None:
+            return session
+        if cancel_event is not None and cancel_event.is_set():
+            return None
+        with _WARM_PARAKEET_LOCK:
+            loading = _WARM_PARAKEET_LOADING_SIGNATURE == signature
+        if not loading or time.monotonic() >= deadline:
+            return None
+        _WARM_PARAKEET_LOADING_DONE.wait(timeout=0.1)
+
+
 atexit.register(_close_warm_parakeet_session)
+
+
+_WARM_MOONSHINE_SESSION: Any | None = None
+_WARM_MOONSHINE_SIGNATURE = ""
+_WARM_MOONSHINE_LOCK = threading.Lock()
+_WARM_MOONSHINE_LOADING_SIGNATURE = ""
+_WARM_MOONSHINE_LOADING_DONE = threading.Event()
+_WARM_MOONSHINE_LOADING_DONE.set()
+
+
+def _close_warm_moonshine_session() -> None:
+    """Release the resident Moonshine model used by desktop duplex voice."""
+    global _WARM_MOONSHINE_SESSION, _WARM_MOONSHINE_SIGNATURE
+    with _WARM_MOONSHINE_LOCK:
+        session = _WARM_MOONSHINE_SESSION
+        _WARM_MOONSHINE_SESSION = None
+        _WARM_MOONSHINE_SIGNATURE = ""
+    if session is not None:
+        session.close()
+
+
+def _warm_moonshine_session(stt_config: dict[str, Any]) -> None:
+    """Load Moonshine once without holding its pool mutex during ONNX setup."""
+    global _WARM_MOONSHINE_SESSION, _WARM_MOONSHINE_SIGNATURE
+    global _WARM_MOONSHINE_LOADING_SIGNATURE
+    signature = _parakeet_config_signature(stt_config)
+    stale: Any | None = None
+    wait_for_existing = False
+    with _WARM_MOONSHINE_LOCK:
+        if (
+            _WARM_MOONSHINE_SESSION is not None
+            and _WARM_MOONSHINE_SIGNATURE == signature
+        ):
+            return
+        if _WARM_MOONSHINE_LOADING_SIGNATURE == signature:
+            wait_for_existing = True
+        else:
+            _WARM_MOONSHINE_LOADING_SIGNATURE = signature
+            _WARM_MOONSHINE_LOADING_DONE.clear()
+        stale = _WARM_MOONSHINE_SESSION
+        _WARM_MOONSHINE_SESSION = None
+        _WARM_MOONSHINE_SIGNATURE = ""
+
+    if wait_for_existing:
+        _WARM_MOONSHINE_LOADING_DONE.wait(timeout=30.0)
+        return
+
+    session: Any | None = None
+    load_error: Optional[BaseException] = None
+    try:
+        from tools.moonshine_streaming_stt import MoonshineStreamingSession
+
+        session = MoonshineStreamingSession(stt_config)
+        with _WARM_MOONSHINE_LOCK:
+            _WARM_MOONSHINE_SESSION = session
+            _WARM_MOONSHINE_SIGNATURE = signature
+            session = None
+    except BaseException as exc:  # preserve cleanup, then re-raise unchanged
+        load_error = exc
+    finally:
+        with _WARM_MOONSHINE_LOCK:
+            if _WARM_MOONSHINE_LOADING_SIGNATURE == signature:
+                _WARM_MOONSHINE_LOADING_SIGNATURE = ""
+                _WARM_MOONSHINE_LOADING_DONE.set()
+        if session is not None:
+            session.close()
+    if stale is not None:
+        stale.close()
+    if load_error is not None:
+        raise load_error
+    _log.info("Warmed Moonshine streaming STT")
+
+
+def _return_warm_moonshine_session(session: Any, stt_config: dict[str, Any]) -> None:
+    """Reset and retain Moonshine so the next wake avoids an ONNX cold load."""
+    global _WARM_MOONSHINE_SESSION, _WARM_MOONSHINE_SIGNATURE
+    session.finish()
+    stale: Any | None = None
+    with _WARM_MOONSHINE_LOCK:
+        if _WARM_MOONSHINE_SESSION is session:
+            return
+        stale = _WARM_MOONSHINE_SESSION
+        _WARM_MOONSHINE_SESSION = session
+        _WARM_MOONSHINE_SIGNATURE = _parakeet_config_signature(stt_config)
+    if stale is not None:
+        stale.close()
+
+
+def _take_warm_moonshine_session(stt_config: dict[str, Any]) -> Any | None:
+    global _WARM_MOONSHINE_SESSION, _WARM_MOONSHINE_SIGNATURE
+    signature = _parakeet_config_signature(stt_config)
+    with _WARM_MOONSHINE_LOCK:
+        session = _WARM_MOONSHINE_SESSION
+        if session is None or _WARM_MOONSHINE_SIGNATURE != signature:
+            return None
+        _WARM_MOONSHINE_SESSION = None
+        _WARM_MOONSHINE_SIGNATURE = ""
+    _log.info("Using warmed Moonshine streaming STT")
+    return session
+
+
+def _wait_for_warm_moonshine_session(
+    stt_config: dict[str, Any],
+    cancel_event: Optional[threading.Event] = None,
+    *,
+    timeout: float = 15.0,
+) -> Any | None:
+    signature = _parakeet_config_signature(stt_config)
+    deadline = time.monotonic() + max(0.0, timeout)
+    while True:
+        session = _take_warm_moonshine_session(stt_config)
+        if session is not None:
+            return session
+        if cancel_event is not None and cancel_event.is_set():
+            return None
+        with _WARM_MOONSHINE_LOCK:
+            loading = _WARM_MOONSHINE_LOADING_SIGNATURE == signature
+        if not loading or time.monotonic() >= deadline:
+            return None
+        _WARM_MOONSHINE_LOADING_DONE.wait(timeout=0.1)
+
+
+atexit.register(_close_warm_moonshine_session)
 
 
 # Warmup status for the desktop status bar. Each engine: pending -> warming ->
@@ -513,6 +697,7 @@ def _warm_desktop_voice_models() -> None:
         from tools.voice_residency import register_demote_hook
 
         register_demote_hook(_close_warm_parakeet_session)
+        register_demote_hook(_close_warm_moonshine_session)
 
         from tools.tts_tool import unload_tts_provider
 
@@ -555,18 +740,26 @@ def _warm_desktop_voice_models() -> None:
 
     stt_cfg = cfg.get("stt") or {}
     streaming = (stt_cfg.get("streaming") or {}) if isinstance(stt_cfg, dict) else {}
+    streaming_provider = (
+        str(streaming.get("provider") or "").strip().lower()
+        if isinstance(streaming, dict)
+        else ""
+    )
     if (
         isinstance(streaming, dict)
         and streaming.get("enabled") is True
-        and str(streaming.get("provider") or "").strip().lower() == "parakeet"
+        and streaming_provider in {"parakeet", "moonshine"}
     ):
         _set_warmup(stt="warming")
         try:
-            _warm_parakeet_session(stt_cfg)
+            if streaming_provider == "moonshine":
+                _warm_moonshine_session(stt_cfg)
+            else:
+                _warm_parakeet_session(stt_cfg)
             _set_warmup(stt="ready")
         except Exception as exc:
             _set_warmup(stt="failed")
-            _log.warning("Could not warm Parakeet Realtime EOU STT: %s", exc)
+            _log.warning("Could not warm %s streaming STT: %s", streaming_provider, exc)
     else:
         _set_warmup(stt="skipped")
 
@@ -17814,7 +18007,10 @@ class _InstantLaneUnavailable(RuntimeError):
     to failing mid-reply, which is treated as a partial answer)."""
 
 
-def _duplex_stt_session(stt_cfg: dict[str, Any]):
+def _duplex_stt_session(
+    stt_cfg: dict[str, Any],
+    cancel_event: Optional[threading.Event] = None,
+):
     """Acquire the configured local streaming STT session.
 
     Thin seam: tests monkeypatch this instead of spawning the real
@@ -17823,10 +18019,17 @@ def _duplex_stt_session(stt_cfg: dict[str, Any]):
     streaming = stt_cfg.get("streaming", {}) if isinstance(stt_cfg, dict) else {}
     provider = str(streaming.get("provider") or "parakeet").strip().lower()
     if provider == "moonshine":
-        from tools.moonshine_streaming_stt import MoonshineStreamingSession
+        session = _wait_for_warm_moonshine_session(stt_cfg, cancel_event)
+        if cancel_event is not None and cancel_event.is_set():
+            raise RuntimeError("duplex session closed during speech-recognition startup")
+        if session is None:
+            from tools.moonshine_streaming_stt import MoonshineStreamingSession
 
-        return MoonshineStreamingSession(stt_cfg)
-    session = _take_warm_parakeet_session(stt_cfg)
+            session = MoonshineStreamingSession(stt_cfg)
+        return session
+    session = _wait_for_warm_parakeet_session(stt_cfg, cancel_event)
+    if cancel_event is not None and cancel_event.is_set():
+        raise RuntimeError("duplex session closed during speech-recognition startup")
     if session is None:
         session = _ParakeetSubprocessSession(stt_cfg)
     return session
@@ -18674,6 +18877,9 @@ class _DuplexSession:
         self._utterance_counter = 0
         self._closed = False
         self._stt_slot_acquired = False
+        self._stt_init_task: Optional[asyncio.Task] = None
+        self._startup_cancel = threading.Event()
+        self._residency_leased = False
         # [VOICE-PERF] correlation id + warm-up bookkeeping (see
         # _start_instant_lane_warmup / _log_voice_perf_session_open).
         self._session_id = secrets.token_hex(4)
@@ -18702,6 +18908,25 @@ class _DuplexSession:
 
         threading.Thread(target=_run, name="voice-instant-warmup", daemon=True).start()
 
+    def _start_tts_warmup(self) -> None:
+        """Re-promote a cold local TTS model while the user is listening/talking.
+
+        Idle residency intentionally unloads PocketTTS. Waiting until the first
+        streamed LLM token to reload it puts the entire multi-second cold load
+        on the audible critical path, even though session setup and STT provide
+        ample overlap time.
+        """
+
+        def _run() -> None:
+            try:
+                from tools.tts_tool import warm_tts_provider
+
+                warm_tts_provider(self.cfg.get("tts") or {})
+            except Exception:
+                _log.debug("Voice duplex: TTS re-warm failed", exc_info=True)
+
+        threading.Thread(target=_run, name="voice-tts-warmup", daemon=True).start()
+
     def _maybe_log_session_open(self) -> None:
         """Emit session-open metrics only after both warmup and STT settle."""
         if self._warmup_result is None or not self._stt_init_completed:
@@ -18718,12 +18943,24 @@ class _DuplexSession:
 
     async def start(self) -> None:
         from tools.voice_instant_lane import RollingTranscript
+        from tools.voice_residency import begin_voice_session
 
+        begin_voice_session()
+        self._residency_leased = True
         self.transcript = RollingTranscript(max_turns=_DUPLEX_ROLLING_TURNS)
         # Kick warm-up immediately -- before the STT concurrency-budget wait
         # below, so construction/deferred-context loading overlaps with the
         # rest of session setup instead of waiting for it.
         self._start_instant_lane_warmup()
+        self._start_tts_warmup()
+        self._deep_task_pump = asyncio.create_task(self._pump_deep_tasks())
+        # Do not block the websocket receive loop on a 10-20 second cold NeMo
+        # load. A client that closes/remounts while STT warms must be observed
+        # immediately so its stale session cannot occupy the concurrency slot
+        # and make the next wake appear stuck forever.
+        self._stt_init_task = asyncio.create_task(self._initialize_stt())
+
+    async def _initialize_stt(self) -> None:
 
         # Share the SAME streaming-STT concurrency budget as
         # transcribe_audio_stream_ws (see _STREAMING_STT_MAX_CONCURRENT) --
@@ -18732,8 +18969,8 @@ class _DuplexSession:
         # wake-word flow) and a duplex session could independently spawn
         # concurrent Parakeet subprocess loads with no shared cap between
         # them. Bounded wait, not indefinite: if the budget is exhausted the
-        # session still starts (functional, just without a live STT session
-        # this turn) rather than hanging the WS open with no feedback.
+        # socket fails explicitly so the desktop can enter its legacy fallback
+        # instead of displaying a listening session that silently drops audio.
         transcribe_lock = _get_audio_transcribe_lock(app)
         try:
             await asyncio.wait_for(
@@ -18743,7 +18980,7 @@ class _DuplexSession:
         except asyncio.TimeoutError:
             _log.warning(
                 "Voice duplex: streaming-STT concurrency budget (max=%d) exhausted -- "
-                "starting this session without a live STT session",
+                "falling back instead of opening a deaf voice session",
                 _STREAMING_STT_MAX_CONCURRENT,
             )
             await self._send({
@@ -18752,27 +18989,39 @@ class _DuplexSession:
             })
             self._stt_init_completed = True
             self._maybe_log_session_open()
-            self._deep_task_pump = asyncio.create_task(self._pump_deep_tasks())
-            await self._send({"type": "ready"})
+            try:
+                await self.ws.close(code=1013)
+            except Exception:
+                pass
             return
 
         try:
             self.stt_session = await asyncio.to_thread(
-                _duplex_stt_session, self.stt_cfg
+                _duplex_stt_session, self.stt_cfg, self._startup_cancel
             )
+            if self._closed or self._startup_cancel.is_set():
+                await self._release_stt_session()
+                return
             await asyncio.to_thread(self.stt_session.begin)
         except Exception as exc:
+            if self._closed or self._startup_cancel.is_set():
+                return
             _log.warning("Voice duplex: STT session unavailable: %s", exc)
             self.stt_session = None
             await self._send({
                 "type": "error",
                 "error": f"speech recognition unavailable: {exc}",
             })
+            try:
+                await self.ws.close(code=1013)
+            except Exception:
+                pass
+            return
         finally:
             self._stt_init_completed = True
             self._maybe_log_session_open()
-        self._deep_task_pump = asyncio.create_task(self._pump_deep_tasks())
-        await self._send({"type": "ready"})
+        if not self._closed:
+            await self._send({"type": "ready"})
 
     async def _send(self, payload: dict) -> None:
         if self._closed:
@@ -20037,8 +20286,36 @@ class _DuplexSession:
         cycle.speak(text, cancel_event or threading.Event())
         cycle.end()
 
+    async def _release_stt_session(self, *, recycle: bool = True) -> None:
+        """Atomically detach and recycle/close the current STT session."""
+        session = self.stt_session
+        self.stt_session = None
+        if session is None:
+            return
+        try:
+            if not recycle:
+                await asyncio.to_thread(session.close)
+                return
+            provider = _streaming_stt_provider(self.stt_cfg)
+            if provider == "parakeet":
+                await asyncio.to_thread(
+                    _return_warm_parakeet_session, session, self.stt_cfg
+                )
+            elif provider == "moonshine":
+                await asyncio.to_thread(
+                    _return_warm_moonshine_session, session, self.stt_cfg
+                )
+            else:
+                await asyncio.to_thread(session.close)
+        except Exception:
+            try:
+                await asyncio.to_thread(session.close)
+            except Exception:
+                pass
+
     async def close(self) -> None:
         self._closed = True
+        self._startup_cancel.set()
         self._cancel_speaking.set()
         self._playback_pending.clear()
         for speaker_task in tuple(self._speaker_tasks):
@@ -20063,22 +20340,35 @@ class _DuplexSession:
                 await asyncio.wait_for(self._deep_task_pump, timeout=30.0)
             except Exception:
                 pass
-        if self.stt_session is not None:
+        if self._stt_init_task is not None and not self._stt_init_task.done():
             try:
-                if _streaming_stt_provider(self.stt_cfg) == "parakeet":
-                    await asyncio.to_thread(
-                        _return_warm_parakeet_session, self.stt_session, self.stt_cfg
-                    )
-                else:
-                    await asyncio.to_thread(self.stt_session.close)
+                # Shield keeps a model constructor running in a worker thread
+                # attached to its cleanup coroutine. Cancelling asyncio's
+                # wrapper cannot stop that raw thread and would discard the
+                # returned model, leaking it after a fast renderer remount.
+                await asyncio.wait_for(
+                    asyncio.shield(self._stt_init_task), timeout=2.0
+                )
+            except asyncio.TimeoutError:
+                pass
             except Exception:
-                try:
-                    await asyncio.to_thread(self.stt_session.close)
-                except Exception:
-                    pass
+                pass
+        # If Parakeet is blocked waiting for its helper's cold-model ready
+        # response, closing here terminates the helper and unblocks the worker.
+        # If construction is still in flight, _initialize_stt observes
+        # _startup_cancel and releases the session as soon as it materializes.
+        init_in_flight = (
+            self._stt_init_task is not None and not self._stt_init_task.done()
+        )
+        await self._release_stt_session(recycle=not init_in_flight)
         if self._stt_slot_acquired:
             _get_audio_transcribe_lock(app).release()
             self._stt_slot_acquired = False
+        if self._residency_leased:
+            from tools.voice_residency import end_voice_session
+
+            end_voice_session()
+            self._residency_leased = False
 
 
 @app.websocket("/api/voice/duplex")
@@ -20092,6 +20382,7 @@ async def voice_duplex_ws(ws: WebSocket) -> None:
         await session.start()
     except Exception:
         _log.exception("Voice duplex: session start failed")
+        await session.close()
         try:
             await ws.close(code=1011)
         except Exception:

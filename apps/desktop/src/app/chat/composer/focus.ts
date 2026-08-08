@@ -260,17 +260,19 @@ export const requestVoiceToggle = (target: ComposerTarget | 'active' = 'active')
   dispatch<{ target: ComposerTarget }>(VOICE_TOGGLE_EVENT, { target: resolve(target) })
 
 /** Start (but never toggle off) the main composer's duplex conversation. */
-export const requestVoiceStart = () => dispatch<{ at: number }>(VOICE_START_EVENT, { at: Date.now() })
-export const requestVoiceStop = () => dispatch<{ at: number }>(VOICE_STOP_EVENT, { at: Date.now() })
+export const requestVoiceStart = () =>
+  dispatch<{ at: number; target: ComposerTarget }>(VOICE_START_EVENT, { at: Date.now(), target: 'main' })
+export const requestVoiceStop = () =>
+  dispatch<{ at: number; target: ComposerTarget }>(VOICE_STOP_EVENT, { at: Date.now(), target: 'main' })
 
 export const onComposerVoiceToggleRequest = (handler: (target: ComposerTarget) => void) =>
   subscribe<{ target: ComposerTarget }>(VOICE_TOGGLE_EVENT, ({ target }) => handler(target))
 
-export const onComposerVoiceStartRequest = (handler: () => void) =>
-  subscribe<{ at: number }>(VOICE_START_EVENT, () => handler())
+export const onComposerVoiceStartRequest = (handler: (target: ComposerTarget) => void) =>
+  subscribe<{ at: number; target: ComposerTarget }>(VOICE_START_EVENT, ({ target }) => handler(target))
 
-export const onComposerVoiceStopRequest = (handler: () => void) =>
-  subscribe<{ at: number }>(VOICE_STOP_EVENT, () => handler())
+export const onComposerVoiceStopRequest = (handler: (target: ComposerTarget) => void) =>
+  subscribe<{ at: number; target: ComposerTarget }>(VOICE_STOP_EVENT, ({ target }) => handler(target))
 /** The chat surface inside the zone the pointer is over, if any. Mirrors the
  *  tab verbs' hover-first targeting (`tabTargetGroupId`, #74447): the model
  *  hotkey lands in the pane you're pointing at without clicking into it first.

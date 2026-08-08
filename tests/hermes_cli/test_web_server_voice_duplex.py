@@ -180,6 +180,7 @@ def duplex_client(monkeypatch, _isolate_hermes_home):
     # speaker-ID are ready; never let a test warmup touch the real stack.
     # Barge-in negative-screen tests use the `tts_echo` seam directly.
     monkeypatch.setattr(web_server, "_duplex_ensure_tts_self_enrollment", lambda cfg: None)
+    monkeypatch.setattr(web_server._DuplexSession, "_start_tts_warmup", lambda self: None)
 
     client = TestClient(web_server.app)
     try:
@@ -208,7 +209,7 @@ def duplex_client(monkeypatch, _isolate_hermes_home):
 @pytest.fixture
 def stt_session(monkeypatch):
     session = FakeSttSession()
-    monkeypatch.setattr(web_server, "_duplex_stt_session", lambda stt_cfg: session)
+    monkeypatch.setattr(web_server, "_duplex_stt_session", lambda stt_cfg, cancel_event=None: session)
     return session
 
 
@@ -425,6 +426,77 @@ def test_speaker_enrollment_api(duplex_client, monkeypatch):
 def test_ready_on_connect(duplex_client, full_fakes):
     with duplex_client.websocket_connect(_duplex_url()) as conn:
         assert conn.receive_json() == {"type": "ready"}
+
+
+def test_disconnect_during_stt_cold_start_cancels_without_stranding_slot(
+    duplex_client, monkeypatch
+):
+    entered = threading.Event()
+
+    def cancellable_start(_cfg, cancel_event=None):
+        entered.set()
+        assert cancel_event is not None
+        cancel_event.wait(timeout=2.0)
+        raise RuntimeError("cancelled startup")
+
+    monkeypatch.setattr(web_server, "_duplex_stt_session", cancellable_start)
+    monkeypatch.setattr(
+        web_server,
+        "_duplex_warm_instant_lane",
+        lambda transcript, cfg: {
+            "ok": True,
+            "construct_ms": 0.0,
+            "provider": "fake",
+            "model": "fake",
+        },
+    )
+
+    started = time.monotonic()
+    with duplex_client.websocket_connect(_duplex_url()):
+        assert entered.wait(timeout=1.0)
+        # Exit before `ready`, mirroring a renderer remount during cold load.
+        pass
+
+    assert time.monotonic() - started < 1.0
+    deadline = time.monotonic() + 1.0
+    while (
+        web_server.app.state.audio_transcribe_lock._value
+        != web_server._STREAMING_STT_MAX_CONCURRENT
+        and time.monotonic() < deadline
+    ):
+        time.sleep(0.01)
+    assert web_server.app.state.audio_transcribe_lock._value == web_server._STREAMING_STT_MAX_CONCURRENT
+
+
+def test_moonshine_session_is_reset_and_reused_between_wakes(monkeypatch):
+    class FakeMoonshine:
+        def __init__(self):
+            self.finished = 0
+
+        def finish(self):
+            self.finished += 1
+            return ""
+
+        def close(self):
+            raise AssertionError("a reusable Moonshine session must stay resident")
+
+    cfg = {
+        "streaming": {
+            "enabled": True,
+            "provider": "moonshine",
+            "model": "medium-streaming",
+        }
+    }
+    session = FakeMoonshine()
+    monkeypatch.setattr(web_server, "_WARM_MOONSHINE_SESSION", None)
+    monkeypatch.setattr(web_server, "_WARM_MOONSHINE_SIGNATURE", "")
+
+    web_server._return_warm_moonshine_session(session, cfg)
+    acquired = web_server._duplex_stt_session(cfg)
+
+    assert acquired is session
+    assert session.finished == 1
+    assert web_server._WARM_MOONSHINE_SESSION is None
 
 
 def test_moonshine_pause_waits_for_smart_turn_and_commit_silence(monkeypatch):

@@ -35,6 +35,7 @@ _lock = threading.RLock()
 _tier: str = TIER_HOT
 _last_activity: float = time.monotonic()
 _demote_hooks: List[Callable[[], None]] = []
+_active_sessions = 0
 
 _idle_lock = threading.Lock()
 _idle_thread: Optional[threading.Thread] = None
@@ -65,6 +66,34 @@ def current_tier() -> str:
         return _tier
 
 
+def begin_voice_session() -> None:
+    """Lease the resident models for one live voice session.
+
+    Resource policies may still mark background work as deferred while a game
+    or other heavy app is focused, but they must never unload STT/TTS from
+    underneath an active duplex call.  The counter (rather than a boolean)
+    also covers short reconnect overlaps safely.
+    """
+    global _active_sessions, _tier, _last_activity
+    with _lock:
+        _active_sessions += 1
+        _last_activity = time.monotonic()
+        _tier = TIER_HOT
+
+
+def end_voice_session() -> None:
+    """Release one live-session lease. Idempotent at zero."""
+    global _active_sessions, _last_activity
+    with _lock:
+        _active_sessions = max(0, _active_sessions - 1)
+        _last_activity = time.monotonic()
+
+
+def has_active_session() -> bool:
+    with _lock:
+        return _active_sessions > 0
+
+
 def register_demote_hook(fn: Callable[[], None]) -> None:
     """Register a callable to run when :func:`demote` fires. Idempotent per fn."""
     with _lock:
@@ -72,7 +101,7 @@ def register_demote_hook(fn: Callable[[], None]) -> None:
             _demote_hooks.append(fn)
 
 
-def demote(reason: str) -> None:
+def demote(reason: str) -> bool:
     """Move the voice stack to "cold": run every demote hook, then mark cold.
 
     Idempotent — calling this while already cold is a no-op (hooks do not
@@ -81,8 +110,15 @@ def demote(reason: str) -> None:
     """
     global _tier
     with _lock:
+        if _active_sessions:
+            logger.info(
+                "[VOICE-RESIDENCY] demotion deferred (reason=%s active_sessions=%d)",
+                reason,
+                _active_sessions,
+            )
+            return False
         if _tier == TIER_COLD:
-            return
+            return False
         hooks = list(_demote_hooks)
         _tier = TIER_COLD
 
@@ -93,6 +129,7 @@ def demote(reason: str) -> None:
             logger.exception("[VOICE-RESIDENCY] demote hook failed: %r", hook)
 
     logger.info("[VOICE-RESIDENCY] demoted to cold (reason=%s)", reason)
+    return True
 
 
 def _idle_watch_loop(stop_event: threading.Event, idle_seconds: float) -> None:
@@ -176,8 +213,9 @@ def _reset_for_tests() -> None:
     Not part of the public API used by other workstreams.
     """
     stop_idle_watch(timeout=1.0)
-    global _tier, _last_activity, _demote_hooks
+    global _tier, _last_activity, _demote_hooks, _active_sessions
     with _lock:
         _tier = TIER_HOT
         _last_activity = time.monotonic()
         _demote_hooks = []
+        _active_sessions = 0

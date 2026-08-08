@@ -912,7 +912,13 @@ def _new_instant_agent(runtime: Dict[str, Any], max_tokens: int):
         platform="voice",
         skip_context_files=False,
         load_soul_identity=True,
-        skip_memory=False,
+        # The bounded deferred-context loader below already supplies durable
+        # personal/world context before the first utterance. Starting the
+        # external memory provider here duplicates that context and makes its
+        # synchronous first-turn network prefetch (up to ~5s for Honcho) part
+        # of voice TTFT. Keep the normal memory tools through the lazy canonical
+        # store, but make external recall explicitly model-invoked.
+        skip_memory=True,
     )
     agent._persist_disabled = True
     # Persistence remains disabled, but read-only recall tools may lazily open

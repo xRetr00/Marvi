@@ -5460,6 +5460,33 @@ class TestDesktopVoiceStartup:
 
         assert [kind for kind, _cfg in warmed] == ["tts", "stt"]
 
+    def test_warms_configured_moonshine_session(self, monkeypatch):
+        import hermes_cli.web_server as web_server
+
+        warmed = []
+        monkeypatch.setattr(
+            web_server,
+            "load_config",
+            lambda: {
+                "stt": {
+                    "streaming": {
+                        "enabled": True,
+                        "provider": "moonshine",
+                        "model": "medium-streaming",
+                    }
+                }
+            },
+        )
+        monkeypatch.setattr(
+            web_server,
+            "_warm_moonshine_session",
+            lambda cfg: warmed.append(cfg),
+        )
+
+        web_server._warm_desktop_voice_models()
+
+        assert warmed and warmed[0]["streaming"]["provider"] == "moonshine"
+
 
 class TestServeIndexMissingIndex:
     """_serve_index must not raise per-request when index.html vanishes."""

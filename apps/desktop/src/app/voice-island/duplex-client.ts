@@ -10,6 +10,7 @@ import { type DuplexCard, parseDuplexServerEvent } from './duplex-protocol'
 import { type DuplexCommand, DuplexSessionMachine, type DuplexSessionState } from './duplex-session'
 
 const CONNECT_TIMEOUT_MS = 8000
+const READY_TIMEOUT_MS = 30_000
 
 export interface DuplexGatewayConnection {
   authMode?: string | null
@@ -40,6 +41,7 @@ export interface DuplexConnectOptions {
   createWebSocket?: (url: string) => WebSocket
   audioPlayerFactory?: () => DuplexAudioPlayer
   micCaptureFactory?: typeof startDuplexMicCapture
+  readyTimeoutMs?: number
 }
 
 export interface DuplexController {
@@ -112,6 +114,14 @@ export async function connectDuplexVoice(options: DuplexConnectOptions): Promise
   const player = createPlayer()
   let mic: DuplexMicCapture | null = null
   let stopped = false
+  let readyTimer: number | null = null
+
+  const clearReadyTimer = () => {
+    if (readyTimer !== null) {
+      window.clearTimeout(readyTimer)
+      readyTimer = null
+    }
+  }
 
   const sendJson = (payload: unknown) => {
     if (ws.readyState === WebSocket.OPEN) {
@@ -158,6 +168,7 @@ export async function connectDuplexVoice(options: DuplexConnectOptions): Promise
     }
 
     stopped = true
+    clearReadyTimer()
     mic?.stop()
     mic = null
     player.destroy()
@@ -214,6 +225,11 @@ export async function connectDuplexVoice(options: DuplexConnectOptions): Promise
     return null
   }
 
+  readyTimer = window.setTimeout(
+    () => teardown('duplex speech recognition did not become ready in time'),
+    options.readyTimeoutMs ?? READY_TIMEOUT_MS
+  )
+
   ws.addEventListener('message', event => {
     if (stopped) {
       return
@@ -238,6 +254,7 @@ export async function connectDuplexVoice(options: DuplexConnectOptions): Promise
 
     if (parsedEvent?.type === 'conversation_end') {
       stopped = true
+      clearReadyTimer()
       mic?.stop()
       mic = null
       player.destroy()
@@ -256,6 +273,7 @@ export async function connectDuplexVoice(options: DuplexConnectOptions): Promise
     // 'connecting' (i.e. the first `ready`), not on every subsequent
     // `ready`-shaped message — mic capture should only ever start once.
     if (!wasReady && machine.state.phase === 'listening' && !mic) {
+      clearReadyTimer()
       void startMic({
         onError: error => teardown(error.message),
         onFrame: base64 => sendJson({ type: 'audio', data: base64 }),
@@ -284,6 +302,7 @@ export async function connectDuplexVoice(options: DuplexConnectOptions): Promise
       }
 
       stopped = true
+      clearReadyTimer()
       runCommands(machine.close())
       mic?.stop()
       mic = null

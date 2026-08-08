@@ -65,8 +65,11 @@ describe('voiceFieldVisible', () => {
     const config = cfg({ stt: { enabled: true, provider: 'local', streaming: { provider: 'parakeet' } } })
 
     expect(voiceFieldVisible('stt.streaming.provider', config)).toBe(true)
-    expect(voiceFieldVisible('stt.streaming.model', config)).toBe(true)
+    expect(voiceFieldVisible('stt.streaming.parakeet.model', config)).toBe(true)
+    expect(voiceFieldVisible('stt.streaming.parakeet.engine', config)).toBe(true)
+    expect(voiceFieldVisible('stt.streaming.parakeet.device', config)).toBe(true)
     expect(voiceFieldVisible('stt.streaming.eou_token', config)).toBe(true)
+    expect(voiceFieldVisible('stt.streaming.model', config)).toBe(false)
     expect(voiceFieldVisible('stt.streaming.backend', config)).toBe(false)
     expect(voiceFieldVisible('stt.streaming.host', config)).toBe(false)
     expect(voiceFieldVisible('stt.streaming.port', config)).toBe(false)

@@ -176,12 +176,10 @@ def duplex_client(monkeypatch, _isolate_hermes_home):
     # within a single test's 1-2 connections, so acquire() never needs to
     # wait/bind to a loop at all.
     web_server.app.state.audio_transcribe_lock = asyncio.Semaphore(web_server._STREAMING_STT_MAX_CONCURRENT)
-    # TTS self-enrollment (spec Part 1.3) fires a background thread from
-    # _DuplexSession.start() that would otherwise touch the real TTS/sherpa
-    # stack -- neuter it for every duplex_client test; barge-in negative-
-    # screen tests that care about TTS-echo matching use the `tts_echo`
-    # seam fixture directly instead.
-    monkeypatch.setattr(web_server._DuplexSession, "_start_tts_self_enrollment", lambda self: None)
+    # TTS self-enrollment now runs once during process warmup, after TTS and
+    # speaker-ID are ready; never let a test warmup touch the real stack.
+    # Barge-in negative-screen tests use the `tts_echo` seam directly.
+    monkeypatch.setattr(web_server, "_duplex_ensure_tts_self_enrollment", lambda cfg: None)
 
     client = TestClient(web_server.app)
     try:
@@ -1690,6 +1688,25 @@ def test_barge_in_uncertain_candidate_barges_immediately(monkeypatch):
 
         assert ws.sent.count({"type": "barge_in"}) == 1
         assert session.state == "listening"
+
+    asyncio.run(run())
+
+
+def test_barge_in_eou_cannot_bypass_sustained_speech_gate(monkeypatch):
+    """A short TTS echo may produce actionable text plus semantic EOU.
+    That lexical endpoint alone must not interrupt playback."""
+    monkeypatch.setattr(web_server, "_duplex_focus_mode_active", lambda cfg: True)
+    _patch_barge_negative(monkeypatch)
+
+    async def run():
+        session, ws, _vad = _make_barge_test_session()
+        session.stt_session.queue_response("yeah", True)
+
+        await session._feed_barge_in(_pcm16_chunk())
+
+        assert ws.sent == []
+        assert session.state == "speaking"
+        assert session._barge_streak_ms < web_server._DUPLEX_BARGE_IN_STREAK_MS
 
     asyncio.run(run())
 

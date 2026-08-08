@@ -57,6 +57,49 @@ _SHERPA_KWS_EN_REPO_ARCHIVE = (
 )
 _SHERPA_NATIVE_PROBE_TIMEOUT_SECONDS = 10
 _WAKEWORD_TELEMETRY_LOG = "wakeword-livekit.jsonl"
+_WAKEWORD_TELEMETRY_MAX_BYTES = 8 * 1024 * 1024
+_WAKEWORD_TELEMETRY_BACKUPS = 2
+_WAKEWORD_DEBUG_SAMPLE_SECONDS = 5.0
+_WAKEWORD_TELEMETRY_LOCK = threading.Lock()
+
+
+def _append_wakeword_telemetry(log_path: Path, line: str) -> None:
+    """Append one bounded JSONL event, rotating before debug logs grow forever."""
+    encoded_size = len(line.encode("utf-8")) + 1
+    with _WAKEWORD_TELEMETRY_LOCK:
+        try:
+            current_size = log_path.stat().st_size
+        except OSError:
+            current_size = 0
+        if current_size and current_size + encoded_size > _WAKEWORD_TELEMETRY_MAX_BYTES:
+            # A legacy unbounded debug log can already be hundreds of MB. Do
+            # not preserve that oversized file as a backup; start the bounded
+            # set immediately on the next event.
+            if current_size > _WAKEWORD_TELEMETRY_MAX_BYTES:
+                try:
+                    log_path.unlink()
+                except FileNotFoundError:
+                    pass
+                current_size = 0
+            else:
+                oldest = log_path.with_name(f"{log_path.name}.{_WAKEWORD_TELEMETRY_BACKUPS}")
+                try:
+                    oldest.unlink(missing_ok=True)
+                except OSError:
+                    pass
+                for index in range(_WAKEWORD_TELEMETRY_BACKUPS - 1, 0, -1):
+                    source = log_path.with_name(f"{log_path.name}.{index}")
+                    target = log_path.with_name(f"{log_path.name}.{index + 1}")
+                    try:
+                        source.replace(target)
+                    except FileNotFoundError:
+                        pass
+                try:
+                    log_path.replace(log_path.with_name(f"{log_path.name}.1"))
+                except FileNotFoundError:
+                    pass
+        with log_path.open("a", encoding="utf-8") as fh:
+            fh.write(line + "\n")
 
 
 @dataclass(frozen=True)
@@ -559,7 +602,7 @@ class LiveKitWakeWordSpotter:
         # inference frame to two logs made debug mode noticeably stall the
         # local gateway.
         now = time.monotonic()
-        if decision != "passed" and now - self._last_debug_log_at < 1.0:
+        if decision != "passed" and now - self._last_debug_log_at < _WAKEWORD_DEBUG_SAMPLE_SECONDS:
             return
         self._last_debug_log_at = now
         try:
@@ -594,7 +637,8 @@ class LiveKitWakeWordSpotter:
             "scores": top_scores,
             "phrases": list(self.cfg.phrases),
         }
-        logger.info(
+        log_method = logger.info if decision == "passed" else logger.debug
+        log_method(
             "[WakeWord] LiveKit %s label=%s score=%.4f threshold=%.4f rms=%.5f peak=%.5f",
             decision,
             label or "-",
@@ -606,8 +650,9 @@ class LiveKitWakeWordSpotter:
         try:
             log_path = get_hermes_home() / "logs" / _WAKEWORD_TELEMETRY_LOG
             log_path.parent.mkdir(parents=True, exist_ok=True)
-            with log_path.open("a", encoding="utf-8") as fh:
-                fh.write(json.dumps(event, separators=(",", ":")) + "\n")
+            _append_wakeword_telemetry(
+                log_path, json.dumps(event, separators=(",", ":"))
+            )
         except OSError as exc:
             logger.debug("[WakeWord] Could not write LiveKit telemetry: %s", exc)
 

@@ -1549,6 +1549,13 @@ DEFAULT_CONFIG = {
             "port": 9090,
             "backend": "faster_whisper",
             "model": "small",
+            "parakeet": {
+                "model": "nvidia/parakeet_realtime_eou_120m-v1",
+                # Batch buffers active speech cheaply. The duplex endpoint
+                # performs one semantic-EOU probe after a VAD-confirmed pause.
+                "engine": "batch",
+                "device": "cuda",
+            },
             "moonshine": {
                 "language": "en",
                 "model": "small-streaming",
@@ -1591,9 +1598,10 @@ DEFAULT_CONFIG = {
         "max_recording_seconds": 120,
         "auto_tts": False,
         "semantic_turn": True,
-        "smart_turn_commit_delay_ms": 1200,
-        "smart_turn_vad_fallback_ms": 1500,
-        "turn_vad_hard_stop_ms": 2800,
+        "smart_turn_commit_delay_ms": 450,
+        "smart_turn_vad_fallback_ms": 900,
+        "turn_vad_hard_stop_ms": 1800,
+        "parakeet_eou_probe_ms": 450,
         "escalation": {"enabled": True},
         "speaker_id": {
             "threshold": 0.45,

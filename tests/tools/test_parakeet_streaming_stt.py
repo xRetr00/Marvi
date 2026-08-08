@@ -67,6 +67,12 @@ def test_resolve_parakeet_config_ignores_whisper_model_name():
     assert cfg.model == DEFAULT_PARAKEET_MODEL
 
 
+def test_resolve_parakeet_config_defaults_to_batch_engine():
+    cfg = resolve_parakeet_config({"streaming": {"provider": "parakeet"}})
+
+    assert cfg.engine == "batch"
+
+
 def test_load_parakeet_model_requires_driver_update_on_cuda_driver_error(monkeypatch):
     import tools.parakeet_streaming_stt as mod
     import pytest
@@ -314,7 +320,7 @@ def test_session_falls_back_when_model_lacks_streaming_api(tmp_path):
 
 def test_batch_engine_has_no_partials(tmp_path):
     # engine=batch buffers only during listening and transcribes once at finish
-    # -- keeps the GPU free for the wake word + TTS (opt-in; rebuffer is default).
+    # -- keeps the GPU free for the wake word + TTS (the production default).
     session = ParakeetStreamingSession(
         {"streaming": {"provider": "parakeet", "engine": "batch"}},
         loader=lambda _cfg: FakeModel(),
@@ -325,6 +331,23 @@ def test_batch_engine_has_no_partials(tmp_path):
     big = np.ones(ParakeetStreamingSession._PARTIAL_INTERVAL_SAMPLES * 2, dtype=np.float32).tobytes()
     assert session.accept_bytes(big) == ""  # no live partial in batch mode
     assert session.finish() == "hello marvi"  # transcribed once at the end
+
+
+def test_batch_engine_probe_decodes_once_and_finish_reuses_it(tmp_path):
+    fake_model = FakeModel()
+    session = ParakeetStreamingSession(
+        {"streaming": {"provider": "parakeet"}},
+        loader=lambda _cfg: fake_model,
+        temp_dir=tmp_path,
+    )
+    session.start()
+    frame = np.ones(16000, dtype=np.float32).tobytes()
+    assert session.accept_bytes(frame) == ""
+
+    assert session.probe() == "hello marvi"
+    assert session.last_eou is True
+    assert session.finish() == "hello marvi"
+    assert len(fake_model.calls) == 1
 
 
 def test_parakeet_streaming_session_emits_partials_and_eou(tmp_path):
@@ -368,6 +391,12 @@ def test_stdio_server_keeps_stdout_json_only_when_model_logs(monkeypatch):
             print("[NeMo I noisy transcribe line]")
             return "hello"
 
+        def probe(self):
+            print("[NeMo I noisy probe line]")
+            self.last_eou = True
+            self.last_eou_prob = 1.0
+            return "hello"
+
         def finish(self):
             print("[NeMo I noisy final line]")
             return "hello"
@@ -375,12 +404,12 @@ def test_stdio_server_keeps_stdout_json_only_when_model_logs(monkeypatch):
     stdout = io.StringIO()
     stderr = io.StringIO()
     monkeypatch.setattr("tools.parakeet_streaming_stt.ParakeetStreamingSession", NoisySession)
-    monkeypatch.setattr(sys, "stdin", io.StringIO('{"type":"start","stt_config":{}}\n{"type":"audio","data":""}\n{"type":"stop"}\n'))
+    monkeypatch.setattr(sys, "stdin", io.StringIO('{"type":"start","stt_config":{}}\n{"type":"audio","data":""}\n{"type":"probe"}\n{"type":"stop"}\n'))
     monkeypatch.setattr(sys, "stdout", stdout)
     monkeypatch.setattr(sys, "stderr", stderr)
 
     assert _run_stdio_server() == 0
     lines = stdout.getvalue().splitlines()
-    assert [json.loads(line)["type"] for line in lines] == ["ready", "partial", "final"]
+    assert [json.loads(line)["type"] for line in lines] == ["ready", "partial", "probe", "final"]
     assert "[NeMo" not in stdout.getvalue()
     assert "[NeMo" in stderr.getvalue()

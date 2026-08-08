@@ -166,6 +166,32 @@ def test_livekit_spotter_writes_debug_score_telemetry(monkeypatch, tmp_path):
     assert events[1]["threshold"] == 0.5
 
 
+def test_wakeword_debug_telemetry_rotates_at_bounded_size(monkeypatch, tmp_path):
+    from tools import streaming_stt
+
+    monkeypatch.setattr(streaming_stt, "_WAKEWORD_TELEMETRY_MAX_BYTES", 16)
+    path = tmp_path / "wakeword-livekit.jsonl"
+
+    streaming_stt._append_wakeword_telemetry(path, "first-event")
+    streaming_stt._append_wakeword_telemetry(path, "second-event")
+
+    assert path.read_text(encoding="utf-8") == "second-event\n"
+    assert path.with_name(f"{path.name}.1").read_text(encoding="utf-8") == "first-event\n"
+
+
+def test_wakeword_debug_drops_legacy_oversized_log(monkeypatch, tmp_path):
+    from tools import streaming_stt
+
+    monkeypatch.setattr(streaming_stt, "_WAKEWORD_TELEMETRY_MAX_BYTES", 16)
+    path = tmp_path / "wakeword-livekit.jsonl"
+    path.write_text("legacy-unbounded-debug-data", encoding="utf-8")
+
+    streaming_stt._append_wakeword_telemetry(path, "new-event")
+
+    assert path.read_text(encoding="utf-8") == "new-event\n"
+    assert not path.with_name(f"{path.name}.1").exists()
+
+
 def test_wake_word_factory_rejects_disabled_config():
     from tools.streaming_stt import WakeWordUnavailable, WakeWordFactory
 

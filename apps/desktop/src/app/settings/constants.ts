@@ -268,6 +268,9 @@ export const ENUM_OPTIONS: Record<string, string[]> = {
     'small-streaming',
     'medium-streaming'
   ],
+  'stt.streaming.parakeet.model': ['nvidia/parakeet_realtime_eou_120m-v1'],
+  'stt.streaming.parakeet.engine': ['batch', 'cache_aware', 'rebuffer'],
+  'stt.streaming.parakeet.device': ['auto', 'cuda', 'cpu'],
   'stt.streaming.moonshine.model': ['tiny-streaming', 'base-streaming', 'small-streaming', 'medium-streaming'],
   'stt.streaming.moonshine.device': ['auto', 'cpu'],
   'voice.wake_word.provider': ['livekit'],
@@ -474,8 +477,10 @@ export const FIELD_LABELS: Record<string, string> = defineFieldCopy({
     maxRecordingSeconds: 'Max Recording Length',
     autoTts: 'Read Responses Aloud',
     semanticTurn: 'Smart Turn',
+    smartTurnCommitDelayMs: 'Smart Turn Commit Delay',
     smartTurnVadFallbackMs: 'Smart Turn VAD Fallback',
     turnVadHardStopMs: 'Listening VAD Hard Stop',
+    parakeetEouProbeMs: 'Parakeet EOU Probe Delay',
     bargeIn: 'Barge-In',
     wakeWord: {
       enabled: 'Wake Word',
@@ -511,6 +516,11 @@ export const FIELD_LABELS: Record<string, string> = defineFieldCopy({
       maxClients: 'Streaming STT Max Clients',
       maxConnectionTime: 'Streaming STT Max Seconds',
       singleModel: 'Streaming STT Single Model',
+      parakeet: {
+        model: 'Parakeet Realtime EOU Model',
+        engine: 'Parakeet Streaming Engine',
+        device: 'Parakeet Device'
+      },
       moonshine: {
         device: 'Moonshine Device',
         language: 'Moonshine Language',
@@ -662,10 +672,14 @@ export const FIELD_DESCRIPTIONS: Record<string, string> = defineFieldCopy({
   voice: {
     autoTts: 'Automatically speak assistant responses.',
     semanticTurn: 'Use Pipecat Smart Turn when available to avoid cutting off unfinished speech after VAD silence.',
+    smartTurnCommitDelayMs:
+      'After Smart Turn accepts an endpoint, require this much continued silence before committing the turn.',
     smartTurnVadFallbackMs:
       'After Smart Turn says speech is unfinished, let TEN VAD finish the turn after this many milliseconds of continued silence.',
     turnVadHardStopMs:
-      'Finalize after this much TEN VAD silence when Moonshine never emits an endpoint, preventing a stuck Listening state.',
+      'Finalize after this much VAD silence when the streaming recognizer never emits an endpoint, preventing a stuck Listening state.',
+    parakeetEouProbeMs:
+      'After this much VAD-confirmed silence, ask Parakeet for one semantic endpoint decision without repeatedly decoding active speech.',
     bargeIn: 'Allow sustained user speech to interrupt hands-free TTS playback.',
     wakeWord: {
       enabled: 'Listen for a local wake phrase and submit one spoken command, then return to wake-only mode.',
@@ -685,7 +699,7 @@ export const FIELD_DESCRIPTIONS: Record<string, string> = defineFieldCopy({
     speakerId: {
       threshold: 'Minimum enrolled-speaker similarity. Raise it to reduce false owner matches.',
       focusMode:
-        'Focus on the owner\'s voice when other people are talking nearby -- not access control, every speaker can still ask Marvi anything.'
+        "Focus on the owner's voice when other people are talking nearby -- not access control, every speaker can still ask Marvi anything."
     }
   },
   tts: {
@@ -717,6 +731,12 @@ export const FIELD_DESCRIPTIONS: Record<string, string> = defineFieldCopy({
       backend: 'Use faster_whisper for the built-in GPU path. TensorRT needs prebuilt engines.',
       model: 'Parakeet Realtime EOU Hugging Face model id.',
       eouToken: 'Token emitted by Parakeet when the utterance is complete.',
+      parakeet: {
+        model: 'Parakeet Realtime EOU Hugging Face model id.',
+        engine:
+          'Batch is the stable low-contention default. Cache-aware is experimental; rebuffer repeatedly decodes the growing utterance and is intended only for diagnostics.',
+        device: 'Use CUDA on an NVIDIA GPU, CPU as a fallback, or auto to select at runtime.'
+      },
       moonshine: {
         device: 'Auto currently resolves to CPU. Moonshine Voice does not expose CUDA execution.',
         language: 'Two-letter language code for the locally cached Moonshine model.',
@@ -846,6 +866,9 @@ export const SECTIONS: DesktopConfigSection[] = [
       'stt.streaming.port',
       'stt.streaming.backend',
       'stt.streaming.model',
+      'stt.streaming.parakeet.model',
+      'stt.streaming.parakeet.engine',
+      'stt.streaming.parakeet.device',
       'stt.streaming.moonshine.language',
       'stt.streaming.moonshine.model',
       'stt.streaming.moonshine.device',
@@ -863,8 +886,10 @@ export const SECTIONS: DesktopConfigSection[] = [
       'voice.record_key',
       'voice.max_recording_seconds',
       'voice.semantic_turn',
+      'voice.smart_turn_commit_delay_ms',
       'voice.smart_turn_vad_fallback_ms',
       'voice.turn_vad_hard_stop_ms',
+      'voice.parakeet_eou_probe_ms',
       'voice.barge_in',
       'voice.escalation.enabled',
       'auxiliary.voice_instant.max_tokens'

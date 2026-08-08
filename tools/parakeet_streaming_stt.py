@@ -34,13 +34,14 @@ class ParakeetStreamingConfig:
     eou_token: str = "<EOU>"
     # NOTE(duplex-phase1): STT engine selection + tuning knobs. See
     # docs/design/2026-07-05-voice-duplex-design.md (Tunables).
-    #   engine: "auto" (cache-aware if the model exposes it, else re-transcribe),
+    #   engine: "batch" (buffer cheaply; semantic EOU is probed on a VAD pause),
+    #           "auto" (legacy alias that also buffers),
     #           "cache_aware" (force streaming; error+fallback if unavailable),
     #           "rebuffer" (force the O(n^2) re-transcribe fallback).
     #   stream_chunk_seconds: cache-aware decode cadence — smaller = lower
     #           latency, more GPU calls. Tune from logs/parakeet-stt.log.
     #   debug: verbose per-chunk logs (timing, eou_prob, partial text).
-    engine: str = "auto"
+    engine: str = "batch"
     stream_chunk_seconds: float = 0.5
     debug: bool = False
 
@@ -86,14 +87,14 @@ def resolve_parakeet_config(stt_config: dict[str, Any] | None) -> ParakeetStream
     except (TypeError, ValueError):
         stream_chunk_seconds = 0.5
 
-    # rebuffer (default): live partials via re-transcribe -- text streams as you
-    # talk. batch: buffer + transcribe once at end (lowest GPU, no live caption).
-    # cache_aware: experimental frame streaming. Now that the helper is persistent
-    # (model loads once), rebuffer no longer thrashes the GPU, so it's the default
-    # again for the streaming feel; switch to batch if you see stutter.
-    engine = str(pick("engine", "rebuffer")).strip().lower() or "rebuffer"
+    # ``rebuffer`` re-runs NeMo over the full utterance every 500 ms.  That is
+    # useful for diagnostics, but it is O(n²), creates a temporary manifest on
+    # every pass, and competes with wake-word/TTS inference for the GPU.  Keep it
+    # explicit.  The production default buffers cheaply and lets the duplex
+    # endpoint issue one semantic-EOU probe when VAD observes a pause.
+    engine = str(pick("engine", "batch")).strip().lower() or "batch"
     if engine not in {"auto", "batch", "rebuffer", "cache_aware"}:
-        engine = "rebuffer"
+        engine = "batch"
 
     return ParakeetStreamingConfig(
         model=str(model_value).strip() or DEFAULT_PARAKEET_MODEL,
@@ -403,9 +404,9 @@ class _CacheAwareStream:
 class ParakeetStreamingSession:
     """Session fed by browser Float32 mic frames and finalized with Parakeet EOU.
 
-    Two engines: the cache-aware streaming fast path (``_CacheAwareStream``) when
-    the model exposes it, else a re-transcribe fallback. The full sample buffer
-    is always retained so we can fall back mid-stream if the fast path throws.
+    Three engines: cheap batch buffering (the default), an explicit whole-buffer
+    partial mode for diagnostics, and the cache-aware fast path when requested
+    and supported. The full sample buffer is retained for final transcription.
     """
 
     # Re-transcribe cadence for the FALLBACK engine only. ponytail: O(n^2) over
@@ -505,7 +506,8 @@ class ParakeetStreamingSession:
         # Live partials via whole-buffer re-transcribe are OPT-IN (engine=rebuffer):
         # they run the model every ~0.5s DURING listening, competing with the wake
         # word + TTS for the GPU (a cause of stutter/freezes). The default (batch/
-        # auto) buffers only and transcribes once in finish(), keeping listening cheap.
+        # auto) buffers and is decoded only by a VAD-pause probe or finish(),
+        # keeping active listening cheap.
         if self.config.engine != "rebuffer":
             return ""
         if self._since_last < self._PARTIAL_INTERVAL_SAMPLES:
@@ -518,6 +520,27 @@ class ParakeetStreamingSession:
         return self._last_partial
 
     def drain_text(self) -> str:
+        return self._last_partial
+
+    def probe(self) -> str:
+        """Decode the current buffer without closing the utterance.
+
+        Duplex voice calls this once at a VAD-confirmed pause.  It preserves
+        Parakeet's semantic ``<EOU>`` decision while avoiding the old 500 ms
+        whole-buffer retranscription loop during active speech.
+        """
+        if self._closed or not self._samples:
+            return self._last_partial
+        if self._stream is not None:
+            # Cache-aware mode already reports EOU as chunks are pushed.
+            return self._last_partial
+        if self._model is None:
+            self.start()
+        raw = self._transcribe_current()
+        self.last_eou = self.config.eou_token.lower() in raw.lower()
+        self.last_eou_prob = 1.0 if self.last_eou else 0.0
+        self._last_partial = _strip_eou(raw, self.config.eou_token)
+        self._since_last = 0
         return self._last_partial
 
     def finish(self) -> str:
@@ -631,6 +654,18 @@ def _run_stdio_server() -> int:
                     _emit_stdio({"type": "partial", "text": partial, "eou": session.last_eou, "eou_prob": eou_prob})
                 else:
                     _emit_stdio({"type": "ok", "eou": session.last_eou, "eou_prob": eou_prob})
+
+            elif event_type == "probe":
+                if session is None:
+                    _emit_stdio({"type": "error", "error": "Parakeet helper received probe before start"})
+                    continue
+                partial = _call_with_stdout_on_stderr(session.probe)
+                _emit_stdio({
+                    "type": "probe",
+                    "text": partial,
+                    "eou": session.last_eou,
+                    "eou_prob": session.last_eou_prob,
+                })
 
             elif event_type == "stop":
                 final = _call_with_stdout_on_stderr(session.finish) if session is not None else ""

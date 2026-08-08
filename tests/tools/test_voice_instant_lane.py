@@ -337,6 +337,26 @@ class TestConfig:
 
         assert vil.resolve_instant_runtime(cfg)["reasoning_config"] == {"enabled": True, "effort": "low"}
 
+    def test_instant_runtime_inherits_normal_chat_fast_mode(self, monkeypatch):
+        from hermes_cli import runtime_provider
+
+        monkeypatch.setattr(
+            runtime_provider,
+            "resolve_runtime_provider",
+            lambda **_kwargs: {
+                "provider": "openai", "api_key": "key", "base_url": "https://x", "api_mode": None,
+            },
+        )
+        cfg = {
+            "agent": {"service_tier": "fast"},
+            "auxiliary": {"voice_instant": {"provider": "openai", "model": "gpt-5.4"}},
+        }
+
+        runtime = vil.resolve_instant_runtime(cfg)
+
+        assert runtime["service_tier"] == "priority"
+        assert runtime["request_overrides"] == {"service_tier": "priority"}
+
     def test_resolve_instant_runtime_treats_auto_as_unconfigured(self, monkeypatch):
         # provider="auto" is treated the same as "unset" -> falls back to a
         # curated instant model for the configured MAIN provider, never a
@@ -633,6 +653,28 @@ class TestStreamInstantReply:
         assert fake_agent_cls.last_instance._skill_nudge_interval == 0
         assert not hasattr(fake_agent_cls.last_instance, "_cached_system_prompt")
         assert fake_agent_cls.last_instance._recall_allowed_while_persist_disabled is True
+
+    def test_constructs_agent_with_fast_request_settings(self, monkeypatch, fake_agent_cls):
+        monkeypatch.setattr(
+            vil,
+            "resolve_instant_runtime",
+            lambda cfg=None: {
+                "provider": "openai",
+                "model": "gpt-5.4",
+                "base_url": None,
+                "api_key": "key",
+                "api_mode": None,
+                "reasoning_config": {"enabled": False, "effort": "none"},
+                "service_tier": "priority",
+                "request_overrides": {"service_tier": "priority"},
+            },
+        )
+
+        list(vil.stream_instant_reply(vil.RollingTranscript(), "hi", cfg={}))
+
+        kwargs = fake_agent_cls.last_instance.kwargs
+        assert kwargs["service_tier"] == "priority"
+        assert kwargs["request_overrides"] == {"service_tier": "priority"}
 
     def test_reuses_warm_agent_and_adds_deferred_context(self, fake_agent_cls):
         transcript = vil.RollingTranscript()

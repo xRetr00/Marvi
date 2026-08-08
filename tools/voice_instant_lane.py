@@ -652,6 +652,33 @@ def resolve_instant_runtime(cfg: Optional[Dict[str, Any]] = None) -> Dict[str, A
     if configured_reasoning is not None:
         reasoning_config = configured_reasoning
 
+    # Keep the voice lane on the same request-speed path as normal chat.  In
+    # particular, `/fast`/Priority Processing is represented by service_tier
+    # plus provider-specific request overrides in the regular chat setup.
+    # Voice owns a separate AIAgent instance, so these values must be copied
+    # explicitly or the two surfaces silently drift even when they use the
+    # same provider and model.
+    raw_service_tier = str(
+        cfg_get(cfg, "auxiliary", "voice_instant", "service_tier", default="")
+        or cfg_get(cfg, "agent", "service_tier", default="")
+        or ""
+    ).strip().lower()
+    service_tier = (
+        "priority" if raw_service_tier in {"fast", "priority", "on"} else None
+    )
+    request_overrides: Optional[Dict[str, Any]] = None
+    if service_tier:
+        try:
+            from hermes_cli.models import resolve_fast_mode_overrides
+
+            request_overrides = resolve_fast_mode_overrides(model)
+        except Exception:
+            logger.debug(
+                "voice_instant_lane: fast-mode override resolution failed for model=%s",
+                model,
+                exc_info=True,
+            )
+
     try:
         from hermes_cli.runtime_provider import resolve_runtime_provider
 
@@ -672,6 +699,8 @@ def resolve_instant_runtime(cfg: Optional[Dict[str, Any]] = None) -> Dict[str, A
             "api_key": api_key,
             "api_mode": None,
             "reasoning_config": reasoning_config,
+            "service_tier": service_tier,
+            "request_overrides": request_overrides,
         }
 
     return {
@@ -681,6 +710,8 @@ def resolve_instant_runtime(cfg: Optional[Dict[str, Any]] = None) -> Dict[str, A
         "api_key": rp.get("api_key") or api_key,
         "api_mode": rp.get("api_mode"),
         "reasoning_config": reasoning_config,
+        "service_tier": service_tier,
+        "request_overrides": request_overrides,
     }
 
 
@@ -856,9 +887,11 @@ def deferred_context_status(transcript: RollingTranscript) -> Tuple[str, Optiona
 
 def _runtime_key(runtime: Dict[str, Any], max_tokens: int) -> Tuple[Any, ...]:
     reasoning = runtime.get("reasoning_config") or {}
+    request_overrides = runtime.get("request_overrides") or {}
     return (
         runtime.get("provider"), runtime.get("model"), runtime.get("base_url"),
         runtime.get("api_mode"), max_tokens, reasoning.get("enabled"), reasoning.get("effort"),
+        runtime.get("service_tier"), tuple(sorted(request_overrides.items())),
     )
 
 
@@ -873,6 +906,8 @@ def _new_instant_agent(runtime: Dict[str, Any], max_tokens: int):
         api_mode=runtime["api_mode"],
         max_tokens=max_tokens,
         reasoning_config=runtime.get("reasoning_config"),
+        service_tier=runtime.get("service_tier"),
+        request_overrides=runtime.get("request_overrides"),
         quiet_mode=True,
         platform="voice",
         skip_context_files=False,

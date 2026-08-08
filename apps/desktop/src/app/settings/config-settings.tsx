@@ -52,7 +52,13 @@ const STREAMING_PROVIDER_FIELDS: Record<string, Set<string>> = {
     'stt.streaming.moonshine.model',
     'stt.streaming.moonshine.device'
   ]),
-  parakeet: new Set(['stt.streaming.provider', 'stt.streaming.model', 'stt.streaming.eou_token'])
+  parakeet: new Set([
+    'stt.streaming.provider',
+    'stt.streaming.parakeet.model',
+    'stt.streaming.parakeet.engine',
+    'stt.streaming.parakeet.device',
+    'stt.streaming.eou_token'
+  ])
 }
 
 // On the Voice page, only surface the sub-fields of the *selected* TTS/STT

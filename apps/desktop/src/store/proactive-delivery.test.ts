@@ -4,6 +4,7 @@ import {
   isEnglishTtsText,
   proactiveDeliveryAction,
   proactiveMessage,
+  smartRoomGestureCommand,
   unseenProactiveRuns
 } from './proactive-delivery'
 
@@ -35,5 +36,11 @@ describe('proactive delivery cursor', () => {
   it('never sends unsupported-language text to the English-only TTS lane', () => {
     expect(isEnglishTtsText('The room sensor briefly went offline.')).toBe(true)
     expect(isEnglishTtsText('Isıtma cihazı çevrimdışı oldu.')).toBe(false)
+  })
+
+  it('routes only explicit Smart Room voice gestures', () => {
+    expect(smartRoomGestureCommand({ source: 'smart_room_gesture', thought: '__gesture__:voice_start' })).toBe('voice_start')
+    expect(smartRoomGestureCommand({ source: 'smart_room_gesture', thought: '__gesture__:cancel' })).toBe('cancel')
+    expect(smartRoomGestureCommand({ source: 'tick', thought: '__gesture__:voice_start' })).toBeNull()
   })
 })

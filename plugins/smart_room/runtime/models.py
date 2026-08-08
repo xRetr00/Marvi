@@ -93,6 +93,32 @@ class DeviceHealth:
 
 
 @dataclass
+class VisionState:
+    """Latest fused visual truth produced by the Smart Room camera service."""
+
+    enabled: bool = False
+    camera_online: bool = False
+    camera_name: str = ""
+    visibility: str = "unavailable"  # good | dim | dark | blurred | unavailable
+    brightness: float = 0.0
+    blur_score: float = 0.0
+    person_count: int = 0
+    people: List[Dict[str, Any]] = field(default_factory=list)
+    owner_visible: bool = False
+    owner_zone: str = "unknown"
+    owner_activity: str = "unknown"
+    sleep_state: str = "unknown"
+    active_gesture: Optional[str] = None
+    gesture_armed_until: Optional[str] = None
+    last_observed_at: Optional[str] = None
+    last_evidence_id: Optional[str] = None
+    last_error: Optional[str] = None
+    model_versions: Dict[str, str] = field(default_factory=dict)
+    scene_analysis: Dict[str, Any] = field(default_factory=dict)
+    last_deep_observed_at: Optional[str] = None
+
+
+@dataclass
 class Alarm:
     id: str
     name: str
@@ -124,6 +150,7 @@ class RoomState:
     flags: DailyFlags = field(default_factory=DailyFlags)
     location: PhoneLocation = field(default_factory=PhoneLocation)
     devices: Dict[str, DeviceHealth] = field(default_factory=dict)
+    vision: VisionState = field(default_factory=VisionState)
     weather: Dict[str, Any] = field(default_factory=dict)
     sun: Dict[str, Any] = field(default_factory=dict)
     last_updated: Optional[str] = None
@@ -183,6 +210,13 @@ class RoomState:
             state.devices = {
                 k: DeviceHealth(**v) for k, v in d["devices"].items()
             }
+        if isinstance(d.get("vision"), dict):
+            raw_vision = {
+                key: value
+                for key, value in d["vision"].items()
+                if key in VisionState.__dataclass_fields__
+            }
+            state.vision = VisionState(**raw_vision)
         if "weather" in d:
             state.weather = d["weather"]
         if "sun" in d:

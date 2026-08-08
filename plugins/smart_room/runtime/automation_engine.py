@@ -59,10 +59,14 @@ def evaluate_automations(
     suppress_off = state.modes.active_mode in {"focus", "sleep", "alarm"} or state.modes.manual_override == "hold_on"
 
     adaptive = auto_cfg.get("adaptive_light", {})
+    cognitive_presence = bool(
+        (config.get("vision") or {}).get("enabled", False)
+        and (config.get("cognition") or {}).get("enabled", False)
+    )
 
     # --- 4.1 Adaptive Light On ---
     if adaptive.get("enabled", True):
-        if event_type == "presence_detected" and not suppress_on:
+        if event_type == "presence_detected" and not suppress_on and not cognitive_presence:
             actions.append(Action(type="turn_on", params={"restore_scene": True}))
 
     # --- 4.2 Light Off After Clear ---

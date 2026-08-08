@@ -1,7 +1,7 @@
 ---
 name: smart_room
 description: "Control and monitor the smart room — lights, presence, modes, automations."
-version: 0.4.0
+version: 0.7.0
 author: xRetro Labs
 ---
 
@@ -16,6 +16,7 @@ Use smart_room tools when the user asks about:
 - Presence ("did I leave?", "when did I get home?")
 - Device health ("is the bulb online?", "is ESP32 connected?")
 - Diagnostics ("why is the light not working?", "run diagnostics")
+- Vision ("look at the room", "am I in bed?", "who was here?", "review this face")
 
 ## Tools
 
@@ -29,6 +30,9 @@ Use smart_room tools when the user asks about:
 | `smart_room_alarm` | Manage named one-day/daily alarms and acknowledge wake-up |
 | `smart_room_health` | Device health check — online/offline status, last seen |
 | `smart_room_diagnostic` | Full diagnostic dump for troubleshooting |
+| `smart_room_observe` | Fresh camera truth: visibility, people, reviewed identity, zone, posture, sleep and gesture |
+| `smart_room_vision_history` | Bounded local visual/cognition evidence |
+| `smart_room_faces` | Explicitly review/reject/delete face identities |
 
 ## Context
 
@@ -36,6 +40,7 @@ The smart room plugin provides ambient world-context to Marvi:
 - One compact context line injected at session start
 - Subconscious diff on meaningful transitions (mode changes, arrivals/departures)
 - The runtime NEVER writes memory — the subconscious proposes, runtime supplies raw events
+- Vision and Smart Room cognition are operational truth. The restricted cognition model may use only room observe/light/mode/speak/silent/recheck/history tools.
 
 ## Fusion Model
 

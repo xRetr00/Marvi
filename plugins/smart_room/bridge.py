@@ -56,7 +56,7 @@ def _rpc_token() -> str:
     return token
 
 
-def call_runtime(method: str, params: Dict[str, Any]) -> Dict[str, Any]:
+def call_runtime(method: str, params: Dict[str, Any], *, timeout: float = _TIMEOUT_SECONDS) -> Dict[str, Any]:
     """Send a JSON-RPC request to the runtime and return the result.
 
     Raises RuntimeError if the runtime is not running or times out.
@@ -75,7 +75,7 @@ def call_runtime(method: str, params: Dict[str, Any]) -> Dict[str, Any]:
 
     try:
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        sock.settimeout(_TIMEOUT_SECONDS)
+        sock.settimeout(max(0.5, float(timeout)))
         sock.connect(("127.0.0.1", _rpc_port()))
     except (ConnectionRefusedError, socket.timeout, OSError) as e:
         raise RuntimeError(
@@ -183,6 +183,21 @@ def build_context_line() -> Optional[str]:
         parts.append(f"light {brightness}% ({scene}){suffix}")
     else:
         parts.append("light off")
+
+    vision = state.get("vision") or {}
+    if vision.get("enabled"):
+        if not vision.get("camera_online"):
+            parts.append("camera offline")
+        else:
+            parts.append(
+                f"vision {vision.get('visibility', 'unknown')}: {vision.get('person_count', 0)} person(s), "
+                f"owner {'visible' if vision.get('owner_visible') else 'not visible'}, "
+                f"zone {vision.get('owner_zone', 'unknown')}, activity {vision.get('owner_activity', 'unknown')}, "
+                f"sleep {vision.get('sleep_state', 'unknown')}"
+            )
+            scene = vision.get("scene_analysis") or {}
+            if scene.get("summary"):
+                parts.append(f"deep scene: {str(scene['summary'])[:240]}")
 
     # Mode
     modes = state.get("modes", {})

@@ -27,6 +27,12 @@ class TestAutomationEngine:
         actions = evaluate_automations(self.state, {"type": "presence_detected"}, self.config)
         assert any(a.type == "turn_on" for a in actions)
 
+    def test_cognition_owns_presence_light_when_vision_is_enabled(self):
+        self.config["vision"] = {"enabled": True}
+        self.config["cognition"] = {"enabled": True}
+        actions = evaluate_automations(self.state, {"type": "presence_detected"}, self.config)
+        assert not any(a.type == "turn_on" for a in actions)
+
     def test_presence_cleared_triggers_light_off(self):
         actions = evaluate_automations(self.state, {"type": "presence_cleared"}, self.config)
         assert any(a.type == "turn_off" for a in actions)

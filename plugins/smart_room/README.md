@@ -8,6 +8,8 @@
 - **Tuya LAN control**: Direct control of RGBCW bulb + HE20 sensor via tinytuya — no cloud
 - **Room automations**: Adaptive light, sleep/alarm behavior, work-return settle/cancel, evening sleep, and daily resets
 - **Sound controls**: Plugin-local quantized YAMNet detection — double clap toggles the light; optional triple clap enters Sleep; a lone clap is ignored
+- **Local vision**: MediaPipe pose/gesture perception plus InsightFace reviewed identity, zones, sleep-state evidence, and bounded local history
+- **Room cognition**: A restricted DeepSeek V4 Flash loop can inspect the room, use only Smart Room tools, temporarily raise a dark bulb to low warm light, re-observe, restore it, speak, or remain silent
 - **World-awareness**: Marvi knows where you are, what mode the room is in, light state — as ambient context, not memory writes
 - **Marvi integration**: Plugin tools (`smart_room_state`, `smart_room_set_mode`, etc.) + session context line + subconscious transitions
 
@@ -20,13 +22,15 @@ OwnTracks (iPhone) ──MQTT───┘
                                                   Tuya Controller (tinytuya)
                                                   (RGBCW bulb + HE20 sensor)
 Microphone ──transient gate──YAMNet──clap sequence──────────┘
+Camera ──latest-frame buffer──MediaPipe + InsightFace──vision truth──┤
+HE20 + vision conflicts ──DeepSeek room cognition──restricted tools─┘
 ```
 
 ## Installation
 
 ### 1. Install dependencies
 ```bash
-pip install tinytuya paho-mqtt pyyaml ai-edge-litert==2.1.6 sounddevice==0.5.5
+pip install tinytuya paho-mqtt pyyaml ai-edge-litert==2.1.6 sounddevice==0.5.5 mediapipe==1.0.0 insightface==1.0.1
 ```
 
 ### 2. Install Mosquitto MQTT broker
@@ -54,6 +58,39 @@ smart_room:
     max_gap_ms: 900
     decision_ms: 650
     cooldown_ms: 3000
+  vision:
+    enabled: true
+    camera_index: 0
+    camera_name: "Konftel Cam10"
+    width: 1280
+    height: 720
+    standby_fps: 1.5
+    active_fps: 8
+    # Normalized polygons; calibrate from smart_room_observe evidence.
+    zones:
+      bed: [[0.58, 0.38], [1.0, 0.38], [1.0, 1.0], [0.58, 1.0]]
+      desk: [[0.20, 0.25], [0.72, 0.25], [0.72, 1.0], [0.20, 1.0]]
+    sleep:
+      settling_seconds: 120
+      likely_sleeping_seconds: 600
+    gestures:
+      wake_gesture: Open_Palm
+      armed_seconds: 8
+      hold_seconds: 0.65
+    history:
+      retention_hours: 72
+      max_events: 2000
+    deep:
+      enabled: true
+      provider: openrouter
+      model: google/gemma-4-26b-a4b-it:free
+  cognition:
+    enabled: true
+    provider: opencode-go       # your unlimited DeepSeek V4 Flash route
+    model: deepseek-v4-flash
+    thinking: true
+    inspection_brightness: 8
+    max_tool_steps: 6
   automations:
     adaptive_light:
       enabled: true
@@ -103,6 +140,15 @@ python plugins/smart_room/scripts/create_owntracks_config.py `
 | `smart_room_health` | Device health check |
 | `smart_room_diagnostic` | Full diagnostic dump |
 | `smart_room_alarm` | Create/update/list/delete one-day or daily alarms; acknowledge active alarm |
+| `smart_room_observe` | Fresh local camera observation with face, zone, posture, sleep and visibility |
+| `smart_room_vision_history` | Query visual evidence and cognition decisions |
+| `smart_room_faces` | List and explicitly review/reject/delete local face identities |
+
+## Gesture map
+
+Gestures require holding `Open_Palm` first, which arms control for eight seconds. Then: `Pointing_Up` toggles the bulb, `Thumb_Up`/`Thumb_Down` change brightness, `Victory` starts Desktop voice mode, `Closed_Fist` cancels voice/sleep/alarm, and `ILoveYou` applies Relax. Confidence, hold, cooldown, and the mapping are configurable. Raw gestures cannot call arbitrary Marvi tools.
+
+Face identities are not learned silently. Unknown faces create throttled local review items; `smart_room_faces` accepts or rejects them. `enroll_current` provides an explicit short live enrollment and rejects multiple/inconsistent faces. Images expire according to `vision.history.retention_hours`, embeddings remain local, and deleting an identity removes its embeddings.
 
 ## Spec
 See `D:\hermes-agent\docs\superpowers\specs\2026-07-14-marvi-smart-room-plugin-v0.3.md` for the current v0.4 revision (the original path is retained for existing links).

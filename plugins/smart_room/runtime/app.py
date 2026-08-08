@@ -127,6 +127,8 @@ class Runtime:
         self._scheduler = None
         self._router = None
         self._sound_events = None
+        self._vision = None
+        self._cognition = None
         self._rpc_thread: Optional[threading.Thread] = None
         self._poll_thread: Optional[threading.Thread] = None
 
@@ -174,6 +176,24 @@ class Runtime:
 
         # Initialize command router
         self._router = CommandRouter(self._state, self._config, self)
+
+        # Camera perception and the restricted room-only cognition lane are
+        # plugin-local services; neither expands Marvi's core tool surface.
+        try:
+            from plugins.smart_room.runtime.vision import VisionService
+            from plugins.smart_room.runtime.cognition import CognitionWorker
+
+            self._vision = VisionService(
+                self._config.get("vision") or {}, self._state, self._state_lock,
+                self._emit_event, self._on_gesture_command,
+            )
+            self._vision.start()
+            self._cognition = CognitionWorker(
+                self._config.get("cognition") or {}, self, self._vision
+            )
+            self._cognition.start()
+        except Exception as e:
+            logger.warning("Vision/cognition init failed (non-fatal): %s", e)
 
         # Start RPC server
         self._running = True
@@ -325,6 +345,14 @@ class Runtime:
                 "alarm_acknowledged",
                 "room_entry",
                 "room_presence_unverified",
+                "vision_identity_state",
+                "vision_sleep_state",
+                "vision_camera_offline",
+                "vision_camera_online",
+                "vision_gesture",
+                "gesture_voice_mode_requested",
+                "sensor_vision_conflict",
+                "smart_room_cognition",
             }:
                 event["summary"] = data.get("summary") or event_type.replace("_", " ")
                 append_transition(event)
@@ -332,6 +360,9 @@ class Runtime:
             save_state(self._state)
         for action in actions:
             self._execute_action(action)
+        cognition = self._cognition
+        if cognition is not None:
+            cognition.submit(event)
 
     def _on_ble_presence(
         self, detected: bool, rssi: Optional[int], identity: Optional[str] = None
@@ -564,6 +595,36 @@ class Runtime:
         else:
             logger.warning("Unknown sound action: %s", action)
 
+    def _on_gesture_command(self, command: str, params: Dict[str, Any]) -> None:
+        """Execute debounced visual commands without LLM latency."""
+        with self._state_lock:
+            light_on = self._state.light.on
+            brightness = self._state.light.brightness
+        if command == "toggle_light":
+            self.set_light(on=not light_on, manual=True)
+        elif command == "brightness_up":
+            self.set_light(on=True, brightness=min(100, brightness + int(params.get("step", 15))), manual=True)
+        elif command == "brightness_down":
+            target = max(0, brightness - int(params.get("step", 15)))
+            self.set_light(on=target > 0, brightness=target, manual=True)
+        elif command == "set_mode":
+            self.set_mode(str(params.get("mode") or "relax"), reason="gesture")
+        elif command == "cancel":
+            if self._state.modes.active_mode == "sleep":
+                self.cancel_sleep()
+            elif self._state.active_alarm:
+                self.acknowledge_alarm(reason="gesture")
+            from plugins.smart_room.runtime.state_store import publish_gesture_command
+            publish_gesture_command("cancel")
+        elif command == "voice_mode":
+            from plugins.smart_room.runtime.state_store import publish_gesture_command
+            publish_gesture_command("voice_start")
+            self._emit_event("gesture_voice_mode_requested", {"source": "vision", "summary": "Hand gesture requested voice mode"})
+        elif command == "gesture_armed":
+            logger.debug("Hand gesture controls armed")
+        else:
+            logger.warning("Unknown gesture command: %s", command)
+
     # -------------------------------------------------------------------
     # Device polling
     # -------------------------------------------------------------------
@@ -680,6 +741,8 @@ class Runtime:
             }
             snapshot = self._state.to_dict()
         if stable_entry:
+            if self._vision:
+                self._vision.request_burst(float((self._config.get("vision") or {}).get("entry_burst_seconds", 10)))
             self._emit_event(
                 "he20_occupied",
                 {
@@ -1447,6 +1510,8 @@ class Runtime:
                 "enabled": False,
                 "running": False,
             },
+            "vision": self._vision.status() if self._vision else {"enabled": False, "running": False},
+            "cognition": self._cognition.status() if self._cognition else {"enabled": False, "running": False},
         }
 
     def get_clap_dataset_status(self) -> Dict[str, Any]:
@@ -1500,6 +1565,10 @@ class Runtime:
     def _cleanup(self) -> None:
         """Clean shutdown of all components."""
         logger.info("Smart room runtime shutting down...")
+        if self._cognition:
+            self._cognition.stop()
+        if self._vision:
+            self._vision.stop()
         if self._scheduler:
             self._scheduler.stop()
         if self._sound_events:

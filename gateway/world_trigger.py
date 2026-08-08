@@ -37,7 +37,7 @@ logger = logging.getLogger(__name__)
 # How often the watcher polls the smart_room event log. Coarser than a tight
 # loop but fine-grained enough that a real-time event doesn't sit for the
 # rest of a 20-minute scheduled-tick window. Config: smart_room.trigger.poll_seconds.
-DEFAULT_POLL_SECONDS = 30.0
+DEFAULT_POLL_SECONDS = 2.0
 
 # At most one world-triggered tick per this many seconds, regardless of how
 # many wake-worthy events land in between. Config: smart_room.trigger.debounce_seconds.
@@ -100,6 +100,15 @@ def is_wake_worthy(event: Dict[str, Any]) -> bool:
 
     if event_type == "device_offline":
         return True
+
+    if event_type in {
+        "room_entry", "room_presence_unverified", "vision_camera_offline",
+        "sensor_vision_conflict", "gesture_voice_mode_requested",
+    }:
+        return True
+
+    if event_type == "vision_identity_state":
+        return str(event.get("identity_state") or "") == "unknown_person"
 
     if event_type == "presence_detected":
         vacancy_seconds = event.get("vacancy_seconds")

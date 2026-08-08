@@ -171,3 +171,29 @@ class CommandRouter:
 
     def _handle_get_diagnostic(self, params: Dict[str, Any]) -> Dict[str, Any]:
         return {"success": True, "diagnostic": self._runtime.run_diagnostic()}
+
+    def _handle_vision_observe(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        if not self._runtime._vision:
+            return {"success": False, "error": "vision service is not configured"}
+        return {
+            "success": True,
+            "vision": self._runtime._vision.observe(
+                burst_seconds=float(params.get("burst_seconds", 3)),
+                save_evidence=bool(params.get("save_evidence", False)),
+                deep=bool(params.get("deep", False)),
+                question=str(params.get("question") or ""),
+            ),
+        }
+
+    def _handle_vision_history(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        if not self._runtime._vision:
+            return {"success": False, "error": "vision service is not configured"}
+        allowed = {key: params[key] for key in ("limit", "since", "event_type", "identity", "zone") if key in params}
+        return {"success": True, "events": self._runtime._vision.history(**allowed)}
+
+    def _handle_vision_faces(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        if not self._runtime._vision:
+            return {"success": False, "error": "vision service is not configured"}
+        action = str(params.get("action") or "list")
+        rest = {key: value for key, value in params.items() if key != "action"}
+        return {"success": True, "faces": self._runtime._vision.faces(action, **rest)}

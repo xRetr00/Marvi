@@ -158,6 +158,39 @@ SMART_ROOM_DIAGNOSTIC_SCHEMA: Dict[str, Any] = {
     "parameters": {"type": "object", "properties": {}, "additionalProperties": False},
 }
 
+SMART_ROOM_OBSERVE_SCHEMA: Dict[str, Any] = {
+    "name": "smart_room_observe",
+    "description": "Ask the Smart Room camera for a fresh local observation: visibility, people, reviewed face identity, zone, posture, sleep state, and gesture. This is operational vision, not memory.",
+    "parameters": {"type": "object", "properties": {
+        "burst_seconds": {"type": "number", "minimum": 1, "maximum": 5, "default": 3},
+        "save_evidence": {"type": "boolean", "default": False, "description": "Save a local review image for this observation."},
+        "deep": {"type": "boolean", "default": False, "description": "Use the configured vision-language model for whole-scene activity/object understanding."},
+        "question": {"type": "string", "description": "Optional focused question for deep scene analysis.", "maxLength": 500},
+    }, "additionalProperties": False},
+}
+
+SMART_ROOM_VISION_HISTORY_SCHEMA: Dict[str, Any] = {
+    "name": "smart_room_vision_history",
+    "description": "Query bounded local visual/cognition history for sensor conflicts, people, sleep, gestures, and decisions.",
+    "parameters": {"type": "object", "properties": {
+        "limit": {"type": "integer", "minimum": 1, "maximum": 200, "default": 20},
+        "since": {"type": "string"}, "event_type": {"type": "string"},
+        "identity": {"type": "string"}, "zone": {"type": "string"},
+    }, "additionalProperties": False},
+}
+
+SMART_ROOM_FACES_SCHEMA: Dict[str, Any] = {
+    "name": "smart_room_faces",
+    "description": "List, review, or delete local Smart Room face identities. Unknown faces are never learned automatically; review explicitly assigns or rejects them.",
+    "parameters": {"type": "object", "properties": {
+        "action": {"type": "string", "enum": ["list", "review", "enroll_current", "delete"]},
+        "event_id": {"type": "string", "description": "Pending unknown-face evidence ID."},
+        "name": {"type": "string"}, "owner": {"type": "boolean"}, "reject": {"type": "boolean"},
+        "samples": {"type": "integer", "minimum": 3, "maximum": 30, "default": 8},
+        "timeout": {"type": "number", "minimum": 3, "maximum": 30, "default": 20},
+    }, "required": ["action"], "additionalProperties": False},
+}
+
 
 # ---------------------------------------------------------------------------
 # Handlers — all non-blocking via bridge.call_runtime()
@@ -250,5 +283,27 @@ def handle_smart_room_alarm(args: Dict[str, Any], **_kw) -> str:
     params = {key: value for key, value in args.items() if key != "action"}
     try:
         return _json(call_runtime(method, params))
+    except RuntimeError as e:
+        return _err(str(e), code="DEVICE_TIMEOUT")
+
+
+def handle_smart_room_observe(args: Dict[str, Any], **_kw) -> str:
+    try:
+        return _json(call_runtime("vision_observe", args, timeout=max(6.0, float(args.get("burst_seconds", 3)) + 3)))
+    except RuntimeError as e:
+        return _err(str(e), code="DEVICE_TIMEOUT")
+
+
+def handle_smart_room_vision_history(args: Dict[str, Any], **_kw) -> str:
+    try:
+        return _json(call_runtime("vision_history", args))
+    except RuntimeError as e:
+        return _err(str(e), code="DEVICE_TIMEOUT")
+
+
+def handle_smart_room_faces(args: Dict[str, Any], **_kw) -> str:
+    try:
+        timeout = min(35.0, float(args.get("timeout", 20)) + 5) if args.get("action") == "enroll_current" else 8.0
+        return _json(call_runtime("vision_faces", args, timeout=timeout))
     except RuntimeError as e:
         return _err(str(e), code="DEVICE_TIMEOUT")

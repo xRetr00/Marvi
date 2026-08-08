@@ -20,12 +20,11 @@ def fetch_delta(store: SurfaceStore) -> Optional[str]:
     if not events:
         return None
     store.set_cursor({"event_id": max(int(e.get("id", 0)) for e in events)})
-    if not any(
-        event.get("type") not in {
-            "he20_occupied",
-            "he20_cleared",
-            "room_presence_unverified",
-        }
+    # Sensor-only, uncertain, visual, and cognition transitions are valuable
+    # evidence now that the subconscious can correlate them as a sequence.
+    if all(
+        event.get("type") in {"he20_occupied", "he20_cleared"}
+        and event.get("mode") == "sleep"
         for event in events
     ):
         return None

@@ -25,6 +25,9 @@ from plugins.smart_room.tools import (
     SMART_ROOM_HEALTH_SCHEMA,
     SMART_ROOM_DIAGNOSTIC_SCHEMA,
     SMART_ROOM_ALARM_SCHEMA,
+    SMART_ROOM_OBSERVE_SCHEMA,
+    SMART_ROOM_VISION_HISTORY_SCHEMA,
+    SMART_ROOM_FACES_SCHEMA,
     check_smart_room_requirements,
     handle_smart_room_state,
     handle_smart_room_set_mode,
@@ -34,6 +37,9 @@ from plugins.smart_room.tools import (
     handle_smart_room_health,
     handle_smart_room_diagnostic,
     handle_smart_room_alarm,
+    handle_smart_room_observe,
+    handle_smart_room_vision_history,
+    handle_smart_room_faces,
 )
 from plugins.smart_room.context import build_context_line
 from plugins.smart_room import process_manager
@@ -50,6 +56,9 @@ _TOOLS = (
     ("smart_room_health",      SMART_ROOM_HEALTH_SCHEMA,      handle_smart_room_health,      "💚"),
     ("smart_room_diagnostic",  SMART_ROOM_DIAGNOSTIC_SCHEMA,  handle_smart_room_diagnostic,  "🔍"),
     ("smart_room_alarm",       SMART_ROOM_ALARM_SCHEMA,       handle_smart_room_alarm,       "⏰"),
+    ("smart_room_observe",     SMART_ROOM_OBSERVE_SCHEMA,     handle_smart_room_observe,     "👁️"),
+    ("smart_room_vision_history", SMART_ROOM_VISION_HISTORY_SCHEMA, handle_smart_room_vision_history, "🎞️"),
+    ("smart_room_faces",       SMART_ROOM_FACES_SCHEMA,       handle_smart_room_faces,       "🙂"),
 )
 
 

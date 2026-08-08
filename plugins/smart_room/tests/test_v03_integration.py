@@ -595,7 +595,10 @@ def test_plugin_registers_tools_lifecycle_and_context(monkeypatch):
     monkeypatch.setattr(plugin.platform, "system", lambda: "Windows")
     ctx = FakeContext()
     plugin.register(ctx)
-    assert len(ctx.tools) == 8
+    assert {
+        "smart_room_state", "smart_room_set_light", "smart_room_observe",
+        "smart_room_vision_history", "smart_room_faces",
+    }.issubset({tool["name"] for tool in ctx.tools})
     assert {name for name, _ in ctx.hooks} == {
         "on_gateway_start", "on_gateway_stop", "pre_llm_call",
     }

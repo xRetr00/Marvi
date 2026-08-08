@@ -233,6 +233,37 @@ def publish_alarm(alarm_id: str, message: str, *, active: bool) -> None:
         logger.debug("Failed to publish smart-room alarm", exc_info=True)
 
 
+def publish_cognition(message: str, *, correlation_id: str) -> None:
+    """Deliver a deliberate Smart Room cognition message through Marvi."""
+    try:
+        from cron.scheduler import record_subconscious_activity
+
+        record_subconscious_activity(
+            source="smart_room_cognition",
+            job_id=correlation_id,
+            outcome="message",
+            summary="Smart Room noticed something",
+            thought=message,
+        )
+    except Exception:
+        logger.debug("Failed to publish Smart Room cognition", exc_info=True)
+
+
+def publish_gesture_command(command: str) -> None:
+    """Bridge a reviewed hand command to the active Desktop surface."""
+    try:
+        from cron.scheduler import record_subconscious_activity
+
+        record_subconscious_activity(
+            source="smart_room_gesture",
+            outcome="message",
+            summary="Smart Room gesture",
+            thought=f"__gesture__:{command}",
+        )
+    except Exception:
+        logger.debug("Failed to publish Smart Room gesture", exc_info=True)
+
+
 def load_transition_events(after_id: int = 0) -> list[Dict[str, Any]]:
     path = events_path()
     if not path.exists():

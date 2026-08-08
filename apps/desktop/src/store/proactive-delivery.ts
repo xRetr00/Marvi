@@ -116,6 +116,16 @@ export function proactiveMessage(run: ProactiveRun): string {
   return String(run.thought || run.summary || '').trim()
 }
 
+export function smartRoomGestureCommand(run: ProactiveRun): 'cancel' | 'voice_start' | null {
+  if (run.source !== 'smart_room_gesture') {
+    return null
+  }
+
+  const command = proactiveMessage(run).replace(/^__gesture__:/u, '')
+
+  return command === 'voice_start' || command === 'cancel' ? command : null
+}
+
 export function proactiveDeliveryAction(
   delivery: ProactiveDeliveryContext | undefined,
   urgency: ProactiveRun['urgency']
@@ -307,7 +317,15 @@ async function poll(): Promise<void> {
       }
 
       for (const run of candidates.values()) {
-        if (run.source === 'smart_room_alarm' && run.outcome === 'diff_silent') {
+        if (run.source === 'smart_room_gesture') {
+          const command = smartRoomGestureCommand(run)
+
+          if (command === 'voice_start') {
+            requestVoiceStart()
+          } else if (command === 'cancel') {
+            requestVoiceStop()
+          }
+        } else if (run.source === 'smart_room_alarm' && run.outcome === 'diff_silent') {
           if (activeAlarmCardId) {
             dismissIslandCard(activeAlarmCardId)
             activeAlarmCardId = null

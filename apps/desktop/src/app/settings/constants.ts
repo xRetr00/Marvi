@@ -269,8 +269,8 @@ export const ENUM_OPTIONS: Record<string, string[]> = {
     'medium-streaming'
   ],
   'stt.streaming.parakeet.model': ['nvidia/parakeet_realtime_eou_120m-v1'],
-  'stt.streaming.parakeet.engine': ['batch', 'cache_aware', 'rebuffer'],
-  'stt.streaming.parakeet.device': ['auto', 'cuda', 'cpu'],
+  'stt.streaming.parakeet.engine': ['native', 'batch', 'cache_aware', 'rebuffer'],
+  'stt.streaming.parakeet.device': ['auto', 'vulkan', 'metal', 'cuda', 'cpu'],
   'stt.streaming.moonshine.model': ['tiny-streaming', 'base-streaming', 'small-streaming', 'medium-streaming'],
   'stt.streaming.moonshine.device': ['auto', 'cpu'],
   'voice.wake_word.provider': ['livekit'],
@@ -734,8 +734,9 @@ export const FIELD_DESCRIPTIONS: Record<string, string> = defineFieldCopy({
       parakeet: {
         model: 'Parakeet Realtime EOU Hugging Face model id.',
         engine:
-          'Batch is the stable low-contention default. Cache-aware is experimental; rebuffer repeatedly decodes the growing utterance and is intended only for diagnostics.',
-        device: 'Use CUDA on an NVIDIA GPU, CPU as a fallback, or auto to select at runtime.'
+          'Native is the recommended local parakeet.cpp path with real streaming EOU. Batch is the legacy NeMo fallback; cache-aware is experimental; rebuffer is diagnostics only.',
+        device:
+          'Auto selects Vulkan on Windows/Linux and Metal on Apple silicon. Use CPU for compatibility; CUDA applies to the legacy NeMo engines.'
       },
       moonshine: {
         device: 'Auto currently resolves to CPU. Moonshine Voice does not expose CUDA execution.',

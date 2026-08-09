@@ -110,15 +110,44 @@ class VisionService:
     def status(self) -> Dict[str, Any]:
         return dict(self._status)
 
+    def preview(self, *, width: int = 720, quality: int = 72) -> Dict[str, Any]:
+        """Return a bounded JPEG data URL plus the latest perception overlay."""
+        frame = self._frame_copy()
+        if frame is None:
+            return {"available": False, "error": self._status.get("last_error") or "no camera frame is available"}
+        try:
+            import cv2
+
+            height, original_width = frame.shape[:2]
+            target_width = max(320, min(int(width), 960))
+            if original_width > target_width:
+                frame = cv2.resize(frame, (target_width, round(height * target_width / original_width)))
+            ok, encoded = cv2.imencode(
+                ".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, max(45, min(int(quality), 88))]
+            )
+            if not ok:
+                raise RuntimeError("failed to encode preview frame")
+            with self._lock:
+                vision = self._state.vision.__dict__.copy()
+            return {
+                "available": True,
+                "captured_at": now_iso(),
+                "image": "data:image/jpeg;base64," + base64.b64encode(encoded.tobytes()).decode("ascii"),
+                "vision": vision,
+            }
+        except Exception as exc:
+            self._status["preview_error"] = str(exc)
+            return {"available": False, "error": str(exc)}
+
     def _capture_loop(self) -> None:
         """Continuously replace one latest frame; never queue stale frames."""
-        import cv2
-
         retry = max(1.0, float(self.config.get("camera_retry_seconds", 5)))
         was_online = False
         while not self._stop.is_set():
             cap = None
             try:
+                import cv2
+
                 backend = cv2.CAP_DSHOW if hasattr(cv2, "CAP_DSHOW") else cv2.CAP_ANY
                 cap = cv2.VideoCapture(int(self.config.get("camera_index", 0)), backend)
                 cap.set(cv2.CAP_PROP_FRAME_WIDTH, int(self.config.get("width", 1280)))
@@ -137,11 +166,12 @@ class VisionService:
                     with self._latest_lock:
                         self._latest_frame = frame
             except Exception as exc:
-                self._status["last_error"] = str(exc)
-                self._mark_camera(False, str(exc))
+                message = f"{type(exc).__name__}: {exc}"
+                self._status["last_error"] = message
+                self._mark_camera(False, message)
                 if was_online or not self._last_event_values.get("camera_offline_emitted"):
                     self._last_event_values["camera_offline_emitted"] = True
-                    self._emit_event("vision_camera_offline", {"error": str(exc), "summary": "Smart Room camera offline"})
+                    self._emit_event("vision_camera_offline", {"error": message, "summary": "Smart Room camera offline"})
                 was_online = False
                 self._stop.wait(retry)
             finally:

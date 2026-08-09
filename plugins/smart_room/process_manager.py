@@ -5,6 +5,7 @@ from __future__ import annotations
 import atexit
 from contextlib import contextmanager
 import json
+import importlib.util
 import logging
 import os
 import secrets
@@ -27,6 +28,36 @@ _supervisor_home: Optional[Path] = None
 _process: Optional[subprocess.Popen] = None
 _atexit_registered = False
 logger = logging.getLogger(__name__)
+
+_VISION_IMPORTS = ("cv2", "mediapipe", "insightface")
+_VISION_SPECS = (
+    "opencv-contrib-python==5.0.0.93",
+    "mediapipe==1.0.0",
+    "insightface==1.0.1",
+)
+
+
+def _ensure_vision_dependencies(config: Dict[str, Any]) -> None:
+    """Install the plugin-local vision stack before spawning the daemon.
+
+    The runtime is a child of the gateway/desktop managed venv. Declaring
+    packages in plugin.yaml documents the plugin, but does not put them in
+    that venv by itself. Use Marvi's gated installer so Apply works on managed
+    installs too and a missing native module is reported before a silent child
+    thread failure.
+    """
+    if not (config.get("vision") or {}).get("enabled", False):
+        return
+    missing = [name for name in _VISION_IMPORTS if importlib.util.find_spec(name) is None]
+    if not missing:
+        return
+    from tools.lazy_deps import install_specs
+
+    logger.info("Installing Smart Room vision dependencies (missing: %s)", ", ".join(missing))
+    result = install_specs(list(_VISION_SPECS), timeout=600)
+    if not result.ok:
+        detail = result.reason or result.stderr or result.stdout or "dependency installation failed"
+        raise RuntimeError(f"Smart Room vision dependencies unavailable: {detail[-2000:]}")
 
 
 @contextmanager
@@ -325,6 +356,7 @@ def start_supervisor(config: Dict[str, Any]) -> Dict[str, Any]:
     with _lock:
         _supervisor_config = dict(config)
         _supervisor_home = Path(get_hermes_home())
+        _ensure_vision_dependencies(_supervisor_config)
         result = start(_supervisor_config)
         if _supervisor_thread and _supervisor_thread.is_alive():
             return result

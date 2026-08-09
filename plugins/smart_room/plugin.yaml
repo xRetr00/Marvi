@@ -8,6 +8,7 @@ platforms:
 pip_dependencies:
   - ai-edge-litert==2.1.6
   - sounddevice==0.5.5
+  - opencv-contrib-python==5.0.0.93
   - mediapipe==1.0.0
   - insightface==1.0.1
 provides_tools:

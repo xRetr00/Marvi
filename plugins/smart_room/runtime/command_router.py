@@ -136,6 +136,8 @@ class CommandRouter:
         health["sound_events"] = runtime.get(
             "sound_events", {"enabled": False, "running": False}
         )
+        health["vision"] = runtime.get("vision", {"enabled": False, "running": False})
+        health["cognition"] = runtime.get("cognition", {"enabled": False, "running": False})
         return {"success": True, "health": health}
 
     def _handle_get_clap_dataset(self, params: Dict[str, Any]) -> Dict[str, Any]:
@@ -190,6 +192,16 @@ class CommandRouter:
             return {"success": False, "error": "vision service is not configured"}
         allowed = {key: params[key] for key in ("limit", "since", "event_type", "identity", "zone") if key in params}
         return {"success": True, "events": self._runtime._vision.history(**allowed)}
+
+    def _handle_vision_preview(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        if not self._runtime._vision:
+            return {"success": False, "error": "vision service is not configured"}
+        return {
+            "success": True,
+            "preview": self._runtime._vision.preview(
+                width=int(params.get("width", 720)), quality=int(params.get("quality", 72))
+            ),
+        }
 
     def _handle_vision_faces(self, params: Dict[str, Any]) -> Dict[str, Any]:
         if not self._runtime._vision:

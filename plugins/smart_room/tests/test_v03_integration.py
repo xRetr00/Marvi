@@ -757,6 +757,26 @@ def test_supervisor_trusts_a_live_runtime_during_rpc_startup_grace(monkeypatch):
     assert process_manager._managed_runtime_alive({"pid": 123, "started_at": time.time()}) is True
 
 
+def test_vision_dependencies_are_installed_only_when_enabled_and_missing(monkeypatch):
+    installed = []
+    monkeypatch.setattr(process_manager.importlib.util, "find_spec", lambda _name: None)
+
+    class Result:
+        ok = True
+        reason = stderr = stdout = ""
+
+    monkeypatch.setattr(
+        "tools.lazy_deps.install_specs",
+        lambda specs, timeout: installed.append((specs, timeout)) or Result(),
+    )
+
+    process_manager._ensure_vision_dependencies({"vision": {"enabled": False}})
+    assert installed == []
+
+    process_manager._ensure_vision_dependencies({"vision": {"enabled": True}})
+    assert installed == [(list(process_manager._VISION_SPECS), 600)]
+
+
 def test_subconscious_fetcher_baselines_then_returns_only_new_events():
     from cron.scripts.subconscious.smart_room import fetch_delta
     from cron.scripts.subconscious.snapshot_store import SurfaceStore

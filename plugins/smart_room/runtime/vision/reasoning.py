@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
+import json
 import math
 import time
 from typing import Any, Dict, Optional
@@ -25,6 +26,11 @@ def point_in_polygon(x: float, y: float, polygon: list[list[float]]) -> bool:
 def locate_zone(point: tuple[float, float], zones: Dict[str, Any]) -> str:
     x, y = point
     for name, polygon in zones.items():
+        if isinstance(polygon, str):
+            try:
+                polygon = json.loads(polygon)
+            except (TypeError, ValueError):
+                polygon = None
         if isinstance(polygon, list) and point_in_polygon(x, y, polygon):
             return str(name)
     return "room"
@@ -123,6 +129,8 @@ class GestureController:
     def update(self, gesture: str, confidence: float, *, now_monotonic: Optional[float] = None) -> GestureDecision:
         now = now_monotonic if now_monotonic is not None else time.monotonic()
         gesture = str(gesture or "").strip()
+        if not self._config.get("enabled", True):
+            return GestureDecision(gesture=gesture, armed=False)
         if not gesture or confidence < float(self._config.get("confidence", 0.65)):
             self._candidate = ""
             self._candidate_since = 0.0

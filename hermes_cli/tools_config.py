@@ -1885,6 +1885,28 @@ def _run_post_setup(post_setup_key: str):
 
     elif post_setup_key == "pockettts":
         installed = False
+        try:
+            __import__("pocket_tts")
+            _print_success("    pocket-tts is already installed")
+            installed = True
+        except ImportError:
+            _print_info("    Installing PocketTTS...")
+            try:
+                result = _pip_install(["-U", "pocket-tts", "scipy", "--quiet"], timeout=600)
+                if result.returncode == 0:
+                    _print_success("    PocketTTS installed")
+                    installed = True
+                else:
+                    _print_warning("    PocketTTS install failed:")
+                    _print_info(f"      {(result.stderr or '').strip()[:300]}")
+                    _print_info("    Run manually: uv pip install -U pocket-tts scipy")
+            except subprocess.TimeoutExpired:
+                _print_warning("    PocketTTS install timed out (>10min)")
+                _print_info("    Run manually: uv pip install -U pocket-tts scipy")
+        if installed and cfg_get(load_config(), "tts", "pockettts", "device", default="cpu") == "cuda":
+            _ensure_cuda_torch(Path(sys.executable))
+        if installed:
+            _print_info("    Set tts.provider to pockettts and choose tts.pockettts.voice.")
     elif post_setup_key == "faster_whisper":
         import subprocess
         try:
@@ -1907,31 +1929,6 @@ def _run_post_setup(post_setup_key: str):
         except subprocess.TimeoutExpired:
             _print_warning("    faster-whisper install timed out (>5min)")
             _print_info("    Run manually: uv pip install -U faster-whisper")
-
-    elif post_setup_key == "kittentts":
-        try:
-            __import__("pocket_tts")
-            _print_success("    pocket-tts is already installed")
-        except ImportError:
-            _print_info("    Installing PocketTTS...")
-            try:
-                result = _pip_install(["-U", "pocket-tts", "scipy", "--quiet"], timeout=600)
-                if result.returncode == 0:
-                    _print_success("    PocketTTS installed")
-                    installed = True
-                else:
-                    _print_warning("    PocketTTS install failed:")
-                    _print_info(f"      {(result.stderr or '').strip()[:300]}")
-                    _print_info("    Run manually: uv pip install -U pocket-tts scipy")
-            except subprocess.TimeoutExpired:
-                _print_warning("    PocketTTS install timed out (>10min)")
-                _print_info("    Run manually: uv pip install -U pocket-tts scipy")
-        else:
-            installed = True
-        if installed and cfg_get(load_config(), "tts", "pockettts", "device", default="cpu") == "cuda":
-            _ensure_cuda_torch(Path(sys.executable))
-        if installed:
-            _print_info("    Set tts.provider to pockettts and choose tts.pockettts.voice.")
 
     elif post_setup_key == "piper":
         try:
@@ -1979,51 +1976,15 @@ def _run_post_setup(post_setup_key: str):
             _print_info("    Run manually: uv pip install -U livekit-wakeword ten-vad")
 
     elif post_setup_key == "parakeet_stt":
-        _print_info("    Installing Parakeet Realtime EOU STT into its venv...")
+        _print_info("    Installing native Parakeet Realtime EOU STT (local accelerated runtime)...")
         try:
-            from hermes_constants import get_hermes_home
+            from tools.parakeet_streaming_stt import install_native_parakeet
 
-            venv_dir = get_hermes_home() / "parakeet-venv"
-            py = venv_dir / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
-            if not py.exists():
-                _print_info(f"    Creating Parakeet venv: {venv_dir}")
-                subprocess.run([sys.executable, "-m", "venv", str(venv_dir)], check=True, timeout=120)
-            _ensure_cuda_torch(py)
-            result = _pip_install_with_python(
-                py,
-                [
-                    "-U",
-                    "pip",
-                    "setuptools",
-                    "wheel",
-                    "nemo_toolkit[asr]",
-                    "hf_xet",
-                    "soundfile",
-                    "packaging",
-                    "--quiet",
-                ],
-                timeout=900,
-            )
-            if result.returncode == 0:
-                verify = subprocess.run(
-                    [str(py), "-c", "import nemo.collections.asr"],
-                    capture_output=True,
-                    text=True,
-                    timeout=60,
-                )
-                if verify.returncode != 0:
-                    _print_warning("    Parakeet install completed, but NeMo ASR verification failed:")
-                    _print_info(f"      {(verify.stderr or '').strip()[:300]}")
-                    return
-                _print_success("    Parakeet Realtime EOU STT dependencies installed in parakeet-venv")
-                _print_info("    Model downloads on first use; set stt.streaming.provider to parakeet.")
-                return
-            _print_warning("    Parakeet Realtime EOU STT install failed:")
-            _print_info(f"      {(result.stderr or '').strip()[:300]}")
-            _print_info(f"    Run manually: \"{py}\" -m pip install -U \"nemo_toolkit[asr]\" hf_xet soundfile packaging")
-        except subprocess.TimeoutExpired:
-            _print_warning("    Parakeet Realtime EOU STT install timed out (>15min)")
-            _print_info("    Run manually from the parakeet-venv Python shown above.")
+            library, model = install_native_parakeet()
+            _print_success("    Native Parakeet Realtime EOU STT installed")
+            _print_info(f"    Runtime: {library}")
+            _print_info(f"    Model: {model}")
+            _print_info("    Enable it with stt.streaming.provider=parakeet and engine=native.")
         except Exception as e:
             _print_warning(f"    Parakeet Realtime EOU STT install failed: {e}")
 

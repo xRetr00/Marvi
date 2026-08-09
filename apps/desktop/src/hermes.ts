@@ -805,6 +805,21 @@ export interface SmartRoomClapDataset {
   target: number
 }
 
+export interface SmartRoomVisionPreview {
+  available: boolean
+  captured_at?: string
+  error?: string
+  image?: string
+  vision?: Record<string, any>
+}
+
+export interface SmartRoomFaces {
+  owner: null | string
+  people: Record<string, { reviewed: boolean; samples: number }>
+  pending: number
+  pending_items: Array<{ event_id: string; evidence_path?: string }>
+}
+
 function smartRoomApi<T>(path: string, method = 'GET', body?: unknown): Promise<T> {
   return window.hermesDesktop.api<T>({
     ...profileScoped(),
@@ -835,6 +850,17 @@ export const getSmartRoomClapDataset = () =>
   smartRoomApi<{ dataset: SmartRoomClapDataset }>('/clap-dataset')
 export const reviewSmartRoomClap = (id: string, confirmed: boolean) =>
   smartRoomApi<{ dataset: SmartRoomClapDataset }>('/clap-dataset/review', 'POST', { id, confirmed })
+export const getSmartRoomVisionPreview = () =>
+  smartRoomApi<{ preview: SmartRoomVisionPreview }>('/vision/preview')
+export const observeSmartRoomVision = (deep = false, question = '') =>
+  smartRoomApi<{ vision: Record<string, any> }>('/vision/observe', 'POST', { deep, question, save_evidence: false })
+export const getSmartRoomFaces = () => smartRoomApi<{ faces: SmartRoomFaces }>('/vision/faces')
+export const enrollSmartRoomFace = (name: string, owner: boolean, samples = 8) =>
+  smartRoomApi<{ faces: SmartRoomFaces }>('/vision/faces/enroll', 'POST', { name, owner, samples })
+export const reviewSmartRoomFace = (event_id: string, name: string, owner = false, reject = false) =>
+  smartRoomApi<{ faces: SmartRoomFaces }>('/vision/faces/review', 'POST', { event_id, name, owner, reject })
+export const deleteSmartRoomFace = (name: string) =>
+  smartRoomApi<{ faces: SmartRoomFaces }>(`/vision/faces/${encodeURIComponent(name)}`, 'DELETE')
 
 export interface VoiceSpeaker {
   consistency: number | null

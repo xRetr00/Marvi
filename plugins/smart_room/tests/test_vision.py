@@ -26,6 +26,7 @@ def test_face_similarity_and_reviewed_matching(tmp_path, monkeypatch):
 def test_zone_and_sleep_temporal_contract():
     zones = {"bed": [[0, 0], [0.5, 0], [0.5, 1], [0, 1]]}
     assert locate_zone((0.2, 0.5), zones) == "bed"
+    assert locate_zone((0.2, 0.5), {"bed": json.dumps(zones["bed"])}) == "bed"
     tracker = SleepTracker({"settling_seconds": 10, "likely_sleeping_seconds": 30, "stillness_distance": 0.1})
     assert tracker.update(owner_visible=True, owner_zone="bed", posture="lying", center=(0.2, 0.5), mmwave_occupied=True, now_monotonic=100) == "in_bed_awake"
     assert tracker.update(owner_visible=True, owner_zone="bed", posture="lying", center=(0.2, 0.5), mmwave_occupied=True, now_monotonic=111) == "settling"
@@ -43,6 +44,7 @@ def test_gestures_require_hold_and_explicit_arming():
     gestures.update("Thumb_Up", 0.9, now_monotonic=5)
     command = gestures.update("Thumb_Up", 0.9, now_monotonic=6)
     assert command.command == "brightness_up"
+    assert GestureController({"enabled": False}).update("Open_Palm", 1, now_monotonic=10).command is None
 
 
 def test_cognition_trigger_filter():

@@ -4,13 +4,19 @@ from __future__ import annotations
 
 import argparse
 import base64
+import ctypes
 import json
 import logging
 import os
+import platform
+import shutil
 import sys
+import tarfile
 import tempfile
 import time
 import traceback
+import urllib.request
+import zipfile
 from contextlib import redirect_stdout
 from dataclasses import dataclass
 from pathlib import Path
@@ -21,6 +27,12 @@ import numpy as np
 logger = logging.getLogger(__name__)
 
 DEFAULT_PARAKEET_MODEL = "nvidia/parakeet_realtime_eou_120m-v1"
+PARAKEET_CPP_VERSION = "0.5.0"
+PARAKEET_CPP_MODEL_FILE = "realtime_eou_120m-v1-q8_0.gguf"
+PARAKEET_CPP_MODEL_URL = (
+    "https://huggingface.co/mudler/parakeet-cpp-gguf/resolve/main/"
+    + PARAKEET_CPP_MODEL_FILE
+)
 
 
 @dataclass(frozen=True)
@@ -34,7 +46,8 @@ class ParakeetStreamingConfig:
     eou_token: str = "<EOU>"
     # NOTE(duplex-phase1): STT engine selection + tuning knobs. See
     # docs/design/2026-07-05-voice-duplex-design.md (Tunables).
-    #   engine: "batch" (buffer cheaply; semantic EOU is probed on a VAD pause),
+    #   engine: "native" (parakeet.cpp cache-aware streaming + model EOU),
+    #           "batch" (buffer cheaply; semantic EOU is probed on a VAD pause),
     #           "auto" (legacy alias that also buffers),
     #           "cache_aware" (force streaming; error+fallback if unavailable),
     #           "rebuffer" (force the O(n^2) re-transcribe fallback).
@@ -46,7 +59,7 @@ class ParakeetStreamingConfig:
     debug: bool = False
 
 
-_MODEL_CACHE: dict[tuple[str, str, str, float | None, bool, str], Any] = {}
+_MODEL_CACHE: dict[tuple[str, str, str, float | None, bool, str, str], Any] = {}
 
 
 def resolve_parakeet_config(stt_config: dict[str, Any] | None) -> ParakeetStreamingConfig:
@@ -90,10 +103,10 @@ def resolve_parakeet_config(stt_config: dict[str, Any] | None) -> ParakeetStream
     # ``rebuffer`` re-runs NeMo over the full utterance every 500 ms.  That is
     # useful for diagnostics, but it is O(n²), creates a temporary manifest on
     # every pass, and competes with wake-word/TTS inference for the GPU.  Keep it
-    # explicit.  The production default buffers cheaply and lets the duplex
-    # endpoint issue one semantic-EOU probe when VAD observes a pause.
+    # explicit. The legacy batch engine buffers cheaply and lets duplex issue
+    # one semantic-EOU probe; the profile default selects native streaming.
     engine = str(pick("engine", "batch")).strip().lower() or "batch"
-    if engine not in {"auto", "batch", "rebuffer", "cache_aware"}:
+    if engine not in {"native", "auto", "batch", "rebuffer", "cache_aware"}:
         engine = "batch"
 
     return ParakeetStreamingConfig(
@@ -162,10 +175,18 @@ def _load_parakeet_model(config: ParakeetStreamingConfig) -> Any:
         config.max_gpu_memory_gb,
         config.cpu_fallback,
         config.eou_token,
+        config.engine,
     )
     cached = _MODEL_CACHE.get(key)
     if cached is not None:
         return cached
+
+    if config.engine == "native":
+        model = _NativeParakeetModel(
+            native_parakeet_library_path(config.device), native_parakeet_model_path()
+        )
+        _MODEL_CACHE[key] = model
+        return model
 
     try:
         import torch
@@ -245,14 +266,167 @@ def warm_parakeet_stt(stt_config: dict[str, Any] | None = None) -> bool:
     return True
 
 
-def parakeet_venv_python() -> Path:
+def _native_root() -> Path:
     from hermes_constants import get_hermes_home
 
+    return get_hermes_home() / "cache" / "parakeet-cpp"
+
+
+def native_parakeet_model_path() -> Path:
+    return _native_root() / "models" / PARAKEET_CPP_MODEL_FILE
+
+
+def _native_library_name() -> str:
+    if sys.platform == "win32":
+        return "parakeet.dll"
+    if sys.platform == "darwin":
+        return "libparakeet.dylib"
+    return "libparakeet.so"
+
+
+def _native_backend(requested: str = "auto") -> str:
+    requested = str(requested or "auto").strip().lower()
+    if requested in {"cpu", "vulkan", "metal"}:
+        return requested
+    if sys.platform == "darwin":
+        return "metal" if platform.machine().lower() in {"arm64", "aarch64"} else "cpu"
+    # Vulkan is a compact, self-contained accelerated build and avoids the
+    # ~580MB CUDA runtime bundle. A user can explicitly select CPU on hosts
+    # without Vulkan; duplex voice also has a local Moonshine fallback.
+    return "vulkan"
+
+
+def native_parakeet_library_path(backend: str = "auto") -> Path:
+    backend = _native_backend(backend)
+    root = _native_root() / f"v{PARAKEET_CPP_VERSION}-{backend}"
+    direct = root / _native_library_name()
+    if direct.exists():
+        return direct
+    matches = list(root.rglob(_native_library_name())) if root.exists() else []
+    return matches[0] if matches else direct
+
+
+def native_parakeet_available(backend: str = "auto") -> bool:
+    return native_parakeet_library_path(backend).is_file() and native_parakeet_model_path().is_file()
+
+
+def _native_asset_name(backend: str = "auto") -> str:
+    backend = _native_backend(backend)
+    machine = platform.machine().lower()
+    arm = machine in {"arm64", "aarch64"}
+    if sys.platform == "win32":
+        if arm:
+            raise RuntimeError("parakeet.cpp does not publish a Windows ARM64 library")
+        return f"parakeet-v{PARAKEET_CPP_VERSION}-lib-win-{backend}-x64.zip"
+    if sys.platform == "darwin":
+        flavor = "metal-arm64" if backend == "metal" and arm else "cpu-x64"
+        return f"parakeet-v{PARAKEET_CPP_VERSION}-lib-macos-{flavor}.tar.gz"
+    arch = "arm64" if arm else "x64"
+    return f"parakeet-v{PARAKEET_CPP_VERSION}-lib-linux-{backend}-{arch}.tar.gz"
+
+
+def _download_file(url: str, destination: Path, *, progress: Callable[[str], None] | None = None) -> None:
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    partial = destination.with_suffix(destination.suffix + ".part")
+    request = urllib.request.Request(url, headers={"User-Agent": "Marvi/parakeet-setup"})
+    try:
+        with urllib.request.urlopen(request, timeout=60) as response, partial.open("wb") as output:
+            total = int(response.headers.get("Content-Length") or 0)
+            copied = 0
+            while True:
+                chunk = response.read(1024 * 1024)
+                if not chunk:
+                    break
+                output.write(chunk)
+                copied += len(chunk)
+                if progress and total:
+                    progress(f"{destination.name}: {copied * 100 // total}%")
+        if partial.stat().st_size == 0:
+            raise RuntimeError(f"Downloaded an empty file from {url}")
+        partial.replace(destination)
+    finally:
+        try:
+            partial.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+
+def _safe_extract(archive: Path, destination: Path) -> None:
+    destination.mkdir(parents=True, exist_ok=True)
+    base = destination.resolve()
+
+    def safe(name: str) -> bool:
+        candidate = (destination / name).resolve()
+        return candidate == base or base in candidate.parents
+
+    if archive.name.endswith(".zip"):
+        with zipfile.ZipFile(archive) as bundle:
+            if not all(safe(info.filename) for info in bundle.infolist()):
+                raise RuntimeError("Unsafe path in parakeet.cpp archive")
+            bundle.extractall(destination)
+        return
+    with tarfile.open(archive, "r:gz") as bundle:
+        if not all(safe(member.name) for member in bundle.getmembers()):
+            raise RuntimeError("Unsafe path in parakeet.cpp archive")
+        bundle.extractall(destination, filter="data")
+
+
+def install_native_parakeet(
+    *,
+    backend: str = "auto",
+    progress: Callable[[str], None] | None = None,
+) -> tuple[Path, Path]:
+    """Install the small local parakeet.cpp runtime and quantized EOU model.
+
+    Downloads are profile-scoped, resumable on retry through atomic ``.part``
+    files, and never add packages to Marvi's Python environment.
+    """
+    backend = _native_backend(backend)
+    library = native_parakeet_library_path(backend)
+    model = native_parakeet_model_path()
+    root = _native_root()
+    if not library.is_file():
+        asset = _native_asset_name(backend)
+        archive = root / "downloads" / asset
+        if not archive.is_file():
+            _download_file(
+                f"https://github.com/mudler/parakeet.cpp/releases/download/v{PARAKEET_CPP_VERSION}/{asset}",
+                archive,
+                progress=progress,
+            )
+        target = root / f"v{PARAKEET_CPP_VERSION}-{backend}"
+        staging = root / f".v{PARAKEET_CPP_VERSION}-{backend}.installing"
+        root_resolved = root.resolve()
+        if staging.resolve().parent != root_resolved or target.resolve().parent != root_resolved:
+            raise RuntimeError("Refusing to replace a Parakeet runtime outside its cache root")
+        if staging.exists():
+            shutil.rmtree(staging)
+        _safe_extract(archive, staging)
+        found = list(staging.rglob(_native_library_name()))
+        if not found:
+            raise RuntimeError(f"{_native_library_name()} was missing from {asset}")
+        if target.exists():
+            shutil.rmtree(target)
+        target.mkdir(parents=True, exist_ok=True)
+        for item in found[0].parent.iterdir():
+            shutil.move(str(item), str(target / item.name))
+        shutil.rmtree(staging, ignore_errors=True)
+        library = native_parakeet_library_path(backend)
+    if not model.is_file():
+        _download_file(PARAKEET_CPP_MODEL_URL, model, progress=progress)
+    return library, model
+
+
+def parakeet_venv_python(stt_config: dict[str, Any] | None = None) -> Path:
+    from hermes_constants import get_hermes_home
+
+    if resolve_parakeet_config(stt_config).engine == "native":
+        return Path(sys.executable)
     return get_hermes_home() / "parakeet-venv" / ("Scripts/python.exe" if sys.platform == "win32" else "bin/python")
 
 
-def parakeet_stdio_command() -> list[str]:
-    return [str(parakeet_venv_python()), "-m", "tools.parakeet_streaming_stt", "--stdio"]
+def parakeet_stdio_command(stt_config: dict[str, Any] | None = None) -> list[str]:
+    return [str(parakeet_venv_python(stt_config)), "-m", "tools.parakeet_streaming_stt", "--stdio"]
 
 
 def _extract_text(result: Any) -> str:
@@ -268,6 +442,145 @@ def _extract_text(result: Any) -> str:
 
 def _strip_eou(text: str, token: str) -> str:
     return text.replace(token, " ").replace("<eou>", " ").strip()
+
+
+class _NativeParakeetModel:
+    """Thin ctypes owner for parakeet.cpp's stable C ABI.
+
+    The 120M EOU model uses the compact Vulkan/Metal build where available;
+    this avoids the large CUDA runtime while remaining substantially faster
+    than real-time. A CPU build remains selectable as a compatibility path.
+    """
+
+    def __init__(self, library_path: Path, model_path: Path) -> None:
+        if not library_path.is_file() or not model_path.is_file():
+            raise RuntimeError(
+                "Native Parakeet streaming files are missing. "
+                "Run: hermes tools post-setup parakeet_stt"
+            )
+        self.library_path = library_path
+        self.model_path = model_path
+        self._dll_directory = None
+        if sys.platform == "win32" and hasattr(os, "add_dll_directory"):
+            self._dll_directory = os.add_dll_directory(str(library_path.parent))
+        self.lib = ctypes.CDLL(str(library_path))
+        self._configure_abi()
+        abi = int(self.lib.parakeet_capi_abi_version())
+        if abi < 5:
+            raise RuntimeError(f"parakeet.cpp ABI {abi} is too old; ABI 5+ is required")
+        self.ctx = self.lib.parakeet_capi_load(os.fsencode(model_path))
+        if not self.ctx:
+            raise RuntimeError(self.last_error() or f"Could not load {model_path.name}")
+        logger.info(
+            "Loaded native parakeet.cpp ABI %d model %s via %s",
+            abi,
+            model_path.name,
+            library_path.parent.name,
+        )
+
+    def _configure_abi(self) -> None:
+        lib = self.lib
+        lib.parakeet_capi_abi_version.argtypes = []
+        lib.parakeet_capi_abi_version.restype = ctypes.c_int
+        lib.parakeet_capi_load.argtypes = [ctypes.c_char_p]
+        lib.parakeet_capi_load.restype = ctypes.c_void_p
+        lib.parakeet_capi_free.argtypes = [ctypes.c_void_p]
+        lib.parakeet_capi_free.restype = None
+        lib.parakeet_capi_stream_begin.argtypes = [ctypes.c_void_p]
+        lib.parakeet_capi_stream_begin.restype = ctypes.c_void_p
+        lib.parakeet_capi_stream_feed.argtypes = [
+            ctypes.c_void_p,
+            ctypes.POINTER(ctypes.c_float),
+            ctypes.c_int,
+            ctypes.POINTER(ctypes.c_int),
+        ]
+        lib.parakeet_capi_stream_feed.restype = ctypes.c_void_p
+        lib.parakeet_capi_stream_finalize.argtypes = [ctypes.c_void_p]
+        lib.parakeet_capi_stream_finalize.restype = ctypes.c_void_p
+        lib.parakeet_capi_stream_free.argtypes = [ctypes.c_void_p]
+        lib.parakeet_capi_stream_free.restype = None
+        lib.parakeet_capi_free_string.argtypes = [ctypes.c_void_p]
+        lib.parakeet_capi_free_string.restype = None
+        lib.parakeet_capi_last_error.argtypes = [ctypes.c_void_p]
+        lib.parakeet_capi_last_error.restype = ctypes.c_char_p
+
+    def last_error(self) -> str:
+        raw = self.lib.parakeet_capi_last_error(getattr(self, "ctx", None))
+        return raw.decode("utf-8", errors="replace") if raw else ""
+
+    def begin_stream(self) -> "_NativeParakeetStream":
+        stream = self.lib.parakeet_capi_stream_begin(self.ctx)
+        if not stream:
+            raise RuntimeError(self.last_error() or "Could not start native Parakeet stream")
+        return _NativeParakeetStream(self, stream)
+
+    def read_string(self, pointer: int | None) -> str:
+        if not pointer:
+            raise RuntimeError(self.last_error() or "Native Parakeet decode failed")
+        try:
+            return ctypes.string_at(pointer).decode("utf-8", errors="replace")
+        finally:
+            self.lib.parakeet_capi_free_string(pointer)
+
+    def close(self) -> None:
+        ctx = getattr(self, "ctx", None)
+        if ctx:
+            self.lib.parakeet_capi_free(ctx)
+            self.ctx = None
+
+    def __del__(self) -> None:  # pragma: no cover - interpreter cleanup timing
+        try:
+            self.close()
+        except Exception:
+            pass
+
+
+class _NativeParakeetStream:
+    EOU = 1
+    EOB = 2
+
+    def __init__(self, model: _NativeParakeetModel, stream: int) -> None:
+        self.model = model
+        self.stream = stream
+        self.text = ""
+        self.closed = False
+
+    def _append(self, piece: str) -> None:
+        if piece:
+            self.text += piece
+
+    def push(self, samples: np.ndarray) -> tuple[str, float] | None:
+        values = np.ascontiguousarray(samples, dtype=np.float32)
+        events = ctypes.c_int(0)
+        pointer = values.ctypes.data_as(ctypes.POINTER(ctypes.c_float))
+        result = self.model.lib.parakeet_capi_stream_feed(
+            self.stream, pointer, int(values.size), ctypes.byref(events)
+        )
+        piece = self.model.read_string(result)
+        self._append(piece)
+        eou = bool(events.value & self.EOU)
+        if piece or eou:
+            return self.text.strip(), 1.0 if eou else 0.0
+        return None
+
+    def finish(self) -> str:
+        if self.closed:
+            return self.text.strip()
+        try:
+            self._append(
+                self.model.read_string(
+                    self.model.lib.parakeet_capi_stream_finalize(self.stream)
+                )
+            )
+            return self.text.strip()
+        finally:
+            self.model.lib.parakeet_capi_stream_free(self.stream)
+            self.closed = True
+
+    def close(self) -> None:
+        if not self.closed:
+            self.model.lib.parakeet_capi_stream_free(self.stream)
+            self.closed = True
 
 
 class _CacheAwareStream:
@@ -404,14 +717,15 @@ class _CacheAwareStream:
 class ParakeetStreamingSession:
     """Session fed by browser Float32 mic frames and finalized with Parakeet EOU.
 
-    Three engines: cheap batch buffering (the default), an explicit whole-buffer
-    partial mode for diagnostics, and the cache-aware fast path when requested
-    and supported. The full sample buffer is retained for final transcription.
+    Four engines: native parakeet.cpp streaming, cheap legacy batch buffering,
+    an explicit whole-buffer diagnostic mode, and NeMo's experimental
+    cache-aware path. The full sample buffer is retained for compatibility.
     """
 
     # Re-transcribe cadence for the FALLBACK engine only. ponytail: O(n^2) over
     # the utterance; fine for short turns. The cache-aware engine replaces this.
     _PARTIAL_INTERVAL_SAMPLES = 8000  # 0.5s at 16 kHz
+    _SILENCE_RMS_FLOOR = 1e-4
 
     def __init__(
         self,
@@ -423,8 +737,9 @@ class ParakeetStreamingSession:
         self.config = resolve_parakeet_config(stt_config)
         self._loader = loader
         self._model: Any = None
-        self._stream: _CacheAwareStream | None = None
+        self._stream: _CacheAwareStream | _NativeParakeetStream | None = None
         self._samples: list[float] = []
+        self._signal_sum_squares = 0.0
         self._since_last = 0
         self._last_partial = ""
         self.last_eou = False
@@ -437,6 +752,12 @@ class ParakeetStreamingSession:
         self._stream = self._maybe_start_cache_aware()
 
     def _maybe_start_cache_aware(self) -> _CacheAwareStream | None:
+        if self.config.engine == "native":
+            if not isinstance(self._model, _NativeParakeetModel):
+                raise RuntimeError("Native Parakeet engine did not load its native runtime")
+            logger.info("Parakeet STT engine=native ACTIVE (parakeet.cpp cache-aware streaming)")
+            return self._model.begin_stream()
+
         # Cache-aware streaming is OPT-IN only (engine=cache_aware). It needs a
         # specific NeMo/CUDA config and currently crashes on some setups
         # (partial_hypotheses + frame-looping + cuda graphs -> NotImplementedError),
@@ -475,7 +796,14 @@ class ParakeetStreamingSession:
             return
         clamped = [float(max(-1.0, min(1.0, sample))) for sample in samples]
         self._samples.extend(clamped)
+        self._signal_sum_squares += sum(sample * sample for sample in clamped)
         self._since_last += len(clamped)
+
+    def _effectively_silent(self) -> bool:
+        if not self._samples:
+            return True
+        rms = (self._signal_sum_squares / len(self._samples)) ** 0.5
+        return rms < self._SILENCE_RMS_FLOOR
 
     def accept_bytes(self, chunk: bytes) -> str:
         """Accept a Float32 mic chunk; return a fresh partial transcript or ''."""
@@ -500,6 +828,9 @@ class ParakeetStreamingSession:
                 text, eou_prob = pushed
                 self.last_eou_prob = eou_prob
                 self.last_eou = eou_prob >= 1.0
+                if isinstance(self._stream, _NativeParakeetStream) and self._effectively_silent():
+                    self._last_partial = ""
+                    return ""
                 self._last_partial = text
                 return text
 
@@ -532,7 +863,7 @@ class ParakeetStreamingSession:
         if self._closed or not self._samples:
             return self._last_partial
         if self._stream is not None:
-            # Cache-aware mode already reports EOU as chunks are pushed.
+            # Native/cache-aware modes report EOU as chunks are pushed.
             return self._last_partial
         if self._model is None:
             self.start()
@@ -547,7 +878,9 @@ class ParakeetStreamingSession:
         self._closed = True
         if self._stream is not None:
             try:
-                return self._stream.finish()
+                native = isinstance(self._stream, _NativeParakeetStream)
+                text = self._stream.finish()
+                return "" if native and self._effectively_silent() else text
             except Exception:
                 logger.exception("Parakeet cache-aware finish failed; re-transcribing buffer")
                 self._stream = None
@@ -582,6 +915,8 @@ class ParakeetStreamingSession:
 
     def close(self) -> None:
         self._closed = True
+        if self._stream is not None and hasattr(self._stream, "close"):
+            self._stream.close()
 
 
 def _emit_stdio(payload: dict[str, Any]) -> None:

@@ -73,6 +73,28 @@ def test_clap_dataset_review_calls_private_runtime_bridge(monkeypatch):
     ]
 
 
+def test_vision_preview_and_face_controls_call_private_runtime(monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        plugin_api,
+        "call_runtime",
+        lambda method, params: calls.append((method, params)) or {"success": True},
+    )
+    client = _client()
+
+    assert client.get("/api/plugins/smart_room/vision/preview").status_code == 200
+    assert client.post(
+        "/api/plugins/smart_room/vision/faces/enroll",
+        json={"name": "Shereef", "owner": True, "samples": 8},
+    ).status_code == 200
+    assert client.delete("/api/plugins/smart_room/vision/faces/Guest").status_code == 200
+    assert calls == [
+        ("vision_preview", {"width": 720, "quality": 72}),
+        ("vision_faces", {"action": "enroll_current", "name": "Shereef", "owner": True, "samples": 8}),
+        ("vision_faces", {"action": "delete", "name": "Guest"}),
+    ]
+
+
 def test_named_alarm_crud_calls_runtime(monkeypatch):
     calls = []
     monkeypatch.setattr(plugin_api, "call_runtime", lambda method, params: calls.append((method, params)) or {"success": True})

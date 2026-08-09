@@ -317,7 +317,6 @@ class PocketTTSStreamer(StreamingTTSProvider):
         for audio, _sample_rate in _stream_pockettts_audio(text, self.tts_config):
             samples = np.asarray(audio, dtype=np.float32)
             yield (np.clip(samples, -1.0, 1.0) * 32767).astype("<i2").tobytes()
-            yield from _capped(response.iter_bytes(), "OpenAI streaming TTS")
 
 
 def _capped(chunks: Iterator[bytes], label: str) -> Iterator[bytes]:

@@ -1551,10 +1551,11 @@ DEFAULT_CONFIG = {
             "model": "small",
             "parakeet": {
                 "model": "nvidia/parakeet_realtime_eou_120m-v1",
-                # Batch buffers active speech cheaply. The duplex endpoint
-                # performs one semantic-EOU probe after a VAD-confirmed pause.
-                "engine": "batch",
-                "device": "cuda",
+                # Native parakeet.cpp performs real cache-aware streaming and
+                # emits the model's EOU/EOB events without a heavyweight NeMo
+                # process. Auto selects compact Vulkan/Metal acceleration.
+                "engine": "native",
+                "device": "auto",
             },
             "moonshine": {
                 "language": "en",

@@ -43,6 +43,25 @@ class ClapReviewBody(BaseModel):
     confirmed: bool
 
 
+class VisionObserveBody(BaseModel):
+    deep: bool = False
+    question: str = Field(default="", max_length=500)
+    save_evidence: bool = False
+
+
+class FaceEnrollBody(BaseModel):
+    name: str = Field(min_length=1, max_length=80)
+    owner: bool = False
+    samples: int = Field(default=8, ge=3, le=30)
+
+
+class FaceReviewBody(BaseModel):
+    event_id: str = Field(min_length=1, max_length=80)
+    name: str = Field(default="", max_length=80)
+    owner: bool = False
+    reject: bool = False
+
+
 class LightBody(BaseModel):
     on: Optional[bool] = None
     brightness: Optional[int] = Field(default=None, ge=0, le=100)
@@ -123,6 +142,36 @@ async def get_clap_dataset() -> dict:
 @router.post("/clap-dataset/review")
 async def review_clap(body: ClapReviewBody) -> dict:
     return await _rpc("review_clap", body.model_dump())
+
+
+@router.get("/vision/preview")
+async def vision_preview() -> dict:
+    return await _rpc("vision_preview", {"width": 720, "quality": 72})
+
+
+@router.post("/vision/observe")
+async def vision_observe(body: VisionObserveBody) -> dict:
+    return await _rpc("vision_observe", {**body.model_dump(), "burst_seconds": 3})
+
+
+@router.get("/vision/faces")
+async def vision_faces() -> dict:
+    return await _rpc("vision_faces", {"action": "list"})
+
+
+@router.post("/vision/faces/enroll")
+async def vision_face_enroll(body: FaceEnrollBody) -> dict:
+    return await _rpc("vision_faces", {"action": "enroll_current", **body.model_dump()})
+
+
+@router.post("/vision/faces/review")
+async def vision_face_review(body: FaceReviewBody) -> dict:
+    return await _rpc("vision_faces", {"action": "review", **body.model_dump()})
+
+
+@router.delete("/vision/faces/{name}")
+async def vision_face_delete(name: str) -> dict:
+    return await _rpc("vision_faces", {"action": "delete", "name": name})
 
 
 @router.get("/alarms")

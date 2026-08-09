@@ -2446,6 +2446,10 @@ def _check_pockettts_available() -> bool:
     """Check whether the pocket-tts package is importable."""
     try:
         import importlib.util
+        import sys
+
+        if "pocket_tts" in sys.modules:
+            return True
         return importlib.util.find_spec("pocket_tts") is not None
     except Exception:
         return False
@@ -2500,33 +2504,35 @@ def _split_for_streaming(text: str, min_chars: int = _TTS_MIN_SEGMENT_CHARS) -> 
 
 
 def stream_text_to_speech_chunks(text: str):
-    """Yield browser-playable PCM chunks for streaming TTS."""
+    """Yield browser-playable PCM chunks from the configured streamer.
+
+    This is the one provider-neutral seam used by duplex voice. Keeping the
+    provider registry here means PocketTTS's real generator reaches the client
+    immediately, while any other configured chunked provider gets identical
+    framing instead of being rejected by a PocketTTS-only branch.
+    """
     text = _strip_markdown_for_tts(text)
     if not text:
         raise ValueError("Text is required")
 
     tts_config = _load_tts_config()
     provider = _get_provider(tts_config)
-    if provider == "pockettts":
-        yield {"type": "start", "sample_rate": int(_pockettts_sample_rate(tts_config)), "provider": provider}
-        emitted_sr = False
-        # NOTE(duplex-phase1): synthesize per clause (was: one generate_audio()
-        # over the whole message) so the first chunk streams after the first
-        # clause. See _split_for_streaming above.
-        for segment in _split_for_streaming(text):
-            for audio_chunk, sample_rate in _stream_pockettts_audio(segment, tts_config):
-                encoded = _audio_to_pcm16_base64(audio_chunk)
-                if not encoded:
-                    continue
-                if not emitted_sr:
-                    yield {"type": "sample_rate", "sample_rate": int(sample_rate)}
-                    emitted_sr = True
-                yield {"type": "chunk", "audio": encoded}
-        yield {"type": "end", "provider": provider}
-        return
+    from tools.tts_streaming import resolve_streaming_provider
 
-    if provider != "pockettts":
-        raise ValueError("Streaming TTS is only available for pockettts")
+    streamer = resolve_streaming_provider(tts_config, preferred=provider)
+    if streamer is None:
+        raise ValueError(f"Streaming TTS is unavailable for {provider}")
+
+    import base64
+
+    sample_rate = int(streamer.sample_rate)
+    yield {"type": "start", "sample_rate": sample_rate, "provider": provider}
+    yield {"type": "sample_rate", "sample_rate": sample_rate}
+    for segment in _split_for_streaming(text):
+        for pcm in streamer.stream(segment):
+            if pcm:
+                yield {"type": "chunk", "audio": base64.b64encode(pcm).decode("ascii")}
+    yield {"type": "end", "provider": provider}
 
 
 # ===========================================================================

@@ -19,6 +19,7 @@ import atexit
 import base64
 import binascii
 import concurrent.futures
+import copy
 import functools
 from collections import deque
 from dataclasses import dataclass
@@ -231,7 +232,7 @@ class _ParakeetSubprocessSession:
             parakeet_venv_python,
         )
 
-        py = parakeet_venv_python()
+        py = parakeet_venv_python(self._stt_config)
         if not py.exists():
             raise RuntimeError(
                 "Parakeet venv is missing. Run: hermes tools post-setup parakeet_stt"
@@ -242,7 +243,7 @@ class _ParakeetSubprocessSession:
         self._log_file = log_path.open("ab")
         env = {**os.environ, "PYTHONPATH": str(PROJECT_ROOT)}
         self._proc = subprocess.Popen(
-            parakeet_stdio_command(),
+            parakeet_stdio_command(self._stt_config),
             cwd=str(PROJECT_ROOT),
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
@@ -1588,6 +1589,11 @@ _SCHEMA_OVERRIDES: Dict[str, Dict[str, Any]] = {
         "type": "select",
         "description": "OpenAI transcription model",
         "options": ["whisper-1", "gpt-4o-mini-transcribe", "gpt-4o-transcribe", "gpt-transcribe"],
+    },
+    "stt.streaming.parakeet.engine": {
+        "type": "select",
+        "description": "Parakeet streaming engine (native is recommended)",
+        "options": ["native", "batch", "cache_aware", "rebuffer"],
     },
     "stt.elevenlabs.model_id": {
         "type": "select",
@@ -18708,35 +18714,51 @@ class _DuplexTtsPipeline:
             return
         if self._first_submission:
             self._first_submission = False
-            events: "queue.Queue[Optional[dict]]" = queue.Queue()
+            events: "queue.Queue[Optional[dict]]" = queue.Queue(maxsize=8)
             self._executor.submit(self._synthesize_streaming, sentence, events)
             self._pending.put(events)
         else:
             future = self._executor.submit(self._synthesize, sentence)
             self._pending.put(future)
 
-    @staticmethod
     def _synthesize_streaming(
+        self,
         sentence: str, events: "queue.Queue[Optional[dict]]"
     ) -> None:
         """Produce the first segment incrementally so first audio is not
         held until the whole sentence has finished synthesizing."""
         try:
             for event in _duplex_stream_tts_chunks(sentence):
-                events.put(event)
+                while not self._cancel_event.is_set():
+                    try:
+                        events.put(event, timeout=0.1)
+                        break
+                    except queue.Full:
+                        continue
+                if self._cancel_event.is_set():
+                    break
         except Exception as exc:
             _log.warning("Voice duplex: TTS unavailable: %s", exc)
         finally:
-            events.put(None)
+            while not self._cancel_event.is_set():
+                try:
+                    events.put(None, timeout=0.1)
+                    break
+                except queue.Full:
+                    continue
 
-    @staticmethod
-    def _synthesize(sentence: str) -> list:
+    def _synthesize(self, sentence: str) -> list:
         """Runs on the executor: fully materialize this sentence's TTS
         stream events (see the class docstring for why this can't emit
         directly). Mirrors ``_DuplexTtsCycle.speak``'s own degrade-silently
         error handling."""
         try:
-            return list(_duplex_stream_tts_chunks(sentence))
+            events = []
+            for event in _duplex_stream_tts_chunks(sentence):
+                if self._cancel_event.is_set():
+                    break
+                events.append(event)
+            return events
         except Exception as exc:
             _log.warning("Voice duplex: TTS unavailable: %s", exc)
             return []
@@ -19014,17 +19036,53 @@ class _DuplexSession:
         except Exception as exc:
             if self._closed or self._startup_cancel.is_set():
                 return
-            _log.warning("Voice duplex: STT session unavailable: %s", exc)
+            failed = self.stt_session
             self.stt_session = None
-            await self._send({
-                "type": "error",
-                "error": f"speech recognition unavailable: {exc}",
-            })
-            try:
-                await self.ws.close(code=1013)
-            except Exception:
-                pass
-            return
+            if failed is not None:
+                try:
+                    await asyncio.to_thread(failed.close)
+                except Exception:
+                    pass
+
+            # Native Parakeet is preferred, but a driver/runtime regression
+            # must not leave an otherwise healthy voice session deaf. The
+            # already-installed local Moonshine engine is the compatibility
+            # rung; update this session's effective config so endpoint logic
+            # uses Smart Turn exactly as a normal Moonshine session would.
+            if _streaming_stt_provider(self.stt_cfg) == "parakeet":
+                fallback_cfg = copy.deepcopy(self.stt_cfg)
+                fallback_streaming = fallback_cfg.setdefault("streaming", {})
+                fallback_streaming["provider"] = "moonshine"
+                try:
+                    fallback = await asyncio.to_thread(
+                        _duplex_stt_session, fallback_cfg, self._startup_cancel
+                    )
+                    await asyncio.to_thread(fallback.begin)
+                    self.stt_session = fallback
+                    self.stt_cfg = fallback_cfg
+                    _log.warning(
+                        "Voice duplex: native Parakeet unavailable (%s); "
+                        "using local Moonshine fallback",
+                        exc,
+                    )
+                except Exception as fallback_exc:
+                    _log.warning(
+                        "Voice duplex: Parakeet unavailable (%s) and Moonshine "
+                        "fallback failed: %s",
+                        exc,
+                        fallback_exc,
+                    )
+            if self.stt_session is None:
+                _log.warning("Voice duplex: STT session unavailable: %s", exc)
+                await self._send({
+                    "type": "error",
+                    "error": f"speech recognition unavailable: {exc}",
+                })
+                try:
+                    await self.ws.close(code=1013)
+                except Exception:
+                    pass
+                return
         finally:
             self._stt_init_completed = True
             self._maybe_log_session_open()

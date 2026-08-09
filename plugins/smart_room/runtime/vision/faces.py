@@ -58,6 +58,11 @@ class FaceLibrary:
                 if isinstance(entry, dict)
             },
             "pending": len(data.get("pending") or {}),
+            "pending_items": [
+                {"event_id": event_id, "evidence_path": str(entry.get("evidence_path") or "")}
+                for event_id, entry in (data.get("pending") or {}).items()
+                if isinstance(entry, dict)
+            ],
         }
 
     def enroll(self, name: str, embeddings: list[list[float]], *, owner: bool = False) -> Dict[str, Any]:

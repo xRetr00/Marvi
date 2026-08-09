@@ -944,31 +944,21 @@ def _install_pockettts_deps() -> bool:
 
 
 def _install_parakeet_stt_deps() -> bool:
-    """Install Parakeet Realtime EOU STT dependencies. Returns True on success."""
-    import subprocess
-def _install_kittentts_deps() -> bool:
-    """Install KittenTTS dependencies with user approval. Returns True on success."""
+    """Install the local native Parakeet EOU runtime. Returns True on success."""
 
     print()
-    print_info("Installing Parakeet Realtime EOU STT...")
+    print_info("Installing native Parakeet Realtime EOU STT...")
     print()
 
     try:
-        from hermes_cli.tools_config import _run_post_setup
+        from tools.parakeet_streaming_stt import install_native_parakeet
 
-        _run_post_setup("parakeet_stt")
-        from tools.parakeet_streaming_stt import parakeet_venv_python
-
-        subprocess.run(
-            [str(parakeet_venv_python()), "-c", "import nemo.collections.asr"],
-            check=True,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            timeout=30,
-        )
-        print_success("Parakeet Realtime EOU STT dependencies installed successfully")
+        library, model = install_native_parakeet()
+        print_success("Native Parakeet Realtime EOU STT installed successfully")
+        print_info(f"Runtime: {library}")
+        print_info(f"Model: {model}")
         return True
-    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError) as e:
+    except Exception as e:
         print_error(f"Failed to install Parakeet Realtime EOU STT: {e}")
         print_info("Try manually: hermes tools post-setup parakeet_stt")
         return False
@@ -1273,6 +1263,7 @@ def _setup_tts_provider(config: dict):
             streaming["enabled"] = True
             streaming["provider"] = "parakeet"
             streaming["model"] = "nvidia/parakeet_realtime_eou_120m-v1"
+            streaming.setdefault("parakeet", {}).update({"engine": "native", "device": "auto"})
             streaming["eou_token"] = "<EOU>"
             streaming["host"] = "127.0.0.1"
             streaming["port"] = 9090

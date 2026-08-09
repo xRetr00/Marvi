@@ -7,6 +7,8 @@ from tools.parakeet_streaming_stt import (
     DEFAULT_PARAKEET_MODEL,
     ParakeetStreamingConfig,
     ParakeetStreamingSession,
+    _NativeParakeetModel,
+    _NativeParakeetStream,
     _load_parakeet_model,
     _run_stdio_server,
     resolve_parakeet_config,
@@ -71,6 +73,64 @@ def test_resolve_parakeet_config_defaults_to_batch_engine():
     cfg = resolve_parakeet_config({"streaming": {"provider": "parakeet"}})
 
     assert cfg.engine == "batch"
+
+
+def test_resolve_parakeet_config_accepts_native_engine():
+    cfg = resolve_parakeet_config(
+        {"streaming": {"provider": "parakeet", "parakeet": {"engine": "native"}}}
+    )
+
+    assert cfg.engine == "native"
+
+
+def test_native_stream_accumulates_incremental_text_and_distinguishes_eou():
+    pieces = iter(["hello", " world", ""])
+
+    class FakeLib:
+        def parakeet_capi_stream_feed(self, _stream, _pcm, _count, events):
+            events._obj.value = 1 if len(model.seen) == 1 else 0
+            model.seen.append("feed")
+            return 1
+
+        def parakeet_capi_stream_finalize(self, _stream):
+            return 1
+
+        def parakeet_capi_stream_free(self, _stream):
+            model.freed += 1
+
+    class FakeNativeModel:
+        def __init__(self):
+            self.lib = FakeLib()
+            self.seen = []
+            self.freed = 0
+
+        def read_string(self, _pointer):
+            return next(pieces)
+
+    model = FakeNativeModel()
+    stream = _NativeParakeetStream(model, 123)
+    samples = np.zeros(1600, dtype=np.float32)
+
+    assert stream.push(samples) == ("hello", 0.0)
+    assert stream.push(samples) == ("hello world", 1.0)
+    assert stream.finish() == "hello world"
+    assert model.freed == 1
+
+
+def test_native_session_suppresses_model_text_for_effective_silence():
+    stream = object.__new__(_NativeParakeetStream)
+    stream.push = lambda _samples: ("yeah", 1.0)
+    stream.finish = lambda: "yeah"
+    model = object.__new__(_NativeParakeetModel)
+    model.begin_stream = lambda: stream
+    session = ParakeetStreamingSession(
+        {"streaming": {"parakeet": {"engine": "native"}}},
+        loader=lambda _config: model,
+    )
+    session.start()
+
+    assert session.accept_bytes(np.zeros(1600, dtype=np.float32).tobytes()) == ""
+    assert session.finish() == ""
 
 
 def test_load_parakeet_model_requires_driver_update_on_cuda_driver_error(monkeypatch):

@@ -6,8 +6,14 @@ import {
   applySmartRoomConfig,
   cancelSmartRoomSleep,
   deleteSmartRoomAlarm,
+  deleteSmartRoomFace,
+  enrollSmartRoomFace,
   getHermesConfigRecord,
+  getSmartRoomFaces,
   getSmartRoomStatus,
+  getSmartRoomVisionPreview,
+  observeSmartRoomVision,
+  reviewSmartRoomFace,
   saveHermesConfig,
   saveSmartRoomAlarm,
   saveSmartRoomSecrets,
@@ -15,7 +21,9 @@ import {
   setSmartRoomMode,
   setSmartRoomOverride,
   type SmartRoomAlarm,
+  type SmartRoomFaces,
   type SmartRoomStatus,
+  type SmartRoomVisionPreview,
   testSmartRoomWelcome
 } from '@/hermes'
 import { useI18n } from '@/i18n'
@@ -60,6 +68,28 @@ interface SmartRoomConfig {
   mqtt: { broker: string; port: number }
   context: { enabled: boolean }
   subconscious: { enabled: boolean }
+  vision: {
+    enabled: boolean
+    camera_index: number
+    camera_name: string
+    width: number
+    height: number
+    standby_fps: number
+    active_fps: number
+    dark_brightness: number
+    gestures: {
+      enabled: boolean
+      wake_gesture: string
+      armed_seconds: number
+      hold_seconds: number
+      confidence: number
+      mapping: Record<string, { command: string; [key: string]: string | number }>
+    }
+    faces: { min_enrollment_samples: number; match_threshold: number }
+    sleep: { settling_seconds: number; likely_sleeping_seconds: number }
+    deep: { enabled: boolean; provider: string; model: string; timeout: number }
+    history: { retention_hours: number; max_events: number }
+  }
   tuya: {
     worker: { timeout_seconds: number; retries: number; queue_size: number }
     bulb: {
@@ -123,6 +153,35 @@ const DEFAULT_CONFIG: SmartRoomConfig = {
   mqtt: { broker: '127.0.0.1', port: 1883 },
   context: { enabled: true },
   subconscious: { enabled: true },
+  vision: {
+    enabled: false,
+    camera_index: 0,
+    camera_name: 'Smart Room camera',
+    width: 1280,
+    height: 720,
+    standby_fps: 1.5,
+    active_fps: 8,
+    dark_brightness: 28,
+    gestures: {
+      enabled: true,
+      wake_gesture: 'Open_Palm',
+      armed_seconds: 8,
+      hold_seconds: 0.65,
+      confidence: 0.65,
+      mapping: {
+        Thumb_Up: { command: 'brightness_up', step: 15 },
+        Thumb_Down: { command: 'brightness_down', step: 15 },
+        Closed_Fist: { command: 'cancel' },
+        Victory: { command: 'voice_mode' },
+        Pointing_Up: { command: 'toggle_light' },
+        ILoveYou: { command: 'set_mode', mode: 'relax' }
+      }
+    },
+    faces: { min_enrollment_samples: 8, match_threshold: 0.42 },
+    sleep: { settling_seconds: 120, likely_sleeping_seconds: 600 },
+    deep: { enabled: true, provider: '', model: '', timeout: 30 },
+    history: { retention_hours: 72, max_events: 2000 }
+  },
   tuya: {
     worker: { timeout_seconds: 4, retries: 1, queue_size: 16 },
     bulb: {
@@ -414,6 +473,10 @@ export function SmartRoomSettings() {
   const [testingWelcome, setTestingWelcome] = useState<'owner' | 'guest' | null>(null)
   const [lightBusy, setLightBusy] = useState(false)
   const [lightDraft, setLightDraft] = useState({ brightness: 70, colorTemp: 3000, color: '#ffffff' })
+  const [visionPreview, setVisionPreview] = useState<SmartRoomVisionPreview | null>(null)
+  const [faces, setFaces] = useState<SmartRoomFaces | null>(null)
+  const [faceName, setFaceName] = useState('Shereef')
+  const [visionBusy, setVisionBusy] = useState(false)
 
   const [newAlarm, setNewAlarm] = useState<SmartRoomAlarm>({
     id: '',
@@ -467,6 +530,37 @@ export function SmartRoomSettings() {
 
     return () => clearInterval(interval)
   }, [refreshStatus])
+
+  // Camera frames stay local and are fetched only while this settings page is
+  // mounted. A slow preview heartbeat is enough for enrollment/gesture review
+  // without turning the settings UI into a second video pipeline.
+  useEffect(() => {
+    if (!config.vision.enabled || !liveStatus?.runtime?.alive) {
+      setVisionPreview(null)
+
+      return
+    }
+
+    const refreshVision = async () => {
+      try {
+        const [{ preview }, faceResult] = await Promise.all([
+          getSmartRoomVisionPreview(),
+          getSmartRoomFaces()
+        ])
+
+        setVisionPreview(preview)
+        setFaces(faceResult.faces)
+      } catch {
+        // The runtime status card carries the actionable error. Keep the last
+        // good frame instead of flashing the preview on transient restarts.
+      }
+    }
+
+    void refreshVision()
+    const interval = setInterval(refreshVision, 2000)
+
+    return () => clearInterval(interval)
+  }, [config.vision.enabled, liveStatus?.runtime?.alive])
 
   useEffect(() => {
     const light = liveStatus?.state?.light
@@ -637,6 +731,175 @@ export function SmartRoomSettings() {
               onChange={v => updatePath('enabled', v)}
             />
           </div>
+        </SectionCard>
+
+        <SectionCard icon={Monitor} title="Vision, Face & Hand Controls">
+          <ToggleRow
+            checked={config.vision.enabled}
+            description="Local camera perception feeds Smart Room cognition, face identity, sleep state, and gestures"
+            label="Vision service"
+            onChange={value => updatePath('vision.enabled', value)}
+          />
+
+          <div className="grid gap-4 lg:grid-cols-[minmax(0,1.5fr)_minmax(280px,1fr)]">
+            <div className="overflow-hidden rounded-lg border border-zinc-800 bg-black">
+              {visionPreview?.available && visionPreview.image ? (
+                <img
+                  alt="Live Smart Room camera preview"
+                  className="aspect-video w-full object-contain"
+                  src={visionPreview.image}
+                />
+              ) : (
+                <div className="flex aspect-video items-center justify-center px-6 text-center text-xs text-zinc-500">
+                  {visionPreview?.error || liveStatus?.health?.vision?.last_error || 'Waiting for a camera frame…'}
+                </div>
+              )}
+              <div className="flex flex-wrap gap-x-3 gap-y-1 border-t border-zinc-800 bg-zinc-950 px-3 py-2 text-[11px] text-zinc-400">
+                <span className={liveState?.vision?.camera_online ? 'text-emerald-400' : 'text-red-400'}>
+                  ● {liveState?.vision?.camera_online ? 'Camera online' : 'Camera offline'}
+                </span>
+                <span>{liveState?.vision?.visibility || 'unavailable'} light</span>
+                <span>{liveState?.vision?.person_count ?? 0} people</span>
+                <span>{liveState?.vision?.owner_visible ? `${faces?.owner || 'Owner'} visible` : 'Owner not visible'}</span>
+                <span>{liveState?.vision?.sleep_state || 'sleep unknown'}</span>
+                <span>{liveState?.vision?.active_gesture || 'no gesture'}</span>
+              </div>
+            </div>
+
+            <div className="space-y-3">
+              <div className="grid grid-cols-2 gap-x-3">
+                <TextField label="Camera name" onChange={value => updatePath('vision.camera_name', value)} value={config.vision.camera_name} />
+                <TextField label="Camera index" min={0} onChange={value => updatePath('vision.camera_index', Math.max(0, parseInt(value) || 0))} type="number" value={config.vision.camera_index} />
+                <TextField label="Width" min={320} onChange={value => updatePath('vision.width', Math.max(320, parseInt(value) || 1280))} type="number" value={config.vision.width} />
+                <TextField label="Height" min={240} onChange={value => updatePath('vision.height', Math.max(240, parseInt(value) || 720))} type="number" value={config.vision.height} />
+                <TextField label="Idle FPS" max={10} min={0.2} onChange={value => updatePath('vision.standby_fps', parseFloat(value) || 1.5)} step={0.1} type="number" value={config.vision.standby_fps} />
+                <TextField label="Active FPS" max={30} min={1} onChange={value => updatePath('vision.active_fps', parseFloat(value) || 8)} step={1} type="number" value={config.vision.active_fps} />
+              </div>
+              <button
+                className="w-full rounded-md border border-zinc-700 px-3 py-2 text-xs text-zinc-200 disabled:opacity-40"
+                disabled={!runtimeUp || visionBusy}
+                onClick={() => {
+                  setVisionBusy(true)
+                  void observeSmartRoomVision(true, 'Describe what is happening in the room now.')
+                    .then(refreshStatus)
+                    .catch(error => notifyError(error, 'Vision inspection failed'))
+                    .finally(() => setVisionBusy(false))
+                }}
+                type="button"
+              >
+                {visionBusy ? 'Inspecting scene…' : 'Inspect scene with vision model'}
+              </button>
+              {liveState?.vision?.scene_analysis?.summary ? (
+                <p className="rounded-md bg-zinc-950 p-2 text-xs text-zinc-300">{liveState.vision.scene_analysis.summary}</p>
+              ) : null}
+            </div>
+          </div>
+
+          <details className="mt-4 border-t border-zinc-800 pt-3 text-xs text-zinc-400">
+            <summary className="cursor-pointer text-zinc-300">Advanced vision reasoning</summary>
+            <div className="mt-3 grid grid-cols-2 gap-x-3 lg:grid-cols-4">
+              <TextField label="Dark threshold" max={100} min={0} onChange={value => updatePath('vision.dark_brightness', parseFloat(value) || 28)} step={1} type="number" value={config.vision.dark_brightness} />
+              <TextField label="Face match threshold" max={1} min={0.1} onChange={value => updatePath('vision.faces.match_threshold', parseFloat(value) || 0.42)} step={0.01} type="number" value={config.vision.faces.match_threshold} />
+              <TextField label="Enrollment samples" max={30} min={3} onChange={value => updatePath('vision.faces.min_enrollment_samples', Math.max(3, parseInt(value) || 8))} type="number" value={config.vision.faces.min_enrollment_samples} />
+              <TextField label="Gesture confidence" max={1} min={0.1} onChange={value => updatePath('vision.gestures.confidence', parseFloat(value) || 0.65)} step={0.05} type="number" value={config.vision.gestures.confidence} />
+              <TextField label="Sleep settling (seconds)" min={10} onChange={value => updatePath('vision.sleep.settling_seconds', parseInt(value) || 120)} type="number" value={config.vision.sleep.settling_seconds} />
+              <TextField label="Likely sleeping (seconds)" min={30} onChange={value => updatePath('vision.sleep.likely_sleeping_seconds', parseInt(value) || 600)} type="number" value={config.vision.sleep.likely_sleeping_seconds} />
+              <TextField label="History retention (hours)" min={1} onChange={value => updatePath('vision.history.retention_hours', parseInt(value) || 72)} type="number" value={config.vision.history.retention_hours} />
+              <TextField label="History event limit" min={100} onChange={value => updatePath('vision.history.max_events', parseInt(value) || 2000)} type="number" value={config.vision.history.max_events} />
+              <TextField label="Scene model provider" onChange={value => updatePath('vision.deep.provider', value)} placeholder="openrouter" value={config.vision.deep.provider} />
+              <div className="col-span-2">
+                <TextField label="Scene vision model" onChange={value => updatePath('vision.deep.model', value)} placeholder="google/gemma-4-26b-a4b-it:free" value={config.vision.deep.model} />
+              </div>
+              <ToggleRow checked={config.vision.deep.enabled} description="Use the configured multimodal model only for requested or uncertain scenes" label="Deep scene analysis" onChange={value => updatePath('vision.deep.enabled', value)} />
+            </div>
+          </details>
+
+          <div className="mt-4 grid gap-4 border-t border-zinc-800 pt-4 lg:grid-cols-2">
+            <div>
+              <div className="mb-2 flex items-center justify-between">
+                <div>
+                  <p className="text-sm text-zinc-200">Face recognition</p>
+                  <p className={`${CONTROL_TEXT} text-zinc-500`}>Reviewed local embeddings only; enrollment uses the live preview.</p>
+                </div>
+                <span className={`${CONTROL_TEXT} text-zinc-400`}>{faces?.owner ? `Owner: ${faces.owner}` : 'No owner enrolled'}</span>
+              </div>
+              <div className="flex gap-2">
+                <input
+                  aria-label="Face name"
+                  className="min-w-0 flex-1 rounded-md border border-zinc-800 bg-zinc-950 px-3 py-1.5 text-sm text-zinc-200"
+                  onChange={event => setFaceName(event.target.value)}
+                  placeholder="Person name"
+                  value={faceName}
+                />
+                <button
+                  className="rounded-md bg-primary px-3 py-1.5 text-xs text-primary-foreground disabled:opacity-40"
+                  disabled={!runtimeUp || visionBusy || !faceName.trim()}
+                  onClick={() => {
+                    setVisionBusy(true)
+                    void enrollSmartRoomFace(faceName.trim(), true, config.vision.faces.min_enrollment_samples)
+                      .then(result => setFaces(result.faces))
+                      .then(() => notify({ kind: 'success', message: `${faceName.trim()} enrolled as owner` }))
+                      .catch(error => notifyError(error, 'Face enrollment failed'))
+                      .finally(() => setVisionBusy(false))
+                  }}
+                  type="button"
+                >
+                  Enroll current face
+                </button>
+              </div>
+              <div className="mt-2 space-y-1">
+                {Object.entries(faces?.people || {}).map(([name, person]) => (
+                  <div className="flex items-center justify-between rounded-md bg-zinc-950 px-3 py-2 text-xs" key={name}>
+                    <span className="text-zinc-300">{name}{faces?.owner === name ? ' · owner' : ''} · {person.samples} samples</span>
+                    <button className="text-red-400" onClick={() => void deleteSmartRoomFace(name).then(result => setFaces(result.faces)).catch(error => notifyError(error, 'Could not delete face'))} type="button">Delete</button>
+                  </div>
+                ))}
+                {(faces?.pending_items || []).map(item => (
+                  <div className="rounded-md border border-amber-900/40 bg-amber-950/20 px-3 py-2 text-xs" key={item.event_id}>
+                    <p className="mb-2 text-amber-300">Unknown face needs review · {item.event_id}</p>
+                    <div className="flex gap-2">
+                      <button className="rounded border border-zinc-700 px-2 py-1 text-zinc-300" onClick={() => void reviewSmartRoomFace(item.event_id, faceName.trim(), false, false).then(result => setFaces(result.faces)).catch(error => notifyError(error, 'Face review failed'))} type="button">Accept as {faceName || 'name'}</button>
+                      <button className="rounded border border-red-900 px-2 py-1 text-red-400" onClick={() => void reviewSmartRoomFace(item.event_id, '', false, true).then(result => setFaces(result.faces)).catch(error => notifyError(error, 'Face review failed'))} type="button">Reject</button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div>
+              <ToggleRow
+                checked={config.vision.gestures.enabled}
+                description={`Hold ${config.vision.gestures.wake_gesture} to arm controls for ${config.vision.gestures.armed_seconds} seconds`}
+                label="Hand gesture controls"
+                onChange={value => updatePath('vision.gestures.enabled', value)}
+              />
+              <div className="grid grid-cols-2 gap-x-3">
+                <TextField label="Arm gesture" onChange={value => updatePath('vision.gestures.wake_gesture', value)} value={config.vision.gestures.wake_gesture} />
+                <TextField label="Hold seconds" max={3} min={0.2} onChange={value => updatePath('vision.gestures.hold_seconds', parseFloat(value) || 0.65)} step={0.05} type="number" value={config.vision.gestures.hold_seconds} />
+              </div>
+              <div className="space-y-1 text-xs">
+                {Object.entries(config.vision.gestures.mapping).map(([gesture, action]) => (
+                  <div className="flex items-center justify-between rounded-md bg-zinc-950 px-3 py-1.5" key={gesture}>
+                    <span className={liveState?.vision?.active_gesture === gesture ? 'text-emerald-400' : 'text-zinc-300'}>{gesture}</span>
+                    <select
+                      aria-label={`${gesture} action`}
+                      className="rounded border border-zinc-800 bg-zinc-900 px-2 py-1 text-zinc-300"
+                      onChange={event => updatePath(`vision.gestures.mapping.${gesture}.command`, event.target.value)}
+                      value={action.command}
+                    >
+                      <option value="toggle_light">Toggle light</option>
+                      <option value="brightness_up">Brightness up</option>
+                      <option value="brightness_down">Brightness down</option>
+                      <option value="voice_mode">Voice mode</option>
+                      <option value="cancel">Cancel / wake</option>
+                      <option value="set_mode">Relax mode</option>
+                    </select>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+          <p className={`mt-3 ${CONTROL_TEXT} text-zinc-500`}>Camera and model changes apply after pressing the refresh button at the top.</p>
         </SectionCard>
 
         <SectionCard icon={Brain} title="Voice Welcome">

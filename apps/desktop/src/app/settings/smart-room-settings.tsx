@@ -8,6 +8,7 @@ import {
   deleteSmartRoomAlarm,
   deleteSmartRoomFace,
   enrollSmartRoomFace,
+  getGlobalModelOptions,
   getHermesConfigRecord,
   getSmartRoomFaces,
   getSmartRoomStatus,
@@ -41,6 +42,7 @@ import {
   Zap
 } from '@/lib/icons'
 import { notify, notifyError } from '@/store/notifications'
+import type { ModelOptionProvider } from '@/types/hermes'
 
 import { CONTROL_TEXT } from './constants'
 import { SettingsContent } from './primitives'
@@ -76,6 +78,9 @@ interface SmartRoomConfig {
     height: number
     standby_fps: number
     active_fps: number
+    gesture_scan_fps: number
+    face_interval_seconds: number
+    active_face_interval_seconds: number
     dark_brightness: number
     gestures: {
       enabled: boolean
@@ -160,7 +165,10 @@ const DEFAULT_CONFIG: SmartRoomConfig = {
     width: 1280,
     height: 720,
     standby_fps: 1.5,
-    active_fps: 8,
+    active_fps: 12,
+    gesture_scan_fps: 10,
+    face_interval_seconds: 1,
+    active_face_interval_seconds: 0.35,
     dark_brightness: 28,
     gestures: {
       enabled: true,
@@ -477,6 +485,7 @@ export function SmartRoomSettings() {
   const [faces, setFaces] = useState<SmartRoomFaces | null>(null)
   const [faceName, setFaceName] = useState('Shereef')
   const [visionBusy, setVisionBusy] = useState(false)
+  const [modelProviders, setModelProviders] = useState<ModelOptionProvider[]>([])
 
   const [newAlarm, setNewAlarm] = useState<SmartRoomAlarm>({
     id: '',
@@ -514,6 +523,12 @@ export function SmartRoomSettings() {
       .finally(() => setLoading(false))
   }, [])
 
+  useEffect(() => {
+    getGlobalModelOptions({ explicitOnly: true })
+      .then(result => setModelProviders((result.providers ?? []).filter(provider => (provider.models || []).length > 0)))
+      .catch(error => notifyError(error, 'Could not load the live model catalog'))
+  }, [])
+
   // Poll the authenticated backend API; the renderer never connects to the
   // runtime's private TCP socket directly.
   useEffect(() => {
@@ -532,8 +547,8 @@ export function SmartRoomSettings() {
   }, [refreshStatus])
 
   // Camera frames stay local and are fetched only while this settings page is
-  // mounted. A slow preview heartbeat is enough for enrollment/gesture review
-  // without turning the settings UI into a second video pipeline.
+  // mounted. Preview and face-library polling are separate: video stays fluid
+  // without reloading the face database on every frame.
   useEffect(() => {
     if (!config.vision.enabled || !liveStatus?.runtime?.alive) {
       setVisionPreview(null)
@@ -543,13 +558,9 @@ export function SmartRoomSettings() {
 
     const refreshVision = async () => {
       try {
-        const [{ preview }, faceResult] = await Promise.all([
-          getSmartRoomVisionPreview(),
-          getSmartRoomFaces()
-        ])
+        const { preview } = await getSmartRoomVisionPreview()
 
         setVisionPreview(preview)
-        setFaces(faceResult.faces)
       } catch {
         // The runtime status card carries the actionable error. Keep the last
         // good frame instead of flashing the preview on transient restarts.
@@ -557,7 +568,20 @@ export function SmartRoomSettings() {
     }
 
     void refreshVision()
-    const interval = setInterval(refreshVision, 2000)
+    const interval = setInterval(refreshVision, 400)
+
+    return () => clearInterval(interval)
+  }, [config.vision.enabled, liveStatus?.runtime?.alive])
+
+  useEffect(() => {
+    if (!config.vision.enabled || !liveStatus?.runtime?.alive) {
+      return
+    }
+
+    const refreshFaces = () => void getSmartRoomFaces().then(result => setFaces(result.faces)).catch(() => undefined)
+
+    refreshFaces()
+    const interval = setInterval(refreshFaces, 5000)
 
     return () => clearInterval(interval)
   }, [config.vision.enabled, liveStatus?.runtime?.alive])
@@ -606,6 +630,23 @@ export function SmartRoomSettings() {
     }
 
     obj[parts[parts.length - 1]] = value
+    void updateConfig(next)
+  }
+
+  const updatePaths = (values: Record<string, unknown>) => {
+    const next = JSON.parse(JSON.stringify(config))
+
+    for (const [path, value] of Object.entries(values)) {
+      const parts = path.split('.')
+      let obj = next
+
+      for (let i = 0; i < parts.length - 1; i++) {
+        obj = obj[parts[i]]
+      }
+
+      obj[parts[parts.length - 1]] = value
+    }
+
     void updateConfig(next)
   }
 
@@ -685,6 +726,9 @@ export function SmartRoomSettings() {
     zone?: string
   }>
 
+  const selectedSceneProvider = modelProviders.find(provider => provider.slug === config.vision.deep.provider)
+  const sceneModels = selectedSceneProvider?.models || []
+
   return (
     <SettingsContent>
       <div className="space-y-4 px-4 pb-8">
@@ -763,6 +807,8 @@ export function SmartRoomSettings() {
                 <span>{liveState?.vision?.owner_visible ? `${faces?.owner || 'Owner'} visible` : 'Owner not visible'}</span>
                 <span>{liveState?.vision?.sleep_state || 'sleep unknown'}</span>
                 <span>{liveState?.vision?.active_gesture || 'no gesture'}</span>
+                {liveStatus?.health?.vision?.analysis_fps ? <span>{liveStatus.health.vision.analysis_fps} analysis FPS</span> : null}
+                {liveStatus?.health?.vision?.analysis_latency_ms ? <span>{liveStatus.health.vision.analysis_latency_ms} ms</span> : null}
               </div>
             </div>
 
@@ -802,13 +848,41 @@ export function SmartRoomSettings() {
               <TextField label="Face match threshold" max={1} min={0.1} onChange={value => updatePath('vision.faces.match_threshold', parseFloat(value) || 0.42)} step={0.01} type="number" value={config.vision.faces.match_threshold} />
               <TextField label="Enrollment samples" max={30} min={3} onChange={value => updatePath('vision.faces.min_enrollment_samples', Math.max(3, parseInt(value) || 8))} type="number" value={config.vision.faces.min_enrollment_samples} />
               <TextField label="Gesture confidence" max={1} min={0.1} onChange={value => updatePath('vision.gestures.confidence', parseFloat(value) || 0.65)} step={0.05} type="number" value={config.vision.gestures.confidence} />
+              <TextField label="Gesture scan FPS" max={20} min={2} onChange={value => updatePath('vision.gesture_scan_fps', parseFloat(value) || 10)} step={1} type="number" value={config.vision.gesture_scan_fps} />
+              <TextField label="Face scan interval (seconds)" max={10} min={0.2} onChange={value => updatePath('vision.face_interval_seconds', parseFloat(value) || 1)} step={0.1} type="number" value={config.vision.face_interval_seconds} />
               <TextField label="Sleep settling (seconds)" min={10} onChange={value => updatePath('vision.sleep.settling_seconds', parseInt(value) || 120)} type="number" value={config.vision.sleep.settling_seconds} />
               <TextField label="Likely sleeping (seconds)" min={30} onChange={value => updatePath('vision.sleep.likely_sleeping_seconds', parseInt(value) || 600)} type="number" value={config.vision.sleep.likely_sleeping_seconds} />
               <TextField label="History retention (hours)" min={1} onChange={value => updatePath('vision.history.retention_hours', parseInt(value) || 72)} type="number" value={config.vision.history.retention_hours} />
               <TextField label="History event limit" min={100} onChange={value => updatePath('vision.history.max_events', parseInt(value) || 2000)} type="number" value={config.vision.history.max_events} />
-              <TextField label="Scene model provider" onChange={value => updatePath('vision.deep.provider', value)} placeholder="openrouter" value={config.vision.deep.provider} />
-              <div className="col-span-2">
-                <TextField label="Scene vision model" onChange={value => updatePath('vision.deep.model', value)} placeholder="google/gemma-4-26b-a4b-it:free" value={config.vision.deep.model} />
+              <div className="mb-3">
+                <label className={`mb-1 block ${CONTROL_TEXT} text-zinc-400`} htmlFor="vision-provider">Scene model provider</label>
+                <select
+                  className="w-full rounded-md border border-zinc-800 bg-zinc-950 px-3 py-1.5 text-sm text-zinc-200"
+                  id="vision-provider"
+                  onChange={event => {
+                    const provider = modelProviders.find(item => item.slug === event.target.value)
+                    updatePaths({
+                      'vision.deep.provider': event.target.value,
+                      'vision.deep.model': provider?.models?.[0] || ''
+                    })
+                  }}
+                  value={config.vision.deep.provider}
+                >
+                  {!selectedSceneProvider && config.vision.deep.provider ? <option value={config.vision.deep.provider}>{config.vision.deep.provider}</option> : null}
+                  {modelProviders.map(provider => <option key={provider.slug} value={provider.slug}>{provider.name}</option>)}
+                </select>
+              </div>
+              <div className="col-span-2 mb-3">
+                <label className={`mb-1 block ${CONTROL_TEXT} text-zinc-400`} htmlFor="vision-model">Scene vision model</label>
+                <select
+                  className="w-full rounded-md border border-zinc-800 bg-zinc-950 px-3 py-1.5 text-sm text-zinc-200"
+                  id="vision-model"
+                  onChange={event => updatePath('vision.deep.model', event.target.value)}
+                  value={config.vision.deep.model}
+                >
+                  {!sceneModels.includes(config.vision.deep.model) && config.vision.deep.model ? <option value={config.vision.deep.model}>{config.vision.deep.model}</option> : null}
+                  {sceneModels.map(model => <option key={model} value={model}>{model}</option>)}
+                </select>
               </div>
               <ToggleRow checked={config.vision.deep.enabled} description="Use the configured multimodal model only for requested or uncertain scenes" label="Deep scene analysis" onChange={value => updatePath('vision.deep.enabled', value)} />
             </div>

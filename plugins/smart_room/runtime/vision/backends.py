@@ -122,7 +122,12 @@ class MediaPipeBackend:
         for categories in gesture_result.gestures:
             if categories:
                 best = categories[0]
-                gestures.append({"name": best.category_name, "confidence": float(best.score)})
+                name = str(best.category_name or "").strip()
+                # MediaPipe emits a literal "None" category when a hand is
+                # visible but no canned gesture matches. It is absence, not a
+                # gesture; forwarding it resets the temporal hold candidate.
+                if name and name.lower() != "none":
+                    gestures.append({"name": name, "confidence": float(best.score)})
         return {"poses": poses, "gestures": gestures}
 
     def close(self) -> None:

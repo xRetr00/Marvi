@@ -37,7 +37,7 @@ logger = logging.getLogger(__name__)
 # tools.lazy_deps itself is somehow unavailable. The real source of truth is
 # tools/lazy_deps.py's LAZY_DEPS["integration.composio"] entry -- see
 # _install_hint(), which reads the pin from there so the two can't drift.
-COMPOSIO_PACKAGE_SPEC = "composio==0.17.1"
+COMPOSIO_PACKAGE_SPEC = "composio==0.15.0"
 
 
 class ComposioUnavailable(RuntimeError):

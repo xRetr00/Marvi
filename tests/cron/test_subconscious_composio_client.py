@@ -95,7 +95,7 @@ class TestEnsureSdkInstalled:
         _block_composio_import(monkeypatch)
 
         def fake_ensure(feature, *, prompt=False):
-            raise lazy_deps.FeatureUnavailable(feature, ("composio==0.17.1",), "user declined install at prompt")
+            raise lazy_deps.FeatureUnavailable(feature, ("composio==0.15.0",), "user declined install at prompt")
 
         monkeypatch.setattr(lazy_deps, "ensure", fake_ensure)
 
@@ -106,7 +106,7 @@ class TestEnsureSdkInstalled:
         _block_composio_import(monkeypatch)
 
         def fake_ensure(feature, *, prompt=False):
-            raise lazy_deps.FeatureUnavailable(feature, ("composio==0.17.1",), "lazy installs disabled (security.allow_lazy_installs=false)")
+            raise lazy_deps.FeatureUnavailable(feature, ("composio==0.15.0",), "lazy installs disabled (security.allow_lazy_installs=false)")
 
         monkeypatch.setattr(lazy_deps, "ensure", fake_ensure)
 
@@ -149,7 +149,7 @@ class TestImportComposioSdk:
         _block_composio_import(monkeypatch)
 
         def fake_ensure(feature, *, prompt=False):
-            raise lazy_deps.FeatureUnavailable(feature, ("composio==0.17.1",), "pip install failed: network unreachable")
+            raise lazy_deps.FeatureUnavailable(feature, ("composio==0.15.0",), "pip install failed: network unreachable")
 
         monkeypatch.setattr(lazy_deps, "ensure", fake_ensure)
 
@@ -160,7 +160,7 @@ class TestImportComposioSdk:
 class TestInstallHint:
     def test_hint_mentions_lazy_deps_pinned_spec(self):
         hint = composio_client_mod.install_hint()
-        assert "composio==0.17.1" in hint
+        assert "composio==0.15.0" in hint
 
     def test_hint_falls_back_gracefully_if_lazy_deps_unavailable(self, monkeypatch):
         import builtins as _builtins
@@ -174,7 +174,7 @@ class TestInstallHint:
 
         monkeypatch.setattr(_builtins, "__import__", fake_import)
         hint = composio_client_mod.install_hint()
-        assert "composio==0.17.1" in hint
+        assert "composio==0.15.0" in hint
 
 
 def test_verify_auth_uses_current_list_signature():

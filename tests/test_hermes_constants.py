@@ -608,6 +608,7 @@ class TestSecureParentDir:
 
 
 
+    @pytest.mark.require_symlinks
     def test_symlink_resolved(self, tmp_path, monkeypatch):
         """Symlinks should be resolved before checking depth."""
         if os.name == "nt":

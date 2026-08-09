@@ -21,7 +21,7 @@ import { startProactiveDeliveryPolling, stopProactiveDeliveryPolling } from '@/s
 import { initVoiceIslandBridge } from '@/store/voice-island'
 import { startVoiceWarmupPolling } from '@/store/voice-warmup'
 import { initWindowPresence } from '@/store/window-presence'
-import { isSecondaryWindow } from '@/store/windows'
+import { isHudWindow, isSecondaryWindow } from '@/store/windows'
 import type { SessionInfo } from '@/types/hermes'
 
 import { requestComposerFocus, requestComposerInsert } from '../../chat/composer/focus'
@@ -153,7 +153,7 @@ export function useDesktopIntegrations({
   // This ref is a one-time lifecycle latch, not a mirror of reactive atom state.
   // eslint-disable-next-line no-restricted-syntax
   useEffect(() => {
-    if (!profileReady) {
+    if (!profileReady || isHudWindow()) {
       return
     }
 

@@ -35,9 +35,52 @@ _VISION_SPECS = (
     "mediapipe==1.0.0",
     "insightface==1.0.1",
 )
+_RUNTIME_IMPORTS = ("tinytuya", "paho", "yaml")
+_RUNTIME_SPECS = (
+    "tinytuya==1.20.0",
+    "paho-mqtt==2.1.0",
+    "PyYAML==6.0.3",
+)
+_SOUND_EVENT_IMPORTS = ("ai_edge_litert", "sounddevice")
+_SOUND_EVENT_SPECS = (
+    "ai-edge-litert==2.1.6",
+    "sounddevice==0.5.5",
+)
 
 
-def _ensure_vision_dependencies(config: Dict[str, Any]) -> None:
+def _ensure_dependency_group(
+    label: str,
+    imports: tuple[str, ...],
+    specs: tuple[str, ...],
+    *,
+    timeout: int,
+) -> bool:
+    missing = [name for name in imports if importlib.util.find_spec(name) is None]
+    if not missing:
+        return False
+    from tools.lazy_deps import install_specs
+
+    logger.info("Installing Smart Room %s dependencies (missing: %s)", label, ", ".join(missing))
+    result = install_specs(list(specs), timeout=timeout)
+    if not result.ok:
+        detail = result.reason or result.stderr or result.stdout or "dependency installation failed"
+        raise RuntimeError(f"Smart Room {label} dependencies unavailable: {detail[-2000:]}")
+    return True
+
+
+def _ensure_runtime_dependencies(config: Dict[str, Any]) -> bool:
+    """Restore plugin dependencies pruned by a managed-runtime update."""
+    repaired = _ensure_dependency_group(
+        "runtime", _RUNTIME_IMPORTS, _RUNTIME_SPECS, timeout=300
+    )
+    if (config.get("sound_events") or {}).get("enabled", False):
+        repaired = _ensure_dependency_group(
+            "sound-event", _SOUND_EVENT_IMPORTS, _SOUND_EVENT_SPECS, timeout=600
+        ) or repaired
+    return repaired
+
+
+def _ensure_vision_dependencies(config: Dict[str, Any]) -> bool:
     """Install the plugin-local vision stack before spawning the daemon.
 
     The runtime is a child of the gateway/desktop managed venv. Declaring
@@ -47,17 +90,10 @@ def _ensure_vision_dependencies(config: Dict[str, Any]) -> None:
     thread failure.
     """
     if not (config.get("vision") or {}).get("enabled", False):
-        return
-    missing = [name for name in _VISION_IMPORTS if importlib.util.find_spec(name) is None]
-    if not missing:
-        return
-    from tools.lazy_deps import install_specs
-
-    logger.info("Installing Smart Room vision dependencies (missing: %s)", ", ".join(missing))
-    result = install_specs(list(_VISION_SPECS), timeout=600)
-    if not result.ok:
-        detail = result.reason or result.stderr or result.stdout or "dependency installation failed"
-        raise RuntimeError(f"Smart Room vision dependencies unavailable: {detail[-2000:]}")
+        return False
+    return _ensure_dependency_group(
+        "vision", _VISION_IMPORTS, _VISION_SPECS, timeout=600
+    )
 
 
 @contextmanager
@@ -356,7 +392,16 @@ def start_supervisor(config: Dict[str, Any]) -> Dict[str, Any]:
     with _lock:
         _supervisor_config = dict(config)
         _supervisor_home = Path(get_hermes_home())
-        _ensure_vision_dependencies(_supervisor_config)
+        dependencies_repaired = _ensure_runtime_dependencies(_supervisor_config)
+        dependencies_repaired = (
+            _ensure_vision_dependencies(_supervisor_config) or dependencies_repaired
+        )
+        # A live child imported optional backends before the repair and cannot
+        # discover them merely because pip populated the venv afterward.
+        # Reload that child once so MQTT, Tuya, sound, and vision all start in
+        # the recovered environment.
+        if dependencies_repaired and _managed_runtime_alive():
+            stop(reason="dependencies repaired")
         result = start(_supervisor_config)
         if _supervisor_thread and _supervisor_thread.is_alive():
             return result

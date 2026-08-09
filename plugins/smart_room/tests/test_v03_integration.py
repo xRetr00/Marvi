@@ -777,6 +777,78 @@ def test_vision_dependencies_are_installed_only_when_enabled_and_missing(monkeyp
     assert installed == [(list(process_manager._VISION_SPECS), 600)]
 
 
+def test_runtime_dependencies_self_repair_after_managed_update(monkeypatch):
+    installed = []
+    missing = {"tinytuya", "paho", "ai_edge_litert"}
+    monkeypatch.setattr(
+        process_manager.importlib.util,
+        "find_spec",
+        lambda name: None if name in missing else object(),
+    )
+
+    class Result:
+        ok = True
+        reason = stderr = stdout = ""
+
+    monkeypatch.setattr(
+        "tools.lazy_deps.install_specs",
+        lambda specs, timeout: installed.append((specs, timeout)) or Result(),
+    )
+
+    process_manager._ensure_runtime_dependencies(
+        {"sound_events": {"enabled": True}}
+    )
+
+    assert installed == [
+        (list(process_manager._RUNTIME_SPECS), 300),
+        (list(process_manager._SOUND_EVENT_SPECS), 600),
+    ]
+
+
+def test_event_log_trim_contention_never_breaks_event_delivery(tmp_path, monkeypatch):
+    import plugins.smart_room.runtime.state_store as state_store
+
+    monkeypatch.setattr(state_store, "get_hermes_home", lambda: tmp_path)
+    path = state_store.events_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        "".join(json.dumps({"id": index}) + "\n" for index in range(500)),
+        encoding="utf-8",
+    )
+    original_replace = Path.replace
+
+    def blocked_replace(self, target):
+        if self.name.startswith(".events.jsonl."):
+            raise PermissionError("reader holds destination")
+        return original_replace(self, target)
+
+    monkeypatch.setattr(Path, "replace", blocked_replace)
+
+    state_store.append_transition({"id": 501, "type": "vision_identity_state"})
+
+    assert json.loads(path.read_text(encoding="utf-8").splitlines()[-1])["id"] == 501
+
+
+def test_tuya_recreates_device_after_repeated_failures(monkeypatch):
+    from plugins.smart_room.runtime.tuya import controller
+
+    monkeypatch.setattr(controller, "HAS_TINYTUYA", False)
+    room = controller.TuyaController({"tuya": {"worker": {"retries": 0}}})
+    reconnect = MagicMock(return_value=True)
+    monkeypatch.setattr(room, "_connect_device", reconnect)
+
+    for _ in range(3):
+        result = room._run(
+            "he20", "get_status", lambda: {"success": False, "error": "wifi"}
+        )
+        assert result["success"] is False
+
+    assert reconnect.call_args.args == ("he20",)
+    assert room.health()["he20"]["reconnect_count"] == 1
+    assert room.health()["he20"]["circuit_open"] is True
+    room.stop()
+
+
 def test_subconscious_fetcher_baselines_then_returns_only_new_events():
     from cron.scripts.subconscious.smart_room import fetch_delta
     from cron.scripts.subconscious.snapshot_store import SurfaceStore

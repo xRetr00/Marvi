@@ -186,9 +186,35 @@ def append_transition(event: Dict[str, Any]) -> None:
             handle.write(json.dumps(event, ensure_ascii=False) + "\n")
         lines = path.read_text(encoding="utf-8").splitlines()
         if len(lines) > 500:
-            tmp = path.with_suffix(".jsonl.tmp")
-            tmp.write_text("\n".join(lines[-500:]) + "\n", encoding="utf-8")
-            tmp.replace(path)
+            # Readers in the desktop/subconscious can briefly hold this file
+            # open without Windows delete-sharing, which makes os.replace
+            # raise PermissionError.  The transition was already appended;
+            # trimming is maintenance and must never fail the sensor/vision
+            # event that produced it.  A unique temp also avoids collisions
+            # with a stale runtime during handover.
+            tmp = path.with_name(
+                f".{path.name}.{threading.get_ident()}.{time.time_ns()}.tmp"
+            )
+            try:
+                tmp.write_text("\n".join(lines[-500:]) + "\n", encoding="utf-8")
+                for attempt in range(4):
+                    try:
+                        tmp.replace(path)
+                        break
+                    except PermissionError:
+                        if attempt == 3:
+                            raise
+                        time.sleep(0.025 * (attempt + 1))
+            except OSError as exc:
+                logger.warning(
+                    "Deferred Smart Room event-log trim after file contention: %s",
+                    exc,
+                )
+            finally:
+                try:
+                    tmp.unlink(missing_ok=True)
+                except OSError:
+                    pass
     try:
         from cron.scheduler import record_subconscious_activity
 

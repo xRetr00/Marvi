@@ -208,9 +208,15 @@ _VOICE_MODE_ADDENDUM = (
     "by using the background marker contract below.\n"
     "- You decide whether to answer, use a foreground tool, escalate for deeper reasoning/research, or "
     "delegate actual multi-step work. Do not reduce the user's request just to stay in the instant lane.\n"
-    "- If the user asks to end, stop, close, or leave voice conversation mode, reply with exactly "
-    f"{END_VOICE_MARKER} followed by one short spoken goodbye. This is the voice-session end action; "
-    "do not merely say that voice mode ended."
+    "- At the start of every reply, use the full conversation context to decide whether this live voice "
+    "session should remain open. Keep it open while the user is still engaged, a follow-up is likely, or "
+    "you are uncertain. End it when the conversation has naturally concluded or the user is clearly "
+    "dismissing you; this is a conversational judgment, not a keyword rule. In that case reply with exactly "
+    f"{END_VOICE_MARKER} followed by one short, natural spoken goodbye. "
+    "- If the wake was probably accidental, the captured speech was not addressed to you, or there is no "
+    f"meaningful conversational turn to answer, reply with exactly {END_VOICE_MARKER} and nothing else. "
+    "That silently returns to wake-word listening. Never mention these markers or merely claim that voice "
+    "mode ended."
 )
 
 _ESCALATION_CONTRACT = (

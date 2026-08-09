@@ -54,6 +54,10 @@ class MQTTClient:
         self._connected = False
         self._thread: Optional[threading.Thread] = None
         self._stop = threading.Event()
+        self._client_lock = threading.Lock()
+        self._last_connected_at: Optional[float] = None
+        self._last_disconnected_at: Optional[float] = None
+        self._reconnect_count = 0
         self._active_identities: set[str] = set()
         self._entry_seen_at: Dict[str, float] = {}
 
@@ -82,53 +86,83 @@ class MQTTClient:
             logger.warning("paho-mqtt not installed — MQTT disabled")
             return
 
-        if hasattr(mqtt, "CallbackAPIVersion"):
-            self._client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION1, client_id="smart_room_runtime")
-        else:
-            self._client = mqtt.Client(client_id="smart_room_runtime")
-        username = os.getenv("SMART_ROOM_MQTT_USERNAME", "")
-        password = os.getenv("SMART_ROOM_MQTT_PASSWORD", "")
-        if username:
-            self._client.username_pw_set(username, password)
-        self._client.on_connect = self._on_connect
-        self._client.on_message = self._on_message
-        self._client.on_disconnect = self._on_disconnect
-        if hasattr(self._client, "reconnect_delay_set"):
-            self._client.reconnect_delay_set(min_delay=1, max_delay=30)
-
-        # Start in background thread
+        if self._thread and self._thread.is_alive():
+            return
         self._stop.clear()
         self._thread = threading.Thread(target=self._connect_loop, daemon=True, name="smart_room_mqtt")
         self._thread.start()
         logger.info("MQTT client starting (broker=%s:%s)", self._broker, self._port)
 
+    def _build_client(self):
+        if hasattr(mqtt, "CallbackAPIVersion"):
+            client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION1, client_id="smart_room_runtime")
+        else:
+            client = mqtt.Client(client_id="smart_room_runtime")
+        username = os.getenv("SMART_ROOM_MQTT_USERNAME", "")
+        password = os.getenv("SMART_ROOM_MQTT_PASSWORD", "")
+        if username:
+            client.username_pw_set(username, password)
+        client.on_connect = self._on_connect
+        client.on_message = self._on_message
+        client.on_disconnect = self._on_disconnect
+        if hasattr(client, "reconnect_delay_set"):
+            client.reconnect_delay_set(min_delay=1, max_delay=30)
+        return client
+
     def stop(self) -> None:
         self._stop.set()
-        if self._client:
+        with self._client_lock:
+            client = self._client
+        if client:
             try:
-                self._client.disconnect()
+                client.disconnect()
             except Exception:
                 pass
         if self._thread:
             self._thread.join(timeout=3)
 
     def _connect_loop(self) -> None:
-        """Connect and reconnect loop."""
+        """Own the Paho network loop and recreate it if that loop dies.
+
+        ``loop_forever`` performs socket-level reconnects itself.  The outer
+        loop is the second recovery layer for callback failures, broker
+        restarts, or a Paho loop that returns unexpectedly.
+        """
         delay = 1
         while not self._stop.is_set():
+            client = self._build_client()
+            with self._client_lock:
+                self._client = client
             try:
-                self._client.connect(self._broker, self._port, 60)
-                self._client.loop_start()
-                self._stop.wait()
-                return
+                client.connect(self._broker, self._port, 60)
+                try:
+                    client.loop_forever(retry_first_connection=True)
+                except TypeError:  # paho < 1.6 compatibility
+                    client.loop_forever()
+                if self._stop.is_set():
+                    return
+                raise RuntimeError("MQTT network loop exited unexpectedly")
             except Exception as e:
+                self._connected = False
+                self._last_disconnected_at = time.time()
+                self._reconnect_count += 1
                 logger.warning("MQTT connect failed: %s — retrying in %ss", e, delay)
-                self._stop.wait(delay)
+                try:
+                    client.disconnect()
+                except Exception:
+                    pass
+                if self._stop.wait(delay):
+                    return
                 delay = min(30, delay * 2)
+            finally:
+                with self._client_lock:
+                    if self._client is client and self._stop.is_set():
+                        self._client = None
 
     def _on_connect(self, client, userdata, flags, rc) -> None:
         if rc == 0:
             self._connected = True
+            self._last_connected_at = time.time()
             logger.info("MQTT connected")
             topics = [
                 (self._owntracks_topic, 0),
@@ -143,7 +177,9 @@ class MQTTClient:
 
     def _on_disconnect(self, client, userdata, rc) -> None:
         self._connected = False
+        self._last_disconnected_at = time.time()
         if rc != 0:
+            self._reconnect_count += 1
             logger.warning("MQTT disconnected unexpectedly (rc=%s) — will reconnect", rc)
 
     def _on_message(self, client, userdata, msg) -> None:
@@ -239,3 +275,12 @@ class MQTTClient:
     @property
     def connected(self) -> bool:
         return self._connected
+
+    def health(self) -> Dict[str, Any]:
+        return {
+            "connected": self._connected,
+            "worker_alive": bool(self._thread and self._thread.is_alive()),
+            "last_connected_at": self._last_connected_at,
+            "last_disconnected_at": self._last_disconnected_at,
+            "reconnect_count": self._reconnect_count,
+        }

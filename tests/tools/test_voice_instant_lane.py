@@ -110,6 +110,16 @@ class TestEscalationStream:
         assert result.end_voice is True
         assert result.reply_text == "Talk soon."
 
+    def test_bare_end_voice_marker_is_a_silent_session_control_action(self):
+        parser = vil.EscalationStream()
+        assert parser.feed("[END_VOICE]") is None
+
+        result = parser.finish()
+
+        assert result.escalate is False
+        assert result.end_voice is True
+        assert result.reply_text == ""
+
     def test_marker_split_across_many_deltas(self):
         parser = vil.EscalationStream()
         out = []
@@ -257,6 +267,12 @@ class TestVoiceModeAddendum:
         addendum = vil.build_voice_mode_addendum(allow_escalation=True)
         assert "all tools enabled by the user's configuration" in addendum
         assert vil.END_VOICE_MARKER in addendum
+
+    def test_session_end_is_contextual_and_supports_false_wake_silence(self):
+        addendum = vil.build_voice_mode_addendum(allow_escalation=False)
+        assert "full conversation context" in addendum
+        assert "conversational judgment, not a keyword rule" in addendum
+        assert "silently returns to wake-word listening" in addendum
 
     def test_learning_hints_are_loaded_once_per_session(self, monkeypatch):
         from agent.learning import escalation

@@ -19018,6 +19018,7 @@ class _DuplexSession:
         self._utterance_counter = 0
         self._closed = False
         self._stt_slot_acquired = False
+        self._stt_slot_lock: Optional[asyncio.Semaphore] = None
         self._stt_init_task: Optional[asyncio.Task] = None
         self._startup_cancel = threading.Event()
         self._residency_leased = False
@@ -19118,6 +19119,7 @@ class _DuplexSession:
                 transcribe_lock.acquire(), timeout=_STREAMING_STT_ACQUIRE_TIMEOUT
             )
             self._stt_slot_acquired = True
+            self._stt_slot_lock = transcribe_lock
         except asyncio.TimeoutError:
             _log.warning(
                 "Voice duplex: streaming-STT concurrency budget (max=%d) exhausted -- "
@@ -20232,16 +20234,20 @@ class _DuplexSession:
                 tts_buffer = result.text
 
             if result.end_voice:
-                full_reply = result.text or "Talk soon."
+                # The instant LLM owns the session-lifecycle decision.  An
+                # [END_VOICE] marker with a goodbye ends after playback; the
+                # marker alone is an intentional silent end for a false wake
+                # or speech that was not addressed to Marvi.
+                full_reply = result.text
                 tts_buffer = full_reply
                 self._active_assistant_text = full_reply
-                self._end_after_playback = True
+                self._end_after_playback = bool(full_reply.strip())
 
             if tts_buffer.strip():
                 pipeline.submit(tts_buffer)
             if not _finish_pipeline():
                 return None, None
-            if not full_reply.strip():
+            if not full_reply.strip() and not result.end_voice:
                 raise _InstantLaneUnavailable(
                     "instant voice lane returned an empty response"
                 )
@@ -20512,6 +20518,10 @@ class _DuplexSession:
                 # Give up waiting rather than hang the WS teardown forever;
                 # the orphaned thread finishes on its own and is harmless.
                 await asyncio.wait_for(task, timeout=30.0)
+            except asyncio.CancelledError:
+                # WebSocket/TestClient teardown may cancel the endpoint task;
+                # cleanup below still owns residency and STT permits.
+                pass
             except Exception:
                 pass
         if self._deep_task_pump is not None:
@@ -20521,6 +20531,8 @@ class _DuplexSession:
                 pass
             try:
                 await asyncio.wait_for(self._deep_task_pump, timeout=30.0)
+            except asyncio.CancelledError:
+                pass
             except Exception:
                 pass
         if self._stt_init_task is not None and not self._stt_init_task.done():
@@ -20534,6 +20546,8 @@ class _DuplexSession:
                 )
             except asyncio.TimeoutError:
                 pass
+            except asyncio.CancelledError:
+                pass
             except Exception:
                 pass
         # If Parakeet is blocked waiting for its helper's cold-model ready
@@ -20543,10 +20557,16 @@ class _DuplexSession:
         init_in_flight = (
             self._stt_init_task is not None and not self._stt_init_task.done()
         )
-        await self._release_stt_session(recycle=not init_in_flight)
-        if self._stt_slot_acquired:
-            _get_audio_transcribe_lock(app).release()
-            self._stt_slot_acquired = False
+        try:
+            await self._release_stt_session(recycle=not init_in_flight)
+        finally:
+            if self._stt_slot_acquired:
+                # Release the exact semaphore acquired by this session.
+                # This finally block is deliberately cancellation-safe: a
+                # renderer can disappear while a cold STT worker unwinds.
+                (self._stt_slot_lock or _get_audio_transcribe_lock(app)).release()
+                self._stt_slot_acquired = False
+                self._stt_slot_lock = None
         if self._residency_leased:
             from tools.voice_residency import end_voice_session
 

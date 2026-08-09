@@ -796,6 +796,20 @@ def test_voice_model_can_end_conversation_after_spoken_goodbye(duplex_client, fu
         assert _recv_until(conn, "conversation_end", timeout=10.0) == {"type": "conversation_end"}
 
 
+def test_voice_model_can_silently_end_an_accidental_wake(duplex_client, full_fakes):
+    full_fakes["instant"]["deltas"] = ["[END_", "VOICE]"]
+    stt = full_fakes["stt"]
+    stt.queue_response("", True)
+    stt.final_text = "background television speech"
+
+    with duplex_client.websocket_connect(_duplex_url()) as conn:
+        conn.receive_json()  # ready
+        conn.send_json(_audio_msg(_pcm16_chunk()))
+        _recv_until(conn, "utterance")
+
+        assert _recv_until(conn, "conversation_end", timeout=10.0) == {"type": "conversation_end"}
+
+
 def test_tts_start_reports_actual_backend_sample_rate(duplex_client, full_fakes, monkeypatch):
     """tts_start must carry whatever sample rate the TTS backend actually
     reports -- the duplex client must not have to assume a fixed 24 kHz."""

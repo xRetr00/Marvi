@@ -1537,6 +1537,10 @@ class Runtime:
             "running": self._running,
             "rpc_port": _rpc_port(),
             "mqtt_connected": self._mqtt.connected if self._mqtt else False,
+            "mqtt": self._mqtt.health() if self._mqtt else {
+                "connected": False,
+                "worker_alive": False,
+            },
             "tuya_available": bool(self._tuya and self._tuya.available),
             "state_event_id": self._state.event_id,
             "active_alarm": self.get_active_alarm(),

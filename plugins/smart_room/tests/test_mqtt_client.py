@@ -89,3 +89,35 @@ def test_every_owntracks_message_is_forwarded_for_history():
     client._handle_owntracks(payload, "owntracks/smart_room/iphone")
 
     report.assert_called_once_with("owntracks/smart_room/iphone", payload)
+
+
+def test_network_worker_recreates_client_after_connect_failure(monkeypatch):
+    client, _, _, _ = _client()
+    first = MagicMock()
+    first.connect.side_effect = OSError("broker unavailable")
+    second = MagicMock()
+
+    def finish_loop(**_kwargs):
+        client._stop.set()
+
+    second.loop_forever.side_effect = finish_loop
+    monkeypatch.setattr(client, "_build_client", MagicMock(side_effect=[first, second]))
+    monkeypatch.setattr(client._stop, "wait", lambda _delay: False)
+
+    client._connect_loop()
+
+    assert client._build_client.call_count == 2
+    assert client.health()["reconnect_count"] == 1
+    first.disconnect.assert_called_once()
+
+
+def test_disconnect_health_is_observable_for_self_healing():
+    client, _, _, _ = _client()
+    client._connected = True
+
+    client._on_disconnect(MagicMock(), None, 7)
+
+    health = client.health()
+    assert health["connected"] is False
+    assert health["last_disconnected_at"] is not None
+    assert health["reconnect_count"] == 1

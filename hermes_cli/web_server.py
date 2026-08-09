@@ -18312,6 +18312,7 @@ def _duplex_stream_instant_reply(
     allow_escalation: bool,
     activity_callback=None,
     warm_status_callback=None,
+    cancel_event=None,
 ):
     from tools.voice_instant_lane import stream_instant_reply
 
@@ -18321,6 +18322,7 @@ def _duplex_stream_instant_reply(
         allow_escalation=allow_escalation,
         activity_callback=activity_callback,
         warm_status_callback=warm_status_callback,
+        cancel_event=cancel_event,
     )
 
 
@@ -19203,7 +19205,7 @@ class _DuplexSession:
         )
         return partial, eou, eou_prob
 
-    async def _feed_stt(self, chunk: bytes) -> None:
+    async def _feed_stt(self, chunk: bytes, *, speech_already_confirmed: bool = False) -> None:
         if self.stt_session is None:
             return
         provider = _streaming_stt_provider(self.stt_cfg)
@@ -19213,7 +19215,16 @@ class _DuplexSession:
             and voice_cfg.get("semantic_turn", True) is not False
         )
         validate_speech = semantic_fallback or provider == "parakeet"
-        speech_now = await self._feed_turn_vad(chunk) if validate_speech else False
+        # Audio that triggered an accepted barge-in already passed the
+        # speaking-state VAD gate. Do not synchronously initialize a second
+        # TEN VAD instance before returning the barge-in event; that can add
+        # seconds to interruption on a cold model load. Subsequent frames use
+        # the normal independent turn gate.
+        speech_now = (
+            True
+            if speech_already_confirmed
+            else await self._feed_turn_vad(chunk) if validate_speech else False
+        )
         if speech_now:
             self._turn_speech_started = True
             self._last_turn_speech_at = time.monotonic()
@@ -19891,7 +19902,7 @@ class _DuplexSession:
         # Compatibility/direct-call path: seed the next STT turn through the
         # normal endpoint logic.
         for audio_chunk in audio_chunks:
-            await self._feed_stt(audio_chunk)
+            await self._feed_stt(audio_chunk, speech_already_confirmed=True)
 
     # -- turn orchestration (instant lane + TTS + escalation) --------------
 
@@ -20044,6 +20055,7 @@ class _DuplexSession:
                     allow_escalation=allow_escalation,
                     activity_callback=_activity,
                     warm_status_callback=_on_warm_status,
+                    cancel_event=cancel_event,
                 )
                 for delta in deltas:
                     if cancel_event.is_set():

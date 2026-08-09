@@ -1003,6 +1003,7 @@ def stream_instant_reply(
     cfg: Optional[Dict[str, Any]] = None,
     activity_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
     warm_status_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
+    cancel_event: Optional[threading.Event] = None,
 ) -> Iterator[str]:
     """Run one fully tool-armed instant-lane agent turn and stream its text
     deltas.
@@ -1151,13 +1152,47 @@ def stream_instant_reply(
     worker.start()
 
     got_any_delta = False
-    while True:
-        item = delta_queue.get()
-        if item is None:
-            break
-        got_any_delta = True
-        yield item
+    interrupted = False
+
+    def _interrupt_cancelled_turn() -> None:
+        nonlocal interrupted
+        if interrupted:
+            return
+        interrupted = True
+        try:
+            hard_interrupt = getattr(agent, "hard_interrupt", None)
+            if callable(hard_interrupt):
+                hard_interrupt("voice barge-in")
+            else:
+                interrupt = getattr(agent, "interrupt", None)
+                if callable(interrupt):
+                    interrupt("voice barge-in")
+        except Exception:
+            logger.debug("Voice instant lane: provider cancellation failed", exc_info=True)
+
+    try:
+        while True:
+            if cancel_event is not None and cancel_event.is_set():
+                _interrupt_cancelled_turn()
+                break
+            try:
+                item = delta_queue.get(timeout=0.05)
+            except queue.Empty:
+                continue
+            if item is None:
+                break
+            if cancel_event is not None and cancel_event.is_set():
+                _interrupt_cancelled_turn()
+                break
+            got_any_delta = True
+            yield item
+    finally:
+        if cancel_event is not None and cancel_event.is_set():
+            _interrupt_cancelled_turn()
     worker.join(timeout=5.0)
+
+    if interrupted:
+        return
 
     error = error_box.get("error")
     if error is not None:

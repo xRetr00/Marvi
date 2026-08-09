@@ -233,6 +233,7 @@ def instant_reply(monkeypatch):
 
     def fake_stream(
         transcript, utterance, *, allow_escalation, activity_callback=None, warm_status_callback=None,
+        cancel_event=None,
     ):
         if warm_status_callback is not None:
             state["warm_calls"].append(state["warm_status"])
@@ -2332,7 +2333,7 @@ def test_synth_ahead_preserves_sentence_order_on_the_wire(
     duplex_client, stt_session, identify_speaker, ordered_tts_chunks, vad_gate, deep_task, warm_lane, monkeypatch,
 ):
     """Each phrase streams incrementally and lands on the wire in order."""
-    def fake_stream(transcript, utterance, *, allow_escalation, activity_callback=None, warm_status_callback=None):
+    def fake_stream(transcript, utterance, *, allow_escalation, activity_callback=None, warm_status_callback=None, cancel_event=None):
         for d in ["First sentence. ", "Second sentence. ", "Third sentence."]:
             yield d
 
@@ -2365,7 +2366,7 @@ def test_synth_ahead_reports_gap_between_sentences_in_perf_line(
         time.sleep(0.05)
         return [{"type": "start", "sample_rate": 24000}, {"type": "chunk", "audio": "AAA="}, {"type": "end"}]
 
-    def fake_instant_stream(transcript, utterance, *, allow_escalation, activity_callback=None, warm_status_callback=None):
+    def fake_instant_stream(transcript, utterance, *, allow_escalation, activity_callback=None, warm_status_callback=None, cancel_event=None):
         for d in ["First. ", "Second."]:
             yield d
 
@@ -2411,7 +2412,7 @@ def test_barge_in_drops_queued_but_unemitted_sentences(
             release.wait(timeout=5.0)
         return [{"type": "start", "sample_rate": 24000}, {"type": "chunk", "audio": "AAA="}, {"type": "end"}]
 
-    def fake_instant_stream(transcript, utterance, *, allow_escalation, activity_callback=None, warm_status_callback=None):
+    def fake_instant_stream(transcript, utterance, *, allow_escalation, activity_callback=None, warm_status_callback=None, cancel_event=None):
         for d in ["First. ", "Second. ", "Third."]:
             yield d
 

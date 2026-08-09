@@ -754,6 +754,41 @@ class TestStreamInstantReply:
         deltas = list(vil.stream_instant_reply(vil.RollingTranscript(), "hi", cfg={}))
         assert deltas == ["partial"]
 
+    def test_cancel_event_hard_interrupts_stalled_provider_call(self, monkeypatch):
+        import run_agent
+
+        instances = []
+
+        class StalledAgent:
+            def __init__(self, **kwargs):
+                self.stopped = threading.Event()
+                instances.append(self)
+
+            def run_conversation(self, *args, **kwargs):
+                self.stopped.wait(timeout=5.0)
+
+            def hard_interrupt(self, message=None):
+                self.stopped.set()
+
+        monkeypatch.setattr(run_agent, "AIAgent", StalledAgent)
+        cancel = threading.Event()
+        timer = threading.Timer(0.05, cancel.set)
+        timer.start()
+        started = time.monotonic()
+
+        try:
+            deltas = list(
+                vil.stream_instant_reply(
+                    vil.RollingTranscript(), "hi", cfg={}, cancel_event=cancel
+                )
+            )
+        finally:
+            timer.cancel()
+
+        assert deltas == []
+        assert instances[0].stopped.is_set()
+        assert time.monotonic() - started < 1.0
+
     def test_does_not_install_a_thread_tool_whitelist(self, monkeypatch):
         import run_agent
         from hermes_cli import plugins

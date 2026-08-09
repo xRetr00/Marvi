@@ -1,11 +1,22 @@
 import { useStore } from '@nanostores/react'
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { SegmentedControl } from '@/components/ui/segmented-control'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { enrollVoiceSpeaker, getVoiceSpeakers, removeVoiceSpeaker, type VoiceSpeaker } from '@/hermes'
+import {
+  enrollVoiceSpeaker,
+  getAuxiliaryModels,
+  getGlobalModelOptions,
+  getVoiceInstantStatus,
+  getVoiceSpeakers,
+  removeVoiceSpeaker,
+  setModelAssignment,
+  type ModelOptionProvider,
+  type VoiceInstantStatusResponse,
+  type VoiceSpeaker
+} from '@/hermes'
 import { triggerHaptic } from '@/lib/haptics'
 import { Loader2, Mic, Settings2, Trash2 } from '@/lib/icons'
 import { notifyError } from '@/store/notifications'
@@ -56,12 +67,85 @@ export function VoicePresenceSettings({
   const [speakerName, setSpeakerName] = useState('Owner')
   const [speakers, setSpeakers] = useState<VoiceSpeaker[]>([])
   const [enrolling, setEnrolling] = useState(false)
+  const [instantProviders, setInstantProviders] = useState<ModelOptionProvider[]>([])
+  const [instantProvider, setInstantProvider] = useState('')
+  const [instantModel, setInstantModel] = useState('')
+  const [instantStatus, setInstantStatus] = useState<VoiceInstantStatusResponse | null>(null)
+  const [instantLoading, setInstantLoading] = useState(true)
+  const [instantSaving, setInstantSaving] = useState(false)
+  const [instantError, setInstantError] = useState('')
   const captureRef = useRef<DuplexMicCapture | null>(null)
   const speakerIdThreshold = marvi.get('voice.speaker_id.threshold', 0.45)
   const speakerIdModel = marvi.get<string>('voice.speaker_id.model', 'wespeaker-en-voxceleb-cam++')
   const voiceFocusMode = marvi.get<string>('voice.speaker_id.focus_mode', 'owner')
 
+  const loadInstantModel = useCallback(async () => {
+    setInstantLoading(true)
+    setInstantError('')
+
+    try {
+      const [options, assignments, status] = await Promise.all([
+        getGlobalModelOptions(),
+        getAuxiliaryModels(),
+        getVoiceInstantStatus()
+      ])
+      const ready = (options.providers ?? []).filter(
+        provider => provider.authenticated !== false && (provider.models?.length ?? 0) > 0
+      )
+      const current = assignments.tasks.find(task => task.task === 'voice_instant')
+      const provider = current?.provider && current.provider !== 'auto' ? current.provider : assignments.main.provider
+      const model = current?.model || assignments.main.model
+
+      setInstantProviders(ready)
+      setInstantProvider(provider)
+      setInstantModel(model)
+      setInstantStatus(status)
+    } catch (error) {
+      setInstantError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setInstantLoading(false)
+    }
+  }, [])
+
+  const instantProviderModels = useMemo(() => {
+    const models = instantProviders.find(provider => provider.slug === instantProvider)?.models ?? []
+
+    return instantModel && !models.includes(instantModel) ? [instantModel, ...models] : models
+  }, [instantModel, instantProvider, instantProviders])
+
+  const applyInstantModel = async () => {
+    if (!instantProvider || !instantModel || instantSaving) {
+      return
+    }
+
+    setInstantSaving(true)
+    setInstantError('')
+
+    try {
+      const providerRow = instantProviders.find(provider => provider.slug === instantProvider)
+      const result = await setModelAssignment({
+        model: instantModel,
+        provider: instantProvider,
+        scope: 'auxiliary',
+        task: 'voice_instant',
+        ...(providerRow?.api_url ? { base_url: providerRow.api_url } : {})
+      })
+
+      if (!result.ok) {
+        throw new Error(result.confirm_message || 'The instant voice model was not saved.')
+      }
+
+      await loadInstantModel()
+      triggerHaptic('success')
+    } catch (error) {
+      setInstantError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setInstantSaving(false)
+    }
+  }
+
   useEffect(() => {
+    void loadInstantModel()
     void Promise.resolve()
       .then(getVoiceSpeakers)
       .then(result => {
@@ -73,7 +157,7 @@ export function VoicePresenceSettings({
       .catch(() => undefined)
 
     return () => captureRef.current?.stop()
-  }, [])
+  }, [loadInstantModel])
 
   const enrollSpeaker = async (nameOverride?: string) => {
     const name = (nameOverride ?? speakerName).trim()
@@ -187,12 +271,72 @@ export function VoicePresenceSettings({
 
       <ListRow
         action={
-          <Button className="gap-1.5" onClick={onOpenModelConfig} size="sm" type="button" variant="outline">
-            <Settings2 className="size-3.5" />
-            Choose model
-          </Button>
+          <div className="flex max-w-full flex-wrap items-center justify-end gap-2">
+            <Select
+              disabled={instantLoading || instantSaving || !instantProviders.length}
+              onValueChange={provider => {
+                const models = instantProviders.find(row => row.slug === provider)?.models ?? []
+                setInstantProvider(provider)
+                setInstantModel(models[0] ?? '')
+              }}
+              value={instantProvider}
+            >
+              <SelectTrigger aria-label="Instant voice provider" className="min-w-36">
+                <SelectValue placeholder="Provider" />
+              </SelectTrigger>
+              <SelectContent>
+                {instantProviders.map(provider => (
+                  <SelectItem key={provider.slug} value={provider.slug}>
+                    {provider.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Select
+              disabled={instantLoading || instantSaving || !instantProviderModels.length}
+              onValueChange={setInstantModel}
+              value={instantModel}
+            >
+              <SelectTrigger aria-label="Instant voice model" className="min-w-52 max-w-72">
+                <SelectValue placeholder="Model" />
+              </SelectTrigger>
+              <SelectContent>
+                {instantProviderModels.map(model => (
+                  <SelectItem key={model} value={model}>
+                    {model}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Button
+              disabled={instantLoading || instantSaving || !instantProvider || !instantModel}
+              onClick={() => void applyInstantModel()}
+              size="sm"
+              type="button"
+            >
+              {instantSaving && <Loader2 className="size-3.5 animate-spin" />}
+              Apply
+            </Button>
+            <Button className="gap-1.5" onClick={onOpenModelConfig} size="sm" type="button" variant="outline">
+              <Settings2 className="size-3.5" />
+              All models
+            </Button>
+          </div>
         }
-        description="Choose the fast auxiliary model that answers first in duplex voice mode."
+        description={
+          <span className="flex flex-col gap-0.5">
+            <span>
+              Choose the fast auxiliary model that answers first in duplex voice mode. Applies to new sessions.
+            </span>
+            {instantStatus?.resolved && (
+              <span className="font-mono text-[0.68rem] text-muted-foreground">
+                Currently using: {instantStatus.provider} · {instantStatus.model}
+                {instantStatus.is_fallback ? ' (fallback)' : ''}
+              </span>
+            )}
+            {instantError && <span className="text-destructive">{instantError}</span>}
+          </span>
+        }
         title="Instant voice model"
       />
 
@@ -285,10 +429,7 @@ export function VoicePresenceSettings({
 
       <ListRow
         action={
-          <Select
-            onValueChange={model => void marvi.patch('voice.speaker_id.model', model)}
-            value={speakerIdModel}
-          >
+          <Select onValueChange={model => void marvi.patch('voice.speaker_id.model', model)} value={speakerIdModel}>
             <SelectTrigger className="min-w-64">
               <SelectValue />
             </SelectTrigger>

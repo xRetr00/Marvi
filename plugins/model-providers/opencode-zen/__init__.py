@@ -24,6 +24,11 @@ def _is_kimi_k2_model(model: str | None) -> bool:
     return _flat_model_name(model).startswith("kimi-k2")
 
 
+def _is_mimo_v2_5_model(model: str | None) -> bool:
+    """MiMo V2.5 and V2.5 Pro expose Xiaomi's binary thinking switch."""
+    return _flat_model_name(model).startswith("mimo-v2.5")
+
+
 def _is_deepseek_thinking_model(model: str | None) -> bool:
     m = _flat_model_name(model)
     if m.startswith("deepseek-v") and not m.startswith("deepseek-v3"):
@@ -99,6 +104,23 @@ class OpenCodeGoProfile(ProviderProfile):
             # only send extra_body["thinking"] when no reasoning_effort is set.
             if "reasoning_effort" not in top_level:
                 extra_body["thinking"] = {"type": "enabled"}
+            return extra_body, top_level
+
+        if _is_mimo_v2_5_model(model):
+            # Xiaomi documents thinking as enabled by default for MiMo V2.5.
+            # The voice instant lane always supplies an explicit reasoning
+            # preference, so translate it to the OpenAI-compatible binary
+            # switch instead of silently letting MiMo spend several seconds
+            # generating hidden reasoning before its first spoken word.
+            if not isinstance(reasoning_config, dict):
+                return extra_body, top_level
+            enabled = (
+                reasoning_config.get("enabled") is not False
+                and str(reasoning_config.get("effort") or "").lower() != "none"
+            )
+            extra_body["thinking"] = {
+                "type": "enabled" if enabled else "disabled"
+            }
             return extra_body, top_level
 
         if not _is_deepseek_thinking_model(model):

@@ -91,6 +91,40 @@ class TestOpenCodeGoDeepSeekThinking:
             assert top_level == {"reasoning_effort": "max"}
 
 
+class TestOpenCodeGoMiMoThinking:
+    """MiMo V2.5 defaults to thinking on and uses Xiaomi's binary switch."""
+
+    @pytest.mark.parametrize("model", ["mimo-v2.5", "xiaomi/mimo-v2.5-pro"])
+    def test_disabled_emits_thinking_disabled(self, opencode_go_profile, model):
+        extra_body, top_level = opencode_go_profile.build_api_kwargs_extras(
+            reasoning_config={"enabled": False},
+            model=model,
+        )
+        assert extra_body == {"thinking": {"type": "disabled"}}
+        assert top_level == {}
+
+    def test_no_config_preserves_server_default(self, opencode_go_profile):
+        extra_body, top_level = opencode_go_profile.build_api_kwargs_extras(
+            reasoning_config=None,
+            model="mimo-v2.5",
+        )
+        assert extra_body == {}
+        assert top_level == {}
+
+    def test_disabled_reaches_transport_extra_body(self, opencode_go_profile):
+        from agent.transports.chat_completions import ChatCompletionsTransport
+
+        kwargs = ChatCompletionsTransport().build_kwargs(
+            model="mimo-v2.5",
+            messages=[{"role": "user", "content": "ping"}],
+            tools=None,
+            provider_profile=opencode_go_profile,
+            reasoning_config={"enabled": False},
+            base_url="https://opencode.ai/zen/go/v1",
+        )
+        assert kwargs["extra_body"] == {"thinking": {"type": "disabled"}}
+
+
 class TestOpenCodeGoGLM52Reasoning:
     """GLM-5.2 uses its native high/max reasoning_effort knob on OpenCode Go."""
 

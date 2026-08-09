@@ -2184,12 +2184,10 @@ def test_partial_reply_flushes_before_sentence_punctuation():
     assert rest
 
 
-def test_first_tts_segment_flushes_one_completed_word():
-    ready, rest = web_server._split_ready_sentences(
-        "Hello there, Shereef.", first_word=True
-    )
-    assert ready == ["Hello"]
-    assert rest.strip() == "there, Shereef."
+def test_first_tts_segment_keeps_a_short_sentence_together():
+    ready, rest = web_server._split_ready_sentences("Hello there, Shereef.")
+    assert ready == ["Hello there, Shereef."]
+    assert rest == ""
 
 
 def test_first_tts_chunk_is_emitted_before_first_segment_finishes(monkeypatch):
@@ -2228,12 +2226,93 @@ def test_first_tts_chunk_is_emitted_before_first_segment_finishes(monkeypatch):
     assert pipeline.finish()[0] is True
 
 
+def test_later_tts_segment_also_streams_before_it_finishes(monkeypatch):
+    release = threading.Event()
+
+    def streaming_tts(text):
+        yield {"type": "start", "sample_rate": 24000}
+        yield {"type": "chunk", "audio": f"{text}:FIRST"}
+        if text == "Second segment.":
+            release.wait(timeout=5.0)
+            yield {"type": "chunk", "audio": f"{text}:SECOND"}
+
+    monkeypatch.setattr(web_server, "_duplex_stream_tts_chunks", streaming_tts)
+
+    class Session:
+        def __init__(self):
+            self._playback_pending = threading.Event()
+            self._assistant_audio_started = threading.Event()
+            self.events = []
+
+        def _emit_sync(self, event):
+            self.events.append(event)
+
+    session = Session()
+    pipeline = web_server._DuplexTtsPipeline(session, threading.Event())
+    pipeline.submit("First segment.")
+    pipeline.submit("Second segment.")
+
+    deadline = time.monotonic() + 1.0
+    while time.monotonic() < deadline and not any(
+        event.get("data") == "Second segment.:FIRST" for event in session.events
+    ):
+        time.sleep(0.01)
+
+    assert any(
+        event.get("data") == "Second segment.:FIRST" for event in session.events
+    )
+    assert not any(
+        event.get("data") == "Second segment.:SECOND" for event in session.events
+    )
+    release.set()
+    assert pipeline.finish()[0] is True
+
+
+def test_cancelled_tts_pipeline_does_not_wait_for_next_audio_chunk(monkeypatch):
+    release = threading.Event()
+
+    def blocked_tts(_text):
+        yield {"type": "start", "sample_rate": 24000}
+        yield {"type": "chunk", "audio": "FIRST"}
+        release.wait(timeout=5.0)
+        yield {"type": "chunk", "audio": "TOO_LATE"}
+
+    monkeypatch.setattr(web_server, "_duplex_stream_tts_chunks", blocked_tts)
+
+    class Session:
+        def __init__(self):
+            self._playback_pending = threading.Event()
+            self._assistant_audio_started = threading.Event()
+            self.events = []
+
+        def _emit_sync(self, event):
+            self.events.append(event)
+
+    session = Session()
+    cancelled = threading.Event()
+    pipeline = web_server._DuplexTtsPipeline(session, cancelled)
+    pipeline.submit("Please keep talking.")
+
+    deadline = time.monotonic() + 1.0
+    while time.monotonic() < deadline and not any(
+        event.get("data") == "FIRST" for event in session.events
+    ):
+        time.sleep(0.01)
+    assert any(event.get("data") == "FIRST" for event in session.events)
+
+    cancelled.set()
+    started = time.monotonic()
+    assert pipeline.finish(cancelled=True)[0] is False
+    assert time.monotonic() - started < 0.5
+    assert not any(event.get("data") == "TOO_LATE" for event in session.events)
+    release.set()
+
+
 @pytest.fixture
 def ordered_tts_chunks(monkeypatch):
     """Unlike the generic ``tts_chunks`` fixture, echoes the synthesized
     sentence back in the chunk's ``audio`` field (base64) so a test can
-    verify chunks were emitted in submission order even though synthesis
-    itself may run concurrently across sentences."""
+    verify chunks were emitted in submission order."""
     calls: list[str] = []
 
     def fake_stream(text):
@@ -2252,9 +2331,7 @@ def ordered_tts_chunks(monkeypatch):
 def test_synth_ahead_preserves_sentence_order_on_the_wire(
     duplex_client, stt_session, identify_speaker, ordered_tts_chunks, vad_gate, deep_task, warm_lane, monkeypatch,
 ):
-    """Sentences synthesize with bounded lookahead (possibly out of synthesis
-    order across the two workers), but chunks must still land on the wire in
-    submission order."""
+    """Each phrase streams incrementally and lands on the wire in order."""
     def fake_stream(transcript, utterance, *, allow_escalation, activity_callback=None, warm_status_callback=None):
         for d in ["First sentence. ", "Second sentence. ", "Third sentence."]:
             yield d
@@ -2273,10 +2350,10 @@ def test_synth_ahead_preserves_sentence_order_on_the_wire(
 
     chunks = [f for f in frames if f["type"] == "tts_chunk"]
     decoded = [base64.b64decode(f["data"]).decode("utf-8") for f in chunks]
-    assert decoded == ["First", "sentence.", "Second sentence.", "Third sentence."]
+    assert decoded == ["First sentence.", "Second sentence.", "Third sentence."]
     # seq is monotonically increasing across the whole turn, not reset
     # per-sentence -- proves all three shared one tts_start/tts_end cycle.
-    assert [f["seq"] for f in chunks] == [1, 2, 3, 4]
+    assert [f["seq"] for f in chunks] == [1, 2, 3]
 
 
 def test_synth_ahead_reports_gap_between_sentences_in_perf_line(

@@ -17957,9 +17957,7 @@ _SENTENCE_END_CHARS = ".!?\n"
 _DUPLEX_TTS_EARLY_SEGMENT_CHARS = 36
 
 
-def _split_ready_sentences(
-    buffer: str, *, first_word: bool = False
-) -> tuple[list[str], str]:
+def _split_ready_sentences(buffer: str) -> tuple[list[str], str]:
     """Pop complete sentence-ish segments off ``buffer``; return (segments, remainder).
 
     Flushes everything up to and including the LAST sentence-ending
@@ -17967,13 +17965,6 @@ def _split_ready_sentences(
     for the next call. Pure and dependency-free so it's trivially unit
     tested without a TTS provider.
     """
-    if first_word:
-        seen_text = False
-        for i, ch in enumerate(buffer):
-            if ch.isspace() and seen_text:
-                return [buffer[:i].strip()], buffer[i:]
-            seen_text = seen_text or not ch.isspace()
-
     idx = -1
     for i, ch in enumerate(buffer):
         if ch in _SENTENCE_END_CHARS:
@@ -18637,33 +18628,15 @@ class _DuplexTtsCycle:
 
 
 class _DuplexTtsPipeline:
-    """Pipelines TTS synthesis across a turn's sentences so text -> speech
-    has no "wait for TTS after this sentence before even starting the next"
-    serialization gap -- the audible speaking/thinking/speaking flap seen in
-    voice-presence.log.
+    """Streams phrase-sized TTS submissions in order without word-sized gaps.
 
     Producer/consumer split:
 
-    - ``submit(sentence)`` is called by the caller (the instant-lane delta
-      loop) as soon as a sentence's text is ready. Synthesis for that
-      sentence is handed to a small bounded thread pool (``_LOOKAHEAD``
-      workers, default 2) -- so up to two sentences can be mid-synthesis
-      concurrently, meaning sentence N+1's synthesis can already be running
-      WHILE sentence N's audio is being emitted/played, instead of only
-      starting once N's TTS call (and emission) has fully returned.
-    - A dedicated emitter thread drains completed syntheses STRICTLY IN
-      SUBMISSION ORDER (even though synthesis itself may finish
-      out-of-order across the two workers) and streams their chunks over
-      the WS via a single shared :class:`_DuplexTtsCycle` -- so ordering on
-      the wire is never at risk from the concurrency underneath.
-
-    Each worker synthesizes into a fully-materialized list of events rather
-    than emitting directly (unlike :meth:`_DuplexTtsCycle.speak`) --
-    necessary so two concurrent workers never race to call ``_emit_sync``
-    for different sentences at once, which would scramble chunk order on
-    the wire. The tradeoff is that one sentence's own chunks aren't
-    streamed until its whole synthesis call returns; the win is eliminating
-    the gap BETWEEN sentences, which is what was actually audible.
+    Every submission gets a bounded event queue. One producer streams phrases
+    sequentially while a dedicated emitter drains those queues in submission
+    order. This keeps mutable local models such as PocketTTS single-threaded,
+    sends every audio chunk immediately, and avoids the old behavior where
+    later phrases were fully synthesized before any of their audio was sent.
 
     Barge-in: :meth:`cancel` stops future submissions from being emitted;
     ``cancel_event`` (shared with the rest of the turn) is checked before
@@ -18677,7 +18650,7 @@ class _DuplexTtsPipeline:
     provider call.
     """
 
-    _LOOKAHEAD = 2
+    _LOOKAHEAD = 1
 
     def __init__(
         self,
@@ -18693,8 +18666,7 @@ class _DuplexTtsPipeline:
             max_workers=self._LOOKAHEAD,
             thread_name_prefix="voice-tts-synth",
         )
-        self._pending: "queue.Queue[Optional[Any]]" = queue.Queue()
-        self._first_submission = True
+        self._pending: "queue.Queue[Optional[queue.Queue]]" = queue.Queue()
         self._emit_windows: List[Tuple[float, float]] = []
         self._closed = False
         self._emit_error = False
@@ -18704,22 +18676,13 @@ class _DuplexTtsPipeline:
         self._emitter.start()
 
     def submit(self, sentence: str) -> None:
-        """Queue ``sentence`` for (possibly concurrent) synthesis. Bounded
-        lookahead: the executor has only ``_LOOKAHEAD`` worker threads, so a
-        3rd+ submission naturally waits for a worker slot -- this IS the
-        "bounded lookahead of 1-2 sentences" the caller doesn't need to
-        manage explicitly."""
+        """Queue one natural phrase for ordered incremental synthesis."""
         sentence = (sentence or "").strip()
         if not sentence or self._closed or self._cancel_event.is_set():
             return
-        if self._first_submission:
-            self._first_submission = False
-            events: "queue.Queue[Optional[dict]]" = queue.Queue(maxsize=8)
-            self._executor.submit(self._synthesize_streaming, sentence, events)
-            self._pending.put(events)
-        else:
-            future = self._executor.submit(self._synthesize, sentence)
-            self._pending.put(future)
+        events: "queue.Queue[Optional[dict]]" = queue.Queue(maxsize=8)
+        self._executor.submit(self._synthesize_streaming, sentence, events)
+        self._pending.put(events)
 
     def _synthesize_streaming(
         self,
@@ -18740,53 +18703,41 @@ class _DuplexTtsPipeline:
         except Exception as exc:
             _log.warning("Voice duplex: TTS unavailable: %s", exc)
         finally:
-            while not self._cancel_event.is_set():
+            while True:
                 try:
                     events.put(None, timeout=0.1)
                     break
                 except queue.Full:
-                    continue
-
-    def _synthesize(self, sentence: str) -> list:
-        """Runs on the executor: fully materialize this sentence's TTS
-        stream events (see the class docstring for why this can't emit
-        directly). Mirrors ``_DuplexTtsCycle.speak``'s own degrade-silently
-        error handling."""
-        try:
-            events = []
-            for event in _duplex_stream_tts_chunks(sentence):
-                if self._cancel_event.is_set():
-                    break
-                events.append(event)
-            return events
-        except Exception as exc:
-            _log.warning("Voice duplex: TTS unavailable: %s", exc)
-            return []
+                    if self._cancel_event.is_set():
+                        # Playback no longer needs queued audio. Make room for
+                        # the sentinel so the emitter and producer can both
+                        # terminate without a 30-second cancellation stall.
+                        try:
+                            events.get_nowait()
+                        except queue.Empty:
+                            pass
 
     def _emit_loop(self) -> None:
         while True:
-            future = self._pending.get()
-            if future is None:
+            event_queue = self._pending.get()
+            if event_queue is None:
                 return  # close() sentinel
             if self._cancel_event.is_set():
-                if not isinstance(future, queue.Queue):
-                    future.cancel()  # no-op if already running; harmless either way
                 continue
-            if isinstance(future, queue.Queue):
-                def _stream_events():
-                    while True:
-                        event = future.get()
-                        if event is None:
-                            return
-                        yield event
 
-                events = _stream_events()
-            else:
-                try:
-                    events = future.result()
-                except Exception as exc:
-                    _log.warning("Voice duplex: TTS synthesis failed: %s", exc)
-                    continue
+            def _stream_events():
+                while True:
+                    if self._cancel_event.is_set():
+                        return
+                    try:
+                        event = event_queue.get(timeout=0.05)
+                    except queue.Empty:
+                        continue
+                    if event is None:
+                        return
+                    yield event
+
+            events = _stream_events()
             if self._cancel_event.is_set():
                 continue
             window_start = time.monotonic()
@@ -19989,7 +19940,6 @@ class _DuplexSession:
             self, cancel_event, on_first_chunk=_on_first_tts_chunk
         )
         tts_buffer = ""
-        tts_started = False
         full_reply = ""
         got_any_delta = False
         pipeline_result: Dict[str, Any] = {}
@@ -20068,15 +20018,12 @@ class _DuplexSession:
                     self._emit_sync({"type": "instant_delta", "text": reply_piece})
                     tts_buffer += reply_piece
                     while True:
-                        ready, tts_buffer = _split_ready_sentences(
-                            tts_buffer, first_word=not tts_started
-                        )
+                        ready, tts_buffer = _split_ready_sentences(tts_buffer)
                         if not ready:
                             break
                         if cancel_event.is_set():
                             return None, None
                         pipeline.submit(ready[0])
-                        tts_started = True
             except Exception as exc:
                 if got_any_delta:
                     _log.warning("Voice duplex: instant lane failed mid-reply: %s", exc)

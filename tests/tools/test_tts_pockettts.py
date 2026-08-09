@@ -74,7 +74,9 @@ class TestGeneratePocketTts:
 
         assert result == output_path
         assert (tmp_path / "test.wav").exists()
-        fake_cls.load_model.assert_called_once()
+        fake_cls.load_model.assert_called_once_with(
+            language="english", temp=0.7, lsd_decode_steps=1, quantize=False
+        )
         fake_model.get_state_for_audio_prompt.assert_called_once_with("alba")
         fake_model.generate_audio.assert_called_once_with("voice-state", "Hello world")
         fake_wavfile.write.assert_called_once()
@@ -106,6 +108,48 @@ class TestGeneratePocketTts:
         )
 
         fake_model.get_state_for_audio_prompt.assert_called_once_with("marius")
+
+    def test_pockettts_21_model_options_are_forwarded_and_cached_separately(
+        self, tmp_path, mock_pockettts_modules
+    ):
+        from tools.tts_tool import _generate_pockettts
+
+        _fake_model, fake_cls, _ = mock_pockettts_modules
+        config = {
+            "pockettts": {
+                "language": "english_2026-04",
+                "temperature": 0.55,
+                "lsd_decode_steps": 2,
+                "quantize": True,
+            }
+        }
+
+        _generate_pockettts("Hi", str(tmp_path / "one.wav"), config)
+        _generate_pockettts("Again", str(tmp_path / "two.wav"), config)
+
+        fake_cls.load_model.assert_called_once_with(
+            language="english_2026-04",
+            temp=0.55,
+            lsd_decode_steps=2,
+            quantize=True,
+        )
+
+    def test_custom_model_config_replaces_language(self, tmp_path, mock_pockettts_modules):
+        from tools.tts_tool import _generate_pockettts
+
+        _fake_model, fake_cls, _ = mock_pockettts_modules
+        _generate_pockettts(
+            "Hi",
+            str(tmp_path / "custom.wav"),
+            {"pockettts": {"config": "D:/voices/pocket.yaml"}},
+        )
+
+        fake_cls.load_model.assert_called_once_with(
+            config="D:/voices/pocket.yaml",
+            temp=0.7,
+            lsd_decode_steps=1,
+            quantize=False,
+        )
 
     def test_known_preset_voice_is_case_normalized(self, tmp_path, mock_pockettts_modules):
         from tools.tts_tool import _generate_pockettts
@@ -175,7 +219,7 @@ class TestGeneratePocketTts:
 
         fake_model, fake_cls, _ = mock_pockettts_modules
 
-        def slow_load_model():
+        def slow_load_model(**_kwargs):
             time.sleep(0.05)
             return fake_model
 

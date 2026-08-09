@@ -10,6 +10,20 @@ describe('voiceProviderKeys', () => {
     expect(voiceProviderKeys('tts', 'openai')).toEqual(['tts.openai.model', 'tts.openai.voice'])
     expect(voiceProviderKeys('tts', 'elevenlabs')).toEqual(['tts.elevenlabs.voice_id', 'tts.elevenlabs.model_id'])
     expect(voiceProviderKeys('tts', 'edge')).toEqual(['tts.edge.voice'])
+    expect(voiceProviderKeys('tts', 'pockettts')).toEqual([
+      'tts.pockettts.voice',
+      'tts.pockettts.device',
+      'tts.pockettts.language',
+      'tts.pockettts.temperature',
+      'tts.pockettts.quantize'
+    ])
+    expect(voiceProviderKeys('tts', 'gepard')).toEqual([
+      'tts.gepard.endpoint',
+      'tts.gepard.model',
+      'tts.gepard.voice',
+      'tts.gepard.sample_rate',
+      'tts.gepard.timeout'
+    ])
   })
 
   it('covers every built-in TTS provider the Capabilities picker offers', () => {
@@ -25,7 +39,8 @@ describe('voiceProviderKeys', () => {
       'gemini',
       'piper',
       'deepinfra',
-      'minimax'
+      'minimax',
+      'gepard'
     ]) {
       expect(voiceProviderKeys('tts', provider).length, provider).toBeGreaterThan(0)
     }
@@ -53,7 +68,10 @@ describe('voice field option coverage', () => {
       'tts.elevenlabs.voice_id',
       'tts.edge.voice',
       'tts.xai.voice_id',
-      'tts.piper.voice'
+      'tts.piper.voice',
+      'tts.gepard.endpoint',
+      'tts.gepard.model',
+      'tts.gepard.voice'
     ]) {
       expect(FREE_INPUT_KEYS.has(key), key).toBe(true)
     }

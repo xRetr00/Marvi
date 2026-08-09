@@ -357,13 +357,25 @@ export const ENUM_OPTIONS: Record<string, string[]> = {
     'gemini',
     'deepinfra',
     'piper',
-    'pockettts'
+    'pockettts',
+    'gepard'
   ],
   'stt.openai.model': ['whisper-1', 'gpt-4o-mini-transcribe', 'gpt-4o-transcribe', 'gpt-transcribe'],
   'stt.mistral.model': ['voxtral-mini-latest', 'voxtral-mini-2602'],
   'tts.openai.model': ['gpt-4o-mini-tts', 'tts-1', 'tts-1-hd'],
   'tts.elevenlabs.model_id': ['eleven_multilingual_v2', 'eleven_turbo_v2_5', 'eleven_flash_v2_5'],
   'tts.pockettts.device': ['cpu', 'cuda'],
+  'tts.pockettts.language': [
+    'english',
+    'english_2026-01',
+    'english_2026-04',
+    'french_24l',
+    'german_24l',
+    'portuguese',
+    'italian',
+    'spanish_24l'
+  ],
+  'tts.gepard.sample_rate': ['22050', '24000', '48000'],
   'tts.pockettts.voice': [
     'alba',
     'anna',
@@ -408,6 +420,9 @@ export const FREE_INPUT_KEYS = new Set([
   'tts.mistral.model',
   'tts.mistral.voice_id',
   'tts.piper.voice',
+  'tts.gepard.endpoint',
+  'tts.gepard.model',
+  'tts.gepard.voice',
   'tts.deepinfra.model',
   'tts.deepinfra.voice'
 ])
@@ -582,7 +597,17 @@ export const FIELD_LABELS: Record<string, string> = defineFieldCopy({
     },
     pockettts: {
       voice: 'PocketTTS Voice',
-      device: 'PocketTTS Device'
+      device: 'PocketTTS Device',
+      language: 'PocketTTS Language Model',
+      temperature: 'PocketTTS Temperature',
+      quantize: 'PocketTTS CPU Quantization'
+    },
+    gepard: {
+      endpoint: 'Gepard Streaming Endpoint',
+      model: 'Gepard Model',
+      voice: 'Gepard Voice ID',
+      sampleRate: 'Gepard Sample Rate',
+      timeout: 'Gepard Chunk Timeout'
     },
     deepinfra: {
       model: 'DeepInfra TTS Model',
@@ -714,7 +739,17 @@ export const FIELD_DESCRIPTIONS: Record<string, string> = defineFieldCopy({
     },
     pockettts: {
       voice: 'Preset voice name or path/URI to a reference voice.',
-      device: 'Use CPU by default; CUDA is best-effort when PocketTTS supports it.'
+      device: 'Use CPU by default; CUDA is best-effort when PocketTTS supports it.',
+      language: 'PocketTTS 2.1 language checkpoint. English uses the latest English model.',
+      temperature: 'Sampling variation. 0.7 is the upstream default; lower is more consistent.',
+      quantize: 'Use the PocketTTS 2.1 int8 CPU path to reduce memory and improve CPU speed.'
+    },
+    gepard: {
+      endpoint: 'WebSocket URL of an isolated local Gepard Cartesia-compatible server.',
+      model: 'Model identifier sent to the server. The local default is nineninesix/gepard-1.0.',
+      voice: 'Saved server voice ID. Use default to speak with the server default voice.',
+      sampleRate: 'Raw PCM sample rate requested from Gepard. 22050 avoids resampling.',
+      timeout: 'Maximum wait in seconds for each streamed audio message.'
     }
   },
   stt: {
@@ -854,6 +889,14 @@ export const SECTIONS: DesktopConfigSection[] = [
       'tts.piper.voice',
       'tts.pockettts.voice',
       'tts.pockettts.device',
+      'tts.pockettts.language',
+      'tts.pockettts.temperature',
+      'tts.pockettts.quantize',
+      'tts.gepard.endpoint',
+      'tts.gepard.model',
+      'tts.gepard.voice',
+      'tts.gepard.sample_rate',
+      'tts.gepard.timeout',
       'tts.deepinfra.model',
       'tts.deepinfra.voice',
       'stt.local.model',

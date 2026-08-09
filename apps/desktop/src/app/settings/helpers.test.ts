@@ -190,6 +190,7 @@ describe('settings helpers', () => {
       expect(opts).toBeDefined()
       expect(opts).toContain('xai')
       expect(opts).toContain('pockettts')
+      expect(opts).toContain('gepard')
       expect(opts).toContain('edge')
       expect(opts).toContain('elevenlabs')
       expect(opts).not.toContain('qwen3')
@@ -225,6 +226,8 @@ describe('settings helpers', () => {
       ])
       expect(enumOptionsFor('tts.openai.model', 'gpt-4o-mini-tts', config)).toContain('tts-1-hd')
       expect(enumOptionsFor('tts.pockettts.device', 'cpu', config)).toEqual(['cpu', 'cuda'])
+      expect(enumOptionsFor('tts.pockettts.language', 'english', config)).toContain('english_2026-04')
+      expect(enumOptionsFor('tts.gepard.sample_rate', 22050, config)).toEqual(['22050', '24000', '48000'])
     })
 
     it('renders a dropdown for PocketTTS preset voices', () => {

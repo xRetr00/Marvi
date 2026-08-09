@@ -59,6 +59,20 @@ describe('voiceFieldVisible', () => {
     expect(voiceFieldVisible('tts.pockettts.voice', cfg())).toBe(false)
     expect(voiceFieldVisible('tts.pockettts.voice', cfg({ tts: { provider: 'pockettts', pockettts: {} } }))).toBe(true)
     expect(voiceFieldVisible('tts.pockettts.device', cfg({ tts: { provider: 'pockettts', pockettts: {} } }))).toBe(true)
+    expect(voiceFieldVisible('tts.pockettts.language', cfg({ tts: { provider: 'pockettts', pockettts: {} } }))).toBe(
+      true
+    )
+    expect(voiceFieldVisible('tts.pockettts.quantize', cfg({ tts: { provider: 'pockettts', pockettts: {} } }))).toBe(
+      true
+    )
+  })
+
+  it('shows Gepard fields only when Gepard is selected', () => {
+    const gepard = cfg({ tts: { provider: 'gepard', gepard: {} } })
+    expect(voiceFieldVisible('tts.gepard.endpoint', cfg())).toBe(false)
+    expect(voiceFieldVisible('tts.gepard.endpoint', gepard)).toBe(true)
+    expect(voiceFieldVisible('tts.gepard.model', gepard)).toBe(true)
+    expect(voiceFieldVisible('tts.pockettts.voice', gepard)).toBe(false)
   })
 
   it('hides legacy streaming sidecar fields when Parakeet is selected', () => {

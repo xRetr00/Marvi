@@ -85,6 +85,23 @@ def test_resolve_returns_configured_streamer(monkeypatch):
     assert isinstance(prov, ts.StreamingTTSProvider)
 
 
+def test_resolve_lazily_discovers_plugin_streamer(monkeypatch):
+    import hermes_cli.plugins as plugins
+
+    monkeypatch.delitem(ts._REGISTRY, "late-plugin", raising=False)
+    discovered = []
+
+    def discover():
+        discovered.append(True)
+        _register_fake(monkeypatch, "late-plugin")
+
+    monkeypatch.setattr(plugins, "_ensure_plugins_discovered", discover)
+    provider = ts.resolve_streaming_provider({"provider": "late-plugin"})
+
+    assert discovered == [True]
+    assert isinstance(provider, ts.StreamingTTSProvider)
+
+
 def test_never_swaps_provider_for_streaming(monkeypatch):
     # A registered streamer must NOT be substituted when the user picked another
     # (non-streaming) provider — that would silently change their voice.

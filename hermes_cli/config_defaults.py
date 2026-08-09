@@ -1498,6 +1498,18 @@ DEFAULT_CONFIG = {
         "pockettts": {
             "voice": "alba",  # preset name or path/URI to a reference voice
             "device": "cpu",  # cpu, cuda best-effort when upstream supports it
+            "language": "english",  # PocketTTS 2.1 language/config family
+            "temperature": 0.7,
+            "quantize": False,  # int8 CPU path: lower memory and faster inference
+        },
+        "gepard": {
+            # Standalone user plugin: Cartesia-compatible local Gepard server.
+            # Model/CUDA dependencies stay isolated from Marvi's runtime.
+            "endpoint": "ws://127.0.0.1:8000/tts/websocket",
+            "model": "nineninesix/gepard-1.0",
+            "voice": "default",
+            "sample_rate": 22050,
+            "timeout": 45,
         },
         "piper": {
             # Voice name (e.g. "en_US-lessac-medium") downloaded on first

@@ -163,6 +163,20 @@ def register(name: str) -> Callable[[type[StreamingTTSProvider]], type[Streaming
 def _try_instantiate(name: str, tts_config: Dict) -> Optional[StreamingTTSProvider]:
     """Construct the registered streamer *name* if it's usable, else None."""
     cls = _REGISTRY.get(name)
+    if cls is None:
+        # A user TTS plugin may register both its normal file provider and a
+        # raw-PCM streamer from register(ctx). Streaming endpoints can resolve
+        # before another surface has caused plugin discovery, so give the
+        # general plugin loader one lazy chance before declaring the selected
+        # provider non-streaming. This keeps third-party model code outside the
+        # core while letting it use the same duplex path as built-ins.
+        try:
+            from hermes_cli.plugins import _ensure_plugins_discovered
+
+            _ensure_plugins_discovered()
+            cls = _REGISTRY.get(name)
+        except Exception as exc:
+            logger.debug("streaming TTS plugin discovery failed: %s", exc)
     if cls is None or not cls.available():
         return None
     try:

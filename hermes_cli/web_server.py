@@ -1566,7 +1566,50 @@ _SCHEMA_OVERRIDES: Dict[str, Dict[str, Any]] = {
     "tts.provider": {
         "type": "select",
         "description": "Text-to-speech provider",
-        "options": ["edge", "elevenlabs", "openai", "xai", "minimax", "mistral", "gemini", "piper", "pockettts"],
+        "options": ["edge", "elevenlabs", "openai", "xai", "minimax", "mistral", "gemini", "piper", "pockettts", "gepard"],
+    },
+    "tts.gepard.endpoint": {
+        "type": "string",
+        "description": "Local Gepard Cartesia-compatible WebSocket endpoint",
+    },
+    "tts.gepard.model": {
+        "type": "string",
+        "description": "Gepard model identifier",
+    },
+    "tts.gepard.voice": {
+        "type": "string",
+        "description": "Gepard server voice ID (default uses the server voice)",
+    },
+    "tts.gepard.sample_rate": {
+        "type": "select",
+        "description": "Gepard PCM output sample rate",
+        "options": [22050, 24000, 48000],
+    },
+    "tts.gepard.timeout": {
+        "type": "number",
+        "description": "Maximum seconds to wait for a Gepard audio chunk",
+    },
+    "tts.pockettts.language": {
+        "type": "select",
+        "description": "PocketTTS 2.1 language checkpoint",
+        "options": [
+            "english",
+            "english_2026-01",
+            "english_2026-04",
+            "french_24l",
+            "german_24l",
+            "portuguese",
+            "italian",
+            "spanish_24l",
+        ],
+    },
+    "tts.pockettts.temperature": {
+        "type": "number",
+        "description": "PocketTTS sampling temperature",
+    },
+    "tts.pockettts.quantize": {
+        "type": "boolean",
+        "description": "Use PocketTTS 2.1 dynamic int8 CPU quantization",
     },
     "stt.provider": {
         "type": "select",

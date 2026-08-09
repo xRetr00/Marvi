@@ -2556,20 +2556,51 @@ def _resolve_pockettts_model_and_voice(tts_config: Dict[str, Any]) -> tuple[Any,
     pocket_config = tts_config.get("pockettts", {}) if isinstance(tts_config, dict) else {}
     raw_voice = str(pocket_config.get("voice") or DEFAULT_POCKETTTS_VOICE).strip() or DEFAULT_POCKETTTS_VOICE
     voice = raw_voice.lower() if raw_voice.lower() in POCKETTTS_PRESET_VOICES else raw_voice
-    model_name = str(pocket_config.get("model") or "default").strip() or "default"
+    language = str(pocket_config.get("language") or "english").strip() or "english"
+    custom_config = str(pocket_config.get("config") or "").strip()
+    try:
+        temperature = float(pocket_config.get("temperature", 0.7))
+    except (TypeError, ValueError):
+        temperature = 0.7
+    if temperature <= 0:
+        temperature = 0.7
+    try:
+        lsd_decode_steps = max(1, int(pocket_config.get("lsd_decode_steps", 1)))
+    except (TypeError, ValueError):
+        lsd_decode_steps = 1
+    quantize = pocket_config.get("quantize", False) is True
     device = str(pocket_config.get("device") or "cpu").strip().lower() or "cpu"
     if device not in {"cpu", "cuda"}:
         device = "cpu"
-    model_key = f"{model_name}::{device}"
+    model_key = "::".join(
+        (
+            custom_config or language,
+            str(temperature),
+            str(lsd_decode_steps),
+            "int8" if quantize else "float",
+            device,
+        )
+    )
 
     global _pockettts_model_cache, _pockettts_voice_cache
     with _pockettts_cache_lock:
         if model_key not in _pockettts_model_cache:
-            logger.info("[PocketTTS] Loading model: %s (%s)", model_name, device)
-            # The public API currently exposes load_model() without requiring a
-            # model id. Keep the config key in the cache key so a future model
-            # option can be added without changing user config shape.
-            model = TTSModel.load_model()
+            logger.info(
+                "[PocketTTS] Loading model: %s (%s, quantize=%s)",
+                custom_config or language,
+                device,
+                quantize,
+            )
+            load_kwargs = {
+                "temp": temperature,
+                "lsd_decode_steps": lsd_decode_steps,
+                "quantize": quantize,
+            }
+            if custom_config:
+                load_kwargs["config"] = custom_config
+            else:
+                load_kwargs["language"] = language
+            model = TTSModel.load_model(**load_kwargs)
             if device == "cuda" and hasattr(model, "to"):
                 try:
                     moved = model.to("cuda")

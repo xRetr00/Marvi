@@ -647,6 +647,16 @@ Room mmWave debounce, sleeping-phone sticky identity, and false-alert
 suppression. Keep their implementation, config, navigation, API/IPC contracts,
 and tests together.
 
+Also protect the August 2026 voice and room stack: instant-voice provider/model
+selection, curated fallback, and hard cancellation; ordered phrase-streamed
+duplex TTS; PocketTTS 2.1 model controls; lazy streaming-provider discovery and
+Gepard settings; and Smart Room vision. Vision includes the supervised camera
+service, separate pose/gesture and face cadence, explicit reviewed face
+enrollment, unknown-face evidence, bounded history, sleep/zone/gesture
+reasoning, restricted cognition, world/proactive/subconscious wiring, plugin
+tools/dashboard routes, preview, and Desktop camera/model/face/gesture settings.
+Keep optional camera/model dependencies plugin-local and preserve the tests.
+
 For every upstream sync, first run
 `python scripts/prepare_marvi_upstream_sync.py --review-only`. Resolve against
 its protected-overlap report, then require both

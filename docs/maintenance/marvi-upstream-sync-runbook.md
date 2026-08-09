@@ -166,6 +166,14 @@ Qwen3-TTS setup, episodic memory, and smart-room integration. If a protected
 feature is intentionally moved during the full Marvi rebrand, update the guard
 in the same commit as the move; do not delete the check to make a sync pass.
 
+The protected voice/room set also includes instant provider/model selection and
+cancellation, ordered phrase-streamed duplex TTS, PocketTTS 2.1 controls, lazy
+streaming-provider discovery and Gepard settings, and Smart Room vision. Keep
+the camera service, separate pose/gesture and face cadence, reviewed identities,
+evidence/history, cognition, plugin tools/dashboard routes, world/proactive
+wiring, Desktop preview/settings, optional-dependency boundary, and tests as a
+unit when resolving upstream desktop or `web_server.py` rewrites.
+
 If a new upstream feature adds a visible surface, update
 `scripts/verify_marvi_brand.py` in the same sync. Add either:
 

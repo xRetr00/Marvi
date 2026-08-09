@@ -205,6 +205,18 @@ def _import_sherpa_onnx():
 
 def _import_livekit_wakeword_model():
     try:
+        from tools.lazy_deps import ensure
+
+        ensure("voice.wakeword.livekit", prompt=False)
+    except ImportError:
+        # Backward-compatible raw import below for older installations.
+        pass
+    except Exception as exc:
+        raise WakeWordUnavailable(
+            "Could not restore the LiveKit wake-word dependencies automatically: "
+            f"{exc}"
+        ) from exc
+    try:
         from livekit.wakeword import WakeWordModel  # type: ignore
     except ImportError as exc:
         raise WakeWordUnavailable(

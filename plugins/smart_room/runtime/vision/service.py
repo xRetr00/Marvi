@@ -34,11 +34,13 @@ class VisionService:
         self._wake = threading.Event()
         self._capture_thread: Optional[threading.Thread] = None
         self._analysis_thread: Optional[threading.Thread] = None
+        self._gesture_thread: Optional[threading.Thread] = None
         self._face_thread: Optional[threading.Thread] = None
         self._latest_frame = None
         self._latest_lock = threading.Lock()
         self._latest_face_samples: tuple[str, list[Dict[str, Any]]] = ("", [])
         self._burst_until = 0.0
+        self._gesture_priority_until = 0.0
         self._history = VisionHistory(config.get("history") or {})
         self._faces = FaceLibrary(config.get("faces") or {})
         self._sleep = SleepTracker(config.get("sleep") or {})
@@ -60,15 +62,17 @@ class VisionService:
         self._history.prune()
         self._capture_thread = threading.Thread(target=self._capture_loop, daemon=True, name="smart_room_camera")
         self._analysis_thread = threading.Thread(target=self._analysis_loop, daemon=True, name="smart_room_vision")
+        self._gesture_thread = threading.Thread(target=self._gesture_loop, daemon=True, name="smart_room_gestures")
         self._face_thread = threading.Thread(target=self._face_loop, daemon=True, name="smart_room_faces")
         self._capture_thread.start()
         self._analysis_thread.start()
+        self._gesture_thread.start()
         self._face_thread.start()
 
     def stop(self) -> None:
         self._stop.set()
         self._wake.set()
-        for thread in (self._capture_thread, self._analysis_thread, self._face_thread):
+        for thread in (self._capture_thread, self._gesture_thread, self._analysis_thread, self._face_thread):
             if thread and thread is not threading.current_thread():
                 thread.join(timeout=5)
         self._mark_camera(False, "service stopped")
@@ -197,6 +201,9 @@ class VisionService:
                 self._status["pose_gesture_error"] = str(exc)
                 logger.warning("Vision pose/gesture backend unavailable: %s", exc)
             while not self._stop.is_set():
+                if time.monotonic() < self._gesture_priority_until:
+                    self._stop.wait(0.02)
+                    continue
                 frame = self._frame_copy()
                 if frame is None:
                     self._stop.wait(0.1)
@@ -218,10 +225,7 @@ class VisionService:
                     # camera offline; the next frame is an independent retry.
                     self._status["inference_error"] = str(exc)
                     logger.warning("Vision frame inference failed: %s", exc)
-                if (self.config.get("gestures") or {}).get("enabled", True):
-                    idle_fps = float(self.config.get("gesture_scan_fps", 10))
-                else:
-                    idle_fps = float(self.config.get("standby_fps", 1.5))
+                idle_fps = float(self.config.get("standby_fps", 1.5))
                 fps = float(self.config.get("active_fps", 12) if time.monotonic() < self._burst_until else idle_fps)
                 self._wake.clear()
                 cycle_seconds = float(self._status.get("analysis_latency_ms", 0)) / 1000
@@ -234,6 +238,53 @@ class VisionService:
             if self._mp is not None:
                 self._mp.close()
 
+    def _gesture_loop(self) -> None:
+        """Highest-priority perception lane: hand inference and commands only."""
+        while not self._stop.is_set() and self._mp is None:
+            self._stop.wait(0.02)
+        while not self._stop.is_set():
+            started = time.perf_counter()
+            frame = self._frame_copy()
+            try:
+                if frame is not None and self._mp is not None:
+                    import cv2
+
+                    rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                    gestures = self._mp.recognize_gestures(rgb)
+                    self._handle_gestures(gestures)
+                    self._status["gesture_latency_ms"] = round(
+                        (time.perf_counter() - started) * 1000, 1
+                    )
+                    self._status.pop("gesture_error", None)
+            except Exception as exc:
+                self._status["gesture_error"] = str(exc)
+                logger.warning("Vision gesture inference failed: %s", exc)
+            fps = max(1.0, float(self.config.get("gesture_scan_fps", 20)))
+            elapsed = time.perf_counter() - started
+            self._stop.wait(max(0.001, 1.0 / fps - elapsed))
+
+    def _handle_gestures(self, gestures: list[Dict[str, Any]]) -> None:
+        gesture_name = None
+        if not gestures:
+            self._gestures.update("", 0.0)
+        else:
+            # Once a command hand appears, suspend pose and face work so the
+            # hold/command frames get exclusive CPU time.
+            self._gesture_priority_until = time.monotonic() + 1.0
+        for gesture in gestures:
+            decision = self._gestures.update(gesture["name"], gesture["confidence"])
+            gesture_name = decision.gesture
+            if decision.command:
+                self._gesture_callback(decision.command, decision.params)
+                self._transition(
+                    "vision_gesture",
+                    f"{decision.command}:{time.monotonic_ns()}",
+                    {"gesture": decision.gesture, "command": decision.command},
+                )
+        with self._lock:
+            self._state.vision.active_gesture = gesture_name
+            self._state.vision.gesture_armed_until = self._gestures.armed_until_iso
+
     def _face_loop(self) -> None:
         """Run expensive face detection independently from hand/pose latency."""
         try:
@@ -242,6 +293,9 @@ class VisionService:
             self._face_backend = InsightFaceBackend(self.config.get("faces") or {})
             while not self._stop.is_set():
                 started = time.perf_counter()
+                if time.monotonic() < self._gesture_priority_until:
+                    self._stop.wait(0.05)
+                    continue
                 frame = self._frame_copy()
                 visibility = "unavailable"
                 with self._lock:
@@ -277,7 +331,7 @@ class VisionService:
         dim_at = float(self.config.get("dim_brightness", 55))
         visibility = "dark" if brightness < dark_at else "dim" if brightness < dim_at else "blurred" if blur < float(self.config.get("blur_threshold", 35)) else "good"
         rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        local = self._mp.analyze(rgb) if self._mp is not None else {"poses": [], "gestures": []}
+        local = {"poses": self._mp.analyze_pose(rgb), "gestures": []} if self._mp is not None else {"poses": [], "gestures": []}
         height, width = frame.shape[:2]
         with self._latest_lock:
             detected_faces = list(self._cached_faces)
@@ -311,17 +365,6 @@ class VisionService:
                 if match["is_owner"]:
                     owner = item
         sleep_state = self._sleep.update(owner_visible=owner is not None, owner_zone=str((owner or {}).get("zone", "unknown")), posture=str((owner or {}).get("posture", "unknown")), center=tuple(owner["center"]) if owner else None, mmwave_occupied=bool(self._state.mmwave.occupied))
-        gesture_name = None
-        for gesture in local["gestures"]:
-            self._burst_until = max(
-                self._burst_until,
-                time.monotonic() + float((self.config.get("gestures") or {}).get("armed_seconds", 8)),
-            )
-            decision = self._gestures.update(gesture["name"], gesture["confidence"])
-            gesture_name = decision.gesture
-            if decision.command:
-                self._gesture_callback(decision.command, decision.params)
-                self._transition("vision_gesture", decision.command, {"gesture": decision.gesture, "command": decision.command})
         with self._lock:
             vision = self._state.vision
             vision.enabled = True
@@ -333,8 +376,6 @@ class VisionService:
             vision.owner_zone = str((owner or {}).get("zone", "unknown"))
             vision.owner_activity = str((owner or {}).get("posture", "unknown"))
             vision.sleep_state = sleep_state
-            vision.active_gesture = gesture_name
-            vision.gesture_armed_until = self._gestures.armed_until_iso
             vision.last_observed_at = now_iso()
             vision.last_error = None
             vision.model_versions = {"pose_gesture": "mediapipe-tasks" if self._mp else "unavailable", "face": "insightface" if self._face_backend else "unavailable"}

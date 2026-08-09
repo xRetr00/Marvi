@@ -118,6 +118,7 @@ class GestureController:
         self._armed_until = 0.0
         self._last_fired_at = 0.0
         self._last_fired_gesture = ""
+        self._last_seen_at = 0.0
 
     @property
     def armed_until_iso(self) -> Optional[str]:
@@ -131,15 +132,20 @@ class GestureController:
         gesture = str(gesture or "").strip()
         if not self._config.get("enabled", True):
             return GestureDecision(gesture=gesture, armed=False)
-        if not gesture or confidence < float(self._config.get("confidence", 0.65)):
-            self._candidate = ""
-            self._candidate_since = 0.0
+        if not gesture or confidence < float(self._config.get("confidence", 0.55)):
+            # One dropped frame is normal for real-time hand tracking. Keep a
+            # candidate alive briefly instead of requiring a perfectly stable
+            # classifier result on every frame.
+            if now - self._last_seen_at > float(self._config.get("gap_tolerance_seconds", 0.25)):
+                self._candidate = ""
+                self._candidate_since = 0.0
             return GestureDecision(gesture=gesture, armed=now < self._armed_until)
+        self._last_seen_at = now
         if gesture != self._candidate:
             self._candidate = gesture
             self._candidate_since = now
             return GestureDecision(gesture=gesture, armed=now < self._armed_until)
-        hold = float(self._config.get("hold_seconds", 0.65))
+        hold = float(self._config.get("hold_seconds", 0.2))
         if now - self._candidate_since < hold:
             return GestureDecision(gesture=gesture, armed=now < self._armed_until)
         cooldown = float(self._config.get("cooldown_seconds", 1.5))
@@ -150,7 +156,7 @@ class GestureController:
         if gesture == wake:
             self._armed_until = now + float(self._config.get("armed_seconds", 8.0))
             command = "gesture_armed"
-        elif now >= self._armed_until:
+        elif self._config.get("require_arming", True) and now >= self._armed_until:
             return GestureDecision(gesture=gesture, armed=False)
         else:
             mapping = self._config.get("mapping") or {

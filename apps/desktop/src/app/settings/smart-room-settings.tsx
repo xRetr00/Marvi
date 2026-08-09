@@ -88,6 +88,7 @@ interface SmartRoomConfig {
       armed_seconds: number
       hold_seconds: number
       confidence: number
+      require_arming: boolean
       mapping: Record<string, { command: string; [key: string]: string | number }>
     }
     faces: { min_enrollment_samples: number; match_threshold: number }
@@ -166,7 +167,7 @@ const DEFAULT_CONFIG: SmartRoomConfig = {
     height: 720,
     standby_fps: 1.5,
     active_fps: 12,
-    gesture_scan_fps: 10,
+    gesture_scan_fps: 20,
     face_interval_seconds: 1,
     active_face_interval_seconds: 0.35,
     dark_brightness: 28,
@@ -174,8 +175,9 @@ const DEFAULT_CONFIG: SmartRoomConfig = {
       enabled: true,
       wake_gesture: 'Open_Palm',
       armed_seconds: 8,
-      hold_seconds: 0.65,
-      confidence: 0.65,
+      hold_seconds: 0.2,
+      confidence: 0.55,
+      require_arming: false,
       mapping: {
         Thumb_Up: { command: 'brightness_up', step: 15 },
         Thumb_Down: { command: 'brightness_down', step: 15 },
@@ -809,6 +811,7 @@ export function SmartRoomSettings() {
                 <span>{liveState?.vision?.active_gesture || 'no gesture'}</span>
                 {liveStatus?.health?.vision?.analysis_fps ? <span>{liveStatus.health.vision.analysis_fps} analysis FPS</span> : null}
                 {liveStatus?.health?.vision?.analysis_latency_ms ? <span>{liveStatus.health.vision.analysis_latency_ms} ms</span> : null}
+                {liveStatus?.health?.vision?.gesture_latency_ms ? <span>{liveStatus.health.vision.gesture_latency_ms} ms gesture</span> : null}
               </div>
             </div>
 
@@ -943,13 +946,19 @@ export function SmartRoomSettings() {
             <div>
               <ToggleRow
                 checked={config.vision.gestures.enabled}
-                description={`Hold ${config.vision.gestures.wake_gesture} to arm controls for ${config.vision.gestures.armed_seconds} seconds`}
+                description={config.vision.gestures.require_arming ? `Hold ${config.vision.gestures.wake_gesture} to arm controls for ${config.vision.gestures.armed_seconds} seconds` : 'Direct low-latency controls; no arm gesture required'}
                 label="Hand gesture controls"
                 onChange={value => updatePath('vision.gestures.enabled', value)}
               />
+              <ToggleRow
+                checked={config.vision.gestures.require_arming}
+                description="Require Open Palm before accepting a command gesture"
+                label="Safety arming gesture"
+                onChange={value => updatePath('vision.gestures.require_arming', value)}
+              />
               <div className="grid grid-cols-2 gap-x-3">
                 <TextField label="Arm gesture" onChange={value => updatePath('vision.gestures.wake_gesture', value)} value={config.vision.gestures.wake_gesture} />
-                <TextField label="Hold seconds" max={3} min={0.2} onChange={value => updatePath('vision.gestures.hold_seconds', parseFloat(value) || 0.65)} step={0.05} type="number" value={config.vision.gestures.hold_seconds} />
+                <TextField label="Hold seconds" max={3} min={0.1} onChange={value => updatePath('vision.gestures.hold_seconds', parseFloat(value) || 0.2)} step={0.05} type="number" value={config.vision.gestures.hold_seconds} />
               </div>
               <div className="space-y-1 text-xs">
                 {Object.entries(config.vision.gestures.mapping).map(([gesture, action]) => (

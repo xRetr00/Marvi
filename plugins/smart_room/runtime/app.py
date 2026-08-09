@@ -743,10 +743,12 @@ class Runtime:
         if stable_entry:
             if self._vision:
                 self._vision.request_burst(float((self._config.get("vision") or {}).get("entry_burst_seconds", 10)))
+            reflex = self._apply_entry_reflex()
             self._emit_event(
                 "he20_occupied",
                 {
                     **transition_context,
+                    "reflex": reflex,
                     "summary": "HE20 confirmed room occupancy",
                 },
             )
@@ -769,6 +771,40 @@ class Runtime:
         # Publish state via MQTT
         if self._mqtt:
             self._mqtt.publish_state(snapshot)
+
+    def _apply_entry_reflex(self) -> Dict[str, Any]:
+        """Provide immediate low light while vision/LLM validates an entry.
+
+        This is deliberately deterministic and precedes cognition. The event
+        carries the exact prior state so cognition can commit the light or
+        roll it back after checking the camera.
+        """
+        cognition = self._config.get("cognition") or {}
+        if not cognition.get("enabled", False) or not cognition.get("entry_reflex", True):
+            return {"applied": False, "reason": "disabled"}
+        with self._state_lock:
+            light = self._state.light
+            restore = {
+                "on": bool(light.on),
+                "brightness": int(light.brightness),
+                "color_temp": int(light.color_temp),
+                "rgb": light.rgb,
+            }
+        if restore["on"]:
+            return {"applied": False, "reason": "light_already_on", "restore": restore}
+        brightness = max(3, min(int(cognition.get("inspection_brightness", 8)), 15))
+        result = self.set_light(
+            on=True,
+            brightness=brightness,
+            color_temp=2200,
+            manual=False,
+        )
+        return {
+            "applied": bool(result.get("success")),
+            "brightness": brightness,
+            "restore": restore,
+            "result": result,
+        }
 
     def _handle_welcome_transition(self, was_occupied: bool, occupied: bool) -> None:
         welcome = self._config.get("welcome") or {}

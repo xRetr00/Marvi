@@ -99,7 +99,7 @@ class CognitionWorker:
                 # Let the HE20-triggered camera burst contribute its first
                 # visual transition, then reason once from the newest fused
                 # event instead of paying for three sensor-edge decisions.
-                settle_until = time.monotonic() + max(0.0, float(self.config.get("settle_seconds", 1.5)))
+                settle_until = time.monotonic() + max(0.0, float(self.config.get("settle_seconds", 0.6)))
                 while not self._stop:
                     remaining = settle_until - time.monotonic()
                     if remaining <= 0:
@@ -127,18 +127,21 @@ class CognitionWorker:
         with self._runtime._state_lock:
             state = self._runtime._state.to_dict()
         light = state.get("light") or {}
-        self._inspection_restore = {
+        reflex = event.get("reflex") if isinstance(event.get("reflex"), dict) else {}
+        reflex_restore = reflex.get("restore") if isinstance(reflex.get("restore"), dict) else None
+        self._inspection_restore = dict(reflex_restore or {
             "on": bool(light.get("on", False)),
             "brightness": int(light.get("brightness", 0)),
             "color_temp": int(light.get("color_temp", 3000)),
             "rgb": light.get("rgb"),
-        }
-        self._inspection_pending = False
+        })
+        self._inspection_pending = bool(reflex.get("applied"))
         low_dim = max(3, min(int(self.config.get("inspection_brightness", 8)), 15))
         messages: list[Dict[str, Any]] = [
             {"role": "system", "content": (
                 "You are Marvi's private Smart Room reflex brain. Decide from sensor evidence, use tools, and act conservatively. "
                 "HE20 mmWave proves movement/presence, not identity. Camera proves only what is visible. Never call a dark camera empty. "
+                "An HE20 event may include a reflex inspection light that was already switched on before you were called. Observe immediately; do not switch it on again. "
                 f"If darkness blocks an important HE20/entry decision, call set_light with purpose=inspection at {low_dim}% and 2200K, observe, then call set_light with purpose=final to restore/off it when the room is empty, the owner is sleeping, or HE20 was false-positive. "
                 "If a person arrived, provide useful light. If the owner watches a movie, prefer dim warm light. Do not disturb sleep. "
                 "For an unknown visitor or unclear activity, use a deep observation once visibility is good. Unknown visitors can justify evidence and a short alert. Use remain_silent for ordinary safe changes. Never claim certainty absent evidence. "

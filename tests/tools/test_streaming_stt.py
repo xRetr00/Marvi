@@ -84,6 +84,30 @@ def test_missing_sherpa_error_points_to_setup(monkeypatch):
         streaming_stt._import_sherpa_onnx()
 
 
+def test_livekit_import_repairs_pruned_dependency(monkeypatch):
+    import sys
+    import types
+
+    from tools import lazy_deps, streaming_stt
+
+    fake_model = object()
+    calls = []
+
+    def ensure(feature, *, prompt):
+        calls.append((feature, prompt))
+        package = types.ModuleType("livekit")
+        wakeword = types.ModuleType("livekit.wakeword")
+        wakeword.WakeWordModel = fake_model
+        package.wakeword = wakeword
+        monkeypatch.setitem(sys.modules, "livekit", package)
+        monkeypatch.setitem(sys.modules, "livekit.wakeword", wakeword)
+
+    monkeypatch.setattr(lazy_deps, "ensure", ensure)
+
+    assert streaming_stt._import_livekit_wakeword_model() is fake_model
+    assert calls == [("voice.wakeword.livekit", False)]
+
+
 def test_wake_word_factory_returns_livekit_spotter():
     from tools.streaming_stt import WakeWordFactory
 

@@ -89,10 +89,17 @@ class MediaPipeBackend:
             )
         )
 
-    def analyze(self, rgb: Any) -> Dict[str, Any]:
+    def _image(self, rgb: Any) -> Any:
         import numpy as np
 
-        image = self._mp.Image(image_format=self._mp.ImageFormat.SRGB, data=np.ascontiguousarray(rgb))
+        return self._mp.Image(
+            image_format=self._mp.ImageFormat.SRGB,
+            data=np.ascontiguousarray(rgb),
+        )
+
+    def analyze_pose(self, rgb: Any) -> list[Dict[str, Any]]:
+        """Run only pose inference so hand controls can use their own lane."""
+        image = self._image(rgb)
         poses = []
         result = self._pose.detect(image)
         for landmarks in result.pose_landmarks:
@@ -117,6 +124,11 @@ class MediaPipeBackend:
                 "posture": posture,
                 "confidence": round(sum(visible) / len(visible), 3),
             })
+        return poses
+
+    def recognize_gestures(self, rgb: Any) -> list[Dict[str, Any]]:
+        """Run only the lightweight hand recognizer."""
+        image = self._image(rgb)
         gestures = []
         gesture_result = self._gesture.recognize(image)
         for categories in gesture_result.gestures:
@@ -128,7 +140,14 @@ class MediaPipeBackend:
                 # gesture; forwarding it resets the temporal hold candidate.
                 if name and name.lower() != "none":
                     gestures.append({"name": name, "confidence": float(best.score)})
-        return {"poses": poses, "gestures": gestures}
+        return gestures
+
+    def analyze(self, rgb: Any) -> Dict[str, Any]:
+        """Compatibility combined inference path used by external callers."""
+        return {
+            "poses": self.analyze_pose(rgb),
+            "gestures": self.recognize_gestures(rgb),
+        }
 
     def close(self) -> None:
         self._pose.close()

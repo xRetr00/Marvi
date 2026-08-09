@@ -140,6 +140,11 @@ LAZY_DEPS: dict[str, tuple[str, ...]] = {
     "tts.mistral": ("mistralai==2.4.8",),
     "tts.edge": ("edge-tts==7.2.7",),
     "tts.elevenlabs": ("elevenlabs==1.59.0",),
+    # Local voice providers are installed on demand.  Keep these out of
+    # ``[all]``: they pull large native/model runtimes (notably torch), but a
+    # configured provider must be able to repair itself after ``uv sync``
+    # prunes packages installed by an earlier post-setup hook.
+    "tts.pockettts": ("pocket-tts==2.1.0",),
 
     # ─── Speech-to-text providers ──────────────────────────────────────────
     "stt.mistral": ("mistralai==2.4.8",),
@@ -154,6 +159,11 @@ LAZY_DEPS: dict[str, tuple[str, ...]] = {
     "stt.moonshine.windows": ("moonshine-voice==0.0.66",),
     "voice.semantic_turn": ("pipecat-ai==1.4.0", "numpy==2.4.3"),
     "voice.speaker_id": ("sherpa-onnx==1.13.4",),
+    "voice.wakeword.livekit": (
+        "livekit-wakeword==0.2.1",
+        "ten-vad==1.0.6.8",
+        "matplotlib==3.11.1",
+    ),
     # SILK voice-note decoding (WeChat/QQ .silk voice messages). pilk is a
     # small silk-v3 codec binding; installed on first .silk transcription.
     "stt.silk": ("pilk==0.2.4",),

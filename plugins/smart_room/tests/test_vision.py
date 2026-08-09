@@ -47,6 +47,18 @@ def test_gestures_require_hold_and_explicit_arming():
     assert GestureController({"enabled": False}).update("Open_Palm", 1, now_monotonic=10).command is None
 
 
+def test_direct_gestures_tolerate_one_dropped_frame():
+    gestures = GestureController({
+        "hold_seconds": 0.2,
+        "confidence": 0.55,
+        "gap_tolerance_seconds": 0.25,
+        "require_arming": False,
+    })
+    assert gestures.update("Pointing_Up", 0.9, now_monotonic=1).command is None
+    assert gestures.update("", 0.0, now_monotonic=1.1).command is None
+    assert gestures.update("Pointing_Up", 0.9, now_monotonic=1.21).command == "toggle_light"
+
+
 def test_cognition_trigger_filter():
     assert should_reason({"type": "he20_occupied"})
     assert should_reason({"type": "vision_identity_state"})
@@ -115,3 +127,44 @@ def test_cognition_runs_bounded_tool_loop_and_audits_decision(tmp_path, monkeypa
     assert [message["role"] for message in calls[1]["messages"][-3:]] == ["assistant", "tool", "tool"]
     assert runtime_events[-1][0] == "smart_room_cognition"
     assert [action["tool"] for action in runtime_events[-1][1]["actions"]] == ["set_light", "set_light", "remain_silent"]
+
+
+def test_cognition_rolls_back_pre_llm_reflex_if_not_committed(tmp_path, monkeypatch):
+    import agent.auxiliary_client as auxiliary
+    import plugins.smart_room.runtime.vision.history as history_module
+
+    monkeypatch.setattr(history_module, "get_hermes_home", lambda: tmp_path)
+
+    def tool_call(call_id, name, args):
+        return SimpleNamespace(id=call_id, function=SimpleNamespace(name=name, arguments=json.dumps(args)))
+
+    response = SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(
+        content=None,
+        tool_calls=[tool_call("a", "remain_silent", {"reason": "false positive"})],
+    ))])
+    monkeypatch.setattr(auxiliary, "call_llm", lambda **kwargs: response)
+    state = RoomState()
+    state.light.on = True
+    state.light.brightness = 8
+    light_calls = []
+    runtime = SimpleNamespace(
+        _config={"vision": {}}, _state=state, _state_lock=threading.RLock(),
+        set_light=lambda **kwargs: (light_calls.append(kwargs), {"success": True})[1],
+        set_mode=lambda mode, reason: None,
+        _emit_event=lambda event_type, data: None,
+    )
+    worker = CognitionWorker({"enabled": True}, runtime, SimpleNamespace())
+    worker._decide({
+        "type": "he20_occupied",
+        "reflex": {
+            "applied": True,
+            "restore": {"on": False, "brightness": 0, "color_temp": 3000, "rgb": None},
+        },
+    })
+    assert light_calls[-1] == {
+        "on": False,
+        "brightness": 0,
+        "color_temp": 3000,
+        "rgb": None,
+        "manual": False,
+    }

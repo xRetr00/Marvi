@@ -200,6 +200,21 @@ def _import_piper():
 
 def _import_pockettts_model():
     """Lazy import PocketTTS. Returns the TTSModel class or raises ImportError."""
+    import importlib.util
+
+    if "pocket_tts" not in sys.modules and importlib.util.find_spec("pocket_tts") is None:
+        try:
+            from tools.lazy_deps import ensure
+
+            ensure("tts.pockettts", prompt=False)
+        except ImportError:
+            # Older checkouts do not expose the lazy dependency manager.
+            # Preserve their normal raw-import failure below.
+            pass
+        except Exception as exc:
+            # Convert install-policy/network failures into the same ImportError
+            # contract every PocketTTS caller already handles.
+            raise ImportError(str(exc)) from exc
     from pocket_tts import TTSModel
     return TTSModel
 
@@ -2793,13 +2808,24 @@ def _generate_gemini_tts(text: str, output_path: str, tts_config: Dict[str, Any]
 
 # ===========================================================================
 def _check_pockettts_available() -> bool:
-    """Check whether the pocket-tts package is importable."""
+    """Check PocketTTS, repairing a configured pruned install on demand."""
     try:
         import importlib.util
         import sys
 
         if "pocket_tts" in sys.modules:
             return True
+        if importlib.util.find_spec("pocket_tts") is not None:
+            return True
+
+        # ``hermes update`` deliberately installs only the lean ``[all]``
+        # profile.  Provider packages installed by a post-setup hook can be
+        # pruned during that sync, so a still-configured local provider must
+        # be able to restore itself without making the user run setup again.
+        from tools.lazy_deps import ensure
+
+        ensure("tts.pockettts", prompt=False)
+        importlib.invalidate_caches()
         return importlib.util.find_spec("pocket_tts") is not None
     except Exception:
         return False

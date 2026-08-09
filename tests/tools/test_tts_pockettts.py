@@ -347,11 +347,36 @@ class TestCheckPocketTtsAvailable:
 
     def test_reports_unavailable_when_package_missing(self, monkeypatch):
         import importlib.util
+        from tools import lazy_deps
         from tools.tts_tool import _check_pockettts_available
 
+        def unavailable(*_args, **_kwargs):
+            raise RuntimeError("offline")
+
         monkeypatch.setattr(importlib.util, "find_spec", lambda name: None)
+        monkeypatch.setattr(lazy_deps, "ensure", unavailable)
 
         assert _check_pockettts_available() is False
+
+    def test_repairs_pruned_package_with_lazy_install(self, monkeypatch):
+        import importlib.util
+        from tools import lazy_deps
+        from tools.tts_tool import _check_pockettts_available
+
+        installed = False
+
+        def find_spec(name):
+            return MagicMock() if name == "pocket_tts" and installed else None
+
+        def ensure(feature, *, prompt):
+            nonlocal installed
+            assert (feature, prompt) == ("tts.pockettts", False)
+            installed = True
+
+        monkeypatch.setattr(importlib.util, "find_spec", find_spec)
+        monkeypatch.setattr(lazy_deps, "ensure", ensure)
+
+        assert _check_pockettts_available() is True
 
 
 class TestDispatcherBranch:

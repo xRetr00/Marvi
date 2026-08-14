@@ -45,6 +45,7 @@ class SleepTracker:
         self._bed_since = 0.0
         self._still_since = 0.0
         self._last_center: Optional[tuple[float, float]] = None
+        self._away_from_bed_since = 0.0
 
     def update(
         self,
@@ -59,6 +60,7 @@ class SleepTracker:
         now = now_monotonic if now_monotonic is not None else time.monotonic()
         in_bed = owner_zone == "bed" and posture in {"lying", "reclined"}
         if owner_visible and in_bed:
+            self._away_from_bed_since = 0.0
             if not self._bed_since:
                 self._bed_since = now
             movement = 1.0
@@ -80,19 +82,25 @@ class SleepTracker:
                 self.state = "settling"
             else:
                 self.state = "in_bed_awake"
-        elif not owner_visible and self.state in {"settling", "likely_sleeping", "sleeping"} and mmwave_occupied:
+        elif not owner_visible and self.state in {"in_bed_awake", "settling", "likely_sleeping", "sleeping"} and mmwave_occupied:
             # Blanket or darkness may hide the owner; preserve the last strong
             # state instead of interpreting failed vision as absence.
             if self.state == "likely_sleeping":
                 self.state = "sleeping"
         elif owner_visible:
+            if self.state in {"settling", "likely_sleeping", "sleeping"}:
+                if not self._away_from_bed_since:
+                    self._away_from_bed_since = now
+                if now - self._away_from_bed_since < float(self._config.get("awake_confirmation_seconds", 5.0)):
+                    return self.state
             self.state = "awake"
-            self._bed_since = self._still_since = 0.0
+            self._bed_since = self._still_since = self._away_from_bed_since = 0.0
             self._last_center = center
         elif not mmwave_occupied:
             self.state = "unknown"
             self._bed_since = self._still_since = 0.0
             self._last_center = None
+            self._away_from_bed_since = 0.0
         return self.state
 
 
@@ -119,6 +127,7 @@ class GestureController:
         self._last_fired_at = 0.0
         self._last_fired_gesture = ""
         self._last_seen_at = 0.0
+        self._latched_gesture = ""
 
     @property
     def armed_until_iso(self) -> Optional[str]:
@@ -139,6 +148,7 @@ class GestureController:
             if now - self._last_seen_at > float(self._config.get("gap_tolerance_seconds", 0.25)):
                 self._candidate = ""
                 self._candidate_since = 0.0
+                self._latched_gesture = ""
             return GestureDecision(gesture=gesture, armed=now < self._armed_until)
         self._last_seen_at = now
         if gesture != self._candidate:
@@ -150,6 +160,8 @@ class GestureController:
             return GestureDecision(gesture=gesture, armed=now < self._armed_until)
         cooldown = float(self._config.get("cooldown_seconds", 1.5))
         if gesture == self._last_fired_gesture and now - self._last_fired_at < cooldown:
+            return GestureDecision(gesture=gesture, armed=now < self._armed_until)
+        if gesture == self._latched_gesture:
             return GestureDecision(gesture=gesture, armed=now < self._armed_until)
 
         wake = str(self._config.get("wake_gesture", "Open_Palm"))
@@ -174,6 +186,7 @@ class GestureController:
             params = {key: value for key, value in item.items() if key != "command"}
             self._last_fired_at = now
             self._last_fired_gesture = gesture
+            self._latched_gesture = gesture
             return GestureDecision(gesture=gesture, command=command, params=params, armed=True)
 
         self._last_fired_at = now

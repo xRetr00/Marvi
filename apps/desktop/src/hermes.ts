@@ -902,7 +902,25 @@ export interface SmartRoomFaces {
   owner: null | string
   people: Record<string, { reviewed: boolean; samples: number }>
   pending: number
-  pending_items: Array<{ event_id: string; evidence_path?: string }>
+  sampling_enabled: boolean
+  sampling_full: boolean
+  pending_items: Array<{
+    event_id: string
+    evidence_path?: string
+    preview_available?: boolean
+    captured_at?: string
+    visibility?: string
+    candidate?: null | string
+    match_percent?: number
+    match_status?: string
+    match_label?: string
+  }>
+}
+
+export interface SmartRoomPendingFacePreview {
+  available: boolean
+  error?: string
+  image?: string
 }
 
 function smartRoomApi<T>(path: string, method = 'GET', body?: unknown): Promise<T> {
@@ -944,6 +962,12 @@ export const enrollSmartRoomFace = (name: string, owner: boolean, samples = 8) =
   smartRoomApi<{ faces: SmartRoomFaces }>('/vision/faces/enroll', 'POST', { name, owner, samples })
 export const reviewSmartRoomFace = (event_id: string, name: string, owner = false, reject = false) =>
   smartRoomApi<{ faces: SmartRoomFaces }>('/vision/faces/review', 'POST', { event_id, name, owner, reject })
+export const reviewAllSmartRoomFaces = (name: string, owner = false, reject = false) =>
+  smartRoomApi<{ faces: SmartRoomFaces }>('/vision/faces/review-all', 'POST', { name, owner, reject })
+export const setSmartRoomFaceSampling = (enabled: boolean) =>
+  smartRoomApi<{ faces: SmartRoomFaces }>('/vision/faces/sampling', 'PUT', { enabled })
+export const getSmartRoomPendingFacePreview = (eventId: string) =>
+  smartRoomApi<{ faces: SmartRoomPendingFacePreview }>(`/vision/faces/pending/${encodeURIComponent(eventId)}/preview`)
 export const deleteSmartRoomFace = (name: string) =>
   smartRoomApi<{ faces: SmartRoomFaces }>(`/vision/faces/${encodeURIComponent(name)}`, 'DELETE')
 

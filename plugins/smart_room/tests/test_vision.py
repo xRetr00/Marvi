@@ -8,6 +8,7 @@ from plugins.smart_room.runtime.cognition import CognitionWorker, should_reason
 from plugins.smart_room.runtime.models import RoomState
 from plugins.smart_room.runtime.vision.faces import FaceLibrary, cosine_similarity
 from plugins.smart_room.runtime.vision.reasoning import GestureController, SleepTracker, locate_zone
+from plugins.smart_room.runtime.vision.service import VisionService
 
 
 def test_face_similarity_and_reviewed_matching(tmp_path, monkeypatch):
@@ -61,8 +62,78 @@ def test_direct_gestures_tolerate_one_dropped_frame():
 
 def test_cognition_trigger_filter():
     assert should_reason({"type": "he20_occupied"})
-    assert should_reason({"type": "vision_identity_state"})
+    assert should_reason({"type": "vision_identity_state", "stable": True})
+    assert not should_reason({"type": "vision_identity_state"})
     assert not should_reason({"type": "light_changed"})
+
+
+def test_gesture_command_requires_release_before_refiring():
+    gestures = GestureController({
+        "hold_seconds": 0.1,
+        "cooldown_seconds": 0,
+        "gap_tolerance_seconds": 0.2,
+        "require_arming": False,
+    })
+    gestures.update("Pointing_Up", 0.9, now_monotonic=1)
+    assert gestures.update("Pointing_Up", 0.9, now_monotonic=1.2).command == "toggle_light"
+    assert gestures.update("Pointing_Up", 0.9, now_monotonic=2).command is None
+    gestures.update("", 0, now_monotonic=2.3)
+    gestures.update("Pointing_Up", 0.9, now_monotonic=2.4)
+    assert gestures.update("Pointing_Up", 0.9, now_monotonic=2.6).command == "toggle_light"
+
+
+def test_face_pending_deduplicates_and_exposes_match_preview_metadata(tmp_path, monkeypatch):
+    import plugins.smart_room.runtime.vision.faces as faces_module
+
+    monkeypatch.setattr(faces_module, "get_hermes_home", lambda: tmp_path)
+    library = FaceLibrary({
+        "min_enrollment_samples": 3,
+        "match_threshold": 0.7,
+        "pending_similarity_threshold": 0.7,
+        "max_pending": 2,
+    })
+    library.enroll("Shereef", [[1, 0], [0.9, 0.1], [0.8, 0.2]], owner=True)
+    assert library.add_pending("one", [0.65, 0.35], visibility="dim", captured_at="now") is True
+    assert library.add_pending("duplicate", [0.66, 0.34]) is False
+    listed = library.list_people()
+    assert listed["pending"] == 1
+    assert listed["pending_items"][0]["candidate"] == "Shereef"
+    assert listed["pending_items"][0]["visibility"] == "dim"
+
+
+def test_gesture_device_io_runs_off_inference_thread():
+    state = RoomState()
+    called = threading.Event()
+    callback_threads = []
+    service = VisionService(
+        {"gestures": {"enabled": True, "hold_seconds": 0, "require_arming": False}},
+        state,
+        threading.RLock(),
+        lambda *_args: None,
+        lambda command, _params: (callback_threads.append((command, threading.current_thread().name)), called.set()),
+    )
+    service._gesture_action_thread = threading.Thread(
+        target=service._gesture_action_loop, daemon=True, name="test_gesture_actions"
+    )
+    service._gesture_action_thread.start()
+    service._handle_gestures([{"name": "Pointing_Up", "confidence": 0.99}])
+    service._handle_gestures([{"name": "Pointing_Up", "confidence": 0.99}])
+    assert called.wait(1)
+    service.stop()
+    assert callback_threads == [("toggle_light", "test_gesture_actions")]
+
+
+def test_stable_vision_transition_ignores_single_frame_flaps(monkeypatch):
+    state = RoomState()
+    events = []
+    service = VisionService({}, state, threading.RLock(), lambda kind, data: events.append((kind, data)), lambda *_: None)
+    clock = iter([1.0, 1.1, 2.0, 2.9])
+    monkeypatch.setattr("plugins.smart_room.runtime.vision.service.time.monotonic", lambda: next(clock))
+    service._transition("vision_identity_state", "owner", {}, stable_seconds=0.8)
+    service._transition("vision_identity_state", "empty", {}, stable_seconds=0.8)
+    service._transition("vision_identity_state", "owner", {}, stable_seconds=0.8)
+    service._transition("vision_identity_state", "owner", {}, stable_seconds=0.8)
+    assert events == [("vision_identity_state", {"stable": True, "summary": "vision identity state"})]
 
 
 def test_cognition_tool_surface_is_room_restricted(tmp_path, monkeypatch):
@@ -72,6 +143,8 @@ def test_cognition_tool_surface_is_room_restricted(tmp_path, monkeypatch):
     monkeypatch.setattr(history_module, "get_hermes_home", lambda: tmp_path)
     runtime = SimpleNamespace(
         _config={"vision": {}},
+        _state=RoomState(),
+        _state_lock=threading.RLock(),
         set_light=lambda **kwargs: {"success": True, "args": kwargs},
         set_mode=lambda mode, reason: None,
     )
@@ -168,3 +241,22 @@ def test_cognition_rolls_back_pre_llm_reflex_if_not_committed(tmp_path, monkeypa
         "rgb": None,
         "manual": False,
     }
+
+
+def test_cognition_never_lights_room_while_sleep_mode_is_active(tmp_path, monkeypatch):
+    import plugins.smart_room.runtime.vision.history as history_module
+
+    monkeypatch.setattr(history_module, "get_hermes_home", lambda: tmp_path)
+    state = RoomState()
+    state.modes.active_mode = "sleep"
+    light_calls = []
+    runtime = SimpleNamespace(
+        _config={"vision": {}},
+        _state=state,
+        _state_lock=threading.RLock(),
+        set_light=lambda **kwargs: light_calls.append(kwargs),
+    )
+    worker = CognitionWorker({"enabled": True}, runtime, SimpleNamespace())
+    result = worker._execute("set_light", {"on": True, "brightness": 8, "purpose": "inspection"})
+    assert result == {"success": False, "suppressed": True, "reason": "sleep_mode"}
+    assert light_calls == []

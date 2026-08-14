@@ -51,6 +51,28 @@ class TestAutomationEngine:
         actions = evaluate_automations(self.state, {"type": "mode_changed", "mode": "sleep"}, self.config)
         assert any(a.type == "turn_off" for a in actions)
 
+    def test_stable_likely_sleeping_activates_sleep_mode(self):
+        self.config["vision"] = {"sleep": {"auto_activate": True}}
+        actions = evaluate_automations(
+            self.state,
+            {"type": "vision_sleep_state", "sleep_state": "likely_sleeping", "stable": True},
+            self.config,
+        )
+        assert any(
+            action.type == "set_mode"
+            and action.params == {"mode": "sleep", "reason": "vision_sleep"}
+            for action in actions
+        )
+
+    def test_unstable_sleep_observation_does_not_change_mode(self):
+        self.config["vision"] = {"sleep": {"auto_activate": True}}
+        actions = evaluate_automations(
+            self.state,
+            {"type": "vision_sleep_state", "sleep_state": "likely_sleeping"},
+            self.config,
+        )
+        assert not any(action.type == "set_mode" for action in actions)
+
     def test_alarm_mode_triggers_bright_flash(self):
         actions = evaluate_automations(self.state, {"type": "mode_changed", "mode": "alarm"}, self.config)
         light_action = next(a for a in actions if a.type == "set_light")

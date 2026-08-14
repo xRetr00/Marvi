@@ -79,6 +79,19 @@ def evaluate_automations(
     if event_type == "mode_changed" and event.get("mode") == "sleep":
         actions.append(Action(type="turn_off", params={"reason": "sleep_mode"}))
 
+    # Vision's temporal tracker has already required sustained bed posture
+    # and stillness. Convert that evidence into the actual room mode instead
+    # of merely displaying "likely sleeping" forever.
+    sleep_cfg = (config.get("vision") or {}).get("sleep") or {}
+    if (
+        event_type == "vision_sleep_state"
+        and event.get("stable") is True
+        and event.get("sleep_state") in {"likely_sleeping", "sleeping"}
+        and sleep_cfg.get("auto_activate", True)
+        and state.modes.active_mode != "sleep"
+    ):
+        actions.append(Action(type="set_mode", params={"mode": "sleep", "reason": "vision_sleep"}))
+
     # --- 4.4 Alarm Mode Force Bright Light ---
     if event_type == "mode_changed" and event.get("mode") == "alarm":
         alarm_cfg = auto_cfg.get("alarm", {})

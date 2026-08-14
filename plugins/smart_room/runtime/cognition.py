@@ -25,7 +25,10 @@ logger = logging.getLogger(__name__)
 
 def should_reason(event: Dict[str, Any]) -> bool:
     """Only send uncertain/high-value world events to the cheap model."""
-    return str(event.get("type") or "") in {
+    event_type = str(event.get("type") or "")
+    if event_type in {"vision_identity_state", "vision_sleep_state"} and event.get("stable") is not True:
+        return False
+    return event_type in {
         "he20_occupied", "presence_detected", "room_entry", "room_presence_unverified",
         "vision_identity_state", "vision_sleep_state", "vision_camera_offline",
         "sensor_vision_conflict", "phone_location_changed",
@@ -53,7 +56,13 @@ class CognitionWorker:
         self._stop = False
         self._thread: Optional[threading.Thread] = None
         self._history = VisionHistory((runtime._config.get("vision") or {}).get("history") or {})
-        self._status: Dict[str, Any] = {"enabled": bool(config.get("enabled", False)), "running": False, "decisions": 0}
+        self._status: Dict[str, Any] = {
+            "enabled": bool(config.get("enabled", False)),
+            "running": False,
+            "decisions": 0,
+            "superseded": 0,
+            "dropped_during_sleep": 0,
+        }
         self._active_correlation_id = "smart-room"
         self._inspection_pending = False
         self._inspection_restore: Dict[str, Any] = {}
@@ -75,11 +84,26 @@ class CognitionWorker:
         if not self.config.get("enabled", False) or not should_reason(event):
             return False
         with self._condition:
-            # Coalesce noisy consecutive sensor events of the same type.
-            if self._queue and self._queue[-1].get("type") == event.get("type"):
-                self._queue[-1] = event
-            else:
-                self._queue.append(event)
+            with self._runtime._state_lock:
+                sleeping = self._runtime._state.modes.active_mode == "sleep"
+            if sleeping and str(event.get("type") or "") in {
+                "he20_occupied", "presence_detected", "room_entry", "room_presence_unverified",
+                "vision_identity_state", "vision_sleep_state", "sensor_vision_conflict",
+            }:
+                self._status["dropped_during_sleep"] += 1
+                return False
+            event_type = event.get("type")
+            before = len(self._queue)
+            self._queue = deque(
+                (queued for queued in self._queue if queued.get("type") != event_type),
+                maxlen=self._queue.maxlen,
+            )
+            if len(self._queue) < before:
+                self._status["superseded"] += before - len(self._queue)
+            if len(self._queue) == self._queue.maxlen:
+                self._queue.popleft()
+                self._status["superseded"] += 1
+            self._queue.append(event)
             self._condition.notify()
         return True
 
@@ -96,6 +120,8 @@ class CognitionWorker:
                 if self._stop:
                     break
                 event = self._queue.popleft()
+                self._status["active_event_type"] = event.get("type")
+                self._status["active_event_started_at"] = now_iso()
                 # Let the HE20-triggered camera burst contribute its first
                 # visual transition, then reason once from the newest fused
                 # event instead of paying for three sensor-edge decisions.
@@ -117,6 +143,8 @@ class CognitionWorker:
                 logger.exception("Smart Room cognition failed: %s", exc)
             finally:
                 self._restore_inspection_if_needed()
+                self._status.pop("active_event_type", None)
+                self._status.pop("active_event_started_at", None)
         self._status["running"] = False
 
     def _decide(self, event: Dict[str, Any]) -> None:
@@ -144,6 +172,7 @@ class CognitionWorker:
                 "An HE20 event may include a reflex inspection light that was already switched on before you were called. Observe immediately; do not switch it on again. "
                 f"If darkness blocks an important HE20/entry decision, call set_light with purpose=inspection at {low_dim}% and 2200K, observe, then call set_light with purpose=final to restore/off it when the room is empty, the owner is sleeping, or HE20 was false-positive. "
                 "If a person arrived, provide useful light. If the owner watches a movie, prefer dim warm light. Do not disturb sleep. "
+                "Face evidence can include candidate, match_percent, and status when lighting makes identity uncertain. For matched/ambiguous evidence describe that honestly, for example 'likely Shereef, 70% match in low light'. If status is unknown, call the candidate only a weak closest match, never likely. "
                 "For an unknown visitor or unclear activity, use a deep observation once visibility is good. Unknown visitors can justify evidence and a short alert. Use remain_silent for ordinary safe changes. Never claim certainty absent evidence. "
                 "You control only this room and must finish by calling remain_silent or speak."
             )},
@@ -220,6 +249,9 @@ class CognitionWorker:
                 question=str(args.get("question") or ""),
             )}
         if name == "set_light":
+            with self._runtime._state_lock:
+                if self._runtime._state.modes.active_mode == "sleep":
+                    return {"success": False, "suppressed": True, "reason": "sleep_mode"}
             allowed = {key: args[key] for key in ("on", "brightness", "color_temp") if key in args}
             if args.get("purpose") == "inspection":
                 self._inspection_pending = True

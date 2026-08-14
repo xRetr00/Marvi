@@ -189,6 +189,17 @@ def test_he20_bed_movement_does_not_create_entry_in_sleep_mode(monkeypatch):
     assert runtime._state.unreported_visitor_entries == []
 
 
+def test_entry_reflex_never_lights_room_during_sleep(monkeypatch):
+    runtime = Runtime({"cognition": {"enabled": True, "entry_reflex": True}})
+    runtime._state.modes.active_mode = "sleep"
+    runtime._state.light.on = False
+    set_light = MagicMock()
+    monkeypatch.setattr(runtime, "set_light", set_light)
+
+    assert runtime._apply_entry_reflex() == {"applied": False, "reason": "sleep_mode"}
+    set_light.assert_not_called()
+
+
 def test_device_offline_requires_three_failed_polls(monkeypatch):
     runtime = Runtime({})
     runtime._state.devices["tuya_bulb"] = DeviceHealth(online=True)

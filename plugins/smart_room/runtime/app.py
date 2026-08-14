@@ -784,6 +784,8 @@ class Runtime:
             return {"applied": False, "reason": "disabled"}
         with self._state_lock:
             light = self._state.light
+            if self._state.modes.active_mode == "sleep":
+                return {"applied": False, "reason": "sleep_mode"}
             restore = {
                 "on": bool(light.on),
                 "brightness": int(light.brightness),

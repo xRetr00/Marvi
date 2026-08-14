@@ -88,10 +88,19 @@ def test_vision_preview_and_face_controls_call_private_runtime(monkeypatch):
         json={"name": "Shereef", "owner": True, "samples": 8},
     ).status_code == 200
     assert client.delete("/api/plugins/smart_room/vision/faces/Guest").status_code == 200
+    assert client.get("/api/plugins/smart_room/vision/faces/pending/face-1/preview").status_code == 200
+    assert client.put("/api/plugins/smart_room/vision/faces/sampling", json={"enabled": False}).status_code == 200
+    assert client.post(
+        "/api/plugins/smart_room/vision/faces/review-all",
+        json={"name": "Shereef", "owner": False, "reject": False},
+    ).status_code == 200
     assert calls == [
         ("vision_preview", {"width": 720, "quality": 72}),
         ("vision_faces", {"action": "enroll_current", "name": "Shereef", "owner": True, "samples": 8}),
         ("vision_faces", {"action": "delete", "name": "Guest"}),
+        ("vision_faces", {"action": "pending_preview", "event_id": "face-1"}),
+        ("vision_faces", {"action": "set_sampling", "enabled": False}),
+        ("vision_faces", {"action": "review_all", "name": "Shereef", "owner": False, "reject": False}),
     ]
 
 

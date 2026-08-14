@@ -62,6 +62,16 @@ class FaceReviewBody(BaseModel):
     reject: bool = False
 
 
+class FaceReviewAllBody(BaseModel):
+    name: str = Field(default="", max_length=80)
+    owner: bool = False
+    reject: bool = False
+
+
+class FaceSamplingBody(BaseModel):
+    enabled: bool
+
+
 class LightBody(BaseModel):
     on: Optional[bool] = None
     brightness: Optional[int] = Field(default=None, ge=0, le=100)
@@ -167,6 +177,21 @@ async def vision_face_enroll(body: FaceEnrollBody) -> dict:
 @router.post("/vision/faces/review")
 async def vision_face_review(body: FaceReviewBody) -> dict:
     return await _rpc("vision_faces", {"action": "review", **body.model_dump()})
+
+
+@router.post("/vision/faces/review-all")
+async def vision_face_review_all(body: FaceReviewAllBody) -> dict:
+    return await _rpc("vision_faces", {"action": "review_all", **body.model_dump()})
+
+
+@router.put("/vision/faces/sampling")
+async def vision_face_sampling(body: FaceSamplingBody) -> dict:
+    return await _rpc("vision_faces", {"action": "set_sampling", **body.model_dump()})
+
+
+@router.get("/vision/faces/pending/{event_id}/preview")
+async def vision_face_pending_preview(event_id: str) -> dict:
+    return await _rpc("vision_faces", {"action": "pending_preview", "event_id": event_id})
 
 
 @router.delete("/vision/faces/{name}")

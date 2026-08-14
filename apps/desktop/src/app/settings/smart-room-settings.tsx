@@ -11,13 +11,16 @@ import {
   getGlobalModelOptions,
   getHermesConfigRecord,
   getSmartRoomFaces,
+  getSmartRoomPendingFacePreview,
   getSmartRoomStatus,
   getSmartRoomVisionPreview,
   observeSmartRoomVision,
+  reviewAllSmartRoomFaces,
   reviewSmartRoomFace,
   saveHermesConfig,
   saveSmartRoomAlarm,
   saveSmartRoomSecrets,
+  setSmartRoomFaceSampling,
   setSmartRoomLight,
   setSmartRoomMode,
   setSmartRoomOverride,
@@ -91,8 +94,13 @@ interface SmartRoomConfig {
       require_arming: boolean
       mapping: Record<string, { command: string; [key: string]: string | number }>
     }
-    faces: { min_enrollment_samples: number; match_threshold: number }
-    sleep: { settling_seconds: number; likely_sleeping_seconds: number }
+    faces: {
+      min_enrollment_samples: number
+      match_threshold: number
+      sampling_enabled: boolean
+      max_pending: number
+    }
+    sleep: { settling_seconds: number; likely_sleeping_seconds: number; auto_activate: boolean }
     deep: { enabled: boolean; provider: string; model: string; timeout: number }
     history: { retention_hours: number; max_events: number }
   }
@@ -187,8 +195,8 @@ const DEFAULT_CONFIG: SmartRoomConfig = {
         ILoveYou: { command: 'set_mode', mode: 'relax' }
       }
     },
-    faces: { min_enrollment_samples: 8, match_threshold: 0.42 },
-    sleep: { settling_seconds: 120, likely_sleeping_seconds: 600 },
+    faces: { min_enrollment_samples: 8, match_threshold: 0.42, sampling_enabled: true, max_pending: 30 },
+    sleep: { settling_seconds: 120, likely_sleeping_seconds: 600, auto_activate: true },
     deep: { enabled: true, provider: '', model: '', timeout: 30 },
     history: { retention_hours: 72, max_events: 2000 }
   },
@@ -463,6 +471,60 @@ function AlarmEditor({
               Delete
             </button>
           ) : null}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function PendingFaceCard({
+  item,
+  name,
+  onAccept,
+  onReject
+}: {
+  item: SmartRoomFaces['pending_items'][number]
+  name: string
+  onAccept: () => Promise<void>
+  onReject: () => Promise<void>
+}) {
+  const [preview, setPreview] = useState<null | string>(null)
+  const [busy, setBusy] = useState(false)
+
+  useEffect(() => {
+    let active = true
+
+    if (item.preview_available) {
+      void getSmartRoomPendingFacePreview(item.event_id)
+        .then(result => {
+          if (active && result.faces.available && result.faces.image) {
+            setPreview(result.faces.image)
+          }
+        })
+        .catch(() => undefined)
+    }
+
+    return () => {
+      active = false
+    }
+  }, [item.event_id, item.preview_available])
+
+  const run = (action: () => Promise<void>) => {
+    setBusy(true)
+    void action().finally(() => setBusy(false))
+  }
+
+  return (
+    <div className="overflow-hidden rounded-md border border-amber-900/40 bg-amber-950/20 text-xs">
+      {preview ? <img alt={`Pending face ${item.event_id}`} className="aspect-video w-full bg-black object-contain" src={preview} /> : null}
+      <div className="px-3 py-2">
+        <p className="font-medium text-amber-300">{item.match_label || 'Unknown face needs review'}</p>
+        <p className="mt-1 text-zinc-500">
+          {item.visibility || 'unknown'} light{item.captured_at ? ` · ${new Date(item.captured_at).toLocaleString()}` : ''}
+        </p>
+        <div className="mt-2 flex gap-2">
+          <button className="rounded border border-zinc-700 px-2 py-1 text-zinc-300 disabled:opacity-40" disabled={busy || !name.trim()} onClick={() => run(onAccept)} type="button">Accept as {name || 'name'}</button>
+          <button className="rounded border border-red-900 px-2 py-1 text-red-400 disabled:opacity-40" disabled={busy} onClick={() => run(onReject)} type="button">Reject</button>
         </div>
       </div>
     </div>
@@ -850,11 +912,13 @@ export function SmartRoomSettings() {
               <TextField label="Dark threshold" max={100} min={0} onChange={value => updatePath('vision.dark_brightness', parseFloat(value) || 28)} step={1} type="number" value={config.vision.dark_brightness} />
               <TextField label="Face match threshold" max={1} min={0.1} onChange={value => updatePath('vision.faces.match_threshold', parseFloat(value) || 0.42)} step={0.01} type="number" value={config.vision.faces.match_threshold} />
               <TextField label="Enrollment samples" max={30} min={3} onChange={value => updatePath('vision.faces.min_enrollment_samples', Math.max(3, parseInt(value) || 8))} type="number" value={config.vision.faces.min_enrollment_samples} />
+              <TextField label="Pending face capacity" max={200} min={1} onChange={value => updatePath('vision.faces.max_pending', Math.max(1, parseInt(value) || 30))} type="number" value={config.vision.faces.max_pending} />
               <TextField label="Gesture confidence" max={1} min={0.1} onChange={value => updatePath('vision.gestures.confidence', parseFloat(value) || 0.65)} step={0.05} type="number" value={config.vision.gestures.confidence} />
               <TextField label="Gesture scan FPS" max={20} min={2} onChange={value => updatePath('vision.gesture_scan_fps', parseFloat(value) || 10)} step={1} type="number" value={config.vision.gesture_scan_fps} />
               <TextField label="Face scan interval (seconds)" max={10} min={0.2} onChange={value => updatePath('vision.face_interval_seconds', parseFloat(value) || 1)} step={0.1} type="number" value={config.vision.face_interval_seconds} />
               <TextField label="Sleep settling (seconds)" min={10} onChange={value => updatePath('vision.sleep.settling_seconds', parseInt(value) || 120)} type="number" value={config.vision.sleep.settling_seconds} />
               <TextField label="Likely sleeping (seconds)" min={30} onChange={value => updatePath('vision.sleep.likely_sleeping_seconds', parseInt(value) || 600)} type="number" value={config.vision.sleep.likely_sleeping_seconds} />
+              <ToggleRow checked={config.vision.sleep.auto_activate} description="Enter sleep mode after sustained owner-in-bed stillness" label="Auto-activate sleep from vision" onChange={value => updatePath('vision.sleep.auto_activate', value)} />
               <TextField label="History retention (hours)" min={1} onChange={value => updatePath('vision.history.retention_hours', parseInt(value) || 72)} type="number" value={config.vision.history.retention_hours} />
               <TextField label="History event limit" min={100} onChange={value => updatePath('vision.history.max_events', parseInt(value) || 2000)} type="number" value={config.vision.history.max_events} />
               <div className="mb-3">
@@ -924,22 +988,83 @@ export function SmartRoomSettings() {
                   Enroll current face
                 </button>
               </div>
-              <div className="mt-2 space-y-1">
+              <div className="mt-3">
+                <ToggleRow
+                  checked={faces?.sampling_enabled ?? config.vision.faces.sampling_enabled}
+                  description={faces?.sampling_full ? 'Collection paused because the review queue is full' : 'Collect a new sample only when it adds a distinct unknown face view'}
+                  label="Collect unknown face samples"
+                  onChange={enabled => {
+                    updatePath('vision.faces.sampling_enabled', enabled)
+                    void setSmartRoomFaceSampling(enabled)
+                      .then(result => setFaces(result.faces))
+                      .catch(error => notifyError(error, 'Could not change face sampling'))
+                  }}
+                />
+              </div>
+              {faces?.pending ? (
+                <div className="mb-2 flex flex-wrap items-center gap-2 rounded-md border border-zinc-800 bg-zinc-950 p-2 text-xs">
+                  <span className="mr-auto text-zinc-400">{faces.pending} pending face samples</span>
+                  <button
+                    className="rounded border border-zinc-700 px-2 py-1 text-zinc-300 disabled:opacity-40"
+                    disabled={visionBusy || !faceName.trim()}
+                    onClick={() => {
+                      setVisionBusy(true)
+                      void reviewAllSmartRoomFaces(faceName.trim(), false, false)
+                        .then(result => setFaces(result.faces))
+                        .catch(error => notifyError(error, 'Could not accept pending faces'))
+                        .finally(() => setVisionBusy(false))
+                    }}
+                    type="button"
+                  >
+                    Accept all as {faceName || 'name'}
+                  </button>
+                  <button
+                    className="rounded border border-red-900 px-2 py-1 text-red-400 disabled:opacity-40"
+                    disabled={visionBusy}
+                    onClick={() => {
+                      setVisionBusy(true)
+                      void reviewAllSmartRoomFaces('', false, true)
+                        .then(result => setFaces(result.faces))
+                        .catch(error => notifyError(error, 'Could not reject pending faces'))
+                        .finally(() => setVisionBusy(false))
+                    }}
+                    type="button"
+                  >
+                    Reject all
+                  </button>
+                </div>
+              ) : null}
+              <div className="mt-2 space-y-2">
                 {Object.entries(faces?.people || {}).map(([name, person]) => (
                   <div className="flex items-center justify-between rounded-md bg-zinc-950 px-3 py-2 text-xs" key={name}>
                     <span className="text-zinc-300">{name}{faces?.owner === name ? ' · owner' : ''} · {person.samples} samples</span>
                     <button className="text-red-400" onClick={() => void deleteSmartRoomFace(name).then(result => setFaces(result.faces)).catch(error => notifyError(error, 'Could not delete face'))} type="button">Delete</button>
                   </div>
                 ))}
-                {(faces?.pending_items || []).map(item => (
-                  <div className="rounded-md border border-amber-900/40 bg-amber-950/20 px-3 py-2 text-xs" key={item.event_id}>
-                    <p className="mb-2 text-amber-300">Unknown face needs review · {item.event_id}</p>
-                    <div className="flex gap-2">
-                      <button className="rounded border border-zinc-700 px-2 py-1 text-zinc-300" onClick={() => void reviewSmartRoomFace(item.event_id, faceName.trim(), false, false).then(result => setFaces(result.faces)).catch(error => notifyError(error, 'Face review failed'))} type="button">Accept as {faceName || 'name'}</button>
-                      <button className="rounded border border-red-900 px-2 py-1 text-red-400" onClick={() => void reviewSmartRoomFace(item.event_id, '', false, true).then(result => setFaces(result.faces)).catch(error => notifyError(error, 'Face review failed'))} type="button">Reject</button>
-                    </div>
-                  </div>
+                {(faces?.pending_items || []).slice(0, 50).map(item => (
+                  <PendingFaceCard
+                    item={item}
+                    key={item.event_id}
+                    name={faceName}
+                    onAccept={async () => {
+                      try {
+                        const result = await reviewSmartRoomFace(item.event_id, faceName.trim(), false, false)
+                        setFaces(result.faces)
+                      } catch (error) {
+                        notifyError(error, 'Face review failed')
+                      }
+                    }}
+                    onReject={async () => {
+                      try {
+                        const result = await reviewSmartRoomFace(item.event_id, '', false, true)
+                        setFaces(result.faces)
+                      } catch (error) {
+                        notifyError(error, 'Face review failed')
+                      }
+                    }}
+                  />
                 ))}
+                {(faces?.pending_items || []).length > 50 ? <p className="text-zinc-500">Showing the newest 50. Bulk actions apply to all {faces?.pending}.</p> : null}
               </div>
             </div>
 

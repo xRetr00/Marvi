@@ -106,7 +106,14 @@ class MediaPipeBackend:
             xs = [float(p.x) for p in landmarks]
             ys = [float(p.y) for p in landmarks]
             visible = [float(getattr(p, "visibility", 1.0)) for p in landmarks]
-            center = (sum(xs) / len(xs), sum(ys) / len(ys))
+            # World-projected wrist/ankle landmarks commonly extend outside
+            # the image.  A whole-skeleton average produced centers above 1.0
+            # and made a person visibly on the bed classify as generic room.
+            torso = [11, 12, 23, 24]
+            center = (
+                max(0.0, min(1.0, sum(xs[index] for index in torso) / len(torso))),
+                max(0.0, min(1.0, sum(ys[index] for index in torso) / len(torso))),
+            )
             shoulder_width = abs(xs[11] - xs[12])
             shoulder_dy = abs(ys[11] - ys[12])
             hip_width = abs(xs[23] - xs[24])

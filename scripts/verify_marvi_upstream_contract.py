@@ -278,7 +278,14 @@ PROHIBITED_TEXT = {
         '"model": "hey_hermes"',
     ],
     "hermes_cli/commands.py": ['CommandDef("wake"'],
-    "tui_gateway/server.py": ['@method("wake.start")', '@method("wake.status")'],
+    "tui_gateway/server.py": [
+        '@method("wake.start")',
+        '@method("wake.status")',
+        '"wake.start",',
+        '"wake.stop",',
+        '"wake.resume",',
+        '"wake.status",',
+    ],
     "pyproject.toml": ["wake = ["],
 }
 

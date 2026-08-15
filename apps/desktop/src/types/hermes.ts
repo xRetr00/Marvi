@@ -564,6 +564,12 @@ export interface MessageReaction {
 }
 
 export interface SessionMessage {
+  /**
+   * Full tool arguments for a gateway-projected tool row (`role: 'tool'`).
+   * `context` is an 80-char display preview. The expanded tool row rebuilds
+   * the full call from this field. Absent on a backend older than this app.
+   */
+  args?: unknown
   codex_reasoning_items?: unknown
   content: unknown
   context?: unknown
@@ -571,7 +577,8 @@ export interface SessionMessage {
   reasoning?: null | string
   reasoning_content?: null | string
   reasoning_details?: unknown
-  display_kind?: 'async_delegation_complete' | 'auto_continue' | 'hidden' | 'model_switch' | string
+  display_kind?:
+    'async_delegation_complete' | 'auto_continue' | 'hidden' | 'model_switch' | 'personality_switch' | string
   /**
    * A backend older than this app can still serve this as unparsed JSON text,
    * so readers must narrow before indexing into it.
@@ -850,18 +857,6 @@ export interface CronJobUpdates {
   prompt?: string
   provider?: null | string
   schedule?: string
-}
-
-// A cron delivery target from GET /api/cron/delivery-targets — the single
-// source of truth (cron.scheduler.cron_delivery_targets) for where a cron job
-// can auto-deliver. Only 'local' plus configured gateway platforms appear; a
-// configured platform without a cron home channel comes back with
-// home_target_set=false so the UI can flag it.
-export interface CronDeliveryTarget {
-  home_env_var: null | string
-  home_target_set: boolean
-  id: string
-  name: string
 }
 
 // Automation Blueprints — parameterized cron templates with typed slots. The
@@ -1299,6 +1294,22 @@ export interface StaleAuxAssignment {
   model: string
 }
 
+export type CronModelDriftAxis = 'model' | 'provider'
+
+export interface CronModelImpactJob {
+  id: string
+  name: string
+  drifted_axes: CronModelDriftAxis[]
+}
+
+export interface CronModelImpact {
+  available: boolean
+  guard_enabled: boolean
+  affected_count: number
+  truncated: boolean
+  jobs: CronModelImpactJob[]
+}
+
 /** One skill-hub source (official index, GitHub, skills.sh, …) as reported by
  *  `GET /api/skills/hub/sources`. */
 export interface SkillHubSource {
@@ -1466,6 +1477,8 @@ export interface ModelAssignmentResponse {
    *  switching the main provider to Nous. Empty unless provider === 'nous'
    *  and the user is a paid subscriber with unconfigured tools. */
   gateway_tools?: string[]
+  /** Additive profile-local cron impact returned after a persisted main assignment. */
+  cron_model_impact?: CronModelImpact
   model?: string
   ok: boolean
   provider?: string

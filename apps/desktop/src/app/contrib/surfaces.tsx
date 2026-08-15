@@ -11,7 +11,7 @@ import { useStore } from '@nanostores/react'
 import { type ComponentProps, lazy, memo, type ReactNode, Suspense, useMemo } from 'react'
 import { Navigate, Route, Routes, useParams } from 'react-router'
 
-import { ContribBoundary } from '@/contrib/react/boundary'
+import { ContribBoundary, ContribRender } from '@/contrib/react/boundary'
 import { useContributions } from '@/contrib/react/use-contributions'
 import { cn } from '@/lib/utils'
 import type { WakeWordConfig } from '@/lib/wake-word'
@@ -326,7 +326,11 @@ export const ChatRoutesSurface = memo(function ChatRoutesSurface({
           as every other contribution mount. */}
       {routeContributions.map(route => (
         <Route
-          element={page(<ContribBoundary id={route.key}>{route.render()}</ContribBoundary>)}
+          element={page(
+            <ContribBoundary id={route.key}>
+              <ContribRender render={route.render} />
+            </ContribBoundary>
+          )}
           key={route.key}
           path={route.path.slice(1)}
         />

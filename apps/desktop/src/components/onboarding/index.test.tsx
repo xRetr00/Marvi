@@ -63,12 +63,12 @@ describe('onboarding Picker', () => {
     expect(screen.getByText('OpenRouter')).toBeTruthy()
     expect(screen.getByText('Fireworks AI')).toBeTruthy()
     expect(screen.queryByText('Anthropic API Key')).toBeNull()
-    expect(screen.queryByText('OpenAI OAuth (ChatGPT)')).toBeNull()
+    expect(screen.queryByText('ChatGPT or Codex Subscription')).toBeNull()
 
     fireEvent.click(screen.getByRole('button', { name: 'Other providers' }))
 
     expect(screen.getByText('Anthropic API Key')).toBeTruthy()
-    expect(screen.getByText('OpenAI OAuth (ChatGPT)')).toBeTruthy()
+    expect(screen.getByText('ChatGPT or Codex Subscription')).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Collapse' })).toBeTruthy()
   })
 
@@ -82,12 +82,13 @@ describe('onboarding Picker', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Other providers' }))
 
+    expect(screen.getByText('Fireworks AI')).toBeTruthy()
     expect(screen.getByText('Anthropic API Key')).toBeTruthy()
     expect(screen.getByText('xAI Grok')).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Collapse' })).toBeTruthy()
   })
 
-  it('shows Fireworks in slot #2 ahead of other OAuth providers', () => {
+  it('shows Fireworks first in the expanded list, ahead of other OAuth providers', () => {
     setProviders([
       provider('openai-codex', 'OpenAI Codex / ChatGPT'),
       provider('minimax-oauth', 'MiniMax'),
@@ -99,15 +100,15 @@ describe('onboarding Picker', () => {
     const labels = screen
       .getAllByRole('button')
       .map(el => el.textContent ?? '')
-      .filter(text => /Nous Portal|Fireworks AI|OpenAI OAuth|MiniMax|OpenRouter/.test(text))
+      .filter(text => /Nous Portal|Fireworks AI|ChatGPT or Codex|MiniMax|OpenRouter/.test(text))
 
     const indexOf = (needle: string) => labels.findIndex(text => text.includes(needle))
     expect(indexOf('OpenRouter')).toBeGreaterThanOrEqual(0)
     expect(indexOf('Nous Portal')).toBeGreaterThanOrEqual(0)
     expect(indexOf('Nous Portal')).toBeGreaterThan(indexOf('OpenRouter'))
     expect(indexOf('Fireworks AI')).toBeGreaterThan(indexOf('Nous Portal'))
-    expect(indexOf('OpenAI OAuth')).toBeGreaterThan(indexOf('Fireworks AI'))
-    expect(indexOf('MiniMax')).toBeGreaterThan(indexOf('OpenAI OAuth'))
+    expect(indexOf('ChatGPT or Codex')).toBeGreaterThan(indexOf('Fireworks AI'))
+    expect(indexOf('MiniMax')).toBeGreaterThan(indexOf('ChatGPT or Codex'))
   })
 
   it('keeps OAuth providers behind the disclosure when Nous Portal is absent', () => {
@@ -116,7 +117,7 @@ describe('onboarding Picker', () => {
 
     expect(screen.getByText('Fireworks AI')).toBeTruthy()
     expect(screen.queryByText('Anthropic API Key')).toBeNull()
-    expect(screen.queryByText('OpenAI OAuth (ChatGPT)')).toBeNull()
+    expect(screen.queryByText('ChatGPT or Codex Subscription')).toBeNull()
     expect(screen.getByRole('button', { name: 'Other providers' })).toBeTruthy()
     expect(screen.queryByText('Recommended')).toBeNull()
   })

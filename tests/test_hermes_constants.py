@@ -125,6 +125,7 @@ class TestGetDefaultHermesRoot:
         monkeypatch.setenv("HERMES_HOME", str(profile))
         assert get_default_hermes_root() == docker_root
 
+    @pytest.mark.windows_only
     def test_no_hermes_home_returns_localappdata_root_on_windows(self, tmp_path, monkeypatch):
         """Native Windows falls back to %LOCALAPPDATA%\\marvi for new installs."""
         local_appdata = tmp_path / "LocalAppData"
@@ -132,7 +133,6 @@ class TestGetDefaultHermesRoot:
         monkeypatch.delenv("HERMES_HOME", raising=False)
         monkeypatch.setenv("LOCALAPPDATA", str(local_appdata))
         monkeypatch.setattr(Path, "home", lambda: tmp_path / "Home")
-        monkeypatch.setattr(hermes_constants.sys, "platform", "win32")
 
         assert get_default_hermes_root() == local_appdata / "marvi"
 
@@ -151,6 +151,7 @@ class TestGetDefaultHermesRoot:
 class TestGetHermesHome:
     """Tests for get_hermes_home() platform-aware fallback."""
 
+    @pytest.mark.windows_only
     def test_windows_fallback_uses_localappdata(self, tmp_path, monkeypatch):
         """When home env vars are unset on Windows, use %LOCALAPPDATA%\\marvi."""
         local_appdata = tmp_path / "LocalAppData"
@@ -158,7 +159,6 @@ class TestGetHermesHome:
         monkeypatch.delenv("HERMES_HOME", raising=False)
         monkeypatch.setenv("LOCALAPPDATA", str(local_appdata))
         monkeypatch.setattr(Path, "home", lambda: tmp_path / "Home")
-        monkeypatch.setattr(hermes_constants.sys, "platform", "win32")
         monkeypatch.setattr(hermes_constants, "_profile_fallback_warned", False)
 
         assert get_hermes_home() == local_appdata / "marvi"
@@ -201,24 +201,24 @@ class TestGetProcessHermesHome:
 
 
 class TestHermesManagedNode:
+    @pytest.mark.windows_only
     def test_windows_node_dir_prefers_portable_root(self, tmp_path, monkeypatch):
         home = tmp_path / "hermes"
         node_dir = home / "node"
         bin_dir = node_dir / "bin"
         node_dir.mkdir(parents=True)
         bin_dir.mkdir()
-        monkeypatch.setattr(hermes_constants.sys, "platform", "win32")
         monkeypatch.setenv("HERMES_HOME", str(home))
 
         assert iter_hermes_node_dirs() == [node_dir, bin_dir]
 
+    @pytest.mark.windows_only
     def test_windows_finds_npm_cmd_before_path(self, tmp_path, monkeypatch):
         home = tmp_path / "hermes"
         node_dir = home / "node"
         node_dir.mkdir(parents=True)
         npm_cmd = node_dir / "npm.cmd"
         npm_cmd.write_text("@echo off\n")
-        monkeypatch.setattr(hermes_constants.sys, "platform", "win32")
         monkeypatch.setenv("HERMES_HOME", str(home))
         monkeypatch.setattr(hermes_constants, "node_tool_runnable", lambda path: True)
 
@@ -226,6 +226,7 @@ class TestHermesManagedNode:
 
 
 
+    @pytest.mark.windows_only
     def test_windows_skips_broken_managed_npm_without_path_fallback(self, tmp_path, monkeypatch):
         home = tmp_path / "hermes"
         managed_npm = home / "node" / "npm.cmd"
@@ -235,7 +236,6 @@ class TestHermesManagedNode:
         bin_dir.mkdir()
         path_npm = bin_dir / "npm.cmd"
         path_npm.write_text("@echo off\n")
-        monkeypatch.setattr(hermes_constants.sys, "platform", "win32")
         monkeypatch.setenv("HERMES_HOME", str(home))
         monkeypatch.setenv("PATH", str(bin_dir))
         monkeypatch.setattr(hermes_constants, "_managed_node_heal_attempted", False)

@@ -43,6 +43,10 @@ if (import.meta.env.MODE !== 'production' || import.meta.env.VITE_PERF_PROBE ===
 // app-shell work so the overlay window stays cheap.
 const win = new URLSearchParams(window.location.search).get('win')
 
+if (win === 'hud') {
+  document.title = 'Marvi HUD'
+}
+
 if (win === 'overlay') {
   void import('./app/pet-overlay/overlay-root').then(({ mountPetOverlay }) => mountPetOverlay())
 } else if (win === 'island') {

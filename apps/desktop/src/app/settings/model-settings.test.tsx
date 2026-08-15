@@ -33,6 +33,7 @@ vi.mock('@/hermes', () => ({
   getGlobalModelInfo: () => getGlobalModelInfo(),
   getGlobalModelOptions: () => getGlobalModelOptions(),
   getAuxiliaryModels: () => getAuxiliaryModels(),
+  getApiRequestProfile: () => 'default',
   getMoaModels: () => getMoaModels(),
   setModelAssignment: (body: unknown) => setModelAssignment(body),
   getRecommendedDefaultModel: (slug: string) => getRecommendedDefaultModel(slug),
@@ -285,6 +286,7 @@ describe('ModelSettings', () => {
       ]
     })
     setModelAssignment.mockResolvedValueOnce({
+      ok: true,
       provider: 'local-ollama',
       model: 'qwen3:latest',
       gateway_tools: []

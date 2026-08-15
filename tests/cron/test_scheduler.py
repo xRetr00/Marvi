@@ -9,9 +9,66 @@ from unittest.mock import AsyncMock, patch, MagicMock
 
 import pytest
 
-from cron.scheduler import _resolve_origin, _resolve_delivery_target, _deliver_result, _send_media_via_adapter, _subconscious_delivery_job, run_job, SILENT_MARKER, _build_job_prompt, _resolve_cron_enabled_toolsets, _merge_mcp_into_per_job_toolsets
+from cron.scheduler import (
+    SILENT_MARKER,
+    _build_job_prompt,
+    _deliver_result,
+    _merge_mcp_into_per_job_toolsets,
+    _resolve_cron_enabled_toolsets,
+    _resolve_delivery_target,
+    _resolve_origin,
+    _send_media_via_adapter,
+    _subconscious_delivery_job,
+    _summarize_cron_failure_for_delivery,
+    run_job,
+)
 from tools.env_passthrough import clear_env_passthrough
 from tools.credential_files import clear_credential_files
+
+
+class TestSummarizeCronFailureForDelivery:
+    def test_embedded_429_in_source_identifier_is_not_a_rate_limit(self):
+        summary = _summarize_cron_failure_for_delivery(
+            {"name": "LLM Wiki Incremental Index", "no_agent": True},
+            "Script failed: path/hash429abc.md source snapshot failure",
+        )
+
+        assert "provider rate limit" not in summary
+        assert "hash429abc.md" in summary
+
+    def test_http_429_is_still_classified_as_a_rate_limit(self):
+        summary = _summarize_cron_failure_for_delivery(
+            {"name": "provider-backed job"},
+            "HTTP 429: Too Many Requests",
+        )
+
+        assert "provider rate limit" in summary
+        # Chain wording is now honest (#85508): either the exhausted phrase
+        # (chain configured) or the "No fallback chain configured" guidance.
+        assert "fallback chain" in summary.lower()
+
+    def test_no_agent_rate_limit_does_not_claim_a_fallback_chain(self):
+        summary = _summarize_cron_failure_for_delivery(
+            {"name": "script job", "no_agent": True},
+            "HTTP 429: Too Many Requests",
+        )
+
+        # Composed with #77648: a no_agent job never gets provider-shaped
+        # classification at all — the generic cleaner reports the script's
+        # own error instead.
+        assert "provider" not in summary.lower()
+        assert "fallback chain" not in summary.lower()
+
+    def test_no_agent_timeout_is_identified_as_a_script_timeout(self):
+        summary = _summarize_cron_failure_for_delivery(
+            {"name": "script job", "no_agent": True},
+            "Script timed out after 3600s",
+        )
+
+        assert "script timed out" in summary
+        assert "No model was invoked" in summary
+        assert "provider timeout" not in summary
+        assert "fallback chain" not in summary.lower()
 
 
 class TestPerJobToolsetMcpMerge:
@@ -217,6 +274,24 @@ class TestResolveDeliveryTarget:
         assert result == {
             "platform": "whatsapp",
             "chat_id": "12345@lid",
+            "thread_id": None,
+        }
+
+    def test_unresolved_target_still_delivered_as_written(self):
+        """A stored job's platform-native target keeps delivering when neither
+        parser nor directory recognizes it. Routing cron through
+        resolve_send_target turned these into a warning plus a silently
+        dropped delivery; pass_unresolved_references hands the raw id to the adapter
+        again."""
+        job = {"deliver": "telegram:ops-room"}
+        with patch(
+            "gateway.channel_directory.resolve_channel_name",
+            return_value=None,
+        ):
+            result = _resolve_delivery_target(job)
+        assert result == {
+            "platform": "telegram",
+            "chat_id": "ops-room",
             "thread_id": None,
         }
 
@@ -2107,8 +2182,15 @@ class TestRunJobSkillBacked:
         assert success is True
         assert error is None
         assert final_response == "ok"
-        assert skill_view_mock.call_count == 2
-        assert [call.args[0] for call in skill_view_mock.call_args_list] == ["blogwatcher", "maps"]
+        # Upstream's readiness preflight reads each skill before the prompt
+        # builder loads its content. Both passes must preserve declaration order.
+        assert skill_view_mock.call_count == 4
+        assert [call.args[0] for call in skill_view_mock.call_args_list] == [
+            "blogwatcher",
+            "maps",
+            "blogwatcher",
+            "maps",
+        ]
 
         prompt_arg = mock_agent.run_conversation.call_args.args[0]
         assert prompt_arg.index("blogwatcher") < prompt_arg.index("maps")
@@ -2643,10 +2725,11 @@ class TestRunJobSubconsciousActivityLog:
         and then ends silently per its prompt contract, the activity log
         should reflect "suggestion", not a plain quiet tick."""
         import cron.scheduler as scheduler
-        from cron.suggestions import add_suggestion
+        import cron.suggestions as suggestions
+        from hermes_constants import get_hermes_home
 
         def _run_conversation(*args, **kwargs):
-            add_suggestion(
+            suggestions.add_suggestion(
                 title="Weekly report",
                 description="desc",
                 source="subconscious",
@@ -2657,7 +2740,10 @@ class TestRunJobSubconsciousActivityLog:
 
         agent = MagicMock()
         agent.run_conversation = MagicMock(side_effect=_run_conversation)
-        with patch.object(scheduler, "_run_job_script", return_value=(True, "gmail: 1 new message")), \
+        cron_dir = get_hermes_home() / "cron"
+        with patch.object(suggestions, "CRON_DIR", cron_dir), \
+             patch.object(suggestions, "SUGGESTIONS_FILE", cron_dir / "suggestions.json"), \
+             patch.object(scheduler, "_run_job_script", return_value=(True, "gmail: 1 new message")), \
              patch("run_agent.AIAgent", return_value=agent):
             scheduler.run_job(self._make_subconscious_job())
 
@@ -4408,5 +4494,4 @@ class TestSetCronSessionTitle:
         out = _set_cron_session_title(db, "sess-1", "Nightly Synthesis")
         assert out == "Nightly Synthesis #2"
         db.get_next_title_in_lineage.assert_called_once_with("Nightly Synthesis")
-
 

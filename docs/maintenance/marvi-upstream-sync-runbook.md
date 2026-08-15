@@ -174,6 +174,17 @@ evidence/history, cognition, plugin tools/dashboard routes, world/proactive
 wiring, Desktop preview/settings, optional-dependency boundary, and tests as a
 unit when resolving upstream desktop or `web_server.py` rewrites.
 
+The post-August 2026 recovery layer is protected with that unit. Preserve lazy
+self-repair for configured PocketTTS and LiveKit Hey Marvi dependencies,
+cancellation-safe duplex STT permit release, and the instant lane's natural
+session-end/silent accidental-wake contract. For Smart Room, preserve managed
+runtime/vision dependency repair, MQTT/Tuya reconnect health and direct probe,
+contention-safe event-log trimming, sleep-safe entry lighting and vision-driven
+sleep, the dedicated gesture/action workers with release and dropped-frame
+tolerance, and the bounded pending-face review queue. Sampling, previews, and
+individual/bulk accept or reject must remain exposed through plugin APIs and
+Desktop settings, with no automatic identity enrollment.
+
 If a new upstream feature adds a visible surface, update
 `scripts/verify_marvi_brand.py` in the same sync. Add either:
 

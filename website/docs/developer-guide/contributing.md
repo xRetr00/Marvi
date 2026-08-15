@@ -115,6 +115,16 @@ world/proactive/subconscious wiring, plugin tools/dashboard APIs, preview, and
 Desktop camera/model/face/gesture settings. Camera/model dependencies remain
 optional and plugin-local.
 
+The post-August 2026 recovery additions are also downstream-owned. Keep lazy
+self-repair for configured PocketTTS and LiveKit Hey Marvi dependencies,
+cancellation-safe duplex STT permits, and instant-lane natural session ending
+and silent accidental-wake dismissal. Smart Room must retain managed
+dependency repair, MQTT/Tuya reconnect health and probing, contention-safe
+event history, sleep-safe entry lighting and vision-driven sleep, dedicated
+gesture/action workers, and the bounded duplicate-aware pending-face queue.
+Sampling, previews, and individual/bulk review remain available through the
+plugin API and Desktop settings; identity enrollment is never automatic.
+
 Run `python scripts/prepare_marvi_upstream_sync.py --review-only` before an
 upstream merge. Use its protected-overlap report during conflict resolution,
 then require `python scripts/verify_marvi_upstream_contract.py` and

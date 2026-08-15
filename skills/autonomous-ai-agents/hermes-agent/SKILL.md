@@ -657,6 +657,16 @@ reasoning, restricted cognition, world/proactive/subconscious wiring, plugin
 tools/dashboard routes, preview, and Desktop camera/model/face/gesture settings.
 Keep optional camera/model dependencies plugin-local and preserve the tests.
 
+The post-August 2026 voice and Smart Room recovery additions are protected as
+well: optional PocketTTS and LiveKit Hey Marvi self-repair after managed
+updates, cancellation-safe duplex STT permit cleanup, natural instant-lane
+session endings and silent accidental-wake dismissal, managed Smart Room
+runtime/vision dependency repair, MQTT/Tuya reconnect telemetry and probing,
+contention-safe event history, sleep-safe entry lighting and automatic
+vision-confirmed sleep mode, and dedicated gesture/action lanes. Keep the
+bounded duplicate-aware pending-face queue, sampling toggle, previews, and
+individual/bulk accept or reject API/UI. Face identity remains review-only.
+
 For every upstream sync, first run
 `python scripts/prepare_marvi_upstream_sync.py --review-only`. Resolve against
 its protected-overlap report, then require both

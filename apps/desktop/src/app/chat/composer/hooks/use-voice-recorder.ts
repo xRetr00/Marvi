@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
 
 import { useI18n } from '@/i18n'
+import { openStreamingTranscription, type StreamingTranscriptionSession } from '@/lib/streaming-transcription'
 import { isLikelySelfEchoTranscript } from '@/lib/voice-echo-guard'
 import { vpLog } from '@/lib/voice-presence-log'
-import { openStreamingTranscription, type StreamingTranscriptionSession } from '@/lib/streaming-transcription'
 import { notify, notifyError } from '@/store/notifications'
 
 import type { VoiceActivityState, VoiceStatus } from '../types'

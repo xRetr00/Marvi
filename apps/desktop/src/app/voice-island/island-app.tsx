@@ -46,6 +46,7 @@ export function VoiceIslandApp() {
           stateRef.current = payload
           setState(payload)
         }, WAKE_HANDOFF_MS)
+
         return
       }
 
@@ -60,6 +61,7 @@ export function VoiceIslandApp() {
 
     return () => {
       unsub?.()
+
       if (wakeHandoffRef.current) {
         clearTimeout(wakeHandoffRef.current)
       }

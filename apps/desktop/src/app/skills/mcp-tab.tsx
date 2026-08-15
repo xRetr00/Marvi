@@ -1,6 +1,6 @@
 import { useStore } from '@nanostores/react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { type ComponentType, type SVGProps, useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 
 import { useDebounced } from '@/app/hooks/use-debounced'
 import { type CodeEditorApi } from '@/components/chat/code-editor'

@@ -62,6 +62,7 @@ afterEach(() => {
 describe('VoicePresenceSettings instant model picker', () => {
   it('changes the persisted voice-instant model instead of presenting a fixed label', async () => {
     const { VoicePresenceSettings } = await import('./voice-presence-settings')
+
     const marvi = {
       get: <T,>(_key: string, fallback: T) => fallback,
       patch: vi.fn()

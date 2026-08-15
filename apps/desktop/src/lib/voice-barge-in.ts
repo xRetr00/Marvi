@@ -43,6 +43,7 @@ export function createBargeInGate({ graceMs, level, sustainedMs }: BargeInGateOp
       if (elapsedMs < graceMs || currentLevel < level) {
         speechStartedAt = null
         gate.state = 'idle'
+
         return false
       }
 
@@ -50,6 +51,7 @@ export function createBargeInGate({ graceMs, level, sustainedMs }: BargeInGateOp
       const sustained = elapsedMs - speechStartedAt >= sustainedMs
       const triggered = sustained && confirmed
       gate.state = triggered ? 'triggered' : 'rising'
+
       return triggered
     }
   }

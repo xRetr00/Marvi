@@ -160,6 +160,7 @@ export async function scanVenvBlockers(
   const hasGateway = outcome.result.processes.some(proc =>
     proc.cmdline.toLowerCase().includes('hermes_cli.main gateway ')
   )
+
   const processes = outcome.result.processes.filter(proc => {
     const cmdline = proc.cmdline.toLowerCase()
 
@@ -213,6 +214,7 @@ export function stopManagedBackgroundProcesses(
       ],
       { cwd: updateRoot, stdio: 'ignore', windowsHide: true }
     )
+
     return stopped
   } catch {
     return false

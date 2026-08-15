@@ -52,6 +52,7 @@ export default function ProgressScreen({ bootstrap }: ProgressProps) {
 
   const isUpdate = mode === 'update'
   const title = bootstrap.status === 'completed' ? 'Done' : isUpdate ? 'Updating Marvi' : 'Setting up Marvi Agent'
+
   const description = isUpdate
     ? 'Marvi is updating to the latest version — this only takes a moment.'
     : 'This is a one-time setup. The Marvi installer is downloading dependencies and configuring your machine. Subsequent launches will skip this step.'

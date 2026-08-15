@@ -78,6 +78,7 @@ describe('useHermesConfig refreshHermesConfig', () => {
     setCurrentCwd('/Users/example/repo/.worktrees/feature')
 
     mockConfig({ terminal: { cwd: '/Users/example/new-workspace' } })
+
     const { result } = renderHook(() =>
       useHermesConfig({ activeSessionIdRef: { current: null }, refreshProjectBranch })
     )

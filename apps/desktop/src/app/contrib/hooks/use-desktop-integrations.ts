@@ -1,12 +1,12 @@
 import { useEffect, useRef } from 'react'
 
 import { closeActiveTab } from '@/app/chat/close-tab'
-import { getSmartRoomClapDataset, reviewSmartRoomClap } from '@/hermes'
 import { openSession } from '@/app/open-session'
+import { getSmartRoomClapDataset, reviewSmartRoomClap } from '@/hermes'
 import { storedSessionIdForNotification } from '@/lib/session-ids'
 import { respondToApprovalAction } from '@/store/native-notifications'
 import { notify, notifyError } from '@/store/notifications'
-import { $activeGatewayProfile } from '@/store/profile'
+import { startProactiveDeliveryPolling, stopProactiveDeliveryPolling } from '@/store/proactive-delivery'
 import { openFolderAsProject } from '@/store/projects'
 import {
   getRememberedRoute,
@@ -17,7 +17,6 @@ import {
 } from '@/store/session'
 import { onSessionsChanged } from '@/store/session-sync'
 import { openUpdatesWindow, startUpdatePoller, stopUpdatePoller } from '@/store/updates'
-import { startProactiveDeliveryPolling, stopProactiveDeliveryPolling } from '@/store/proactive-delivery'
 import { initVoiceIslandBridge } from '@/store/voice-island'
 import { startVoiceWarmupPolling } from '@/store/voice-warmup'
 import { initWindowPresence } from '@/store/window-presence'
@@ -102,6 +101,7 @@ export function useDesktopIntegrations({
         const time = captured.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
         const today = new Date().toDateString() === captured.toDateString()
         const when = today ? `${time} today` : captured.toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })
+
         const answer = (confirmed: boolean) => {
           void reviewSmartRoomClap(sample.id, confirmed)
             .then(() => window.setTimeout(() => void poll(), 250))

@@ -43,6 +43,7 @@ export function resumeAudioContextIfSuspended(audioContext: ResumableAudioContex
   }
 
   const resumeResult = audioContext.resume()
+
   if (resumeResult && typeof resumeResult.catch === 'function') {
     void resumeResult.catch(() => undefined)
   }
@@ -108,6 +109,7 @@ function micError(error: unknown, copy: MicRecorderErrorCopy): Error {
 
 function shouldRetryPlainAudio(error: unknown): boolean {
   const name = error instanceof DOMException ? error.name : ''
+
   return name === 'NotFoundError' || name === 'DevicesNotFoundError' || name === 'OverconstrainedError'
 }
 
@@ -120,6 +122,7 @@ export async function getMicrophoneStream(mediaDevices: MediaDevices): Promise<M
     if (!shouldRetryPlainAudio(error)) {
       throw error
     }
+
     return mediaDevices.getUserMedia({ audio: true })
   }
 }
@@ -145,6 +148,7 @@ export function useMicRecorder(copy: MicRecorderErrorCopy): {
   const silenceStartedAtRef = useRef<number | null>(null)
   const stopResolverRef = useRef<((recording: MicRecording | null) => void) | null>(null)
   const methodsRef = useRef<MicRecorderHandle | null>(null)
+
   const handleRef = useRef<MicRecorderHandle>({
     start: options => methodsRef.current!.start(options),
     stop: () => methodsRef.current!.stop(),
@@ -192,6 +196,7 @@ export function useMicRecorder(copy: MicRecorderErrorCopy): {
 
       if (options.onAudioFrame) {
         const processor = audioContext.createScriptProcessor(4096, 1, 1)
+
         processor.onaudioprocess = event => {
           const input = event.inputBuffer.getChannelData(0)
           options.onAudioFrame?.(downsampleFloat32(input, audioContext.sampleRate, 16000))
@@ -199,6 +204,7 @@ export function useMicRecorder(copy: MicRecorderErrorCopy): {
           const output = event.outputBuffer.getChannelData(0)
           output.fill(0)
         }
+
         source.connect(processor)
         processor.connect(audioContext.destination)
         processorRef.current = processor
@@ -239,6 +245,7 @@ export function useMicRecorder(copy: MicRecorderErrorCopy): {
               silencePendingRef.current = true
               Promise.resolve(options.onSilence()).then(shouldStop => {
                 silencePendingRef.current = false
+
                 if (shouldStop === false) {
                   silenceTriggeredRef.current = false
                   silenceStartedAtRef.current = null
@@ -253,6 +260,7 @@ export function useMicRecorder(copy: MicRecorderErrorCopy): {
             silencePendingRef.current = true
             Promise.resolve(options.onSilence()).then(shouldStop => {
               silencePendingRef.current = false
+
               if (shouldStop === false) {
                 silenceTriggeredRef.current = false
                 silenceStartedAtRef.current = null

@@ -60,6 +60,7 @@ describe('resumeAudioContextIfSuspended', () => {
 describe('getMicrophoneStream', () => {
   it('retries with plain audio when device constraints fail', async () => {
     const stream = {} as MediaStream
+
     const getUserMedia = vi
       .fn()
       .mockRejectedValueOnce(new DOMException('No device matched constraints', 'NotFoundError'))

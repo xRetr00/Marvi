@@ -12,6 +12,7 @@ import { Check, Download, Loader2, Palette, Trash2 } from '@/lib/icons'
 import { selectableCardClass } from '@/lib/selectable-card'
 import { normalize } from '@/lib/text'
 import { cn } from '@/lib/utils'
+import { $backdrop, setBackdrop } from '@/store/backdrop'
 import {
   $backgroundMode,
   $backgroundOpacity,
@@ -21,7 +22,6 @@ import {
   setBackgroundOpacity,
   setBackgroundQuality
 } from '@/store/background'
-import { $backdrop, setBackdrop } from '@/store/backdrop'
 import { $embedAllowed, $embedMode, clearEmbedAllowed, type EmbedMode, setEmbedMode } from '@/store/embed-consent'
 import { $activeGatewayProfile, $profiles, normalizeProfileKey } from '@/store/profile'
 import { $reactionsEnabled, setReactionsEnabled } from '@/store/reactions-enabled'

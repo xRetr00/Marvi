@@ -98,7 +98,8 @@ export function AutonomyPanel() {
   const answer = async (id: string) => {
     const value = answers[id]?.trim()
 
-    if (!value) return
+    if (!value) {return}
+
     try {
       await window.hermesDesktop.api({
         path: `/api/autonomy/questions/${encodeURIComponent(id)}/answer`,
@@ -243,7 +244,7 @@ export function AutonomyPanel() {
                             aria-label={`Answer: ${question.question}`}
                             onChange={event => setAnswers(current => ({ ...current, [question.id]: event.target.value }))}
                             onKeyDown={event => {
-                              if (event.key === 'Enter') void answer(question.id)
+                              if (event.key === 'Enter') {void answer(question.id)}
                             }}
                             placeholder="Your answer"
                             value={answers[question.id] ?? ''}

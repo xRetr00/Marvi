@@ -11,16 +11,15 @@ import { pathToFileURL } from 'node:url'
 import {
   app,
   BrowserWindow,
-  Menu,
-  Notification,
-  Tray,
   clipboard,
   dialog,
-  globalShortcut,
   net as electronNet,
+  globalShortcut,
   ipcMain,
+  Menu,
   nativeImage,
   nativeTheme,
+  Notification,
   powerMonitor,
   powerSaveBlocker,
   protocol,
@@ -28,7 +27,8 @@ import {
   screen,
   session,
   shell,
-  systemPreferences
+  systemPreferences,
+  Tray
 } from 'electron'
 import nodePty from 'node-pty'
 
@@ -731,6 +731,7 @@ const BOOT_FAKE_STEP_MS = (() => {
 
   return Math.max(120, raw)
 })()
+
 const APP_NAME = process.env.HERMES_DESKTOP_APP_NAME || 'Marvi'
 const WINDOW_TITLE = 'Marvi'
 const HUD_WINDOW_TITLE = `${APP_NAME} HUD`
@@ -1046,6 +1047,7 @@ app.setName(APP_NAME)
 if (IS_WINDOWS) {
   app.setAppUserModelId('com.neuretro.marvi')
 }
+
 // Seed the native About panel with the live Marvi version. This is refreshed
 // on every open via the explicit "About" menu handler (refreshAboutPanel), so
 // an in-place `hermes update` mid-session is reflected without an app restart;
@@ -1363,9 +1365,11 @@ function rendererMemorySummary(webContents) {
     const pid = webContents?.getOSProcessId?.()
     const metric = app.getAppMetrics().find(item => item.pid === pid)
     const memory = metric?.memory
-    if (!memory) return pid ? `pid=${pid}` : 'pid=?'
+
+    if (!memory) {return pid ? `pid=${pid}` : 'pid=?'}
 
     const mb = value => (Number(value || 0) / 1024).toFixed(1)
+
     return [
       `pid=${pid}`,
       `workingSet=${mb(memory.workingSetSize)}MiB`,
@@ -2277,6 +2281,7 @@ function findSystemPython() {
             timeout: PROBE_TIMEOUT_MS
           })
         )
+
         const candidate = out.trim()
 
         if (candidate && fileExists(candidate)) {
@@ -3152,6 +3157,7 @@ async function applyUpdates(opts = {}) {
       const message =
         'Update aborted: another process is holding the Marvi install open ' +
         '(a second Marvi window or a terminal running hermes?). Close it and retry.'
+
       emitUpdateProgress({ stage: 'error', message, percent: null })
       resumeBackendAfterFailedUpdate()
 
@@ -3353,6 +3359,7 @@ async function handOffWindowsBootstrapRecovery(reason) {
   // and the bootstrap-complete marker are present earlier and are better signals.
   const haveRealInstall =
     fileExists(venvPython) || fileExists(venvMarvi) || fileExists(path.join(updateRoot, '.hermes-bootstrap-complete'))
+
   const updaterArgs = chooseUpdaterArgs(haveRealInstall, branch)
 
   await releaseBackendLockForUpdate(updateRoot)
@@ -4787,13 +4794,15 @@ const ACTIVITYWATCH_PROBE_TIMEOUT_MS = 1500
 function probeActivityWatchStatus() {
   return new Promise(resolve => {
     let settled = false
+
     const finish = reachable => {
-      if (settled) return
+      if (settled) {return}
       settled = true
       resolve({ reachable })
     }
 
     let req
+
     try {
       req = http.get(ACTIVITYWATCH_STATUS_URL, res => {
         const ok = (res.statusCode || 0) >= 200 && (res.statusCode || 0) < 300
@@ -4802,6 +4811,7 @@ function probeActivityWatchStatus() {
       })
     } catch {
       finish(false)
+
       return
     }
 
@@ -8079,7 +8089,7 @@ function resetBootProgressForReconnect() {
 }
 
 function stopBackendChild(child) {
-  if (child) child.__intentionalStop = true
+  if (child) {child.__intentionalStop = true}
   stopBackendChildImpl(child, { forceKillProcessTree, isWindows: IS_WINDOWS })
 }
 
@@ -8204,10 +8214,12 @@ function resetBackendSupervision() {
     clearTimeout(backendRestartTimer)
     backendRestartTimer = null
   }
+
   if (backendHealthyTimer) {
     clearTimeout(backendHealthyTimer)
     backendHealthyTimer = null
   }
+
   backendRestartAttempts = 0
   backendSupervisionHalted = false
   backendCrashLoopNotified = false
@@ -8215,23 +8227,28 @@ function resetBackendSupervision() {
 
 // Wired into the primary backend's 'exit' handler in startHermes().
 function noteBackendUnexpectedExit(child, { code, signal, wasReady }) {
-  if (isQuitting || isQuittingForHandoff || backendSupervisionHalted) return
-  if (child && child.__intentionalStop) return
+  if (isQuitting || isQuittingForHandoff || backendSupervisionHalted) {return}
+
+  if (child && child.__intentionalStop) {return}
+
   // Pre-ready exits belong to the existing boot-failure recovery flow (the
   // latched backendStartFailure + recovery overlay). Supervised respawn
   // attempts that die before ready still count as failures because
   // attemptBackendRestart() catches the rejected boot promise below.
-  if (!wasReady) return
+  if (!wasReady) {return}
+
   // Died before the 5-minute healthy window elapsed: keep the streak.
   if (backendHealthyTimer) {
     clearTimeout(backendHealthyTimer)
     backendHealthyTimer = null
   }
+
   scheduleBackendRestart(`backend exited unexpectedly (${signal || code})`)
 }
 
 function scheduleBackendRestart(reason) {
-  if (isQuitting || isQuittingForHandoff || backendSupervisionHalted || backendRestartTimer) return
+  if (isQuitting || isQuittingForHandoff || backendSupervisionHalted || backendRestartTimer) {return}
+
   if (backendRestartAttempts >= BACKEND_RESTART_MAX_FAILURES) {
     backendSupervisionHalted = true
     rememberLog(
@@ -8239,8 +8256,10 @@ function scheduleBackendRestart(reason) {
         'giving up until a manual restart'
     )
     notifyBackendCrashLoop()
+
     return
   }
+
   const delay = Math.min(BACKEND_RESTART_CAP_MS, BACKEND_RESTART_BASE_MS * 2 ** backendRestartAttempts)
   backendRestartAttempts += 1
   rememberLog(
@@ -8254,11 +8273,12 @@ function scheduleBackendRestart(reason) {
 }
 
 async function attemptBackendRestart() {
-  if (isQuitting || isQuittingForHandoff || backendSupervisionHalted) return
+  if (isQuitting || isQuittingForHandoff || backendSupervisionHalted) {return}
   // Clear the latched spawn failure so startHermes() actually retries instead
   // of re-throwing the previous attempt's error. (The latch exists to stop
   // the renderer's tight retry loop; the supervisor owns pacing here.)
   backendStartFailure = null
+
   try {
     // startHermes() dedupes via connectionPromise, so if the renderer's own
     // reconnect loop already respawned the backend we simply await that boot.
@@ -8266,9 +8286,11 @@ async function attemptBackendRestart() {
     rememberLog(
       `[supervise] backend restarted (attempt ${backendRestartAttempts}/${BACKEND_RESTART_MAX_FAILURES})`
     )
-    if (backendHealthyTimer) clearTimeout(backendHealthyTimer)
+
+    if (backendHealthyTimer) {clearTimeout(backendHealthyTimer)}
     backendHealthyTimer = setTimeout(() => {
       backendHealthyTimer = null
+
       if (backendRestartAttempts > 0) {
         rememberLog(
           `[supervise] backend healthy for ${Math.round(BACKEND_HEALTHY_AFTER_MS / 60_000)} minutes; resetting restart backoff`
@@ -8289,16 +8311,20 @@ async function attemptBackendRestart() {
 // Notification pattern (see the hermes:notify handler); a click brings the
 // hidden-in-tray window back and reveals the desktop log file.
 function notifyBackendCrashLoop() {
-  if (backendCrashLoopNotified) return
+  if (backendCrashLoopNotified) {return}
   backendCrashLoopNotified = true
-  if (!Notification.isSupported()) return
+
+  if (!Notification.isSupported()) {return}
+
   try {
     const notification = new Notification({
       title: 'Marvi backend keeps crashing',
       body: 'Automatic restarts failed. Click to open Marvi and view the logs.'
     })
+
     notification.on('click', () => {
       focusWindow(mainWindow)
+
       try {
         shell.showItemInFolder(DESKTOP_LOG_PATH)
       } catch {
@@ -8534,6 +8560,7 @@ async function spawnPoolBackend(profile, entry) {
       stdio: ['ignore', 'pipe', 'pipe']
     })
   )
+
   entry.process = child
   entry.token = token
 
@@ -8893,6 +8920,7 @@ async function startHermes() {
       // Auto-restart on unexpected death (no-op for intentional stops, app
       // quit, or pre-ready boot failures — see noteBackendUnexpectedExit).
       noteBackendUnexpectedExit(supervisedChild, { code, signal, wasReady: backendReady })
+
       if (!backendReady) {
         const message = `Hermes backend exited before it became ready (${signal || code}).`
         updateBootProgress(
@@ -9105,9 +9133,10 @@ function focusWindow(win) {
 }
 
 function createTray() {
-  if (tray || !IS_WINDOWS) return
+  if (tray || !IS_WINDOWS) {return}
   const icon = getAppIconPath()
-  if (!icon) return
+
+  if (!icon) {return}
 
   tray = new Tray(nativeImage.createFromPath(icon))
   tray.setToolTip(WINDOW_TITLE)
@@ -9124,7 +9153,8 @@ function createTray() {
 }
 
 function registerWindowsLoginStartup() {
-  if (!IS_WINDOWS || !IS_PACKAGED) return
+  if (!IS_WINDOWS || !IS_PACKAGED) {return}
+
   try {
     app.setLoginItemSettings({ openAtLogin: true, args: ['--hidden'] })
   } catch (error) {
@@ -9455,9 +9485,11 @@ function islandStageX(area, position) {
   if (position === 'left') {
     return Math.round(area.x + ISLAND_EDGE_MARGIN)
   }
+
   if (position === 'right') {
     return Math.round(area.x + area.width - ISLAND_STAGE_W - ISLAND_EDGE_MARGIN)
   }
+
   return Math.round(area.x + (area.width - ISLAND_STAGE_W) / 2)
 }
 
@@ -9465,10 +9497,13 @@ function setIslandPosition(position) {
   if (!['left', 'center', 'right'].includes(position)) {
     return
   }
+
   islandPosition = position
+
   if (!islandWindow || islandWindow.isDestroyed()) {
     return
   }
+
   const display = screen.getDisplayMatching(islandWindow.getBounds())
   islandWindow.setPosition(islandStageX(display.workArea, position), Math.round(display.workArea.y), false)
 }
@@ -9530,6 +9565,7 @@ function spawnIslandWindow() {
   win.setAlwaysOnTop(true, IS_MAC ? 'floating' : 'screen-saver')
   win.setIgnoreMouseEvents(true, { forward: true })
   win.setHiddenInMissionControl?.(true)
+
   try {
     win.setVisibleOnAllWorkspaces(
       true,
@@ -9546,6 +9582,7 @@ function spawnIslandWindow() {
       win.showInactive()
     }
   }
+
   win.once('ready-to-show', showIsland)
   // Transparent utility windows do not reliably emit ready-to-show on every
   // Windows GPU/driver combination. did-finish-load is the reliable fallback.
@@ -9570,10 +9607,12 @@ function spawnIslandWindow() {
 function openIslandWindow() {
   if (islandWindow && !islandWindow.isDestroyed()) {
     islandWindow.showInactive()
+
     return islandWindow
   }
 
   islandWindow = spawnIslandWindow()
+
   return islandWindow
 }
 
@@ -9581,6 +9620,7 @@ function closeIslandWindow() {
   if (islandWindow && !islandWindow.isDestroyed()) {
     islandWindow.close()
   }
+
   islandWindow = null
 }
 
@@ -9588,9 +9628,11 @@ function closeIslandWindow() {
 // focusable/clickable, and let the renderer know to open its command bar.
 function summonIsland() {
   const win = openIslandWindow()
+
   if (!win || win.isDestroyed()) {
     return
   }
+
   win.setFocusable(true)
   win.setIgnoreMouseEvents(false)
   win.showInactive()
@@ -9601,10 +9643,12 @@ function summonIsland() {
 
 ipcMain.handle('hermes:island:open', async () => {
   openIslandWindow()
+
   return { ok: true }
 })
 ipcMain.handle('hermes:island:close', async () => {
   closeIslandWindow()
+
   return { ok: true }
 })
 ipcMain.on('hermes:island:set-position', (_event, position) => {
@@ -9652,6 +9696,7 @@ ipcMain.on('hermes:island:set-ignore-mouse', (_event, ignore) => {
 ipcMain.on('hermes:island:set-focusable', (_event, focusable) => {
   if (islandWindow && !islandWindow.isDestroyed()) {
     islandWindow.setFocusable(Boolean(focusable))
+
     if (focusable) {
       islandWindow.focus()
     }
@@ -10352,7 +10397,7 @@ function createWindow() {
 
   const revealController = wireWindowReveal(createdMainWindow, {
     show: () => {
-      if (!START_HIDDEN) createdMainWindow.show()
+      if (!START_HIDDEN) {createdMainWindow.show()}
     },
     onRevealed: () => {
       // Persist geometry as soon as the window is visible so a crash before the
@@ -10408,6 +10453,7 @@ function createWindow() {
   mainWindow.on('unmaximize', schedulePersistWindowState)
   mainWindow.on('close', event => {
     schedulePersistWindowState.flush()
+
     if (IS_WINDOWS && !isQuitting) {
       event.preventDefault()
       mainWindow.hide()
@@ -12804,6 +12850,7 @@ async function getUninstallSummary() {
           stdio: ['ignore', 'pipe', 'ignore']
         })
       )
+
       child.stdout.on('data', chunk => {
         stdout += chunk.toString()
       })
@@ -13132,6 +13179,7 @@ app.whenReady().then(() => {
   // against double-registration in case whenReady's callback ever re-runs.
   if (!globalShortcut.isRegistered(SUMMON_ACCELERATOR)) {
     const registered = globalShortcut.register(SUMMON_ACCELERATOR, summonIsland)
+
     if (!registered) {
       rememberLog(`[summon] failed to register global shortcut ${SUMMON_ACCELERATOR} (in use by another app)`)
     }
@@ -13232,6 +13280,7 @@ app.on('before-quit', event => {
   isQuitting = true
   // Release the global summon hotkey so it doesn't linger after quit.
   globalShortcut.unregisterAll()
+
   if ((sshConnections.size > 0 || sshBootstrapCoordinator.promises().length > 0) && !sshQuitTeardownDone) {
     event.preventDefault()
     sshBootstrapCoordinator.cancelAll()
@@ -13248,6 +13297,7 @@ app.on('before-quit', event => {
       app.quit()
     })
   }
+
   // Clean quit mid-boot should not trip next-launch --no-sandbox (#38216).
   // FATAL GPU aborts skip before-quit, leaving the `booting` marker in place.
   // Keyed on sticky (not active): a manual --no-sandbox run still records a
@@ -13259,6 +13309,7 @@ app.on('before-quit', event => {
       void 0
     }
   }
+
   // The always-on-top overlay isn't a "real" app window; close it so a stray
   // pet can't keep the process alive or float over a quit app.
   closePetOverlay()
@@ -13306,6 +13357,7 @@ app.on('before-quit', event => {
 
   stopBackendChild(backendConnectionState.getProcess())
   stopAllPoolBackends()
+
   if (!managedBackgroundStopAttempted) {
     managedBackgroundStopAttempted = true
     // Native update handoff owns gateway pause/resume; a real user Quit stops it.

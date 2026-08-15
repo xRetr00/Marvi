@@ -68,7 +68,7 @@ import { ScrollToBottomButton } from './scroll-to-bottom-button'
 import { useSessionView } from './session-view'
 import { SessionActionsMenu } from './sidebar/session-actions-menu'
 import { threadLoadingState } from './thread-loading'
-import { advanceTranscriptWindow, selectTranscriptWindow, type TranscriptWindowState } from './transcript-window'
+import { advanceTranscriptWindow, type TranscriptWindowState } from './transcript-window'
 import { VoiceModeViewport } from './voice-mode-stage'
 
 interface ChatViewProps extends Omit<React.ComponentProps<'div'>, 'onSubmit'> {

@@ -72,6 +72,7 @@ describe('playSpeechText', () => {
 
   it('uses the chunked TTS stream when the backend supports token auth', async () => {
     const encoder = new TextEncoder()
+
     const fetch = vi.fn().mockResolvedValue({
       body: new ReadableStream({
         start(controller) {
@@ -90,6 +91,7 @@ describe('playSpeechText', () => {
       }),
       ok: true
     })
+
     vi.stubGlobal('fetch', fetch)
     Object.defineProperty(window, 'hermesDesktop', {
       configurable: true,
@@ -118,6 +120,7 @@ describe('playSpeechText', () => {
 
   it('aborts the streaming TTS request when playback is stopped', async () => {
     let signal: AbortSignal | undefined
+
     const fetch = vi.fn().mockImplementation((_url, options: RequestInit) => {
       signal = options.signal instanceof AbortSignal ? options.signal : undefined
 
@@ -130,6 +133,7 @@ describe('playSpeechText', () => {
         ok: true
       })
     })
+
     vi.stubGlobal('fetch', fetch)
     Object.defineProperty(window, 'hermesDesktop', {
       configurable: true,
@@ -156,6 +160,7 @@ describe('playSpeechText', () => {
     const starts: number[] = []
     const resume = vi.fn().mockResolvedValue(undefined)
     const encoder = new TextEncoder()
+
     const fetch = vi.fn().mockResolvedValue({
       body: new ReadableStream({
         start(controller) {
@@ -174,6 +179,7 @@ describe('playSpeechText', () => {
       }),
       ok: true
     })
+
     vi.stubGlobal('fetch', fetch)
     vi.stubGlobal(
       'AudioContext',
@@ -222,6 +228,7 @@ describe('playSpeechText', () => {
 
   it('falls back to normal speech synthesis when the stream endpoint reports unavailable', async () => {
     const encoder = new TextEncoder()
+
     const fetch = vi.fn().mockResolvedValue({
       body: new ReadableStream({
         start(controller) {
@@ -231,6 +238,7 @@ describe('playSpeechText', () => {
       }),
       ok: true
     })
+
     vi.stubGlobal('fetch', fetch)
     Object.defineProperty(window, 'hermesDesktop', {
       configurable: true,
@@ -278,9 +286,11 @@ class FakeCtx {
   }
   createBufferSource() {
     const source = new FakeSource()
+
     source.start = (t: number) => {
       this.starts.push(t)
     }
+
     return source as unknown as AudioBufferSourceNode
   }
   resume() {
@@ -295,17 +305,22 @@ class FakeCtx {
 function fakeFetchOnce(): typeof fetch {
   const body =
     '{"type":"start","sample_rate":24000}\n{"type":"chunk","audio":"AAAAAA=="}\n{"type":"chunk","audio":"AAAAAA=="}\n'
+
   return (async () => {
     let sent = false
+
     const reader = {
       read: async () => {
         if (sent) {
           return { done: true, value: undefined }
         }
+
         sent = true
+
         return { done: false, value: new TextEncoder().encode(body) }
       }
     }
+
     return { ok: true, body: { getReader: () => reader } } as unknown as Response
   }) as unknown as typeof fetch
 }
@@ -313,6 +328,7 @@ function fakeFetchOnce(): typeof fetch {
 describe('GaplessPlayer', () => {
   it('schedules chunks contiguously and finish() resolves after playback', async () => {
     const ctx = new FakeCtx()
+
     const player = createGaplessPlayerForTest({
       createAudioContext: () => ctx as unknown as AudioContext,
       fetchImpl: fakeFetchOnce(),
@@ -333,6 +349,7 @@ describe('GaplessPlayer', () => {
 
   it('finish() resolves false (no audio) when there is no connection', async () => {
     const ctx = new FakeCtx()
+
     const player = createGaplessPlayerForTest({
       createAudioContext: () => ctx as unknown as AudioContext,
       fetchImpl: fakeFetchOnce(),

@@ -150,12 +150,12 @@ function RootErrorFallback({ error, reset }: ErrorBoundaryFallbackProps) {
     let cancelled = false
     const bridge = window.hermesDesktop?.updates
 
-    if (!bridge) return
+    if (!bridge) {return}
 
     void bridge
       .check()
       .then(status => {
-        if (!cancelled) setUpdateStatus(status)
+        if (!cancelled) {setUpdateStatus(status)}
       })
       .catch(() => undefined)
 
@@ -174,12 +174,15 @@ function RootErrorFallback({ error, reset }: ErrorBoundaryFallbackProps) {
 
   const applyUpdate = async () => {
     const bridge = window.hermesDesktop?.updates
-    if (!bridge) return
+
+    if (!bridge) {return}
 
     setUpdating(true)
     setUpdateMessage(null)
+
     try {
       const result = await bridge.apply()
+
       if (result?.manual) {
         setUpdateMessage(result.command ?? 'hermes update')
         setUpdating(false)

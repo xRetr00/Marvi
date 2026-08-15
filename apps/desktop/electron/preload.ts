@@ -48,6 +48,7 @@ contextBridge.exposeInMainWorld('hermesDesktop', {
     onState: callback => {
       const listener = (_event, payload) => callback(payload)
       ipcRenderer.on('hermes:island:state', listener)
+
       return () => ipcRenderer.removeListener('hermes:island:state', listener)
     },
     // Main renderer → island window: push the active island card (or null).
@@ -59,11 +60,13 @@ contextBridge.exposeInMainWorld('hermesDesktop', {
     onActivity: callback => {
       const listener = (_event, payload) => callback(payload)
       ipcRenderer.on('hermes:island:activity', listener)
+
       return () => ipcRenderer.removeListener('hermes:island:activity', listener)
     },
     onWork: callback => {
       const listener = (_event, payload) => callback(payload)
       ipcRenderer.on('hermes:island:work', listener)
+
       return () => ipcRenderer.removeListener('hermes:island:work', listener)
     },
     // Capsule interactivity toggle (island window is otherwise click-through).
@@ -74,12 +77,14 @@ contextBridge.exposeInMainWorld('hermesDesktop', {
     onCard: callback => {
       const listener = (_event, payload) => callback(payload)
       ipcRenderer.on('hermes:island:card', listener)
+
       return () => ipcRenderer.removeListener('hermes:island:card', listener)
     },
     // Main renderer subscribes to card actions from the capsule.
     onCardAction: callback => {
       const listener = (_event, payload) => callback(payload)
       ipcRenderer.on('hermes:island:card-action', listener)
+
       return () => ipcRenderer.removeListener('hermes:island:card-action', listener)
     },
     // Make the island window focusable so the command bar can capture keys.
@@ -88,6 +93,7 @@ contextBridge.exposeInMainWorld('hermesDesktop', {
     onSummon: callback => {
       const listener = () => callback()
       ipcRenderer.on('hermes:island:summon', listener)
+
       return () => ipcRenderer.removeListener('hermes:island:summon', listener)
     }
   },

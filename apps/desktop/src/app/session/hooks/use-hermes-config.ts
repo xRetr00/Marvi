@@ -4,6 +4,7 @@ import { setTerminalFontFamilyFromConfig } from '@/app/right-sidebar/terminal/te
 import { getHermesConfig, getHermesConfigDefaults } from '@/hermes'
 import { BUILTIN_PERSONALITIES, normalizePersonalityValue, personalityNamesFromConfig } from '@/lib/chat-runtime'
 import { normalize } from '@/lib/text'
+import { normalizeWakeWordConfig, type WakeWordConfig } from '@/lib/wake-word'
 import {
   $currentCwd,
   getComposerSelectionGeneration,
@@ -17,7 +18,6 @@ import {
   setDefaultReasoningEffort,
   setIntroPersonality
 } from '@/store/session'
-import { normalizeWakeWordConfig, type WakeWordConfig } from '@/lib/wake-word'
 import {
   applyAutoSpeakFromConfig,
   applyThinkingSoundFromConfig,
@@ -105,6 +105,7 @@ export function useHermesConfig({ activeSessionIdRef, refreshProjectBranch }: He
           if (!selectedCwd && !activeSessionIdRef.current) {
             setCurrentCwd(branchCwd)
           }
+
           void refreshProjectBranch?.(branchCwd)
         }
 

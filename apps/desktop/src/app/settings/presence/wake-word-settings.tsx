@@ -34,6 +34,7 @@ export function WakeWordSettings({ marvi }: { marvi: ReturnType<typeof useMarviC
 
   const setEnabled = (value: boolean) => {
     void marvi.patch('voice.wake_word.enabled', value)
+
     if (value) {
       void marvi.patch('voice.wake_word.provider', 'livekit')
       void marvi.patch('voice.wake_word.model', 'livekit-marvi')

@@ -13,6 +13,7 @@ export function initWindowPresence(): void {
   if (started || !window.hermesDesktop?.onWindowStateChanged) {
     return
   }
+
   started = true
   window.hermesDesktop.onWindowStateChanged(state => {
     $mainWindowFocused.set(Boolean(state?.focused))

@@ -42,23 +42,28 @@ interface GaplessPlayerDeps {
 function pcm16Base64ToFloat32(encoded: string): Float32Array {
   const raw = atob(encoded)
   const bytes = new Uint8Array(raw.length)
+
   for (let i = 0; i < raw.length; i += 1) {
     bytes[i] = raw.charCodeAt(i)
   }
 
   const pcm = new Int16Array(bytes.buffer)
   const samples = new Float32Array(pcm.length)
+
   for (let i = 0; i < pcm.length; i += 1) {
     samples[i] = Math.max(-1, pcm[i] / 32768)
   }
+
   return samples
 }
 
 export function voicePlaybackLevel(samples: Float32Array): number {
   let energy = 0
+
   for (let i = 0; i < samples.length; i += 1) {
     energy += samples[i] * samples[i]
   }
+
   return samples.length ? Math.min(1, Math.sqrt(energy / samples.length) * 4) : 0
 }
 
@@ -170,6 +175,7 @@ class GaplessPlayer {
     }
 
     const clean = sanitizeTextForSpeech(text)
+
     if (!clean) {
       return
     }
@@ -189,8 +195,10 @@ class GaplessPlayer {
     return new Promise<boolean>(resolve => {
       if (this.closed) {
         resolve(this.playedChunks > 0)
+
         return
       }
+
       this.drainResolvers.push(resolve)
       void this.pump()
       this.scheduleFinalizeIfDrained()
@@ -213,6 +221,7 @@ class GaplessPlayer {
       window.clearTimeout(this.finalizeTimer)
       this.finalizeTimer = null
     }
+
     if (this.safetyTimer !== null) {
       window.clearTimeout(this.safetyTimer)
       this.safetyTimer = null
@@ -228,6 +237,7 @@ class GaplessPlayer {
         // already stopped
       }
     }
+
     this.sources.clear()
 
     void this.ctx?.close?.()
@@ -243,6 +253,7 @@ class GaplessPlayer {
   private resolveDrain(): void {
     const resolvers = this.drainResolvers
     this.drainResolvers = []
+
     for (const resolve of resolvers) {
       resolve(this.playedChunks > 0)
     }
@@ -252,6 +263,7 @@ class GaplessPlayer {
     if (this.pumping || this.closed) {
       return
     }
+
     const seq = this.sequence
     this.pumping = true
 
@@ -273,6 +285,7 @@ class GaplessPlayer {
     if (this.closed || this.moreComing || this.queue.length > 0 || this.pumping) {
       return
     }
+
     if (this.finalizeTimer !== null) {
       return
     }
@@ -286,12 +299,14 @@ class GaplessPlayer {
     if (this.closed) {
       return
     }
+
     this.closed = true
 
     if (this.finalizeTimer !== null) {
       window.clearTimeout(this.finalizeTimer)
       this.finalizeTimer = null
     }
+
     if (this.safetyTimer !== null) {
       window.clearTimeout(this.safetyTimer)
       this.safetyTimer = null
@@ -314,11 +329,13 @@ class GaplessPlayer {
 
   private async streamSegment(text: string, seq: number): Promise<void> {
     const conn = await this.getConnection()
+
     if (!conn || conn.authMode === 'oauth' || !conn.token || !this.ctx || this.closed || this.sequence !== seq) {
       return
     }
 
     let response: Response
+
     try {
       response = await this.fetchImpl(`${conn.baseUrl.replace(/\/+$/, '')}/api/audio/speak/stream`, {
         body: JSON.stringify({ text }),
@@ -341,6 +358,7 @@ class GaplessPlayer {
     try {
       while (!this.closed) {
         const { done, value } = await reader.read()
+
         if (done) {
           break
         }
@@ -353,7 +371,9 @@ class GaplessPlayer {
           if (!line.trim()) {
             continue
           }
+
           const event = JSON.parse(line) as { audio?: string; error?: string; sample_rate?: number; type?: string }
+
           if ((event.type === 'start' || event.type === 'sample_rate') && event.sample_rate) {
             this.sampleRate = event.sample_rate
           } else if (event.type === 'chunk' && event.audio) {
@@ -370,6 +390,7 @@ class GaplessPlayer {
     if (this.primed || !this.ctx) {
       return
     }
+
     this.primed = true
     const frames = Math.max(1, Math.floor((this.ctx.sampleRate || this.sampleRate) * OUTPUT_PRIME_SECONDS))
     const silent = this.ctx.createBuffer(1, frames, this.ctx.sampleRate || this.sampleRate)
@@ -384,6 +405,7 @@ class GaplessPlayer {
     if (!this.ctx || this.closed) {
       return
     }
+
     this.primeOnce()
 
     const samples = pcm16Base64ToFloat32(encoded)
@@ -403,8 +425,10 @@ class GaplessPlayer {
     this.publishOutput(level)
 
     this.sources.add(source)
+
     source.onended = () => {
       this.sources.delete(source)
+
       if (this.sources.size === 0) {
         this.publishOutput(0)
       }
@@ -413,6 +437,7 @@ class GaplessPlayer {
 
   private publishOutput(level: number): void {
     const current = $voicePlayback.get()
+
     if (current.sequence !== this.sequence || this.closed) {
       return
     }
@@ -426,6 +451,7 @@ class GaplessPlayer {
 }
 
 export const gaplessPlayer = new GaplessPlayer()
+
 /** Test seam: build a player with injected AudioContext/fetch/connection. */
 export function createGaplessPlayerForTest(deps: GaplessPlayerDeps): GaplessPlayer {
   return new GaplessPlayer(deps)
@@ -478,6 +504,7 @@ export async function playSpeechText(text: string, options: VoicePlaybackOptions
   stopVoicePlayback()
 
   const speakableText = sanitizeTextForSpeech(text)
+
   if (!speakableText) {
     return false
   }
@@ -510,12 +537,14 @@ export async function playSpeechText(text: string, options: VoicePlaybackOptions
   })
 
   let response: { data_url: string }
+
   try {
     response = await speakText(speakableText)
   } catch {
     if (isCurrent()) {
       setVoicePlaybackState(idlePlaybackState(ownSequence))
     }
+
     return false
   }
 
@@ -546,6 +575,7 @@ export async function playSpeechText(text: string, options: VoicePlaybackOptions
           window.clearTimeout(stall)
           stall = null
         }
+
         audio.removeEventListener('ended', onEnded)
         audio.removeEventListener('error', onError)
         audio.removeEventListener('timeupdate', armStall)
@@ -555,6 +585,7 @@ export async function playSpeechText(text: string, options: VoicePlaybackOptions
         if (stall !== null) {
           window.clearTimeout(stall)
         }
+
         stall = window.setTimeout(() => {
           cleanup()
           reject(new Error('Playback stalled'))
@@ -565,6 +596,7 @@ export async function playSpeechText(text: string, options: VoicePlaybackOptions
         cleanup()
         resolve()
       }
+
       const onError = () => {
         cleanup()
         reject(new Error('Playback failed'))

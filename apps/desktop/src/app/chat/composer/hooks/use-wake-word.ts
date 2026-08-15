@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { useI18n } from '@/i18n'
-import { isLikelyHallucination, isLikelySelfEchoTranscript } from '@/lib/voice-echo-guard'
 import { openStreamingTranscription, type StreamingTranscriptionSession } from '@/lib/streaming-transcription'
+import { isLikelyHallucination, isLikelySelfEchoTranscript } from '@/lib/voice-echo-guard'
 import { vpLog } from '@/lib/voice-presence-log'
 import {
   normalizeWakeWordConfig,
@@ -220,9 +220,11 @@ export function useWakeWord({
     clearTimers()
     stopWakeSession()
     stopStreamingSession()
+
     if (statusRef.current !== 'idle') {
       handleRef.current.cancel()
     }
+
     detectedRef.current = false
     resumeCaptureRef.current = false
     pendingRestartAfterSubmitRef.current = false
@@ -380,6 +382,7 @@ export function useWakeWord({
       streamingErrorRef.current = null
       streamedCommandFramesRef.current = 0
       stoppingRef.current = false
+
       if (submittedCommand) {
         scheduleRestartAfterSubmittedTurn()
       } else {
@@ -414,12 +417,14 @@ export function useWakeWord({
     if (complete === false) {
       vpLog('wake', 'turn incomplete')
       debugLog('turn incomplete')
+
       return false
     }
 
     if (complete === true) {
       vpLog('wake', 'turn complete')
     }
+
     await finishCaptureRef.current?.()
   }, [debugLog, semanticTurnEnabled])
 
@@ -433,6 +438,7 @@ export function useWakeWord({
     }
 
     pendingRestartAfterSubmitRef.current = false
+
     if (resumeCaptureRef.current) {
       setStartTick(tick => tick + 1) // resume the conversation (capture without wake)
     } else {
@@ -472,10 +478,12 @@ export function useWakeWord({
             streamingOpenRef.current = openStreamingTranscription({ onPartial: text => setUserCaption(text) })
               .then(session => {
                 streamingSessionRef.current = session
+
                 return session
               })
               .catch(error => {
                 streamingErrorRef.current = error
+
                 return null
               })
           }
@@ -494,6 +502,7 @@ export function useWakeWord({
               idleSilenceMs: CONVERSATION_IDLE_MS,
               onAudioFrame: samples => {
                 commandFramesRef.current.push(new Float32Array(samples))
+
                 if (streamingSessionRef.current) {
                   streamingSessionRef.current.sendFrame(samples)
                   streamedCommandFramesRef.current = commandFramesRef.current.length
@@ -507,6 +516,7 @@ export function useWakeWord({
           } catch (error) {
             debugLog('resume capture failed', { error: String(error) })
             scheduleRestart()
+
             return
           }
 
@@ -526,8 +536,10 @@ export function useWakeWord({
             }
 
             const sinceOpen = Date.now() - micOpenedAtRef.current
+
             if (micOpenedAtRef.current && sinceOpen < WAKE_STARTUP_GRACE_MS) {
               debugLog('detection ignored (startup grace)', { phrase, sinceOpen })
+
               return
             }
 
@@ -545,6 +557,7 @@ export function useWakeWord({
               setStatus('woken')
               handleRef.current.cancel()
               void onWakeDetectedRef.current()
+
               return
             }
 

@@ -2112,6 +2112,7 @@ export function installMcpCatalogEntry(
   requestedProfile?: null | string
 ): Promise<{ ok: boolean; name?: string; pid?: number; action?: string; background?: boolean }> {
   const entry = typeof entryOrProfile === 'object' && entryOrProfile !== null ? entryOrProfile : undefined
+
   const profile =
     typeof entryOrProfile === 'string' || entryOrProfile === null ? entryOrProfile : requestedProfile
 

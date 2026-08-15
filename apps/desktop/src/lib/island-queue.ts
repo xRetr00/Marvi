@@ -38,23 +38,26 @@ export function createIslandQueue(options: IslandQueueOptions = {}) {
   const emit = () => options.onChange?.(snapshot())
 
   const clearTimer = () => {
-    if (timer) clearTimeout(timer)
+    if (timer) {clearTimeout(timer)}
     timer = null
   }
 
   const trimQueue = () => {
-    if (typeof options.maxQueue !== 'number' || options.maxQueue < 0) return
-    while (queued.length > options.maxQueue) queued.shift()
+    if (typeof options.maxQueue !== 'number' || options.maxQueue < 0) {return}
+
+    while (queued.length > options.maxQueue) {queued.shift()}
   }
 
   const armTimer = () => {
     clearTimer()
-    if (!active) return
+
+    if (!active) {return}
     const autoDismiss = active.autoDismiss ?? false
     const duration = active.duration ?? 0
-    if (!autoDismiss || duration <= 0) return
+
+    if (!autoDismiss || duration <= 0) {return}
     timer = setTimeout(() => {
-      if (active) dismiss(active.id)
+      if (active) {dismiss(active.id)}
     }, duration)
   }
 
@@ -70,11 +73,14 @@ export function createIslandQueue(options: IslandQueueOptions = {}) {
       trimQueue()
       armTimer()
       emit()
+
       return card.id
     }
+
     queued.push(card)
     trimQueue()
     emit()
+
     return card.id
   }
 
@@ -82,8 +88,10 @@ export function createIslandQueue(options: IslandQueueOptions = {}) {
     if (id && active?.id !== id) {
       queued = queued.filter(card => card.id !== id)
       emit()
+
       return
     }
+
     clearTimer()
     promote()
   }

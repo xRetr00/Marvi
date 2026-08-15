@@ -25,6 +25,7 @@ export function useReadAloudBargeIn({ blocked, enabled, streamingSttEnabled }: R
 
   useEffect(() => {
     const active = enabled && !blocked && playback.source === 'read-aloud' && playback.status === 'speaking'
+
     if (!active) {
       return
     }

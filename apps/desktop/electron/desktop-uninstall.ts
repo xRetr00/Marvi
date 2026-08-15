@@ -83,14 +83,18 @@ function resolveRemovableAppPath(execPath, platform, env: any = {}) {
     const macOsDir = p.dirname(exe) // …/Contents/MacOS
     const contents = p.dirname(macOsDir) // …/Contents
     const appBundle = p.dirname(contents) // …/Marvi.app
-    if (appBundle.endsWith('.app')) return appBundle
+
+    if (appBundle.endsWith('.app')) {return appBundle}
+
     return null
   }
 
   if (platform === 'win32') {
     // NSIS per-user installs Marvi.exe directly in the install dir.
     const dir = p.dirname(exe)
-    if (/[\\/](Hermes|Marvi)$/i.test(dir) || /[\\/]hermes-desktop$/i.test(dir)) return dir
+
+    if (/[\\/](Hermes|Marvi)$/i.test(dir) || /[\\/]hermes-desktop$/i.test(dir)) {return dir}
+
     return null
   }
 

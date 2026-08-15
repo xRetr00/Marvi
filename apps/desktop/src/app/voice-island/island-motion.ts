@@ -12,16 +12,22 @@ export function targetAmplitude(phase: VoicePhase, level: number): number {
   switch (phase) {
     case 'off':
       return 0
+
     case 'wake':
       return 1
+
     case 'listening':
       return Math.min(1, 0.4 + level * 0.9)
+
     case 'transcribing':
       return 0.45
+
     case 'thinking':
       return 0.5
+
     case 'speaking':
       return Math.min(1, 0.55 + level * 0.6)
+
     default:
       return 0
   }
@@ -32,12 +38,16 @@ export function targetAmplitude(phase: VoicePhase, level: number): number {
 export function islandFlowMs(phase: VoicePhase): number {
   switch (phase) {
     case 'listening':
+
     case 'speaking':
       return 3000
+
     case 'wake':
       return 2500
+
     case 'thinking':
       return 6000
+
     default:
       return 14000
   }

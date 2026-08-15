@@ -2,8 +2,8 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { useI18n } from '@/i18n'
 import { startBargeInDetector } from '@/lib/barge-in-detector'
-import { isLikelyHallucination, isLikelySelfEchoTranscript } from '@/lib/voice-echo-guard'
 import { openStreamingTranscription, type StreamingTranscriptionSession } from '@/lib/streaming-transcription'
+import { isLikelyHallucination, isLikelySelfEchoTranscript } from '@/lib/voice-echo-guard'
 import { enqueueSpeech, finishSpeech, startSpeechSession, stopVoicePlayback } from '@/lib/voice-playback'
 import { vpLog } from '@/lib/voice-presence-log'
 import { isVoiceStopCommand } from '@/lib/voice-stop-word'
@@ -254,12 +254,14 @@ export function useVoiceConversation({
 
     if (complete === false) {
       vpLog('voice', 'turn incomplete')
+
       return false
     }
 
     if (complete === true) {
       vpLog('voice', 'turn complete')
     }
+
     await handleTurn()
   }, [handleTurn, semanticTurnEnabled])
 
@@ -369,6 +371,7 @@ export function useVoiceConversation({
         startSpeechSession({ source: 'voice-conversation' })
         armBargeIn()
       }
+
       setCaption(chunk)
       enqueueSpeech(chunk)
     },
@@ -395,9 +398,11 @@ export function useVoiceConversation({
     speakingRef.current = false
     disarmBargeIn()
     setCaption(null)
+
     if (enabledRef.current) {
       pendingStartRef.current = true
     }
+
     setStatus('idle')
   }, [disarmBargeIn, voiceCopy.playbackFailed])
 
@@ -523,6 +528,7 @@ export function useVoiceConversation({
 
         const final = !response.pending && !busy
         let chunk: string | null
+
         while ((chunk = takeSpeechChunk(final))) {
           feedSpeaking(chunk)
         }

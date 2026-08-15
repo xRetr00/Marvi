@@ -33,6 +33,7 @@ export function KnowledgeViewer() {
     entries.reduce<Record<string, typeof entries>>((byTopic, entry) => {
       const topic = entry.topic || 'Uncategorized'
       byTopic[topic] = [...(byTopic[topic] ?? []), entry]
+
       return byTopic
     }, {})
   )

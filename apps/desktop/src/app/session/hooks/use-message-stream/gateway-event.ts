@@ -25,9 +25,9 @@ import { clearClarifyRequest, normalizeChoices, setClarifyRequest, warnDroppedCh
 import { setSessionCompacting } from '@/store/compaction'
 import { refreshBackgroundProcesses } from '@/store/composer-status'
 import { $gateway } from '@/store/gateway'
+import { applyGoalStatusText } from '@/store/goals'
 import { activityLabelForTool, setIslandActivity } from '@/store/island-activity'
 import { dismissIslandCard, showIslandCard } from '@/store/island-cards'
-import { applyGoalStatusText } from '@/store/goals'
 import {
   notifyCronChanged,
   notifyPairingChanged,
@@ -169,6 +169,7 @@ function surfaceBillingBlock(sessionId: string, raw: unknown): void {
     action: { label: billingCtaLabel(block, ctaCopy), onClick: () => runBillingRecovery(block) }
   })
 }
+
 /**
  * Events that retire a "drafting a tool call" claim.
  *

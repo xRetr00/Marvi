@@ -207,6 +207,7 @@ describe('scanVenvBlockers', () => {
         { pid: 3, name: 'python.exe', cmdline: 'python -m hermes_cli.main serve' }
       ]
     })
+
     const outcome = await scanVenvBlockers('/r', execReturn(holders), stubVenv)
 
     assert.equal(outcome.kind, 'blocked')
@@ -251,6 +252,7 @@ describe('scanVenvBlockers', () => {
 describe('stopManagedBackgroundProcesses', () => {
   it('runs the managed-background stop helper with the install venv', () => {
     const calls: any[] = []
+
     const exec = ((cmd: string, args: string[], opts: any) => {
       calls.push({ cmd, args, opts })
     }) as any
@@ -275,9 +277,11 @@ describe('stopManagedBackgroundProcesses', () => {
 
   it('still cleans helpers when gateway shutdown fails', () => {
     let calls = 0
+
     const failGateway = (() => {
       calls += 1
-      if (calls === 1) throw new Error('gateway stuck')
+
+      if (calls === 1) {throw new Error('gateway stuck')}
     }) as any
 
     assert.equal(

@@ -59,6 +59,7 @@ vi.mock('@/lib/wake-word', () => ({
   stripWakePhrase: (text: string, phrases: string[]) => {
     const lower = text.toLowerCase()
     const phrase = phrases.find(item => lower.startsWith(item))
+
     return phrase ? text.slice(phrase.length).trim() : text
   }
 }))
@@ -168,6 +169,7 @@ describe('useWakeWord', () => {
     const onSubmit = vi.fn()
     openWakeWordSession.mockImplementation(async options => {
       wakeOptions = options
+
       return wakeSession
     })
     startMic.mockImplementation(async options => {
@@ -230,6 +232,7 @@ describe('useWakeWord', () => {
     const onTranscribeAudio = vi.fn()
     openWakeWordSession.mockImplementation(async options => {
       wakeOptions = options
+
       return wakeSession
     })
     startMic.mockResolvedValue(undefined)
@@ -271,6 +274,7 @@ describe('useWakeWord', () => {
     const wakeSession = { sendFrame: vi.fn(), stop: vi.fn() }
     openWakeWordSession.mockImplementation(async options => {
       wakeOptions = options
+
       return wakeSession
     })
     startMic.mockResolvedValue(undefined)
@@ -315,6 +319,7 @@ describe('useWakeWord', () => {
     const onSubmit = vi.fn()
     openWakeWordSession.mockImplementation(async options => {
       wakeOptions = options
+
       return wakeSession
     })
     startMic.mockImplementation(async options => {
@@ -360,6 +365,7 @@ describe('useWakeWord', () => {
     const onSubmit = vi.fn()
     openWakeWordSession.mockImplementation(async options => {
       wakeOptions = options
+
       return wakeSession
     })
     openStreamingTranscription.mockResolvedValue(streamSession)
@@ -417,6 +423,7 @@ describe('useWakeWord', () => {
     const onSubmit = vi.fn()
     openWakeWordSession.mockImplementation(async options => {
       wakeOptions = options
+
       return wakeSession
     })
     openStreamingTranscription.mockResolvedValue(streamSession)
@@ -473,6 +480,7 @@ describe('useWakeWord', () => {
     const onSubmit = vi.fn()
     openWakeWordSession.mockImplementation(async options => {
       wakeOptions = options
+
       return wakeSession
     })
     startMic.mockImplementation(async options => {
@@ -522,6 +530,7 @@ describe('useWakeWord', () => {
     const onSubmit = vi.fn()
     openWakeWordSession.mockImplementation(async options => {
       wakeOptions = options
+
       return wakeSession
     })
     openStreamingTranscription.mockRejectedValue(new Error('stream failed'))

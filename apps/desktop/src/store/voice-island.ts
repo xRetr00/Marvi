@@ -38,6 +38,7 @@ export function currentIslandWork(): IslandWorkState | null {
   const sid = $activeSessionId.get()
   const activity = $islandActivity.get()
   const source = sid ? ($statusItemsBySession.get()[sid] ?? []) : []
+
   const items = source.map(item => ({
     id: item.id,
     meta: item.currentTool || item.todoStatus || item.type,
@@ -54,6 +55,7 @@ export function currentIslandWork(): IslandWorkState | null {
   }
 
   const active = $busy.get() || items.some(item => item.state === 'running')
+
   if (!active && items.length === 0) {
     return null
   }
@@ -71,9 +73,11 @@ function ensureOpen(): void {
   }
 
   const overlay = window.hermesDesktop?.islandOverlay
+
   if (!overlay) {
     vpLog('window', 'open failed', { error: 'island overlay preload API is unavailable' })
     retryAfter = Date.now() + 2000
+
     return
   }
 

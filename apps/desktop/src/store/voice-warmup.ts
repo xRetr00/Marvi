@@ -24,17 +24,22 @@ async function pollOnce(): Promise<void> {
   if (!polling) {
     return
   }
+
   try {
     const conn = await window.hermesDesktop?.getConnection?.().catch(() => null)
+
     if (conn?.token) {
       const res = await fetch(`${conn.baseUrl.replace(/\/+$/, '')}/api/audio/voice-warmup`, {
         headers: { 'X-Hermes-Session-Token': conn.token }
       })
+
       if (res.ok) {
         const next = (await res.json()) as VoiceWarmup
         $voiceWarmup.set(next)
+
         if (next.done) {
           polling = false
+
           return
         }
       }
@@ -42,6 +47,7 @@ async function pollOnce(): Promise<void> {
   } catch {
     // transient (still connecting) — keep polling
   }
+
   timer = window.setTimeout(() => void pollOnce(), 1500)
 }
 
@@ -50,12 +56,14 @@ export function startVoiceWarmupPolling(): void {
   if (polling) {
     return
   }
+
   polling = true
   void pollOnce()
 }
 
 export function stopVoiceWarmupPolling(): void {
   polling = false
+
   if (timer !== null) {
     window.clearTimeout(timer)
     timer = null

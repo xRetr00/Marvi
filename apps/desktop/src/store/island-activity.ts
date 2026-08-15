@@ -27,6 +27,7 @@ export function activityLabelForTool(name: string | null | undefined): string {
   if (!name) {
     return 'Working'
   }
+
   return TOOL_LABELS[name] ?? 'Working'
 }
 

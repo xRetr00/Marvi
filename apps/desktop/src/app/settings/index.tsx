@@ -41,8 +41,8 @@ import { GatewaySettings } from './gateway-settings'
 import { KeybindSettings } from './keybind-settings'
 import { KEYS_VIEWS, KeysSettings, type KeysView } from './keys-settings'
 import { NotificationsSettings } from './notifications-settings'
-import { PresenceSettings } from './presence'
 import { PluginsSettings } from './plugins-settings'
+import { PresenceSettings } from './presence'
 import { PROVIDER_VIEWS, ProvidersSettings, type ProviderView } from './providers-settings'
 import { SessionsSettings } from './sessions-settings'
 import { SmartRoomSettings } from './smart-room-settings'
@@ -112,6 +112,7 @@ export function SettingsView({ onClose, onConfigSaved, onMainModelChanged }: Set
     (view: ProviderView) => openSubView('providers', 'pview', view, 'accounts'),
     [openSubView]
   )
+
   const openKeysView = useCallback((view: KeysView) => openSubView('keys', 'kview', view, 'tools'), [openSubView])
 
   const importInputRef = useRef<HTMLInputElement | null>(null)

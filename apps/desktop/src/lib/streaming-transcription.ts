@@ -125,6 +125,7 @@ export async function openStreamingTranscription(
       window.clearTimeout(timeout)
       resolve()
     }
+
     rejectReady = error => {
       window.clearTimeout(timeout)
       reject(error)

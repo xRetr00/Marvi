@@ -21,6 +21,7 @@ export default function Welcome() {
       {/* Hero — same recipe the desktop's chat/intro.tsx uses */}
       <div className="w-full max-w-2xl min-w-0 text-center">
         <p
+          aria-label="MARVI"
           className="fit-text mx-auto mb-4 w-full font-['Collapse'] font-bold uppercase leading-[0.9] tracking-[0.08em] text-midground mix-blend-plus-lighter dark:text-foreground/90"
           style={
             {
@@ -29,7 +30,6 @@ export default function Welcome() {
               '--fit-text-min': '2.5rem'
             } as CSSProperties
           }
-          aria-label="MARVI"
         >
           <span>
             <span>MARVI</span>

@@ -33,11 +33,13 @@ export function IslandWaveform({ level, active, width, height }: IslandWaveformP
 
   useEffect(() => {
     const canvas = canvasRef.current
+
     if (!canvas) {
       return
     }
 
     const ctx = canvas.getContext('2d')
+
     if (!ctx) {
       return
     }
@@ -55,6 +57,7 @@ export function IslandWaveform({ level, active, width, height }: IslandWaveformP
       const midY = height / 2
       const barWidth = Math.max(1.5, width / (BAR_COUNT * 2))
       const gap = (width - barWidth * BAR_COUNT) / (BAR_COUNT - 1)
+
       for (let i = 0; i < BAR_COUNT; i++) {
         const x = i * (barWidth + gap)
         ctx.fillRect(x, midY - 1, barWidth, 2)
@@ -97,10 +100,12 @@ export function IslandWaveform({ level, active, width, height }: IslandWaveformP
       // ongoing rAF loop while idle.
       ampRef.current *= 1 - IDLE_EASE
       drawFlat()
+
       if (rafRef.current !== null) {
         cancelAnimationFrame(rafRef.current)
         rafRef.current = null
       }
+
       return
     }
 

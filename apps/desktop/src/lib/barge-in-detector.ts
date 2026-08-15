@@ -50,6 +50,7 @@ export function startBargeInDetector({ handle, streamingSttEnabled, onInterrupt 
     if (stopped) {
       return
     }
+
     stopped = true
     void streaming?.finish().catch(() => '')
     streaming = null
@@ -60,6 +61,7 @@ export function startBargeInDetector({ handle, streamingSttEnabled, onInterrupt 
     if (fired || stopped) {
       return
     }
+
     fired = true
     vpLog('voice', 'barge-in accepted', { reason, ...detail })
     onInterrupt()
@@ -72,12 +74,16 @@ export function startBargeInDetector({ handle, streamingSttEnabled, onInterrupt 
         if (stopped || fired) {
           return
         }
+
         const trimmed = text.trim()
+
         if (!trimmed) {
           return
         }
+
         const echo = isLikelySelfEchoTranscript(trimmed)
         vpLog('voice', 'barge-in partial', { chars: trimmed.length, echo })
+
         if (!echo && trimmed.length >= MIN_CONFIRM_CHARS && Date.now() - startedAt > BARGE_GRACE_MS) {
           fire('stt-words', { text: trimmed })
         }
@@ -110,13 +116,16 @@ export function startBargeInDetector({ handle, streamingSttEnabled, onInterrupt 
         if (stopped || fired) {
           return
         }
+
         latestLevel = level
         peak = Math.max(peak, level)
+
         if (Date.now() - lastLogAt > 1000) {
           vpLog('voice', 'barge-in level', { peak: Number(peak.toFixed(3)), floor: ECHO_FLOOR, confirmBy: streamingSttEnabled ? 'stt-words' : 'energy' })
           lastLogAt = Date.now()
           peak = 0
         }
+
         // Fallback: energy gate ONLY when streaming STT isn't available.
         if (!streamingSttEnabled && gate.update(level, Date.now() - startedAt)) {
           fire('energy', { level })

@@ -11,9 +11,9 @@ import {
   getGlobalModelOptions,
   getVoiceInstantStatus,
   getVoiceSpeakers,
+  type ModelOptionProvider,
   removeVoiceSpeaker,
   setModelAssignment,
-  type ModelOptionProvider,
   type VoiceInstantStatusResponse,
   type VoiceSpeaker
 } from '@/hermes'
@@ -89,9 +89,11 @@ export function VoicePresenceSettings({
         getAuxiliaryModels(),
         getVoiceInstantStatus()
       ])
+
       const ready = (options.providers ?? []).filter(
         provider => provider.authenticated !== false && (provider.models?.length ?? 0) > 0
       )
+
       const current = assignments.tasks.find(task => task.task === 'voice_instant')
       const provider = current?.provider && current.provider !== 'auto' ? current.provider : assignments.main.provider
       const model = current?.model || assignments.main.model
@@ -123,6 +125,7 @@ export function VoicePresenceSettings({
 
     try {
       const providerRow = instantProviders.find(provider => provider.slug === instantProvider)
+
       const result = await setModelAssignment({
         model: instantModel,
         provider: instantProvider,

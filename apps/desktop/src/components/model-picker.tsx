@@ -69,6 +69,7 @@ export function ModelPickerDialog({
     { model: currentModel, provider: currentProvider },
     modelOptions.data
   )
+
   const loading = modelOptions.isPending && !modelOptions.data
 
   const error = modelOptions.error

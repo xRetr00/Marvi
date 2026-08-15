@@ -269,6 +269,7 @@ export function ModelSettings({ onMainModelChanged }: ModelSettingsProps) {
         setSelectedProvider(prev => prev || modelInfo.provider)
         setSelectedModel(prev => prev || modelInfo.model)
       }
+
       setAuxiliary(auxiliaryModels)
       setMoa(moaModels)
       setInstantStatus(voiceInstantStatus)

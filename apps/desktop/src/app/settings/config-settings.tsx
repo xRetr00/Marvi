@@ -6,13 +6,8 @@ import { useSearchParams } from 'react-router'
 
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { Switch } from '@/components/ui/switch'
-import { Textarea } from '@/components/ui/textarea'
 import {
   getElevenLabsVoices,
-  getHermesConfigDefaults,
-  getHermesConfigRecord,
   getHermesConfigSchema,
   saveHermesConfig,
   warmTextToSpeech

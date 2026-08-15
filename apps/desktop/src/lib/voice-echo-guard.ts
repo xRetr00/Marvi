@@ -40,6 +40,7 @@ export function isLikelySelfEchoTranscript(transcript: string, at = Date.now()):
   return recent.some(item => {
     const spoken = new Set(item.words)
     const matches = transcriptWords.filter(word => spoken.has(word)).length
+
     return matches / transcriptWords.length >= 0.8
   })
 }
@@ -102,17 +103,21 @@ export function isLikelyHallucination(transcript: string): boolean {
   if (!normalized) {
     return true
   }
+
   if (HALLUCINATION_PHRASES.has(normalized)) {
     return true
   }
 
   const tokens = normalized.split(' ')
+
   // A single 1-2 char token, or the same word repeated ("you you you").
   if (tokens.length === 1 && tokens[0].length <= 2) {
     return true
   }
+
   if (tokens.length >= 2 && new Set(tokens).size === 1) {
     return true
   }
+
   return false
 }
